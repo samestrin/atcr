@@ -1,0 +1,8 @@
+fix(projects): refuse writes to an archived project
+
+An archived project is meant to be read-only, but the rename endpoint
+loaded it and saved the new name anyway, so a project could change after
+it was archived.
+
+- rename_project() raises ProjectArchived for an archived project
+- an archived project can no longer be modified

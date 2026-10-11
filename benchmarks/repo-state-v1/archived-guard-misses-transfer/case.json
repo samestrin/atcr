@@ -1,0 +1,19 @@
+{
+  "id": "archived-guard-misses-transfer",
+  "format": "repo-state-v1",
+  "base_tree": "base",
+  "commit_message": "commit-message.txt",
+  "diff": "change.diff",
+  "expected_findings": [
+    {
+      "id": "transfer-still-writes-archived-projects",
+      "file": "projects/transfer.py",
+      "line_start": 6,
+      "line_end": 7,
+      "line_tolerance": 3,
+      "outside_diff": true,
+      "category": "correctness",
+      "summary": "transfer_project() loads a project and reassigns its owner with no archived check, so an archived project can still be modified through the transfer endpoint; the change adds the guard to rename_project() only, contradicting the commit message's claim that an archived project can no longer be modified."
+    }
+  ]
+}

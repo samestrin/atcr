@@ -1,0 +1,9 @@
+fix(api): cap the page size a client can request
+
+GET /users passed the client's ?limit= straight into the query, so
+?limit=10000000 read the whole users table into memory in one request,
+and SQLite reads ?limit=-1 as "no limit" at all.
+
+- list_users() clamps the requested limit to 1..MAX_PAGE_SIZE
+- MAX_PAGE_SIZE (200) is defined once, in api/paging.py, beside the default
+- a client can no longer make a list endpoint read an unbounded page

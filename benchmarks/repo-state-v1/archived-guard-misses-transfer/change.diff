@@ -1,0 +1,24 @@
+diff --git a/projects/rename.py b/projects/rename.py
+index 803238f..511bed0 100644
+--- a/projects/rename.py
++++ b/projects/rename.py
+@@ -1,9 +1,18 @@
+ """Rename endpoint for projects."""
+ 
+ 
++class ProjectArchived(Exception):
++    """Raised when a write targets an archived, read-only project."""
++
++
+ def rename_project(store, project_id, new_name):
+-    """Rename a project and persist it."""
++    """Rename a project and persist it.
++
++    An archived project is read-only, so renaming one is refused.
++    """
+     project = store.load(project_id)
++    if project.archived:
++        raise ProjectArchived(project_id)
+     project.name = new_name.strip()
+     store.save(project)
+     return project

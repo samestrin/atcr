@@ -1,0 +1,25 @@
+diff --git a/media/download.py b/media/download.py
+index 81fe8a0..0f58a0b 100644
+--- a/media/download.py
++++ b/media/download.py
+@@ -4,6 +4,18 @@ import os
+ UPLOAD_ROOT = "/srv/uploads"
+ 
+ 
++class UnsafePath(Exception):
++    """Raised when a requested name resolves outside UPLOAD_ROOT."""
++
++
+ def download_path(name):
+-    """Return the on-disk path of the upload the client asked for by name."""
+-    return os.path.join(UPLOAD_ROOT, name)
++    """Return the on-disk path of the upload the client asked for by name.
++
++    A name that resolves outside UPLOAD_ROOT ("../../etc/passwd", or an
++    absolute path, which os.path.join lets replace the root) is refused.
++    """
++    root = os.path.realpath(UPLOAD_ROOT)
++    path = os.path.realpath(os.path.join(root, name))
++    if os.path.commonpath([root, path]) != root:
++        raise UnsafePath(name)
++    return path
