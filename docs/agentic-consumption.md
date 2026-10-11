@@ -117,12 +117,12 @@ just-reconciled total instead of a fan-out count.
 
 ### The `report --format axi` findings payload
 
-`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set, followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)):
+`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes), followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)):
 
 ```
-findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence}:
-  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH
-  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM
+findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:
+  CRITICAL,"auth.go:42",token never expires,check expiry,security,15,expiresAt unread,"greta,host",HIGH,cf9a121839d95a37
+  LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM,dcf65c25aac8f0d4
 total: 2
 truncated: false
 ```
