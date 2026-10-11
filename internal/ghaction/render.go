@@ -38,12 +38,13 @@ const (
 
 // FixAttribution extracts the executor name from a finding's Evidence field,
 // parsing the "fix by <name>" token written by the executor stage (Epic 7.0).
-// Evidence segments are joined with reclib.EvidenceSep and the token prefix
-// is reclib.FixAttributionPrefix — both defined in the reconcile package so
-// the producer (internal/verify) and this consumer share one source of truth.
+// Evidence segments are joined with reclib.EvidenceSep, or with
+// reconcile.ClusterEvidenceSep when findings were cluster-merged, so it splits
+// through reconcile.SplitEvidence — the same splitter internal/verify's
+// attribution guards use. The token prefix is reclib.FixAttributionPrefix.
 // Returns "" when no attribution token is present.
 func FixAttribution(evidence string) string {
-	segs := strings.Split(evidence, reclib.EvidenceSep)
+	segs := reconcile.SplitEvidence(evidence)
 	for i := len(segs) - 1; i >= 0; i-- {
 		seg := strings.TrimSpace(segs[i])
 		if rest, ok := strings.CutPrefix(seg, reclib.FixAttributionPrefix); ok {
