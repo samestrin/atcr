@@ -29,11 +29,11 @@ type axiPaginatedPayload struct {
 }
 
 // encodeAXI writes v as standard TOON through go-axi, which sanitizes every
-// string before encoding — but only SINGLE control bytes: it strips raw ESC/C1
-// control runes, U+2028/U+2029 and invalid UTF-8, while Unicode Cf format
-// characters (U+202E bidi overrides, U+200B) pass through raw and a stripped
-// escape leaves its CSI parameter text ("[31m") as residue. That exact scope is
-// pinned by TestRenderAXI_SanitizationScope. go-axi writes nothing on failure —
+// string before encoding, one rune at a time: it strips raw ESC/C1 control
+// runes, U+2028/U+2029, Unicode Cf format characters (U+202E bidi overrides,
+// U+200B zero-width space) and invalid UTF-8, but a stripped escape leaves its
+// CSI parameter text ("[31m") as residue, since sequences are not consumed as
+// units. That exact scope is pinned by TestRenderAXI_SanitizationScope. go-axi writes nothing on failure —
 // verified against v0.3.1 (Sanitize → full Marshal → one writeLine, so a marshal
 // fault precedes any byte) and pinned by TestEncodeAXI_WritesNothingOnFailure;
 // its typed failures (*KeyCollisionError, *CycleError) are wrapped with %w so
