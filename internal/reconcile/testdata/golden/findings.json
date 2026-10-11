@@ -18,7 +18,8 @@
       "verdict": "unverifiable",
       "skeptic": "skeptic-a, skeptic-b",
       "notes": "skeptics split on exploitability"
-    }
+    },
+    "id": "e1b16749cac599b5"
   },
   {
     "severity": "HIGH",
@@ -33,7 +34,8 @@
       "greta",
       "host"
     ],
-    "confidence": "HIGH"
+    "confidence": "HIGH",
+    "id": "c96ccb388aed038e"
   },
   {
     "severity": "HIGH",
@@ -47,7 +49,8 @@
     "reviewers": [
       "greta"
     ],
-    "confidence": "MEDIUM"
+    "confidence": "MEDIUM",
+    "id": "fe8d2383b9569092"
   },
   {
     "severity": "MEDIUM",
@@ -61,7 +64,8 @@
     "reviewers": [
       "greta"
     ],
-    "confidence": "MEDIUM"
+    "confidence": "MEDIUM",
+    "id": "fdb8cf4a1193eebf"
   },
   {
     "severity": "MEDIUM",
@@ -75,7 +79,8 @@
     "reviewers": [
       "host"
     ],
-    "confidence": "MEDIUM"
+    "confidence": "MEDIUM",
+    "id": "14cb3486b36463a7"
   },
   {
     "severity": "LOW",
@@ -89,6 +94,7 @@
     "reviewers": [
       "greta"
     ],
-    "confidence": "MEDIUM"
+    "confidence": "MEDIUM",
+    "id": "fe4d7f586aa720ca"
   }
 ]
