@@ -31,7 +31,11 @@ import (
 // is go-axi's sanitizer, which runs on both paths and strips control bytes
 // (other than tab, LF, CR), U+2028/U+2029, Unicode format characters (category
 // Cf: bidi controls such as U+202E, zero-width characters such as U+200B and
-// U+FEFF, tag characters), and invalid UTF-8.
+// U+FEFF, tag characters), and invalid UTF-8. That strip also takes U+200C
+// (needed by Persian and Indic text) and U+200D (the emoji joiner), which carry
+// content, so a pool rebuilt from v2 by `atcr review --resume` can hold a
+// finding whose evidence changed with no marker: the Trojan Source defence wins
+// over byte fidelity for those two.
 const VersionV2 = "# atcr-findings/v2"
 
 // v2Row is one per-source finding in the v2 body. The json tags equal the toon
