@@ -111,6 +111,107 @@ func TestParseVerdictCore_StrictVerdictBeatsEarlierDamagedDecoy(t *testing.T) {
 	assert.True(t, carriesVerdict(in))
 }
 
+// TestParseVerdictCore_ProseExampleIsNotRepairedIntoTheVerdict: a loosely
+// written example in the skeptic's prose, with no strict verdict anywhere, is
+// not repaired into the graded verdict. A repaired `refuted` would clear the CI
+// gate on a finding nobody disproved, so the reply stays malformed_output and
+// unverifiable, which blocks, as it did before repair existed.
+func TestParseVerdictCore_ProseExampleIsNotRepairedIntoTheVerdict(t *testing.T) {
+	t.Parallel()
+	for name, in := range map[string]string{
+		"single quotes and trailing comma": "An example of the format: {'verdict': 'refuted', 'reasoning': 'example',}\n\nI could not finish checking the caller.",
+		"single quotes":                    "Reply like {'verdict': 'refuted', 'reasoning': 'example'} once you are sure. I am not sure yet.",
+		"trailing comma":                   "The schema is {\"verdict\": \"refuted\", \"reasoning\": \"example\",} and I ran out of time.",
+		"two loose objects in prose":       "Either {'verdict': 'confirmed', 'reasoning': 'a'} or {'verdict': 'unverifiable', 'reasoning': 'b'} would fit.",
+	} {
+		v, cause, repaired := parseVerdictCore(in)
+		assert.Equal(t, parseCauseMalformed, cause, "%s: notes %s", name, v.Notes)
+		assert.Equal(t, verdictUnverifiable, v.Verdict, name)
+		assert.False(t, repaired, name)
+		assert.False(t, carriesVerdict(in), "%s: carriesVerdict must agree with parseVerdictCore", name)
+
+		got, ambiguous, _ := verdictFromAnswer(in)
+		require.NotNil(t, got, name)
+		assert.False(t, ambiguous, name)
+		assert.Equal(t, verdictUnverifiable, got.Verdict, name)
+	}
+}
+
+// TestParseVerdictCore_FencedRepairBeatsLooseProseExample: a damaged verdict in
+// a ```json fence is still repaired when a loose example sits in the prose
+// ahead of it, and the example is never the one graded.
+func TestParseVerdictCore_FencedRepairBeatsLooseProseExample(t *testing.T) {
+	t.Parallel()
+	in := "An example of the format: {'verdict': 'refuted', 'reasoning': 'example',}\n\n" +
+		"```json\n{'verdict': 'confirmed', 'reasoning': 'the real one',}\n```"
+	v, cause, repaired := parseVerdictCore(in)
+	require.Equal(t, parseCauseUsable, cause, "notes: %s", v.Notes)
+	assert.Equal(t, verdictConfirmed, v.Verdict)
+	assert.Equal(t, "the real one", v.Notes)
+	assert.True(t, repaired)
+	assert.True(t, carriesVerdict(in))
+}
+
+// TestParseVerdictCore_FenceRuleMatchesTheFindingsParser: the repair pass
+// opens a ```json fence by the findings parser's rule (stream.IsJSONFence) and
+// closes it on the next stream.IsFenceMarker line, both whole-line tests,
+// so a genuinely fenced damaged `refuted` is graded in every form that rule
+// accepts, and a ```json that does not open a fence there does not open one here.
+func TestParseVerdictCore_FenceRuleMatchesTheFindingsParser(t *testing.T) {
+	t.Parallel()
+	const damaged = "{'verdict': 'refuted', 'reasoning': 'rounded once at line 120',}"
+	for name, in := range map[string]string{
+		"indented opener":         "Checked it.\n  ```json\n" + damaged + "\n  ```\n",
+		"upper-case info string":  "Checked it.\n```JSON\n" + damaged + "\n```\n",
+		"info string after json":  "Checked it.\n```json title=verdict\n" + damaged + "\n```\n",
+		"tilde closer":            "Checked it.\n```json\n" + damaged + "\n~~~\n",
+		"backticks inside string": "Checked it.\n```json\n{'verdict': 'refuted', 'reasoning': 'the ``` in the doc is inline',}\n```\n",
+	} {
+		v, cause, repaired := parseVerdictCore(in)
+		assert.Equal(t, parseCauseUsable, cause, "%s: notes %s", name, v.Notes)
+		assert.Equal(t, verdictRefuted, v.Verdict, name)
+		assert.True(t, repaired, name)
+		assert.True(t, carriesVerdict(in), name)
+	}
+
+	for name, in := range map[string]string{
+		"```json mentioned mid-line in prose": "Wrap it in ```json fences like " + damaged + " next time.\n```\n",
+		"opener with no line after it":        damaged + " is my draft.\n```json",
+		"opener never closed":                 "Checked it.\n```json\n" + damaged + " is a draft",
+		"inside a non-json fence":             "Format:\n```text\n" + damaged + "\n```\nI did not finish.",
+		"```json closing an unclosed fence":   "Format:\n```text\nnotes\n```json\n" + damaged + "\n```\n",
+	} {
+		v, cause, repaired := parseVerdictCore(in)
+		assert.Equal(t, parseCauseMalformed, cause, "%s: notes %s", name, v.Notes)
+		assert.Equal(t, verdictUnverifiable, v.Verdict, name)
+		assert.False(t, repaired, name)
+		assert.False(t, carriesVerdict(in), name)
+	}
+}
+
+// TestParseVerdictCore_StrictObjectCountsTowardSingleVerdictKeyed: a strictly
+// valid verdict-keyed object counts toward "the single verdict-keyed object in
+// the reply", so a strict out-of-enum schema echo next to one loose `confirmed`
+// leaves that loose object neither fenced nor alone, and it is not repaired into
+// the answer. The reply reports the out-of-enum value, as it did before repair.
+func TestParseVerdictCore_StrictObjectCountsTowardSingleVerdictKeyed(t *testing.T) {
+	t.Parallel()
+	in := `The schema is {"verdict": "<confirmed|refuted|unverifiable>", "reasoning": "..."}` +
+		" and mine is {'verdict': 'confirmed', 'reasoning': 'example',} for now."
+	v, cause, repaired := parseVerdictCore(in)
+	assert.Equal(t, parseCauseInvalidEnum, cause, "notes: %s", v.Notes)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.False(t, repaired)
+	assert.False(t, carriesVerdict(in))
+}
+
+// TestJSONRepairedVerdictMetric_MatchesMetricsKey pins the spelled-out counter
+// key in verdict.go to the one metrics.Key builds.
+func TestJSONRepairedVerdictMetric_MatchesMetricsKey(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, metrics.Key("atcr_json_repaired_total", "lane", "verdict"), jsonRepairedVerdictMetric)
+}
+
 // TestParseVerdictCore_RepairedOutOfEnumIsInvalidVerdict: a repaired candidate
 // with an out-of-enum value is reported as such rather than as malformed.
 func TestParseVerdictCore_RepairedOutOfEnumIsInvalidVerdict(t *testing.T) {
