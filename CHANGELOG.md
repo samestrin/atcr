@@ -1,1242 +1,518 @@
+# Changelog
+
+All notable changes to `atcr` are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow the release tags described in [docs/release-process.md](docs/release-process.md).
+
+**Rules for every change (people and agents alike):**
+
+- Add your entry under `## [Unreleased]`, in the right category: Added, Changed, Deprecated, Removed, Fixed or Security. Never add a new `##` section; a `##` section is created only when a release tag is cut.
+- End the entry with its source in brackets, for example `(epic 35.16.13)` or `(technical debt, 2026-10-11)`.
+- Write for a user of `atcr`: what changed for them, not how the work was organized.
+- When a release is cut, `[Unreleased]` is renamed to `[X.Y.Z] - YYYY-MM-DD` matching the tag, and a new empty `[Unreleased]` goes above it.
+
+Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) are in [docs/changelog-history.md](docs/changelog-history.md).
+
 ## [Unreleased]
 
 ### Added
 
-- Every finding in `reconciled/findings.json` now carries an `id`: the same stable ID the `.atcr/debt/` store gives the finding, so a consumer can pass it to `atcr debt resolve <id>`. It is computed once from the emitted file, line and problem, after the `(symbol) ` anchor is added, so it matches the stored row. A findings.json written before this change has no `id` key and reads and re-writes unchanged. `reconciled/findings.txt` does not gain the field. When a debate judge merges a gray-zone cluster, the merged record keeps the first member's `id` (the store was written before the debate, so only a member's ID names a stored row); resolving it closes that member's row, and the other members' rows stay open.
-- `atcr report --format axi` declares an `id` column right after `confidence` (before the optional `disagreement`, `verification.*`, `evidence_exec.*`, `fix_warning` and `fix_review` columns) and fills it from the finding's `id` in `findings.json`, in both the plain and the paginated payload. A consumer that reads columns by name is unaffected; one that counts columns must re-key. A finding with no `id` (a findings.json written before it existed) gets an empty cell. The deprecated `--format pipe` / `--legacy-pipe` output is unchanged and has no `id` column.
-- A last-try JSON repair for model replies. A fenced findings block and a skeptic verdict that do not decode strictly are repaired and decoded again: trailing commas, single quotes, `//` and `/* */` comments, unquoted keys, and (findings only) wrong, extra or missing closers after complete content. A slip inside one finding no longer drops that finding and every finding after it, and a slip in a verdict no longer costs the verdict (`malformed_output`). Repair never edits string contents, never invents a value, and never closes a cut-off reply. On the verdict lane it runs only when no object in the reply reads strictly, so a strict verdict always wins. Even then it reads a repaired verdict only from a ```` ```json ```` fence (opened by the findings parser's rule) or from the only verdict-keyed object in the reply, and a repaired `refuted` only from a fence or a reply that is nothing but the object. So a loose `refuted` example in the skeptic's prose never becomes the graded verdict; a real `refuted` mis-written in prose with no fence stays `unverifiable`. A lone loose `confirmed` or `unverifiable` object is still read with prose around it, since both block the gate either way. It does not run on bare JSON outside a fence, findings files on disk, tool-call arguments, executor fix replies, debate rulings or the `atcr doctor` probe. Each accepted repair adds 1 to the new counter `atcr_json_repaired_total{lane}` (`findings` or `verdict`). Measured on the repair fixture corpus: 25 of 25 fixtures meet the bar (every defect class repairs to its expected value, no valid fixture is altered, every cut-off finding stays dropped), so the plain standard-library repair is kept and `kaptinlin/jsonrepair` is not added. `docs/findings-format.md`, `docs/verification.md` and `docs/metrics.md` describe where repair runs and where it does not.
-- A per-agent registry key, `replay_reasoning: off`, stops the tool loop from sending a model's earlier reasoning back on later turns. Use it when a provider rejects a replayed reasoning member (for example with a 400 on turn 2) and you want to keep the tool loop on. Unset keeps the replay; any other value, `on` included, fails the load with an error naming the agent. A fallback does not inherit it from its primary, a community persona may not declare it, and an `off` agent never trips `reasoning_replay_bytes`. All four tool-loop lanes honor it: a review agent, its fallback, the skeptic, and the debate seats. `docs/registry.md` documents the key and no longer says the replay cannot be switched off.
-- `docs/benchmark.md` records the 2026-10-10 live validation of the fit workflow: the three pairs re-pointed on 2026-09-29 (ronin + nemotron-3-super-120b, ronin + minimax-m2.7, pace + gpt-oss-120b) re-run against `fit-v1` with 3 replicates, each verdict matching its 2026-09-29 verdict (unfit, fit, fit).
-- `docs/benchmark.md` explains how to check a persona + model pair before repointing a live agent: build an overlay roster of the candidate pairs with no `fallback:` (a fallback would score a failed primary under its backup), run `fit-v1` with `--replicates`, then read `atcr benchmark fit --in`. It also says `fit-v1` is not for submission and needs `review_strategy: chunked` and a `payload_byte_budget` of at least 502,071.
-- A `fit-v1` benchmark suite (`benchmarks/fit-v1/`) for `atcr benchmark fit`. Its one case is atcr's own history, `git diff 4c588b6b..8576a42 -- . ':!*.md'` (502,071 bytes), which a 128k-window reviewer reviews in 2 chunks without hitting the default 524,288-byte payload budget. Run it with `review_strategy: chunked`: under the default `bulk`, a 128k-window reviewer drops files and every lane reads `incomplete`. The case's single `expected_categories` entry is a placeholder, so the recall score means nothing and the suite is not for leaderboard submission. A CI test fails if the case ever fits in one chunk or exceeds the byte budget.
-- `atcr benchmark fit` refuses a malformed `reviewer_fit` row instead of judging it: a negative count, more `silent_chunks` than `chunk_count`, a persona or model holding a control or format character, or a replicate above the row count (one such row used to allocate memory up to its replicate number). A replicate a pair has no row for, such as replicate 1 of a pre-replicates checkpoint resumed with `--replicates`, now prints as `-` instead of a measured 0.
-- `atcr benchmark fit --in <run-result>` prints one row per persona + model pair from a run-result's `reviewer_fit` rows: calls, truncated, unparseable, failed and timed-out counts, silent chunks out of chunks reviewed, findings and output tokens per replicate, and a health-only verdict. A pair is unfit when any call was truncated, unparseable or failed, or silent on every chunk; a silent chunk beside a productive one is a warning and the pair stays fit. Findings are reported, never gated, and the exit code does not depend on the verdicts.
-- `atcr benchmark run --replicates N` (default 1) reviews every case N times so a persona + model pair can be judged on more than one call. Replicate 1 is scored exactly as before, so `benchmark export` output does not change; replicates 2 to N make fresh calls (diff-cache reads bypassed) and are recorded only in the run-result's new `reviewer_fit` array, one row per reviewer, case and replicate with its outcome, findings, output tokens, `chunk_count` and `silent_chunks`. `--checkpoint` records each replicate, and a checkpoint written before this change resumes and replays as before. `repo-state-v1` suites refuse the flag.
-- An agent's `status.json` records `silent_chunks`: how many of its chunks (1 for an unchunked reviewer) met the silent-lane condition the `atcr review` warning uses — thinking declared on, `NO FINDINGS`, fewer than 50 tokens out on more than 10,000 tokens in. A chunked persona sums it over its chunks, so it is wholly silent when `silent_chunks` reaches `chunk_count`. The key is absent when no chunk was silent, and the reviewer's outcome is unchanged (still clean).
-- `atcr review` warns on stderr when a reviewer that declares thinking on answers `NO FINDINGS` in fewer than 50 output tokens on more than 10,000 input tokens: "reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review", with the agent, model, `tokens_in` and `tokens_out`. Such a lane looked like a clean review with nothing to tell it apart. It is a warning only: the result, its findings and `status.json` are unchanged, and the slot is not failed over. Each chunk of a chunked persona is checked on its own, so the line can repeat per chunk.
-- `atcr review` warns on stderr when a reviewer attempt fails and the slot moves on to its next agent: "reviewer attempt failed; failing over", with the failed agent, its model and the error. A provider error used to hand the slot to a backup with no line saying why. The line is not printed when no next agent exists or the run is already cancelled or timed out, since no failover follows; truncated and empty replies keep their own existing failover line, so each failover prints exactly one.
-- An agent's `status.json` now says why a reply was salvaged. `salvaged_on_stop: true` marks an unchunked reply that the model finished on a stop reason (rather than being cut off), and `salvaged_on_stop_chunks` names those bins of a chunked persona. `salvaged` and `salvaged_chunks` still name every salvaged reply and bin. Both keys are absent when they do not apply, and a `status.json` written before them reads as "reason unknown".
-
-### Fixed
-
-- `atcr benchmark run --replicates N` removes each replicate's review tree (replicates 2 to N) from the run's temp work dir as soon as its fit rows are recorded, including when the case run fails, so a run holds one replicate tree at a time instead of cases x N of them. Replicate 1's tree, the scored results and the run-result are unchanged.
-- A reviewer whose reply arrived on the reasoning channel but finished on a stop reason, and raised findings, is no longer classified `incomplete`: its outcome is `findings`, it keeps its trust-prior eligibility, and its files count as covered for the baseline index. Only a salvage cut off on length (or of unknown reason) still counts as a lost contribution. Scorecard history written before `salvaged_on_stop` existed is left as written.
-- A reviewer that finished its reply with `NO FINDINGS` on the reasoning channel (the provider stopped normally, no visible content) is no longer marked `unparseable_response`; it is read as the clean report it is. A reply cut off on length, or one whose stop reason is unknown, is still marked unparseable, and prose on that channel still is.
-- `docs/findings-format.md` and `docs/providers.md` no longer say every salvaged reply is refused. The findings lane refuses only an abandoned salvage (cut off on length, or a chunked bin with no stop reason recorded); a stop-reason salvage's findings are parsed, its `review.md` narratives back `justification`, and a committed `NO FINDINGS` on the reasoning channel is a clean review. The verify, executor and debate lanes still refuse a salvage of either kind, and no salvage is cached.
-- An abandoned draft sitting before a bare `</think>` (one no `<think>` opened) with nothing usable after it is no longer graded or applied as if committed. The skeptic lane refuses the shape as `ambiguous_unopened_closer` when the recovered verdict is `refuted` — the one grade that would clear the CI gate — and grades `confirmed` and `unverifiable` as before; the executor lane refuses any such fix as `executor_agent_refused`; and the debate lane leaves the item unresolved under `judge_think_markup`, keeping the pre-debate verdict standing. A real verdict, fix or ruling followed by prose that quotes the closer has identical tag structure, so the refusal is the disclosed trade: a real `refuted` in that shape now blocks CI, and a real fix or ruling there is declined.
-- The baseline withheld-coverage warning in `atcr review` names a failed slot as a failed slot; a persona that failed wholly was reported as having re-packed its payload.
-- A fallback walk whose final reply carried findings no longer warns that think-only replies "exhausted the fallback chain"; the warning now fires only when the final reply was itself a think-only run.
-- `atcr benchmark` on a repo-state suite keeps the run's work dir when a slot failure carries an empty or unrecognized reason; only an `unmeasured_salvaged_ok` slot lets it be deleted. Every reason a current build writes behaves as before.
-- `atcr debt backfill-justifications` no longer counts a record as "declined by policy" because of a symlink or over-size `review.md` that sits in a different review. The refusal counts only when that file's review dir owns the record: its `reconciled/summary.json` must carry the `reconciled_at` that the record's `run_id` was built from. Before this, a record whose own review tree had been pruned could print "0 review tree pruned, 1 declined by policy", which told the operator not to restore the one file that would fix it. A review dir whose `summary.json` is missing owns nothing, so in that case the record is reported under the pruned-tree half.
-
-### Changed
-
-- The go-axi pin moves to v0.4.0, whose sanitizer also strips every Unicode format character (category Cf): bidi controls such as `U+202E`, zero-width characters such as `U+200B`, `U+200C`, `U+200D` and `U+FEFF`, and tag characters. On those go-axi surfaces — a `findings.toon` file, the AXI report (`atcr report --format axi`), the review summary and the home view — model-written text in a finding can no longer reorder or hide content (the Trojan Source class) in a terminal, editor or `git diff`. Surfaces that do not go through go-axi are unchanged: console output cleaned by `sanitizeDisplay` (which strips only control characters and `U+2028`/`U+2029`), the deprecated `--format pipe` stream, the reconciled JSON and `review.md` still carry bidi controls verbatim. The strip is not limited to hostile text: joined emoji (built with `U+200D`) split into their parts, some Persian and Indic words (written with `U+200C`) change, and the England, Scotland and Wales flags (built from tag characters) show as a plain black flag. Files already on disk are not rewritten. `docs/findings-format.md` describes the stripped class and no longer says the sanitizer strips ANSI escape sequences: it strips the ESC byte, and the printable rest of the sequence (`[31m`) stays.
-- `atcr doctor`'s salvaged-reasoning hint now states only what the probe saw: the reply had no content and the nonce marker came back on the reasoning channel. It no longer says the review lane cannot use the reply, since review keeps a salvaged reply that the model finished on a stop reason. The remedy (repoint the agent to a model that answers with content) and the `ok_warning` status are unchanged.
-
-## [35.33.0] - 2026-10-05
-
-*Epic 35.16.11.2.2.4.1 — post residue feature 35.16.11.2.2.4 think block stripping.*
-
-### Fixed
-
-- A skeptic reply that quoted an out-of-enum verdict example after a bare `</think>` no longer collapses to `unverifiable`; the committed verdict is graded, and the envelope test now scans the whole section instead of judging only its first verdict-shaped object, so a committed verdict sitting behind a quoted example is still found rather than mistaken for an abandoned draft.
-- An agent-mode executor that declines a fix because of the reply's SHAPE is now reported under its own `executor_agent_refused` class instead of `executor_fix_failed`, which is documented as a provider or transport error, so a decline is no longer indistinguishable from a dead provider.
-- Such a decline can no longer overwrite the repair an earlier, stronger executor already produced — it records its warning only when no earlier fix is present.
-- The all-unverifiable gate collapse message now names the reply-shape cause (`ambiguous_unopened_closer`) beside the context-window and truncation causes it already listed. The message is the operator's only diagnosis at that point; `atcr doctor`'s thinking verdict CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer.
-- A verdict graded from the text after a bare `</think>` now records how much of the reply was discarded ahead of it, so that grade is distinguishable from one read end to end.
+- Every finding in `reconciled/findings.json` now carries an `id`: the same stable ID the `.atcr/debt/` store gives the finding, so a consumer can pass it to `atcr debt resolve <id>`. It is computed once from the emitted file, line and problem, after the `(symbol) ` anchor is added, so it matches the stored row. A findings.json written before this change has no `id` key and reads and re-writes unchanged. `reconciled/findings.txt` does not gain the field. When a debate judge merges a gray-zone cluster, the merged record keeps the first member's `id` (the store was written before the debate, so only a member's ID names a stored row); resolving it closes that member's row, and the other members' rows stay open. (epic 35.16.11.3)
+- `atcr report --format axi` declares an `id` column right after `confidence` (before the optional `disagreement`, `verification.*`, `evidence_exec.*`, `fix_warning` and `fix_review` columns) and fills it from the finding's `id` in `findings.json`, in both the plain and the paginated payload. A consumer that reads columns by name is unaffected; one that counts columns must re-key. A finding with no `id` (a findings.json written before it existed) gets an empty cell. The deprecated `--format pipe` / `--legacy-pipe` output is unchanged and has no `id` column. (epic 35.16.11.3)
+- A last-try JSON repair for model replies. A fenced findings block and a skeptic verdict that do not decode strictly are repaired and decoded again: trailing commas, single quotes, `//` and `/* */` comments, unquoted keys, and (findings only) wrong, extra or missing closers after complete content. A slip inside one finding no longer drops that finding and every finding after it, and a slip in a verdict no longer costs the verdict (`malformed_output`). Repair never edits string contents, never invents a value, and never closes a cut-off reply. On the verdict lane it runs only when no object in the reply reads strictly, so a strict verdict always wins. Even then it reads a repaired verdict only from a ```` ```json ```` fence (opened by the findings parser's rule) or from the only verdict-keyed object in the reply, and a repaired `refuted` only from a fence or a reply that is nothing but the object. So a loose `refuted` example in the skeptic's prose never becomes the graded verdict; a real `refuted` mis-written in prose with no fence stays `unverifiable`. A lone loose `confirmed` or `unverifiable` object is still read with prose around it, since both block the gate either way. It does not run on bare JSON outside a fence, findings files on disk, tool-call arguments, executor fix replies, debate rulings or the `atcr doctor` probe. Each accepted repair adds 1 to the new counter `atcr_json_repaired_total{lane}` (`findings` or `verdict`). Measured on the repair fixture corpus: 25 of 25 fixtures meet the bar (every defect class repairs to its expected value, no valid fixture is altered, every cut-off finding stays dropped), so the plain standard-library repair is kept and `kaptinlin/jsonrepair` is not added. `docs/findings-format.md`, `docs/verification.md` and `docs/metrics.md` describe where repair runs and where it does not. (epic 35.16.11.2.2.10)
+- A per-agent registry key, `replay_reasoning: off`, stops the tool loop from sending a model's earlier reasoning back on later turns. Use it when a provider rejects a replayed reasoning member (for example with a 400 on turn 2) and you want to keep the tool loop on. Unset keeps the replay; any other value, `on` included, fails the load with an error naming the agent. A fallback does not inherit it from its primary, a community persona may not declare it, and an `off` agent never trips `reasoning_replay_bytes`. All four tool-loop lanes honor it: a review agent, its fallback, the skeptic, and the debate seats. `docs/registry.md` documents the key and no longer says the replay cannot be switched off. (epic 35.16.11.2.2.9)
+- `docs/benchmark.md` records the 2026-10-10 live validation of the fit workflow: the three pairs re-pointed on 2026-09-29 (ronin + nemotron-3-super-120b, ronin + minimax-m2.7, pace + gpt-oss-120b) re-run against `fit-v1` with 3 replicates, each verdict matching its 2026-09-29 verdict (unfit, fit, fit). (epic 35.16.11.2.2.8.2)
+- `docs/benchmark.md` explains how to check a persona + model pair before repointing a live agent: build an overlay roster of the candidate pairs with no `fallback:` (a fallback would score a failed primary under its backup), run `fit-v1` with `--replicates`, then read `atcr benchmark fit --in`. It also says `fit-v1` is not for submission and needs `review_strategy: chunked` and a `payload_byte_budget` of at least 502,071. (epic 35.16.11.2.2.8.2)
+- A `fit-v1` benchmark suite (`benchmarks/fit-v1/`) for `atcr benchmark fit`. Its one case is atcr's own history, `git diff 4c588b6b..8576a42 -- . ':!*.md'` (502,071 bytes), which a 128k-window reviewer reviews in 2 chunks without hitting the default 524,288-byte payload budget. Run it with `review_strategy: chunked`: under the default `bulk`, a 128k-window reviewer drops files and every lane reads `incomplete`. The case's single `expected_categories` entry is a placeholder, so the recall score means nothing and the suite is not for leaderboard submission. A CI test fails if the case ever fits in one chunk or exceeds the byte budget. (epic 35.16.11.2.2.8.1)
+- `atcr benchmark fit` refuses a malformed `reviewer_fit` row instead of judging it: a negative count, more `silent_chunks` than `chunk_count`, a persona or model holding a control or format character, or a replicate above the row count (one such row used to allocate memory up to its replicate number). A replicate a pair has no row for, such as replicate 1 of a pre-replicates checkpoint resumed with `--replicates`, now prints as `-` instead of a measured 0. (epic 35.16.11.2.2.8)
+- `atcr benchmark fit --in <run-result>` prints one row per persona + model pair from a run-result's `reviewer_fit` rows: calls, truncated, unparseable, failed and timed-out counts, silent chunks out of chunks reviewed, findings and output tokens per replicate, and a health-only verdict. A pair is unfit when any call was truncated, unparseable or failed, or silent on every chunk; a silent chunk beside a productive one is a warning and the pair stays fit. Findings are reported, never gated, and the exit code does not depend on the verdicts. (epic 35.16.11.2.2.8)
+- `atcr benchmark run --replicates N` (default 1) reviews every case N times so a persona + model pair can be judged on more than one call. Replicate 1 is scored exactly as before, so `benchmark export` output does not change; replicates 2 to N make fresh calls (diff-cache reads bypassed) and are recorded only in the run-result's new `reviewer_fit` array, one row per reviewer, case and replicate with its outcome, findings, output tokens, `chunk_count` and `silent_chunks`. `--checkpoint` records each replicate, and a checkpoint written before this change resumes and replays as before. `repo-state-v1` suites refuse the flag. (epic 35.16.11.2.2.8)
+- An agent's `status.json` records `silent_chunks`: how many of its chunks (1 for an unchunked reviewer) met the silent-lane condition the `atcr review` warning uses — thinking declared on, `NO FINDINGS`, fewer than 50 tokens out on more than 10,000 tokens in. A chunked persona sums it over its chunks, so it is wholly silent when `silent_chunks` reaches `chunk_count`. The key is absent when no chunk was silent, and the reviewer's outcome is unchanged (still clean). (epic 35.16.11.2.2.8)
+- `atcr review` warns on stderr when a reviewer that declares thinking on answers `NO FINDINGS` in fewer than 50 output tokens on more than 10,000 input tokens: "reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review", with the agent, model, `tokens_in` and `tokens_out`. Such a lane looked like a clean review with nothing to tell it apart. It is a warning only: the result, its findings and `status.json` are unchanged, and the slot is not failed over. Each chunk of a chunked persona is checked on its own, so the line can repeat per chunk. (epic 35.16.11.2.2.7)
+- `atcr review` warns on stderr when a reviewer attempt fails and the slot moves on to its next agent: "reviewer attempt failed; failing over", with the failed agent, its model and the error. A provider error used to hand the slot to a backup with no line saying why. The line is not printed when no next agent exists or the run is already cancelled or timed out, since no failover follows; truncated and empty replies keep their own existing failover line, so each failover prints exactly one. (epic 35.16.11.2.2.7)
+- An agent's `status.json` now says why a reply was salvaged. `salvaged_on_stop: true` marks an unchunked reply that the model finished on a stop reason (rather than being cut off), and `salvaged_on_stop_chunks` names those bins of a chunked persona. `salvaged` and `salvaged_chunks` still name every salvaged reply and bin. Both keys are absent when they do not apply, and a `status.json` written before them reads as "reason unknown". (epic 35.16.11.2.2.4.5)
+- `llmclient.SplitThink` strips a leading inline `<think>…</think>` block from reply content, and `llmclient.HasThinkMarkup` detects think markup at any position. Doctor's inline-think detection now calls them, so no second tag parser remains. (epic 35.32.0)
+- A reply that the client salvaged from the reasoning channel is disclosed in `status.json`, the pool `summary.json` (`salvaged_count`), the per-bin `salvaged_chunks` indices and a console warning. (epic 35.32.0)
+- `seat_suppressed` records a debate seat whose statement the strip emptied, so it is not read as silence. (epic 35.32.0)
+- Raw reasoning carrier fields on `internal/llmclient`'s wire types, re-sent under the key they arrived in, with a byte-identical golden test for agents that declare no reasoning. (epic 35.29.0)
+- Per-agent preserved-thinking flag (Qwen `preserve_thinking`, GLM `thinking.clear_thinking`) with registry validation, persona/fallback guards, and fan-out wiring. (epic 35.29.0)
+- `internal/fanout/loop.go` now appends reasoning on assistant history turns only, replacing the tests that previously pinned the no-replay behavior. (epic 35.29.0)
+- Per-agent `thinking`, `thinking_level`, and `thinking_style` registry keys, mapped through one style-keyed table onto the correct wire field (qwen `thinking_budget`, anthropic `budget_tokens`, `template_kwargs`, `reasoning_effort`) on every request path. (epic 35.28.0)
+- A live `atcr doctor` probe that verifies whether a declared thinking setting is actually honored by the provider, with per-style verdicts and remedies. (epic 35.28.0)
+- Fail-loud registry validation for thinking keys: invalid style/level combinations, anthropic thinking combined with tools, and a budget that doesn't fit `max_tokens` are now load errors instead of silent misconfiguration. (epic 35.28.0)
+- `thinking: off` applied to the known runaway agents (archer, mira-backup, ronin-backup, pace) that previously thought by default and produced unparseable, runaway-token output. (epic 35.28.0)
+- `response_format: json_object` as an optional per-agent registry field (`AgentConfig.ResponseFormat`), threaded through `Invocation`, `chatRequest`, and every `chatToolRequest` turn, including forced-final turns. (epic 35.27.0)
+- Per-lane wiring for review primary/fallback, skeptic, and the debate judge seat only (proposer/challenger keep their own single-object contracts). (epic 35.27.0)
+- A render-time `## Output Format` prompt swap that replaces a declared agent's fenced-array contract with a shared `{"findings":[...]}` schema, located by the actual rendered payload offset so undeclared agents' prompts stay byte-identical. (epic 35.27.0)
+- A live `atcr doctor` probe that exercises the declared flag against the real provider. (epic 35.27.0)
+- `docs/registry.md` documentation for the new field. (epic 35.27.0)
+- All 24 reviewer persona files (`_base.md` + 23 personas) migrated to a JSON output format; the pipe-to-slash mangling rule is gone, so bitwise-OR expressions, regexes, and multiline diffs survive intact. (epic 35.26.0)
+- A lossless `# atcr-findings/v2` writer (`internal/stream/v2.go`) that encodes to TOON by default and falls back to a JSON envelope only when TOON would lose data. (epic 35.26.0)
+- Dual-write of `findings.toon` alongside the unchanged `findings.txt`; discovery, resume, history, audit, and benchmark all prefer `.toon` when present. (epic 35.26.0)
+- Host-review skill writes `findings.toon` directly as a JSON envelope, with no hand-rolled TOON formatting. (epic 35.26.0)
+- `docs/findings-format.md` v2 spec, plus an adversarial round-trip test suite covering chunked, truncated, and malformed model output. (epic 35.26.0)
 
 ### Changed
 
-- `docs/verification.md` now publishes the three outcomes of a `</think>` that no `<think>` opened, including the `ambiguous_unopened_closer` refusal, so an operator can look up the token the gate reports to them.
-- Three internal doc comments that had become attached to the wrong declaration are back on the functions they describe, and a test that named a function it never called was renamed.
-
-*Shipped via /execute-epic (epic 35.16.11.2.2.4.1)*
-
-## [Technical Debt] - 2026-10-05
-
-### Fixed
-
-- The think-tag mask no longer splits or un-masks a think pair: a whole-copy discard keeps a cleanly-quoted pair masked, a prose quote at a JSON position fails closed, a lone quoted opener is no longer refused as markup, and a cut pair is told apart by the blanked run's shape. The verify and executor lanes share the same fix.
-- The benchmark retention line counts only infrastructure slot failures and reports `unmeasured_slots` apart from `failed_slots`. The slot-warning wording and the coverage shortfall diagnostic now split `unmeasured_ok` from the other classes.
-- `atcr debate` and the `atcr_debate` MCP tool report `withheld` items apart from the cap `overflow`, because the two need opposite remedies.
-- `atcr debt backfill-justifications` splits its `unresolved` count into review trees that were pruned and records the review policy declined, and asks the policy for the cause instead of inferring it from a namesake file.
-- The contested report lists cap-overflow items with their carried attempt countdown.
-- The baseline withheld-coverage cause in `atcr review` is selected per run instead of emitted as a constant.
-- The contributed-nothing tally and `salvageCost` route through the whole-persona predicates. The walk-level `ThinkOnlyAttempts` total reaches the returned result, the `StatusOK` think-only warning branches on the attempt count, and the salvage is disclosed on the `UsageCompleter`-only path.
-- The truncated-failover arm routes through think-suppressed content handling.
-- The judge seat follows the suppression precedence, and a seat that halted and was also suppressed names both causes.
-- The overflow carry takes the max, so it never lowers an items count. The zero-budget fallback discloses the replay reserve.
-- Corrected stale docs: the `debate.json` artifacts row, the seat-token definitions in `docs/cross-examination.md`, the `unmeasured_ok` class and per-bin think-suppression rule in `docs/benchmark.md`, and the backfill example output in `docs/technical-debt.md`.
-
-## [Technical Debt] - 2026-10-03
-
-### Fixed
-
-- The benchmark exit gate counts only infrastructure slot failures, so a healthy panel is no longer failed by unmeasured-OK slots, and an OK-but-unmeasured slot is skipped from the repo-state score.
-- Think-suppression now folds across bins, and the score is gated on a whole-persona test, so a persona-wide suppression no longer drops a scored row. The numerator-absent arm fails closed when `UnparseableChunks` was never populated.
-- A think-suppressed reply is excluded from the diff cache, and the think-only count reaches the walk-level warning on an untruncated walk.
-- The reasoning reserve is recorded for a tool-loop agent even with a zero budget, moves with the matched set, and is no longer inherited by a re-derived merged record.
-- The total-loss salvage arm keys on the bin index, and the salvage arm is narrowed to a whole-persona refusal so partial salvage stays trust-eligible. The narrow `Complete` path refuses a reasoning salvage instead of returning a draft.
-- Seat suppression is recorded regardless of status and outranks `halted`, so a budget-tripped suppressed seat is no longer reported as halted.
-- The JSON-string mask opens a string only when a quote sits at a JSON position, and a masked copy whose blanked run cut a think pair is discarded so every tag stays visible, so a draft ruling is no longer admitted.
-- Withheld items list their attempt countdown, and the contested overflow count splits by cause with its own remedy.
-- Added tests for the uncovered guards across debate, fanout, reconcile and report, and removed an unreachable salvage append and a redundant empty-content guard.
-
-## [35.32.0] - 2026-10-02
-
-*Sprint 35.16.11.2.2.4 — think block stripping.*
-
-### Added
-
-- `llmclient.SplitThink` strips a leading inline `<think>…</think>` block from reply content, and `llmclient.HasThinkMarkup` detects think markup at any position. Doctor's inline-think detection now calls them, so no second tag parser remains.
-- A reply that the client salvaged from the reasoning channel is disclosed in `status.json`, the pool `summary.json` (`salvaged_count`), the per-bin `salvaged_chunks` indices and a console warning.
-- `seat_suppressed` records a debate seat whose statement the strip emptied, so it is not read as silence.
-
-### Changed
-
-- Verdicts, rulings, findings, the clean-review `NO FINDINGS` check, the executor fix envelope, reused debate statements and tool-loop history are parsed from the answer after the leading think block, so a draft written inside the block no longer wins.
-- A salvaged reply yields no findings, verdict, ruling or cache entry. For a chunked review the refusal is per chunk, so clean sibling chunks keep their findings.
-- The verify and executor lanes refuse a reply whose answer still carries think markup after the leading strip. The judge does the same.
-- Reconcile no longer takes justification provenance from a salvaged `review.md` or from a leading draft block.
-
-### Fixed
-
-- Doctor and review now agree on a reply that is wholly reasoning, and a think-only reply is named as such instead of `empty_response` or `malformed_output`.
-- An item that burned its unresolved attempts is withheld and disclosed as skipped work. Environmental reasons spend no attempt.
-- `docs/findings-format.md`, `docs/registry.md`, `docs/providers.md`, `docs/verification.md` and `docs/cross-examination.md` describe the leading-only strip and the salvage refusal.
-
-*Shipped via /execute-sprint (sprint 35.16.11.2.2.4)*
-
-## [35.31.0] - 2026-09-29
-
-*Epic 35.16.11.2.2.3 — diffcachekey cachekeyinputs struct.*
-
-An agent that sets `thinking_style` alone no longer gets a different diff-cache key or a thinking style in its model-invocation record. A style with no `thinking` or `thinking_level` sends nothing, so the cache and the audit record now treat it as undeclared, the same way `atcr doctor` already did.
-
-### Fixed
-
-- A style-only agent keeps its pre-existing diff-cache key, so a byte-identical request no longer misses the cache.
-- The model-invocation record (`hookobs.Invocation` and the exported `cli.ModelInvocation`) reports an empty `ThinkingStyle` for a call that sent no thinking field, on every call path (fan-out, verify, debate, doctor).
-
-### Changed
-
-- New `registry.ThinkingDeclared` holds the "declared = thinking or thinking_level set" rule used by the cache key and the telemetry gate.
-- `diffCacheKey` takes a (package-private) `cacheKeyInputs` struct instead of 11 positional parameters, so adjacent same-typed values cannot be swapped silently. Key bytes are unchanged for every declared agent.
-
-*Shipped via /execute-epic (epic 35.16.11.2.2.3)*
-
-## [35.30.0] - 2026-09-29
-
-*Epic 35.16.11.2.2.2 — runaway agents content prose and silent lanes.*
-
-The registry guide now gives the thinking and output fixes that live probe runs actually proved, and stops recommending `thinking_level: low`, which silenced a reviewer instead of fixing it.
-
-### Changed
-
-- `docs/registry.md` "Thinking and `max_tokens`" no longer offers `thinking_level: low` as the fix under `reasoning_effort`: on `nemotron-3-super-120b` it made the model answer `NO FINDINGS` in under 20 tokens, and `medium`/`high` still truncated, so the guide now says to repoint the agent to a different model.
-- New "Thinking and prose in the reply" note: `thinking: off` stops the reasoning channel only; a persona output rule that forbids analysis in the reply is the measured fix; `response_format: json_object` is not a fix (it produced empty `{"findings":[]}` chunks) and also drops the persona's output rule.
-- The doc drift test in `internal/reconcile/thinking_doc_test.go` pins the new wording and fails if `thinking_level: low` returns as the remedy.
-
-*Shipped via /execute-epic (epic 35.16.11.2.2.2)*
-
-## [35.29.0] - 2026-09-28
-
-*Sprint 35.16.11.2.2.1 — tool-loop reasoning round-trip.*
-
-A model's own prior reasoning now replays back through tool-loop history on every turn after the first, in the shape each provider returned it, instead of being silently dropped; a turn with no reasoning still sends the same request body as before.
-
-### Added
-
-- Raw reasoning carrier fields on `internal/llmclient`'s wire types, re-sent under the key they arrived in, with a byte-identical golden test for agents that declare no reasoning.
-- Per-agent preserved-thinking flag (Qwen `preserve_thinking`, GLM `thinking.clear_thinking`) with registry validation, persona/fallback guards, and fan-out wiring.
-- `internal/fanout/loop.go` now appends reasoning on assistant history turns only, replacing the tests that previously pinned the no-replay behavior.
-
-### Fixed
-
-- Distinct `Salvaged` flag on completion/result so engine cache gating, debate, and verify guards no longer conflate salvage state.
-- Reasoning containers padded with whitespace, newlines, tabs, or CR are now treated as empty instead of being replayed as real content.
-- Doctor and cross-examination messaging corrected to name the right remedy (`response_truncated`, retry without `preserve_thinking`).
+- The go-axi pin moves to v0.4.0, whose sanitizer also strips every Unicode format character (category Cf): bidi controls such as `U+202E`, zero-width characters such as `U+200B`, `U+200C`, `U+200D` and `U+FEFF`, and tag characters. On those go-axi surfaces — a `findings.toon` file, the AXI report (`atcr report --format axi`), the review summary and the home view — model-written text in a finding can no longer reorder or hide content (the Trojan Source class) in a terminal, editor or `git diff`. Surfaces that do not go through go-axi are unchanged: console output cleaned by `sanitizeDisplay` (which strips only control characters and `U+2028`/`U+2029`), the deprecated `--format pipe` stream, the reconciled JSON and `review.md` still carry bidi controls verbatim. The strip is not limited to hostile text: joined emoji (built with `U+200D`) split into their parts, some Persian and Indic words (written with `U+200C`) change, and the England, Scotland and Wales flags (built from tag characters) show as a plain black flag. Files already on disk are not rewritten. `docs/findings-format.md` describes the stripped class and no longer says the sanitizer strips ANSI escape sequences: it strips the ESC byte, and the printable rest of the sequence (`[31m`) stays. (epic 35.16.11.2.3)
+- `atcr doctor`'s salvaged-reasoning hint now states only what the probe saw: the reply had no content and the nonce marker came back on the reasoning channel. It no longer says the review lane cannot use the reply, since review keeps a salvaged reply that the model finished on a stop reason. The remedy (repoint the agent to a model that answers with content) and the `ok_warning` status are unchanged. (epic 35.16.11.2.2.4.5.1)
+- *Epic 35.16.11.2.2.4.1 — post residue feature 35.16.11.2.2.4 think block stripping.* (epic 35.33.0)
+- `docs/verification.md` now publishes the three outcomes of a `</think>` that no `<think>` opened, including the `ambiguous_unopened_closer` refusal, so an operator can look up the token the gate reports to them. (epic 35.33.0)
+- Three internal doc comments that had become attached to the wrong declaration are back on the functions they describe, and a test that named a function it never called was renamed. (epic 35.33.0)
+- *Sprint 35.16.11.2.2.4 — think block stripping.* (epic 35.32.0)
+- Verdicts, rulings, findings, the clean-review `NO FINDINGS` check, the executor fix envelope, reused debate statements and tool-loop history are parsed from the answer after the leading think block, so a draft written inside the block no longer wins. (epic 35.32.0)
+- A salvaged reply yields no findings, verdict, ruling or cache entry. For a chunked review the refusal is per chunk, so clean sibling chunks keep their findings. (epic 35.32.0)
+- The verify and executor lanes refuse a reply whose answer still carries think markup after the leading strip. The judge does the same. (epic 35.32.0)
+- Reconcile no longer takes justification provenance from a salvaged `review.md` or from a leading draft block. (epic 35.32.0)
+- *Epic 35.16.11.2.2.3 — diffcachekey cachekeyinputs struct.* (epic 35.31.0)
+- An agent that sets `thinking_style` alone no longer gets a different diff-cache key or a thinking style in its model-invocation record. A style with no `thinking` or `thinking_level` sends nothing, so the cache and the audit record now treat it as undeclared, the same way `atcr doctor` already did. (epic 35.31.0)
+- New `registry.ThinkingDeclared` holds the "declared = thinking or thinking_level set" rule used by the cache key and the telemetry gate. (epic 35.31.0)
+- `diffCacheKey` takes a (package-private) `cacheKeyInputs` struct instead of 11 positional parameters, so adjacent same-typed values cannot be swapped silently. Key bytes are unchanged for every declared agent. (epic 35.31.0)
+- *Epic 35.16.11.2.2.2 — runaway agents content prose and silent lanes.* (epic 35.30.0)
+- The registry guide now gives the thinking and output fixes that live probe runs actually proved, and stops recommending `thinking_level: low`, which silenced a reviewer instead of fixing it. (epic 35.30.0)
+- `docs/registry.md` "Thinking and `max_tokens`" no longer offers `thinking_level: low` as the fix under `reasoning_effort`: on `nemotron-3-super-120b` it made the model answer `NO FINDINGS` in under 20 tokens, and `medium`/`high` still truncated, so the guide now says to repoint the agent to a different model. (epic 35.30.0)
+- New "Thinking and prose in the reply" note: `thinking: off` stops the reasoning channel only; a persona output rule that forbids analysis in the reply is the measured fix; `response_format: json_object` is not a fix (it produced empty `{"findings":[]}` chunks) and also drops the persona's output rule. (epic 35.30.0)
+- The doc drift test in `internal/reconcile/thinking_doc_test.go` pins the new wording and fails if `thinking_level: low` returns as the remedy. (epic 35.30.0)
+- *Sprint 35.16.11.2.2.1 — tool-loop reasoning round-trip.* (epic 35.29.0)
+- A model's own prior reasoning now replays back through tool-loop history on every turn after the first, in the shape each provider returned it, instead of being silently dropped; a turn with no reasoning still sends the same request body as before. (epic 35.29.0)
+- *Sprint 35.16.11.2.2 — registry-level thinking controls and doctor verification.* (epic 35.28.0)
+- Agents can now declare `thinking: on|off`, `thinking_level: low|medium|high|max`, and `thinking_style: qwen|template_kwargs|reasoning_effort|anthropic` in the registry, mapped onto the correct wire field on every request path and verified live by `atcr doctor`. (epic 35.28.0)
+- Thinking settings now thread through every reviewer, debate, verify, and doctor call site, replacing per-site ad hoc handling. (epic 35.28.0)
+- A halted debate seat (tripped budget or truncated reply) now records `seat_halted` instead of letting the judge rule on a one-sided or salvaged statement. (epic 35.28.0)
+- Doctor's inline `<think>` detection and truncated-reply handling were hardened to avoid false thinking verdicts. (epic 35.28.0)
+- *Sprint 35.16.11.2.1 — declared JSON-mode response format per agent.* (epic 35.27.0)
+- Agents can now declare `response_format: json_object` in the registry to get real API-level JSON mode, layered on top of 35.16.11.2's fenced-JSON parser baseline. (epic 35.27.0)
+- *Sprint 35.16.11.2 — lossless findings stream and reviewer prompt migration.* (epic 35.26.0)
+- Reviewer personas now output a single fenced JSON array of findings instead of pipe-delimited text, and atcr writes that data losslessly to disk. The old `findings.txt` (v1) keeps working unchanged for every existing consumer. (epic 35.26.0)
+- Model output parsing is JSON-first: it unions multiple fenced JSON blocks, recovers from a truncated final object, and still accepts legacy pipe rows from any persona not yet migrated. (epic 35.26.0)
+- History, audit, and benchmark parse errors now name the specific findings file that failed, instead of a generic error. (epic 35.26.0)
+- A partly-failed-over chunked benchmark case is now credited to whichever model actually served most of it, matching production reconcile behavior. (epic 35.26.0)
 
 ### Removed
 
-- Dead `noContentLike` guard removed from the stream parser (equivalent mutant).
+- Dead `noContentLike` guard removed from the stream parser (equivalent mutant). (epic 35.29.0)
 
-## [35.28.0] - 2026-09-27
+### Fixed
 
-*Sprint 35.16.11.2.2 — registry-level thinking controls and doctor verification.*
+- `atcr benchmark run --replicates N` removes each replicate's review tree (replicates 2 to N) from the run's temp work dir as soon as its fit rows are recorded, including when the case run fails, so a run holds one replicate tree at a time instead of cases x N of them. Replicate 1's tree, the scored results and the run-result are unchanged. (epic 35.16.11.2.2.8)
+- A reviewer whose reply arrived on the reasoning channel but finished on a stop reason, and raised findings, is no longer classified `incomplete`: its outcome is `findings`, it keeps its trust-prior eligibility, and its files count as covered for the baseline index. Only a salvage cut off on length (or of unknown reason) still counts as a lost contribution. Scorecard history written before `salvaged_on_stop` existed is left as written. (epic 35.16.11.2.2.4.5)
+- A reviewer that finished its reply with `NO FINDINGS` on the reasoning channel (the provider stopped normally, no visible content) is no longer marked `unparseable_response`; it is read as the clean report it is. A reply cut off on length, or one whose stop reason is unknown, is still marked unparseable, and prose on that channel still is. (epic 35.16.11.2.2.4.5)
+- `docs/findings-format.md` and `docs/providers.md` no longer say every salvaged reply is refused. The findings lane refuses only an abandoned salvage (cut off on length, or a chunked bin with no stop reason recorded); a stop-reason salvage's findings are parsed, its `review.md` narratives back `justification`, and a committed `NO FINDINGS` on the reasoning channel is a clean review. The verify, executor and debate lanes still refuse a salvage of either kind, and no salvage is cached. (epic 35.16.11.2.2.4.5.1)
+- An abandoned draft sitting before a bare `</think>` (one no `<think>` opened) with nothing usable after it is no longer graded or applied as if committed. The skeptic lane refuses the shape as `ambiguous_unopened_closer` when the recovered verdict is `refuted` — the one grade that would clear the CI gate — and grades `confirmed` and `unverifiable` as before; the executor lane refuses any such fix as `executor_agent_refused`; and the debate lane leaves the item unresolved under `judge_think_markup`, keeping the pre-debate verdict standing. A real verdict, fix or ruling followed by prose that quotes the closer has identical tag structure, so the refusal is the disclosed trade: a real `refuted` in that shape now blocks CI, and a real fix or ruling there is declined. (epic 35.16.11.2.2.4.4)
+- The baseline withheld-coverage warning in `atcr review` names a failed slot as a failed slot; a persona that failed wholly was reported as having re-packed its payload. (epic 35.16.11.2.2.4.2.2)
+- A fallback walk whose final reply carried findings no longer warns that think-only replies "exhausted the fallback chain"; the warning now fires only when the final reply was itself a think-only run. (epic 35.16.11.2.2.4.2.2)
+- `atcr benchmark` on a repo-state suite keeps the run's work dir when a slot failure carries an empty or unrecognized reason; only an `unmeasured_salvaged_ok` slot lets it be deleted. Every reason a current build writes behaves as before. (epic 35.16.11.2.2.4.2.2)
+- `atcr debt backfill-justifications` no longer counts a record as "declined by policy" because of a symlink or over-size `review.md` that sits in a different review. The refusal counts only when that file's review dir owns the record: its `reconciled/summary.json` must carry the `reconciled_at` that the record's `run_id` was built from. Before this, a record whose own review tree had been pruned could print "0 review tree pruned, 1 declined by policy", which told the operator not to restore the one file that would fix it. A review dir whose `summary.json` is missing owns nothing, so in that case the record is reported under the pruned-tree half. (epic 35.16.11.2.2.4.3)
+- A skeptic reply that quoted an out-of-enum verdict example after a bare `</think>` no longer collapses to `unverifiable`; the committed verdict is graded, and the envelope test now scans the whole section instead of judging only its first verdict-shaped object, so a committed verdict sitting behind a quoted example is still found rather than mistaken for an abandoned draft. (epic 35.33.0)
+- An agent-mode executor that declines a fix because of the reply's SHAPE is now reported under its own `executor_agent_refused` class instead of `executor_fix_failed`, which is documented as a provider or transport error, so a decline is no longer indistinguishable from a dead provider. (epic 35.33.0)
+- Such a decline can no longer overwrite the repair an earlier, stronger executor already produced — it records its warning only when no earlier fix is present. (epic 35.33.0)
+- The all-unverifiable gate collapse message now names the reply-shape cause (`ambiguous_unopened_closer`) beside the context-window and truncation causes it already listed. The message is the operator's only diagnosis at that point; `atcr doctor`'s thinking verdict CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer. (epic 35.33.0)
+- A verdict graded from the text after a bare `</think>` now records how much of the reply was discarded ahead of it, so that grade is distinguishable from one read end to end. (epic 35.33.0)
+- The think-tag mask no longer splits or un-masks a think pair: a whole-copy discard keeps a cleanly-quoted pair masked, a prose quote at a JSON position fails closed, a lone quoted opener is no longer refused as markup, and a cut pair is told apart by the blanked run's shape. The verify and executor lanes share the same fix. (technical debt, 2026-10-05)
+- The benchmark retention line counts only infrastructure slot failures and reports `unmeasured_slots` apart from `failed_slots`. The slot-warning wording and the coverage shortfall diagnostic now split `unmeasured_ok` from the other classes. (technical debt, 2026-10-05)
+- `atcr debate` and the `atcr_debate` MCP tool report `withheld` items apart from the cap `overflow`, because the two need opposite remedies. (technical debt, 2026-10-05)
+- `atcr debt backfill-justifications` splits its `unresolved` count into review trees that were pruned and records the review policy declined, and asks the policy for the cause instead of inferring it from a namesake file. (technical debt, 2026-10-05)
+- The contested report lists cap-overflow items with their carried attempt countdown. (technical debt, 2026-10-05)
+- The baseline withheld-coverage cause in `atcr review` is selected per run instead of emitted as a constant. (technical debt, 2026-10-05)
+- The contributed-nothing tally and `salvageCost` route through the whole-persona predicates. The walk-level `ThinkOnlyAttempts` total reaches the returned result, the `StatusOK` think-only warning branches on the attempt count, and the salvage is disclosed on the `UsageCompleter`-only path. (technical debt, 2026-10-05)
+- The truncated-failover arm routes through think-suppressed content handling. (technical debt, 2026-10-05)
+- The judge seat follows the suppression precedence, and a seat that halted and was also suppressed names both causes. (technical debt, 2026-10-05)
+- The overflow carry takes the max, so it never lowers an items count. The zero-budget fallback discloses the replay reserve. (technical debt, 2026-10-05)
+- Corrected stale docs: the `debate.json` artifacts row, the seat-token definitions in `docs/cross-examination.md`, the `unmeasured_ok` class and per-bin think-suppression rule in `docs/benchmark.md`, and the backfill example output in `docs/technical-debt.md`. (technical debt, 2026-10-05)
+- The benchmark exit gate counts only infrastructure slot failures, so a healthy panel is no longer failed by unmeasured-OK slots, and an OK-but-unmeasured slot is skipped from the repo-state score. (technical debt, 2026-10-03)
+- Think-suppression now folds across bins, and the score is gated on a whole-persona test, so a persona-wide suppression no longer drops a scored row. The numerator-absent arm fails closed when `UnparseableChunks` was never populated. (technical debt, 2026-10-03)
+- A think-suppressed reply is excluded from the diff cache, and the think-only count reaches the walk-level warning on an untruncated walk. (technical debt, 2026-10-03)
+- The reasoning reserve is recorded for a tool-loop agent even with a zero budget, moves with the matched set, and is no longer inherited by a re-derived merged record. (technical debt, 2026-10-03)
+- The total-loss salvage arm keys on the bin index, and the salvage arm is narrowed to a whole-persona refusal so partial salvage stays trust-eligible. The narrow `Complete` path refuses a reasoning salvage instead of returning a draft. (technical debt, 2026-10-03)
+- Seat suppression is recorded regardless of status and outranks `halted`, so a budget-tripped suppressed seat is no longer reported as halted. (technical debt, 2026-10-03)
+- The JSON-string mask opens a string only when a quote sits at a JSON position, and a masked copy whose blanked run cut a think pair is discarded so every tag stays visible, so a draft ruling is no longer admitted. (technical debt, 2026-10-03)
+- Withheld items list their attempt countdown, and the contested overflow count splits by cause with its own remedy. (technical debt, 2026-10-03)
+- Added tests for the uncovered guards across debate, fanout, reconcile and report, and removed an unreachable salvage append and a redundant empty-content guard. (technical debt, 2026-10-03)
+- Doctor and review now agree on a reply that is wholly reasoning, and a think-only reply is named as such instead of `empty_response` or `malformed_output`. (epic 35.32.0)
+- An item that burned its unresolved attempts is withheld and disclosed as skipped work. Environmental reasons spend no attempt. (epic 35.32.0)
+- `docs/findings-format.md`, `docs/registry.md`, `docs/providers.md`, `docs/verification.md` and `docs/cross-examination.md` describe the leading-only strip and the salvage refusal. (epic 35.32.0)
+- A style-only agent keeps its pre-existing diff-cache key, so a byte-identical request no longer misses the cache. (epic 35.31.0)
+- The model-invocation record (`hookobs.Invocation` and the exported `cli.ModelInvocation`) reports an empty `ThinkingStyle` for a call that sent no thinking field, on every call path (fan-out, verify, debate, doctor). (epic 35.31.0)
+- Distinct `Salvaged` flag on completion/result so engine cache gating, debate, and verify guards no longer conflate salvage state. (epic 35.29.0)
+- Reasoning containers padded with whitespace, newlines, tabs, or CR are now treated as empty instead of being replayed as real content. (epic 35.29.0)
+- Doctor and cross-examination messaging corrected to name the right remedy (`response_truncated`, retry without `preserve_thinking`). (epic 35.29.0)
+- `est_minutes` can no longer bypass its clamp bound on host write paths (`debt add --est`, `WriteSourceV2`). (epic 35.28.0)
+- `IsNoFindings` and the fence scanner now agree on a labeled, content-free JSON fence. (epic 35.28.0)
+- Machine-local-field validation now reports every rejected key in one joined error instead of only the first. (epic 35.28.0)
+- `IsNoFindings` no longer misreads a fence opener carrying an info string, or a bare `~~~` quoted example, as a findings block. (epic 35.27.0)
+- `est_minutes` is clamped to 0–10080 on every decode path, including the legacy pipe branch. (epic 35.27.0)
+- The doctor Target dedup key correctly reflects the declared flag, and a validation error now echoes the rejected `response_format` value. (epic 35.27.0)
+- Several dead-code and stale-comment cleanups surfaced by the sprint's adversarial review (`cli/debt_resolve.go`, `internal/stream`, `internal/fanout`, `internal/reconcile`). (epic 35.27.0)
+- v2 readers reject case-variant envelope keys, non-integer `est_minutes`, and non-regular files (symlinks, sockets), closing several data-integrity gaps found by the new adversarial suite. (epic 35.26.0)
+- A model's `est_minutes` is now clamped to a sane 0–10080 range instead of accepting runaway or negative values. (epic 35.26.0)
 
-Agents can now declare `thinking: on|off`, `thinking_level: low|medium|high|max`, and `thinking_style: qwen|template_kwargs|reasoning_effort|anthropic` in the registry, mapped onto the correct wire field on every request path and verified live by `atcr doctor`.
+## [0.3.0] - 2026-09-24
 
 ### Added
 
-- Per-agent `thinking`, `thinking_level`, and `thinking_style` registry keys, mapped through one style-keyed table onto the correct wire field (qwen `thinking_budget`, anthropic `budget_tokens`, `template_kwargs`, `reasoning_effort`) on every request path.
-- A live `atcr doctor` probe that verifies whether a declared thinking setting is actually honored by the provider, with per-style verdicts and remedies.
-- Fail-loud registry validation for thinking keys: invalid style/level combinations, anthropic thinking combined with tools, and a budget that doesn't fit `max_tokens` are now load errors instead of silent misconfiguration.
-- `thinking: off` applied to the known runaway agents (archer, mira-backup, ronin-backup, pace) that previously thought by default and produced unparseable, runaway-token output.
+- `atcr report --format pipe`, `--legacy-pipe` on `atcr review` and bare `atcr`, and `ATCR_LEGACY_PIPE=1` (a global switch over every AXI surface) route AXI output through the legacy pipe encoder. Each legacy route writes one deprecation notice to stderr; stdout stays payload-only and exit codes are unchanged. (epic 35.25.0)
+- A `total: <int>` line on every paginated `report --format axi` payload, carrying the true pre-truncation finding count beside `truncated: <bool>`. (epic 35.25.0)
+- `goaxi.Check` assertions on every AXI payload (lossless, and tabular plus token-efficient when non-empty), and doc-vs-code drift tests pinning the AXI docs to the go-axi pin, the emitted header, and the fallback flags. (epic 35.25.0)
+- `ExplainTrustPriors()` function providing explainable trust scoring with per-lens tallies (counted cases, excluded cases, exclusion reasons). (epic 35.24.0)
+- Trust prior resolution per model via `ResolveTrustPriorsForReview()`, keying ratings on the review's pool-summary model configuration. (epic 35.24.0)
+- Outcome precedence ordering (`ReviewerOutcomePrecedence`) exported from fanout, eliminating duplicate vocabulary definitions. (epic 35.24.0)
+- Persisted outcome field on scorecard records, tracking reviewer lens eligibility state (clean, truncated, incomplete, unparseable, unknown). (epic 35.24.0)
+- **A per-slot failure channel on the run-result** (`slot_failures[]`, carrying the reviewer identity, the case id, and whether the call failed or timed out). When one reviewer cannot be shown a case the rest of the panel reviewed, that pair is recorded rather than passing silently: the run used to exit 0 with no warning, delete the work dir holding each slot's `status.json`, and then have `benchmark export` reject the finished run-result while calling the gap "missing". The shortfall is now labelled `unshown`, the work dir is retained, and the remedy says to investigate that one provider rather than to re-run cases that ran fine. Run-result-only, like `case_failures[]`. (epic 35.23.0)
+- **A per-case failure channel on the run-result** (`case_failures[]`, carrying a case id and the stage it died at). A `repo-state-v1` case that cannot be materialized, prepared, executed, summarized, or read back is now recorded there and the run continues, instead of aborting a ten-minute paid panel on its last case. `--checkpoint` is refused for this tier, so there was no resume to fall back on. (epic 35.23.0)
+- A case in that array is **unmeasured, not missed**: it appears in no reviewer's `case_ids` and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero would charge every reviewer for a defect they were never shown. (epic 35.23.0)
+- `atcr benchmark run` now prints a partial-run summary to stderr naming each unmeasured case and its stage, above the recall summary it qualifies — a recall figure that covers less than the suite must not read like one that covers all of it. (epic 35.23.0)
+- `repo-state-v1`, a second benchmark suite tier whose cases carry **repository state** rather than a bare diff: a pruned base tree, a commit message, and a change applied on top. It exists to host the defect class `standard-v1` cannot — a defect whose root cause sits in a file the diff never touches, which a diff-only case physically cannot contain and no model can win. (epic 35.22.0)
+- `atcr benchmark run --suite-path <dir>` now routes on the manifest's `suite` field, so the same invocation runs either tier. A repo-state case is materialized into a real git repository and reviewed over `base..head` through the **range** path — the diff-ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features cannot run without it. (epic 35.22.0)
+- **Positional expected-finding matching.** A case locates each planted defect by `file` plus a line range with a per-finding `line_tolerance`, so scoring can tell "found the silent deletion in the reconcile loop" from "raised any correctness nit anywhere in the diff". One report settles at most one expectation, ties resolve to the nearest range midpoint, and exact ties break alphabetically by id. (epic 35.22.0)
+- **Out-of-diff recall as a distinct metric**, in the run-result's `reviewer_positional_recall` array alongside overall and within-diff recall. A report citing an added or removed line cannot satisfy an `outside_diff: true` expectation even inside the tolerance window, which is what makes `outside_diff` a measurement rather than a label an author asserts. (epic 35.22.0)
+- Four hand-verified cases (`SPOT-CHECK.md`) covering both shapes: a quarantine/reconcile silent deletion, a mock that outlives the contract it stands in for, an incomplete predicate guard, and the existing claim-absent cursor fix. All trees are synthetic — see `benchmarks/repo-state-v1/NOTICE.md`. (epic 35.22.0)
+- Predicate-exhaustiveness review rule in all ten built-in reviewer personas (`_base.md` plus the nine registered personas). When a diff edits one branch of a comparison, equality, or guard predicate, the reviewer now enumerates every branch of that predicate and every field it is contracted to cover, and reports any field covered in one branch but not another — filing the finding on the edited branch's changed line with the sibling quoted as evidence, so it survives the grounding gate instead of being discarded as out-of-range. (epic 35.21.0)
+- Class guard over the embedded built-in persona filesystem: a built-in persona that omits either anchor phrase fails the suite, and a companion check asserts the rule reaches the rendered prompt with tool support both enabled and disabled. (epic 35.21.0)
+- Regression pin that text present only in `_base.md` reaches no registered agent — every registered agent ships its own persona file and wins resolution first, so a panel-wide rule written into `_base.md` alone would change no reviewer's behavior. (epic 35.21.0)
+- **Context-aware pre-fetching.** A range review now resolves the symbols its diff changed to the call sites that *consume* them, and prepends those snippets to every reviewer's payload as a **Context Definitions** block. This targets a defect class no amount of reviewer diversity catches: when a change's blast radius lands in a file the diff never touched, that file was absent from the payload, so no reviewer could cite it and the grounding gate discarded any finding about it. Retrieval is structural rather than semantic — a single `git grep` for the changed symbol names, parsing only the files that match — so it needs no index, no external service and no pre-built artifact. Measured overhead on a 150-file repository is ~34ms against a 2-second budget. (epic 35.20.0)
+- **`max_prefetch_bytes`** (default `16384`) bounds the injected block. **Setting it to `0` disables the feature outright** — no `git grep` runs and no repository source from outside the diff is sent to a provider. ⚠️ **Operators upgrading should note the feature is ON by default and does transmit source from untouched files.** Negative values are rejected at load and fail safe to disabled. Files excluded by `.gitignore`/`.atcrignore` are never retrieved, so the payload filter governs pre-fetched context exactly as it governs the diff, and snippets shed at the cap are named in the section rather than dropped silently. (epic 35.20.0)
+- Review payloads over a git range now carry a **claim ledger**: the branch's commit-message assertions, enumerated, with a contract asking every reviewer to rule `VERIFIED` / `CONTRADICTED` / `UNSUPPORTED` / `NOT-IN-PAYLOAD` on each one against what the diff actually does. `UNSUPPORTED` is the finding-worthy verdict — it catches a fix that a commit message describes but the diff never makes, which leaves no trace a reviewer reading only added and removed lines could react to. (epic 35.18.0)
+- Claims are extracted deterministically from `git log --no-merges` with no model in the path, so the same range always produces byte-identical claims, and the ledger is identical for every agent in a fan-out on the normal path. Three exceptions are deliberate and documented in `internal/payload/claims.go`: a `review_strategy: chunked` run puts the ledger in the first chunk only, an agent whose effective budget is 0 may receive the ledger as its sole entry, and under `on_overflow: truncate` a fallback whose budget cannot fund both the ledger and a reviewable file re-fits without it — either the exemption's budget bound sheds it, or funding it would shed every reviewable file and the `AllDropped` reroute to `keepSmallestEntry` keeps the smallest entry instead — which is a reviewable file, and so drops the ledger, whenever some file is smaller than the ledger. A budget larger than the ledger therefore does not by itself keep it. (epic 35.18.0)
+- The claim ledger is exempt from byte-budget shedding while it fits the budget: when the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption is bounded — a ledger larger than the whole budget sheds like any other entry, rather than dropping every file to fund itself. (epic 35.18.0)
+- `benchmarks/repo-state-v1/`: a case format (`FORMAT.md`) for benchmark cases that are small repositories rather than diffs, plus its first case, `claim-absent-cursor-fix`. The cases are authored and hand-verifiable but not yet machine-runnable — the loader is future work. (epic 35.18.0)
+- **A skeptic will no longer answer from a fragment.** The lane now refuses to install any derived tool ceiling below one real tool result (`payload.MinUsableReadBytes`, mirroring `tools.DefaultMaxResultBytes`): such a window takes the floor with `derived = false`, so its trip VOIDS the verdict instead of letting a confirmed/refuted formed from a sub-kilobyte view through reconcile's CI gate, and `invokeSkeptic` short-circuits before any provider request. Previously window `4097` derived **3 bytes** and still classified the ceiling as derived. In the same change the `ceiling <= 0` arm stopped honouring a declared `tool_budget_bytes`: it bounded the loop at a number the window cannot hold either way, while making the enforced ceiling swing ~350000x across one token of window (`4096` with `1<<20` declared enforced `1048576`; `4097` enforced `3`) and flipping the trip between voiding and preserving. **Every window below `31013` tokens is affected.** No claim is made here about where any roster sits: this repository ships no registry (only `examples/registry-*.yaml`), so an installation's exposure depends entirely on the windows its own `registry.yaml` declares — run `atcr doctor`, which warns across the whole affected band. (epic 35.16.6.8.2.1)
+- `atcr doctor` warns across that whole band, not just at-or-below-overhead windows. It asks `payload.WindowFundsAUsableRead` — the same policy the lane enforces, pinned equal across `1..40960` — so the warning cannot describe a narrower band than the code refuses, and it stands as its own hint above the point where the zero-budget verdict co-fires. (epic 35.16.6.8.2.1)
+- `truncated` on a finding's `verification` block (additive, `omitempty`, same shape as `challenge_survived`). A verdict reached from a shortened read now reaches the artifacts that read verdicts: `report.md` appends `(answered from a truncated read)` — on the main finding line AND in the collapsed Refuted section, which is where it matters most, since refuted is the verdict the gate excludes — and the reviewer's durable `survived_skeptic_rate` leaves such a verdict out of the ratio entirely, neither numerator nor denominator, rather than charging a partial read as a full-confidence one. Previously the fact reached `reconciled/verification.json` alone. **The report reads `truncated`; the score reads `trippedBudgets` in `reconciled/verification.json`** — the scorecard is emitted during `atcr reconcile`, which rebuilds `findings.json` from `sources/` and strips its `verification` blocks, so `verification.json` is the only verdict record still standing then. `atcr debate` now keeps the two in step on the findings it rules: a ruling that clears the caveat also clears the matching `tool_budget_bytes` entry **and writes the ruled verdict into that same record**, in the same atomic write — the caveat and the verdict describe one verdict, and clearing only the caveat would return the finding to the ratio under the verdict the judge had just replaced. Scoped deliberately to records whose caveat a ruling cleared: `runDebate` does not otherwise rewrite the verify snapshot's verdicts, so an overturned finding that never carried a `tool_budget_bytes` entry is still scored under its verify-stage verdict. **When EVERY verdict in a run is truncated the key is OMITTED, not published as `0.0`** — an all-truncated run leaves nothing to divide, and a published `0.0` is indistinguishable from a reviewer whose findings were all refuted, which is the strongest negative signal the metric carries. The same omission covers a reviewer whose findings drew no verdict at all. (epic 35.16.6.8.2.1)
+- The derived tool ceiling now bounds the FIRST turn's delivery, not only the second. `internal/fanout`'s byte-budget check is a deferred end-of-turn trip and a single tool result is capped separately at 64 KiB, so one turn could hand a small window far more than its whole ceiling before anything tripped; `invokeSkeptic` wraps the dispatcher per invocation to clamp cumulative tool content. Trip timing is unchanged — same turn, same trip — so only the delivered bytes differ. Holding that guarantee across real source text is what makes the clamp's cut round UP to the next rune boundary: the loop trips on `ToolBytes > ToolBudgetBytes`, strictly greater, so a cut that walked the offset DOWN to avoid splitting a multi-byte rune delivered fewer bytes than the allowance, left the comparison false, and delayed the trip by one provider round-trip. Rounding up overshoots by the 1–3 bytes that complete the straddling rune and keeps the trip on its turn. (epic 35.16.6.8.2.1)
+- `payload.InputRoomTokens`, so a caller sizing a reservation against what a window can fund reads the prompt overhead from the package that defines it rather than restating the constant. (epic 35.16.6.8.2.1)
+- `atcr_tier4_problem_anchor_imprecise_total`, for the primary resolution the barring withholds. That arm changes no field and renders identically to "could not check", to a no-match on a truncated set, and to the two FIX-side vetoes, so a counter is its only signal. Documented in `docs/metrics.md`, including the two things it is NOT: not a per-anchor count, and not the veto where the unnarrowed resolver refused on the same disagreement anyway. (epic 35.16.6.8.2)
+- A sixth Tier-4 counter, `atcr_tier4_fix_set_contradicted_total`, for the dropped-anchor veto. That arm produces a file and withholds it, returns "could not check", changes no field, and renders identically to two other outcomes — so it was the one remaining withhold path attributable only indirectly, through a counter (`atcr_tier4_fix_anchor_dropped_total`) that fires for every narrowing and therefore cannot isolate it. Documented in `docs/metrics.md`, written denial-first. (epic 35.16.6.8.1.1.1)
+- Four Tier-4 telemetry counters, so a suggestion that never landed is attributable after the fact instead of being indistinguishable from a FIX that named nothing: `atcr_tier4_fix_set_capped_total` and `atcr_tier4_fix_set_unaccounted_total` (the FIX anchor set abandoned whole, by the anchor cap or by a fidelity loss that left no member to repair), `atcr_tier4_fix_set_all_dropped_total` (abandoned whole because the imprecise narrowing removed its LAST member — previously counted as a single narrowed anchor, the opposite of what happened), and `atcr_tier4_fix_anchor_dropped_total` (individual anchors narrowed out of an otherwise usable set). All four are documented in `docs/metrics.md`. (epic 35.16.6.8.1.1)
+- A fifth Tier-4 counter, `atcr_tier4_problem_set_unaccounted_total`, the PROBLEM-side counterpart of the four above: it counts a path suggestion the resolver produced and the completeness check withheld, which was previously the one such arm with no durable signal at all. Also documented in `docs/metrics.md`. (epic 35.16.6.8.1.1)
+- **Producer-side publication gates for reviewer identity.** Epic 35.16.6.2 taught `atcr benchmark export` to reject a reviewer identity the public scrub cannot carry intact, but nothing stopped `atcr benchmark run` from *producing* one: the fold's scrub provably leaves control (Cc) and format (Cf) runes alone, so a soft hyphen (U+00AD) or zero-width space (U+200B) pasted into a registry `model:` reached a finished run-result that export then refused permanently — after the whole reviewer panel had been paid for. `benchmark run` now rejects such an identity **at load, before any reviewer is invoked**, across both roster lanes (`agents` and `serial_agents`), each agent's transitive `fallback` chain, and the agent name itself where it stands in for an empty `persona`. A second check at the fold catches the one source the load gate cannot see — a model id echoed back in the provider's own usage payload. (epic 35.16.6.6)
+- **`atcr leaderboard --export` applies the same control/format-rune rule.** It is the sibling producer into the same public envelope through the same scrub, so the "no invisible rune reaches the board" invariant now holds for both. The check runs on the records your filters actually select, so a stale record excluded by `--since` or `--model` cannot fail an export it was never part of. (epic 35.16.6.6)
+- **Content-based resolution for findings that cite a file which does not exist (Tier 4).** Epic 5.4 added three tiers that all match on the *filename string* — an exact basename elsewhere, a same-directory typo, a case-only difference — so a real issue attributed to a file with a *dissimilar* name had no signal to match on and stayed in the report unresolved. Tier 4 searches the tracked tree's actual content for the construct the finding's prose names, and promotes a single unambiguous hit to the same suggest-only `path_suggestion` field. `file` is never rewritten: a wrong guess is worse than no guess. (epic 35.16.6.5)
+- Anchor extraction is fully deterministic and involves no model call. Backtick spans, quoted spans and call shapes are read out of the `PROBLEM` and `FIX` text; identical text always yields an identical anchor set. A summarizing pass between the raw finding and the match is exactly where a fabricated finding could be paraphrased into something that matches, so there is none. (epic 35.16.6.5)
+- **`reconciled/unresolved.json`**, a new preserved sidecar. A finding whose cited file does not exist, for which no filename-level correction was found, and whose named constructs appear nowhere in the tracked tree is routed out of the primary stream into this file — excluded from `report.md` and from the `findings.json` the skeptic pass reads, counted by the new `unresolved_filtered` summary field, and never deleted. This follows the sidecar precedent the consensus filter already set, and required no change to the verification stage: the exclusion happens upstream at emit time. (epic 35.16.6.5)
+- `unresolved_filtered` on the published `reconcile` module's `Summary`, and a new "Findings excluded from the primary stream" section in `docs/code-review-backend.md` documenting both this filter and the pre-existing consensus filter for backend callers. (epic 35.16.6.5)
+- **`docs/findings-format.md` now enumerates the closed CATEGORY vocabulary.** A new "CATEGORY vocabulary" section lists all 32 members in the offer order the reviewer prompt uses, each with the class of defect it labels, so a reader no longer has to open Go source to learn the member list. `out-of-scope` and `other` are marked as routing values rather than defect classes: `out-of-scope` is a reserved control token whose findings are annotated instead of promoted, and `other` is the escape hatch that keeps the set closed rather than lossy. (epic 35.16.6.4)
+- A drift guard (`internal/reconcile/findings_format_taxonomy_test.go`) pins that table to the in-tree `reconcile/category.go`, read from source — never to a duplicated literal list, and not to `reconcile.Categories()`, which is ambient (it resolves to the in-tree module under a local `go.work` and to the `go.mod` pin under `GOWORK=off`). Reading the source by path resolves identically in both environments, so adding, removing, or reordering a member without updating the table fails the adding PR's own CI run. A separate release-lag check in the same file reports — via `t.Skip`, because the lag is an expected release-window state rather than a defect — when the `go.mod` pin lags the tree. (epic 35.16.6.4)
+- **A benchmark submission now carries its own coverage.** The `benchmark export` envelope gained `suite_case_ids` (the suite's case list) and `reviewer_coverage` (the case ids each reviewer row scored), so a run published with `--allow-partial-coverage` is self-describing: a consumer joins a coverage row to its `reviewers[]` row by `(model, persona)` and compares its `case_ids` against `suite_case_ids` as a set. Previously a partial submission was indistinguishable from a full one on the board. (epic 35.16.6.2)
+- Export now rejects a run-result whose case ids do not survive publication intact — an id that scrubs to empty (it would publish as `""`), or two distinct ids that scrub to the same value (the published denominator would repeat an entry, making a short row read as fully covered). This mirrors the check already applied to reviewer identities. (epic 35.16.6.2)
+- `reviewer_vocabulary` on the benchmark run result — the out-of-vocabulary rate broken down **per reviewer**, so the metric can finally name the model that drifted. The run-level scalar is micro-averaged, which is correct (drift is a property of the run's findings) but concealing: a reviewer raising 12 findings that all drifted, pooled against a peer raising 300 clean ones, reports `0.038` — under the ceiling, no warning, run reads clean. Each row carries `findings`, `drifted`, `rate`, and `routing_values`, and is positionally aligned with the matching `reviewers[]` row. Run-result-only: it is not carried into the public submission envelope, and `scorecard.PublicRecord` is unchanged. (epic 35.16.6.1)
+- `routing_values` per reviewer — a count of findings labelled `other` or `out-of-scope` — which makes the all-`other` blind spot legible for the first time. Both are taxonomy members, so a reviewer labelling everything `other` reports drift `0.0`, identical to one that categorized every finding precisely. `routing_values` equal to `findings`, alongside `rate 0.0` and a `corroboration_rate` of `0.0` on the aligned row, is that signature. The rate's own definition is deliberately unchanged: `other` is the escape hatch that makes the category set closed rather than lossy, so counting its correct use as drift would conflate two unrelated failures and strand the measured baseline. (epic 35.16.6.1)
+- `atcr benchmark run` now warns on stderr naming any reviewer whose own drift is at or above `0.50`, quoting `drifted/findings` so a small-n row is visibly small-n. The threshold is deliberately looser than the run-level ceiling rather than reusing it: only one valid run exists under this metric, so the spread between models is unmeasured, and a signal that fires on ordinary variation is one nobody reads. (epic 35.16.6.1)
+- `atcr review` now warns on stderr, naming the agents, when reviewers were **truncated (`finish_reason=length`) with zero surviving findings** and so contributed nothing to the pool. The tally has existed since Epic 19.5 but only ever reached `summary.json`, leaving a per-agent WARN line an operator had to go looking for as the sole console surface — a whole roster can truncate to nothing while the run reports success (observed 2026-08-14 across four models on one baseline scan). Deliberately not an exit-code change: failing a multi-hour run over a diagnostic discards the work it existed to produce. The warning names the input-budget tradeoff its own remedy carries — the output cap comes out of the same context window, so raising it shrinks the diff each reviewer sees, and a cap within 4096 tokens of the resolved window leaves no input budget at all. (epic 35.16.6.1)
+- **`chunk_byte_budget`** (registry and project tiers) — a byte budget that sizes a per-chunk payload independently of `payload_byte_budget`. One key was doing two jobs that want opposite values: it caps the concatenated payload, dropping whole files largest-first, **and** derived the per-chunk line budget. Lowering it to fit a small-window model therefore shed files no reviewer ever saw; raising it to keep those files grew every agent's chunks. Left unset it resolves to whatever `payload_byte_budget` resolved to — including a `--byte-budget` override, because the inheritance is applied after the CLI tier — so a config that never mentions it is sized exactly as before. `0` = unlimited; negative is rejected. (epic 35.16.6.1)
+- **`max_tokens`** as a per-agent registry field, plus **`atcr review --max-tokens`** as the run-wide override. The output cap was a hardcoded 8192 applied to every reviewer call, with no field, no config key and no flag, and one cap cannot serve both model classes: a thinking model spends output budget on chain-of-thought, finishes mid-reasoning, hits `finish_reason=length` with zero parsed findings, and is demoted by the truncation gate — so the lens contributes nothing while the run still reports success (observed 2026-08-14 across glm-5.2, minimax-m2.7, kimi-k3 and minimax-m3). Resolution mirrors `context_window_tokens`: flag → agent declaration → built-in default. Must be within `1..1000000`; an explicit `0` is rejected rather than treated as unset. Consumed by the review fan-out only — the skeptic, debate and executor lanes are unaffected. (epic 35.16.6.1)
+- `resolved_max_tokens` on each agent's `status.json` / `summary.json` sizing record — the output cap the agent resolved to, present on every sized record. Its neighbour `reserved_output_tokens` reports what the budget could actually *fund*, so it is `0` on the zero-budget arm: the one record where the cap **caused** the degradation was the one record that never named it, and nothing else on disk carries it (`payload.Manifest` records `max_parallel` and `timeout_secs` but no cap, and `--max-tokens` is re-resolved from live config on a resume). Read the two together — equal means the reservation was funded; a cap with no reservation means the window could not fund it, and names the number to lower. Absent on an unsized agent, like its siblings, and absent on a merged multi-chunk record whose promoted budget is zero: that budget is an aggregate across chunks, so naming any one chunk's cap there would point at a number that closed nothing. (epic 35.16.6.1)
+- Per-row case coverage on the run-result: `suite_case_ids` (the suite's case list, recorded once) and `reviewer_coverage` (the case ids each reviewer row actually scored, plus its outcome tally). `runs` is a count, not a set, and case difficulty varies enormously across the suite, so a recall computed over one 8-case subset is not comparable to one computed over a different 8 — and splitting rows by realized model makes uneven coverage the normal case. (epic 35.16.5.2)
+- `atcr benchmark export` refuses by default to publish a run-result whose reviewer rows do not each cover the full suite, naming every short row and its shortfall. `--allow-partial-coverage` overrides it with a stderr warning. Coverage is chosen over "degradation" as the gate deliberately: flagging any failover as degraded would mark most real runs and train operators to pass the override reflexively. (epic 35.16.5.2)
+- The export gate also rejects coverage payloads that `atcr benchmark run` cannot produce — a duplicate `(model, persona)` identity, a reviewer row with no coverage row, a `runs` disagreeing with its covered case count, a repeated case id within a row, or a case id absent from the suite. Each indicates a hand-assembled file, and the first would otherwise let a full row mask a short one of the same identity. (epic 35.16.5.2)
+- A per-case reviewer **outcome** (`findings` / `clean` / `unparseable` / `truncated` / `failed` / `unknown`), persisted in the checkpoint and tallied per row. A zero-finding result was previously ambiguous: a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed all raised zero categories and scored identically. The signal was never missing — `fanout` computed it and the benchmark discarded it before scoring. (epic 35.16.5.2)
+- Epic 35.16.5.3's Run B checkpoint is committed as a test fixture (`internal/benchmark/testdata/run-b.ckpt.json`). Its original home is gitignored and so could not serve as CI evidence; 35.16.5.3 had to reconstruct its entire before-side from prose in a code review because the preceding dry-run's output was never kept. The fixture pins all four realized rows (`qwen3.8-max` 8, `llm-large` 9, `kimi-k3` 16, `kimi-k3-256k` 1 — a **second** failover the epic's own acceptance criteria did not record) and the resulting export rejection. (epic 35.16.5.2)
+- Per-agent `context_window_tokens` in the registry, declaring a model's real context window in tokens. Resolution order is **agent declaration → static model table → the `32768` default**, so a roster that reaches models through bare proxy aliases (`glm-5.2`, `kimi-k3`) is no longer sized as if every agent had a 32,768-token window. Those aliases match no key in the static table — whose keys are provider-qualified ids like `deepseek/deepseek-v4-pro` — so the entire roster silently resolved the conservative default, an under-fill of up to 30×. The table itself gains no proxy-local alias: those names are machine-specific and meaningless to any other user, so the truth belongs in that user's own registry. Declaration, not detection — no network call enters window resolution, matching the precedent set by `supports_function_calling`. (epic 35.16.5.1)
+- Validation of the new field within `1..10000000` (`ContextWindowTokensCap`), rejected at load with an error naming both the field and the file that defined the agent. The ceiling deliberately does not reuse `max_context_lines`' 1,000,000: the static table already resolves exactly 1,000,000 for the Gemini entries, so that ceiling would leave the declaration tier unable to exceed the tier it exists to override. (epic 35.16.5.1)
+- Equivalence-class matching in the benchmark scorer: a coarse expected category is now satisfied by any member of the ATCR family it spans, so a reviewer that writes `style` for a planted `maintainability` defect is credited for detecting it. Previously the scorer compared by exact string equality, and aacr-bench's single upstream "Maintainability and Readability" label could only ever be satisfied by the literal word `maintainability` — recall measured vocabulary agreement rather than detection ability. The families are the steering set `reconcile/category.go` names for each coarse word and nothing wider; they are scorer-side only and merge no product category. (epic 35.16.5)
+- `out_of_vocabulary_rate` on the benchmark run result — the share of a run's findings whose category is not a member of the closed reviewer vocabulary. Nothing previously measured model drift away from the enumeration: a reviewer that invents its own words quietly zeroes its own recall, and the resulting low score is indistinguishable from one that simply found less. The key is absent (never `0.0`) for a run that raised nothing, so unmeasured and clean stay distinguishable. (epic 35.16.5)
+- `MaxOutOfVocabularyRate` (0.20) plus four committed scorer-input fixtures, including a neighbouring boundary pair, so the ceiling is proven to fail as well as to pass. (epic 35.16.5)
+- `atcr benchmark run` now warns on stderr when a run's measured `out_of_vocabulary_rate` is at or above the ceiling, naming both the ceiling and the measured value. The constant previously had no non-test consumer: a run measuring 0.72 drift wrote the number to JSON and exited 0 silently, and `--output <path>` prints nothing to stdout, so the documented resumable invocation gave the operator no signal at all. Deliberately a warning and not an exit code — failing a multi-hour validation run at the end over a diagnostic would discard the work the run existed to produce. (epic 35.16.5)
+- Closed reviewer CATEGORY vocabulary as an exported, ordered constant in the public `reconcile` module (`reconcile.Categories`, plus `Category*` constants), derived from three sources: the categories the 35.16.2 benchmark dry-run actually emitted, each persona's declared Focus list, and the 14 category words bound in code by the community persona roster. (epic 35.16.4)
+- Disambiguation guidance in the injected prompt for the six confusable member pairs (`race`/`concurrency`, `contract`/`api-contract`, `resource-leak`/`leak`, `input-validation`/`validation`, `secret`/`security`, `correctness`/`logic`), so keeping the distinctions does not just relocate the drift. (epic 35.16.4)
+- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the rendered enumeration tracks `reconcile.Categories()`, and a locked-set test so removing any member fails. (epic 35.16.4)
+- **OS-level sandbox backend (`internal/sandbox`) — a config-gated alternative to `--no-sandbox` for `--auto-fix` validation and `--exec`.** Wraps native process confinement instead of a container: `sandbox-exec` on macOS, `bwrap` (Bubblewrap, namespace-based mount/network/PID isolation) on Linux. Opt in with `sandbox.fallback: os-level` in `.atcr/config.yaml`; it engages only when Docker's preflight has already failed and never as a first-choice backend while Docker is healthy. With `fallback` unset, behavior is byte-identical to before this sprint — a Docker preflight failure remains a hard refusal, and `--no-sandbox` remains the only way to run validation fully unsandboxed. (epic 35.16.3)
+- **Deny-by-default sandbox profile generation.** Both platforms generate a strict runtime profile scoped to the project directory (or its writable scratch copy) and `/tmp`: no outbound network egress, no read access to `$HOME` (so `~/.ssh` stays unreadable), and a narrow read-only allowlist for the host toolchain needed to execute at all. Proven with real kernel-level containment tests on both platforms (blocked write outside allowed dirs, blocked network egress) — executed on real macOS and Linux hosts, not merely unit-tested for shape. (epic 35.16.3)
+- **`Writable: true` support for the OS-level backend**, so `--auto-fix` (which always validates against a writable copy) can use the fallback, not just read-only `--exec` reproduction. The writable copy is made host-side, in Go, before the sandboxed process spawns — bounded in size/entry count and refuses to traverse a symlink out of the snapshot. (epic 35.16.3)
+- **Explicit "neither backend usable" warning**, surfaced identically from both `ResolveExecBackend` and `ResolveAutoFixSandbox` when Docker's preflight fails and the OS-level fallback (if configured) also fails its own preflight — never a silent, partial, or implicit success. (epic 35.16.3)
+- `docs/auto-fix.md` documents the new `sandbox.fallback: os-level` field, what it engages under, and what its containment guarantees give up relative to the Docker backend (no resource caps, no image, host toolchain only, no automatic Go module cache warming). `docs/execution.md`'s "Docker is the only implementation today" claim is corrected. (epic 35.16.3)
+- **`standard-v1` benchmark suite content is now bundled at `benchmarks/standard-v1/`.** `docs/benchmark.md` previously pointed at an external `github.com/atcr/benchmark-suite` repo that was never created, so `atcr benchmark verify`/`run`/`export` had nothing real to run against — only the 2-case unit-test fixtures. The suite ships 17 cases spanning `correctness`, `maintainability`, `performance`, and `security`, drawn from a seeded sample of [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0, arXiv:2601.19494) — 1,505 review comments over 196 real pull requests across 50 repositories and 10 languages. Attribution is in `benchmarks/standard-v1/NOTICE.md`; the suite is content-addressed by `suite_version` 1.0.0 and a reproducibility hash. (epic 35.16.2)
+- **`cmd/ingest-alibaba-benchmark`** regenerates that suite from the upstream dataset. It is an authoring-time tool — its output is committed, so neither CI nor a benchmark run reaches the network. Diffs come from GitHub's compare API by default, with a `-clone` fallback for when that is unavailable. The dataset URL is pinned to an immutable commit so a record added upstream cannot silently reshuffle the seeded selection. (epic 35.16.2)
+- **`otto`'s worked example now labels a readability defect `maintainability`**, matching the dominant ground-truth category in the new suite. It previously emitted `style` for exactly that defect shape — the only shipped persona whose example did — which made recall on `maintainability` noisy across the panel. (epic 35.16.2)
 
 ### Changed
 
-- Thinking settings now thread through every reviewer, debate, verify, and doctor call site, replacing per-site ad hoc handling.
-- A halted debate seat (tripped budget or truncated reply) now records `seat_halted` instead of letting the judge rule on a one-sided or salvaged statement.
-- Doctor's inline `<think>` detection and truncated-reply handling were hardened to avoid false thinking verdicts.
-
-### Fixed
-
-- `est_minutes` can no longer bypass its clamp bound on host write paths (`debt add --est`, `WriteSourceV2`).
-- `IsNoFindings` and the fence scanner now agree on a labeled, content-free JSON fence.
-- Machine-local-field validation now reports every rejected key in one joined error instead of only the first.
-
-*Shipped via /finalize-sprint (sprint 35.16.11.2.2)*
-
-## [35.27.0] - 2026-09-26
-
-*Sprint 35.16.11.2.1 — declared JSON-mode response format per agent.*
-
-Agents can now declare `response_format: json_object` in the registry to get real API-level JSON mode, layered on top of 35.16.11.2's fenced-JSON parser baseline.
-
-### Added
-
-- `response_format: json_object` as an optional per-agent registry field (`AgentConfig.ResponseFormat`), threaded through `Invocation`, `chatRequest`, and every `chatToolRequest` turn, including forced-final turns.
-- Per-lane wiring for review primary/fallback, skeptic, and the debate judge seat only (proposer/challenger keep their own single-object contracts).
-- A render-time `## Output Format` prompt swap that replaces a declared agent's fenced-array contract with a shared `{"findings":[...]}` schema, located by the actual rendered payload offset so undeclared agents' prompts stay byte-identical.
-- A live `atcr doctor` probe that exercises the declared flag against the real provider.
-- `docs/registry.md` documentation for the new field.
-
-### Fixed
-
-- `IsNoFindings` no longer misreads a fence opener carrying an info string, or a bare `~~~` quoted example, as a findings block.
-- `est_minutes` is clamped to 0–10080 on every decode path, including the legacy pipe branch.
-- The doctor Target dedup key correctly reflects the declared flag, and a validation error now echoes the rejected `response_format` value.
-- Several dead-code and stale-comment cleanups surfaced by the sprint's adversarial review (`cli/debt_resolve.go`, `internal/stream`, `internal/fanout`, `internal/reconcile`).
-
-*Shipped via /finalize-sprint (sprint 35.16.11.2.1)*
-
-## [35.26.0] - 2026-09-25
-
-*Sprint 35.16.11.2 — lossless findings stream and reviewer prompt migration.*
-
-Reviewer personas now output a single fenced JSON array of findings instead of pipe-delimited text, and atcr writes that data losslessly to disk. The old `findings.txt` (v1) keeps working unchanged for every existing consumer.
-
-### Added
-
-- All 24 reviewer persona files (`_base.md` + 23 personas) migrated to a JSON output format; the pipe-to-slash mangling rule is gone, so bitwise-OR expressions, regexes, and multiline diffs survive intact.
-- A lossless `# atcr-findings/v2` writer (`internal/stream/v2.go`) that encodes to TOON by default and falls back to a JSON envelope only when TOON would lose data.
-- Dual-write of `findings.toon` alongside the unchanged `findings.txt`; discovery, resume, history, audit, and benchmark all prefer `.toon` when present.
-- Host-review skill writes `findings.toon` directly as a JSON envelope, with no hand-rolled TOON formatting.
-- `docs/findings-format.md` v2 spec, plus an adversarial round-trip test suite covering chunked, truncated, and malformed model output.
-
-### Changed
-
-- Model output parsing is JSON-first: it unions multiple fenced JSON blocks, recovers from a truncated final object, and still accepts legacy pipe rows from any persona not yet migrated.
-- History, audit, and benchmark parse errors now name the specific findings file that failed, instead of a generic error.
-- A partly-failed-over chunked benchmark case is now credited to whichever model actually served most of it, matching production reconcile behavior.
-
-### Fixed
-
-- v2 readers reject case-variant envelope keys, non-integer `est_minutes`, and non-regular files (symlinks, sockets), closing several data-integrity gaps found by the new adversarial suite.
-- A model's `est_minutes` is now clamped to a sane 0–10080 range instead of accepting runaway or negative values.
-
-*Shipped via /finalize-sprint (sprint 35.16.11.2)*
-
-## [35.25.0] - 2026-09-23
-
-*Epic 35.16.11.1 — standard toon output migration.*
-
-`--axi` output is now canonical, specification-compliant TOON encoded by `go-axi` v0.3.1, readable by any off-the-shelf TOON decoder. The old pipe-delimited form stays available as a deprecated fallback.
-
-### Added
-
-- `atcr report --format pipe`, `--legacy-pipe` on `atcr review` and bare `atcr`, and `ATCR_LEGACY_PIPE=1` (a global switch over every AXI surface) route AXI output through the legacy pipe encoder. Each legacy route writes one deprecation notice to stderr; stdout stays payload-only and exit codes are unchanged.
-- A `total: <int>` line on every paginated `report --format axi` payload, carrying the true pre-truncation finding count beside `truncated: <bool>`.
-- `goaxi.Check` assertions on every AXI payload (lossless, and tabular plus token-efficient when non-empty), and doc-vs-code drift tests pinning the AXI docs to the go-axi pin, the emitted header, and the fallback flags.
-
-### Changed
-
-- `atcr report --format axi`, `atcr review --axi` and `atcr --axi` emit standard comma-delimited TOON (`findings[N]{...}:`) instead of the pipe variant (`findings[N|]{...}:`). Code fields carrying `|`, `||`, quotes, or newlines now survive a stock decode verbatim (fields of at most 500 runes).
-- On the standard path, a truncated findings payload's header `N` now equals the rows emitted, so it still decodes; the true count moved to the `total` line. The legacy pipe path keeps its old contract byte-for-byte.
-- Control-byte stripping on the standard path now uses go-axi's sanitizer (invalid UTF-8 is dropped); the hand-rolled `toonQuote`/`toonEscape`/`isTOONControl` encoder is gone. The legacy path keeps its own helper, which still writes U+FFFD for invalid UTF-8.
-- `--legacy-pipe` without `--axi` is now a usage error (exit 2).
-- The pool summary now records the model on every completed slot, whether or not the provider reported token usage, so per-model trust scoring no longer leaves those personas permanently neutral.
-
-*Shipped via /execute-epic (epic 35.16.11.1)*
-
-## [35.24.0] - 2026-09-23
-
-*Sprint 36.0 — durable lens authority scoring.*
-
-### Added
-
-- `ExplainTrustPriors()` function providing explainable trust scoring with per-lens tallies (counted cases, excluded cases, exclusion reasons).
-- Trust prior resolution per model via `ResolveTrustPriorsForReview()`, keying ratings on the review's pool-summary model configuration.
-- Outcome precedence ordering (`ReviewerOutcomePrecedence`) exported from fanout, eliminating duplicate vocabulary definitions.
-- Persisted outcome field on scorecard records, tracking reviewer lens eligibility state (clean, truncated, incomplete, unparseable, unknown).
-
-### Changed
-
-- Trust scoring now accounts for outcome eligibility state: a truncated or timeouts-out reviewer that raised findings is not penalized for silent cases that were never shown to it.
-- Per-model trust scoring on each reconcile path, reading personas' models from pool-summary configuration rather than deriving from runtime agents.
-- Repository state path now uses the per-model trust scoring for consistent multi-model panel evaluation.
-- Retention line reports now correctly counts failed slots (not reviewers), reports retained directories by name, and bounds the size walk at 200,000 entries.
-
-### Fixed
-
-- Model attribution on reviewer records is now preserved through store compaction and append operations.
-- Per-finding reviewers on ambiguous reconcile paths are normalized consistently (trimmed and case-folded).
-
-## [35.23.0] - 2026-09-17
-
-*Epic 35.16.10.1 — repo-state partial-failure outcomes.*
-
-### Added
-
-- **A per-slot failure channel on the run-result** (`slot_failures[]`, carrying the reviewer identity, the case id, and whether the call failed or timed out). When one reviewer cannot be shown a case the rest of the panel reviewed, that pair is recorded rather than passing silently: the run used to exit 0 with no warning, delete the work dir holding each slot's `status.json`, and then have `benchmark export` reject the finished run-result while calling the gap "missing". The shortfall is now labelled `unshown`, the work dir is retained, and the remedy says to investigate that one provider rather than to re-run cases that ran fine. Run-result-only, like `case_failures[]`.
-- **A per-case failure channel on the run-result** (`case_failures[]`, carrying a case id and the stage it died at). A `repo-state-v1` case that cannot be materialized, prepared, executed, summarized, or read back is now recorded there and the run continues, instead of aborting a ten-minute paid panel on its last case. `--checkpoint` is refused for this tier, so there was no resume to fall back on.
-- A case in that array is **unmeasured, not missed**: it appears in no reviewer's `case_ids` and adds nothing to any recall denominator, so recall over a 3-case suite with one failed case reads exactly as recall over the two that were scored. Scoring it as a zero would charge every reviewer for a defect they were never shown.
-- `atcr benchmark run` now prints a partial-run summary to stderr naming each unmeasured case and its stage, above the recall summary it qualifies — a recall figure that covers less than the suite must not read like one that covers all of it.
-
-### Changed
-
-- **The work dir is now retained on a partial run**, not only on a hard failure, so the scored cases' review artifacts survive for inspection or manual rescoring. A fully clean run still cleans up.
-- **The export rejection's remedy is tier-aware.** It used to say "re-run the missing or unmeasured cases" on every tier, which is false for `repo-state-v1`: `--checkpoint` is refused there, so the only re-run available is the whole paid suite. The message now says so. Under `--allow-partial-coverage`, a row short because it lost reviewer slots now carries an explicit warning that its `corroboration_rate` is averaged over only the cases that reviewer was shown — it is not penalised for the rest and will read higher than a row scored over the full suite.
-- `atcr benchmark export` still rejects a partial run by default, but now names the failed case and its stage rather than telling you to re-run cases that never ran. The failure reason vocabulary is closed and fail-closed at that boundary: an entry whose reason is unrecognized, whose case the suite does not declare, whose case some reviewer also scored, or which repeats a case is rejected as malformed.
-- **A per-case failure no longer makes `atcr benchmark run` exit non-zero for `repo-state-v1`.** A run that loses one case to infrastructure now writes a partial run-result and exits 0; a pipeline that gated on the old all-or-nothing contract can restore it with `--fail-on-case-failure`, or set `--max-case-failures` for a threshold instead of a floor of one.
-- Nine failure classes still abort the whole run, none of them transient: a total-roster failure, an empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), a run that scored nothing at all, the opt-in --max-consecutive-case-failures abort, a host-level work-dir fault (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, `EROFS`), and the realized-identity printability guard. The first two are kept apart deliberately — a total-roster failure is a transient outage the run refuses to score around, while an empty roster is a deterministic configuration defect that would repeat on every case.
-
-*Shipped via /execute-epic (epic 35.16.10.1)*
-
-## [35.22.0] - 2026-09-16
-
-*Epic 35.16.10 — repo-state benchmark tier.*
-
-### Added
-
-- `repo-state-v1`, a second benchmark suite tier whose cases carry **repository state** rather than a bare diff: a pruned base tree, a commit message, and a change applied on top. It exists to host the defect class `standard-v1` cannot — a defect whose root cause sits in a file the diff never touches, which a diff-only case physically cannot contain and no model can win.
-- `atcr benchmark run --suite-path <dir>` now routes on the manifest's `suite` field, so the same invocation runs either tier. A repo-state case is materialized into a real git repository and reviewed over `base..head` through the **range** path — the diff-ingestion path builds no `RangeBuilder`, and both the claim ledger and context-aware pre-fetching live there, so a tier meant to measure those features cannot run without it.
-- **Positional expected-finding matching.** A case locates each planted defect by `file` plus a line range with a per-finding `line_tolerance`, so scoring can tell "found the silent deletion in the reconcile loop" from "raised any correctness nit anywhere in the diff". One report settles at most one expectation, ties resolve to the nearest range midpoint, and exact ties break alphabetically by id.
-- **Out-of-diff recall as a distinct metric**, in the run-result's `reviewer_positional_recall` array alongside overall and within-diff recall. A report citing an added or removed line cannot satisfy an `outside_diff: true` expectation even inside the tolerance window, which is what makes `outside_diff` a measurement rather than a label an author asserts.
-- Four hand-verified cases (`SPOT-CHECK.md`) covering both shapes: a quarantine/reconcile silent deletion, a mock that outlives the contract it stands in for, an incomplete predicate guard, and the existing claim-absent cursor fix. All trees are synthetic — see `benchmarks/repo-state-v1/NOTICE.md`.
-
-### Changed
-
-- `docs/benchmark.md` documents the second tier and no longer states that `benchmarks/repo-state-v1/` is unrunnable, with a bidirectional doc-vs-code drift test pinning the claims it makes.
-
-### Notes
-
-- **`scorecard.PublicRecord` is unchanged and `corroboration_rate` keeps its category-recall meaning on every suite.** The new metric rides the run-result, never the public submission envelope: forking a frozen shared key's meaning by suite would be worse than the gap it closed.
-- **The Epic 14.1 grounding gate stays ON during a repo-state run, deliberately.** An out-of-diff finding survives only when pre-fetching actually retrieved the cited span. That is the measurement — the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate.
-- **`--checkpoint` is refused on this tier**, not silently ignored. Resumable runs are implemented for the `standard-v1` diff path only.
-
-*Shipped via /execute-epic (epic 35.16.10)*
-
-## [35.21.0] - 2026-09-14
-
-*Epic 35.16.9 — predicate exhaustiveness persona rule.*
-
-### Added
-
-- Predicate-exhaustiveness review rule in all ten built-in reviewer personas (`_base.md` plus the nine registered personas). When a diff edits one branch of a comparison, equality, or guard predicate, the reviewer now enumerates every branch of that predicate and every field it is contracted to cover, and reports any field covered in one branch but not another — filing the finding on the edited branch's changed line with the sibling quoted as evidence, so it survives the grounding gate instead of being discarded as out-of-range.
-- Class guard over the embedded built-in persona filesystem: a built-in persona that omits either anchor phrase fails the suite, and a companion check asserts the rule reaches the rendered prompt with tool support both enabled and disabled.
-- Regression pin that text present only in `_base.md` reaches no registered agent — every registered agent ships its own persona file and wins resolution first, so a panel-wide rule written into `_base.md` alone would change no reviewer's behavior.
-
-### Changed
-
-- `docs/personas-authoring.md` now documents the rule, both anchor phrases, and the two load-bearing placement constraints for anyone adding a built-in persona.
-
-### Notes
-
-- **Reviewer prompt text changed, so benchmark runs from before and after this release are not directly comparable** on the existing suite.
-- **Existing installs do not pick this up automatically.** `atcr init` writes editable persona copies that win resolution over the embedded defaults and are never overwritten, even under `--force`. To adopt the rule, add the bullet to your installed persona files under `## Focus`, or delete those copies and re-run `atcr init --force` (add `--offline` to skip the community-persona fetch). `--force` is required because init also writes `.atcr/config.yaml` and `.atcr/.gitignore`, which a bare re-run refuses to overwrite; it is safe for the persona copies themselves — init preserves existing persona files even under `--force` — so it regenerates only the scaffold and the personas you deleted.
-
-*Shipped via /execute-epic (epic 35.16.9)*
-
-## [35.20.0] - 2026-09-10
-
-*Epic 35.16.8 — context aware prefetching.*
-
-### Added
-
-- **Context-aware pre-fetching.** A range review now resolves the symbols its diff changed to the call sites that *consume* them, and prepends those snippets to every reviewer's payload as a **Context Definitions** block. This targets a defect class no amount of reviewer diversity catches: when a change's blast radius lands in a file the diff never touched, that file was absent from the payload, so no reviewer could cite it and the grounding gate discarded any finding about it. Retrieval is structural rather than semantic — a single `git grep` for the changed symbol names, parsing only the files that match — so it needs no index, no external service and no pre-built artifact. Measured overhead on a 150-file repository is ~34ms against a 2-second budget.
-- **`max_prefetch_bytes`** (default `16384`) bounds the injected block. **Setting it to `0` disables the feature outright** — no `git grep` runs and no repository source from outside the diff is sent to a provider. ⚠️ **Operators upgrading should note the feature is ON by default and does transmit source from untouched files.** Negative values are rejected at load and fail safe to disabled. Files excluded by `.gitignore`/`.atcrignore` are never retrieved, so the payload filter governs pre-fetched context exactly as it governs the diff, and snippets shed at the cap are named in the section rather than dropped silently.
-
-### Changed
-
-- A finding on a pre-fetched file is groundable **only** on the exact line spans that were shown. `payload.FileChange` carries a `PrefetchOnly` marker, and the grounding gate bypasses both of its permissive arms for such files — the file-level (`Line <= 0`) arm and the empty-ranges fail-open arm — so retrieving a consumer cannot become a route for file-level fabricated findings against untouched code.
-- The reported changed-file count now excludes the engine-rendered sections prepended to a payload. It previously counted the claim ledger, over-reporting by one in the manifest and in the persona-visible `{{.FileCount}}`; a second synthetic section would have doubled that.
-- The byte-budget shed now funds shed-exempt sections **cumulatively** rather than one at a time. With two such sections each could satisfy its own bound while jointly overrunning a small budget, shedding every reviewable file to fund sections that then left no room for code. Retrieved context is shed before the claim ledger.
-
-*Shipped via /execute-epic (epic 35.16.8)*
-
-## [35.19.0] - 2026-09-10
-
-*Epic 35.16.7.1 — post residue feature epic 35.16.7 claim ledger verify commit claims.*
-
-### Fixed
-
-- `docs/payload-modes.md` and the 35.18.0 note below both stated the claim ledger's third exception with the wrong condition — that a fallback re-fits without the ledger when its own budget is "smaller than the ledger". Measured end to end, the ledger is lost when the fallback's budget cannot fund both the ledger **and** a reviewable file, by either of two routes: the exemption's own `clampSize(Size) <= budget` bound, or the `AllDropped` reroute to `keepSmallestEntry`. That reroute keeps the smallest *entry*, so it drops the ledger only while some reviewable file is smaller than it — when every file is larger, the ledger survives and the fallback receives claims and no code. A budget larger than the ledger therefore does not by itself keep it.
-- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` pins that row's load-bearing phrases, so reverting or negating the statement turns it red, and asserts the behavioural owner test in `internal/fanout` still exists by name; the gate itself stays pinned behaviourally there.
-- Citations in `internal/payload/claims.go` and `internal/fanout/review.go` that pointed at the wrong construct: the changed-file-count consequence cited two build paths that never prepend a claim ledger, and the coalesce-cap citations pointed at `started = true` inside `splitDiffFiles` rather than at the chunk ceiling. Each now names its identifier alongside the line number, so the next insertion above a target cannot silently re-aim it.
-
-### Changed
-
-- `diffPrefixLines`' contract doc described the preamble subtraction as the oversize gate's rule. It is the warning message's file attribution only: the gate deliberately runs on the unsubtracted delivered total, which is why the warning fires by design for a file whose own diff sits inside the cap.
-
-*Shipped via /execute-epic (epic 35.16.7.1)*
-
-## [35.18.0] - 2026-09-09
-
-*Epic 35.16.7 — claim ledger verify commit claims.*
-
-### Added
-
-- Review payloads over a git range now carry a **claim ledger**: the branch's commit-message assertions, enumerated, with a contract asking every reviewer to rule `VERIFIED` / `CONTRADICTED` / `UNSUPPORTED` / `NOT-IN-PAYLOAD` on each one against what the diff actually does. `UNSUPPORTED` is the finding-worthy verdict — it catches a fix that a commit message describes but the diff never makes, which leaves no trace a reviewer reading only added and removed lines could react to.
-- Claims are extracted deterministically from `git log --no-merges` with no model in the path, so the same range always produces byte-identical claims, and the ledger is identical for every agent in a fan-out on the normal path. Three exceptions are deliberate and documented in `internal/payload/claims.go`: a `review_strategy: chunked` run puts the ledger in the first chunk only, an agent whose effective budget is 0 may receive the ledger as its sole entry, and under `on_overflow: truncate` a fallback whose budget cannot fund both the ledger and a reviewable file re-fits without it — either the exemption's budget bound sheds it, or funding it would shed every reviewable file and the `AllDropped` reroute to `keepSmallestEntry` keeps the smallest entry instead — which is a reviewable file, and so drops the ledger, whenever some file is smaller than the ledger. A budget larger than the ledger therefore does not by itself keep it.
-- The claim ledger is exempt from byte-budget shedding while it fits the budget: when the budget cannot fund both, diff content is dropped and the ledger is kept. The exemption is bounded — a ledger larger than the whole budget sheds like any other entry, rather than dropping every file to fund itself.
-- `benchmarks/repo-state-v1/`: a case format (`FORMAT.md`) for benchmark cases that are small repositories rather than diffs, plus its first case, `claim-absent-cursor-fix`. The cases are authored and hand-verifiable but not yet machine-runnable — the loader is future work.
-
-### Changed
-
-- `Truncation.AllDropped` (published as `all_dropped` in `status.json`) now means "no reviewable file survived the shed" rather than "the kept slice is empty", so an exempt claim ledger cannot mask a payload that has lost all of its code.
-
-## [35.17.0] - 2026-09-08
-
-*Epic 35.16.6.9 — post residue feature epic 35.16.6.6 post residue feature epic 35.16.6.2 submission envelope coverage schema.*
-
-### Fixed
-- `docs/benchmark.md`'s Resume bullet promised an unconditional fail-closed on any roster change, which the binary does not perform: an unstamped (pre-`roster_format`) checkpoint whose recorded roster matches the parallel-lane-only projection resumes across an added serial reviewer. The bullet now names that exception, states that the union upgrade is written back only if the resumed run scores a further case, and a drift test in `internal/reconcile/` fails if either half drifts from the code again.
-- `atcr leaderboard --export` no longer publishes a whitespace-only `model` or `reviewer` in silence. The record is still kept — that scoping is deliberate — but it is now named on stderr as "blank after trimming", so the operator learns about it locally instead of from the board's rejection. A record already empty in the store is unchanged and still unreported. `docs/scorecard.md` records the new warning.
-- `atcr benchmark run --checkpoint` now explains why it rejects a checkpoint recording an empty reviewer roster. The rejection itself is unchanged and correct; the previous message reported a generic "recorded [], configured [...]" panel drift, blaming a change that never happened. The new message names the shape a pre-serial-lane binary wrote for a project with no parallel lane, hedges that a truncated or hand-edited file reads the same, and still carries the current panel.
-- `atcr debt backfill-justifications --dry-run` now resolves its shard locators against the directory snapshot the rewrite was computed from, taken under the store lock, rather than re-listing the directory afterwards. A concurrent writer removing a colliding shard in that window could previously suppress the disambiguating `#hash` suffix, so the dry run printed a bare locator for a name that was ambiguous when the rewrite was computed.
-
-### Changed
-- The shard-listing filter used by the backfill dry run now exists in exactly one place instead of two copies kept in step by hand, and is pinned by tests covering each half independently.
-- The pre-serial-lane compatibility arm in the checkpoint roster guard carries one emptiness term instead of two logically redundant ones.
-
-*Shipped via /execute-epic (epic 35.16.6.9)*
-
-## [Technical Debt] - 2026-09-08
-
-### Fixed
-- A second `atcr debate` over the same review dir no longer leaves `verification.json` naming the first debate's judge for a verdict the second replaced — the standing judge is now re-stamped on every ruling that touches an already-debated record.
-- Unmodelled keys in `verification.json` records no longer disappear when `computeVerificationTruncation` rewrites the file — unrecognized fields are now preserved through the compare-and-write pass.
-- `docs/verification.md`'s debate-sync description no longer disagrees with what the code emits; the guarding test now matches the corrected doc.
-- A partial-write residue in `verification.json` — left behind when a `WriteGroup` publish fails after `findings.json` lands but before this file does — is now repaired: the next `atcr debate` recovers the judge from `reconciled/debate.json` and restores the record, while a genuine declared-budget voiding record (indistinguishable on disk) is deliberately left alone.
-- An empty `model` field in `verification.json` is no longer ambiguous between "no skeptic ran," "a debate withheld it," and "the re-verify guard rejected the prior record." The third case now carries a `modelWithheldReason` marker (`verdict_shifted` or `prior_unreadable`), and that marker now carries forward correctly on subsequent re-verifies instead of being lost after one generation.
-- A rejected prior record no longer silently drops the truncation caveat that `survived_skeptic_rate` relies on — the caveat is now re-derived on every arm that rejects a prior verdict.
-- The `Extra` contract is narrowed to the skip path it actually covers, closing a gap that let it apply beyond its intended scope.
-- Three defensive tag-resolution guards that were previously unreachable in practice are now exercised by tests and made reachable.
-- A duplicate record reader is folded into `parseRecord`, removing redundant parsing logic.
-- `docs/verification.md` now documents the debate-side residue repair and the `modelWithheldReason` marker's deletion behavior.
-
-## [35.16.6.8.2.1] - 2026-09-07
-
-*Epic 35.16.6.8.2.1 — post-review residue from epic 35.16.6.8.2: the skeptic tool-ceiling derivation seam, and three documents describing a clamp the code no longer performed.*
-
-### Fixed
-- A tie no longer credits tripped budgets to skeptics that lost it. `winningAttribution` credits by who WON, and on a tie it credited every participant — so a tie whose confirmed voter carried an exempted derived trip serialized identically to a verdict a DECLARED budget had voided. `model` still lists every participant (it names who spoke); a budget is a causal claim about the recorded outcome, so on a tie only a participant that was itself unverifiable contributes one.
-- A skeptic's tool-output ceiling no longer swings ~9000x on a one-token config change. `skepticToolBudget` derived from two discrete formulas — the full output reservation above the reservation's own threshold, NOTHING reserved below it — so it was non-monotonic in both operands: a declared window of `12288` derived `28672` bytes while `12289` derived `3`, and at window `12000` a `max_tokens` of `7903` derived `3` bytes where `7904` derived `27664`. A larger window and a smaller reservation both made the skeptic worse off. One continuous derivation replaces both arms: the resolved output cap, capped at half the window's input room. Every window at or above `2 * reserved + 4096` tokens (`20480` at the built-in default) derives exactly what it derived before, byte for byte — which covers any roster whose declarations all sit at or above that boundary. This repository ships no registry, so that is a property of the formula, not a measurement of a shipped roster. **What the band below `20480` trades away, stated rather than implied:** the reservation there is the half-room cap, which is SMALLER than the agent's own resolved output cap — so the reservation is no longer an upper bound on the reply and the pre-existing overflow class SURVIVES below `20480`. At window `16384` the full `8192` would have fitted (leaving `4096` tokens for the read); the cap reserves `6144` and leaves `6144`, so tool input grows and the reply's funded room shrinks by `2048` tokens. This is the deliberate trade: below `2 * reserved + 4096` the window cannot host both a full-length reply and a usable read, and the alternative — reserving the full cap regardless — is exactly what derived the `3`-byte ceiling at window `12289` that the entry above removes. `skepticToolBudget`'s own doc comment carries the same caveat; this entry no longer files the change as a clean fix without it.
-- A declared `context_window_tokens` can no longer produce an UNBOUNDED skeptic tool loop. The previous fallback returned the declared `tool_budget_bytes` when no ceiling could be derived, which for the dominant roster shape (no declaration) is `0` — the value `internal/fanout/loop.go` reads as unlimited. A window at or below the prompt overhead with no declared budget now yields a 1-byte floor, and its trip marks the run `unverifiable` rather than letting a skeptic that read one byte hand the CI gate a live verdict.
-- A negative `tool_budget_bytes` on a programmatically built config is normalised at the top of the derivation instead of being propagated to a caller that has no defined reading for it.
-
-### Changed
-- `docs/registry.md` (both the `context_window_tokens` and `tool_budget_bytes` rows) and `docs/verification.md`'s "Per-finding budgets" bullet now describe the clamp the lane actually performs. Three corrections in each place where they applied: the output reservation is the agent's `max_tokens` **when declared, else** the built-in `8192` — a default, never a floor, so `max_tokens: 100` really does reserve `100`; the no-ceiling threshold is **at or below** the prompt overhead, not below it; and the half-room cap is named, including the part of its band that could have funded the full reservation and is capped anyway. The `context_window_tokens` row now cross-references the `tool_budget_bytes` row instead of restating the formula — two descriptions of one clamp is how the pair drifted apart in the first place.
-- `internal/reconcile/skeptic_budget_docs_test.go` asserts each load-bearing clause in **both** documents, and anchors one operand to `payload.DefaultOutputTokens` itself. The previous guard asserted three substrings that no reworded clause touched, which is why the sweep that corrected one document and left the other behind passed it clean; reverting either document alone, or the production constant, now fails.
-
-### Added
-- **A skeptic will no longer answer from a fragment.** The lane now refuses to install any derived tool ceiling below one real tool result (`payload.MinUsableReadBytes`, mirroring `tools.DefaultMaxResultBytes`): such a window takes the floor with `derived = false`, so its trip VOIDS the verdict instead of letting a confirmed/refuted formed from a sub-kilobyte view through reconcile's CI gate, and `invokeSkeptic` short-circuits before any provider request. Previously window `4097` derived **3 bytes** and still classified the ceiling as derived. In the same change the `ceiling <= 0` arm stopped honouring a declared `tool_budget_bytes`: it bounded the loop at a number the window cannot hold either way, while making the enforced ceiling swing ~350000x across one token of window (`4096` with `1<<20` declared enforced `1048576`; `4097` enforced `3`) and flipping the trip between voiding and preserving. **Every window below `31013` tokens is affected.** No claim is made here about where any roster sits: this repository ships no registry (only `examples/registry-*.yaml`), so an installation's exposure depends entirely on the windows its own `registry.yaml` declares — run `atcr doctor`, which warns across the whole affected band.
-- `atcr doctor` warns across that whole band, not just at-or-below-overhead windows. It asks `payload.WindowFundsAUsableRead` — the same policy the lane enforces, pinned equal across `1..40960` — so the warning cannot describe a narrower band than the code refuses, and it stands as its own hint above the point where the zero-budget verdict co-fires.
-- `truncated` on a finding's `verification` block (additive, `omitempty`, same shape as `challenge_survived`). A verdict reached from a shortened read now reaches the artifacts that read verdicts: `report.md` appends `(answered from a truncated read)` — on the main finding line AND in the collapsed Refuted section, which is where it matters most, since refuted is the verdict the gate excludes — and the reviewer's durable `survived_skeptic_rate` leaves such a verdict out of the ratio entirely, neither numerator nor denominator, rather than charging a partial read as a full-confidence one. Previously the fact reached `reconciled/verification.json` alone. **The report reads `truncated`; the score reads `trippedBudgets` in `reconciled/verification.json`** — the scorecard is emitted during `atcr reconcile`, which rebuilds `findings.json` from `sources/` and strips its `verification` blocks, so `verification.json` is the only verdict record still standing then. `atcr debate` now keeps the two in step on the findings it rules: a ruling that clears the caveat also clears the matching `tool_budget_bytes` entry **and writes the ruled verdict into that same record**, in the same atomic write — the caveat and the verdict describe one verdict, and clearing only the caveat would return the finding to the ratio under the verdict the judge had just replaced. Scoped deliberately to records whose caveat a ruling cleared: `runDebate` does not otherwise rewrite the verify snapshot's verdicts, so an overturned finding that never carried a `tool_budget_bytes` entry is still scored under its verify-stage verdict. **When EVERY verdict in a run is truncated the key is OMITTED, not published as `0.0`** — an all-truncated run leaves nothing to divide, and a published `0.0` is indistinguishable from a reviewer whose findings were all refuted, which is the strongest negative signal the metric carries. The same omission covers a reviewer whose findings drew no verdict at all.
-- The derived tool ceiling now bounds the FIRST turn's delivery, not only the second. `internal/fanout`'s byte-budget check is a deferred end-of-turn trip and a single tool result is capped separately at 64 KiB, so one turn could hand a small window far more than its whole ceiling before anything tripped; `invokeSkeptic` wraps the dispatcher per invocation to clamp cumulative tool content. Trip timing is unchanged — same turn, same trip — so only the delivered bytes differ. Holding that guarantee across real source text is what makes the clamp's cut round UP to the next rune boundary: the loop trips on `ToolBytes > ToolBudgetBytes`, strictly greater, so a cut that walked the offset DOWN to avoid splitting a multi-byte rune delivered fewer bytes than the allowance, left the comparison false, and delayed the trip by one provider round-trip. Rounding up overshoots by the 1–3 bytes that complete the straddling rune and keeps the trip on its turn.
-- `payload.InputRoomTokens`, so a caller sizing a reservation against what a window can fund reads the prompt overhead from the package that defines it rather than restating the constant.
-
-*Shipped via /execute-epic (epic 35.16.6.8.2.1)*
-
-## [35.16.6.8.2] - 2026-09-06
-
-*Epic 35.16.6.8.2 — post-review residue from epic 35.16.6.8.1: what a spaceless-script word boundary may and may not be evidence for.*
-
-### Fixed
-- A call name written straight after spaceless prose no longer produces a CONFIDENT path suggestion at a file that declares only its Latin tail. `配置ParseConfig()` is cut to `ParseConfig` by the word-boundary rule, and where the tree declares both the mixed name and the bare tail, the tail located exactly one file and the suggestion was stamped there — a wrong answer at the one seam nothing downstream can undo. Measured: that finding resolved to `internal/cfg/parse.go` before this release and now carries no suggestion at all. The finding itself is KEPT: the cut anchor is barred only from SOURCING a file, never removed from the presence check or the no-match arm, so barring one can never route a real finding out.
-- The anchor cap no longer evicts a name the reviewer backticked in favour of one recovered from a bare call shape. UTF-8 sorts every CJK-prefixed token after all ASCII, so the glued pseudo-token was always the first thing a lexical cap dropped; once the boundary rule rewrote it to its ASCII tail, the tail sorted to the FRONT and survived, pushing the lexically-last real anchor out. Measured: a finding backticking eight names alongside `在配置中调用ParseConfig()` resolved to the call's file before this release and resolves to the backticked `zLastThing`'s file now. Provenance decides only WHICH anchors survive — the returned set is still deduped and lexically sorted, and a finding naming one provenance class is capped exactly as before.
-
-### Added
-- `atcr_tier4_problem_anchor_imprecise_total`, for the primary resolution the barring withholds. That arm changes no field and renders identically to "could not check", to a no-match on a truncated set, and to the two FIX-side vetoes, so a counter is its only signal. Documented in `docs/metrics.md`, including the two things it is NOT: not a per-anchor count, and not the veto where the unnarrowed resolver refused on the same disagreement anyway.
-
-### Changed
-- A GLUED anchor and a BOUNDARY-CUT one are now recorded as different kinds of imprecision, and the two sides answer them differently. A glued token is the WHOLE run, so a file declaring it entire is evidence the reading was right — the PROBLEM side keeps letting it resolve, as `collectCallAnchors` has always promised for `データ_解析`. A boundary-cut token is a proper SUFFIX of a name whose prefix was destroyed, and a file declaring only that suffix is never such evidence. The FIX side bars both, because a FIX anchor only localizes a finding some primary anchor already matched, so barring one there can cost a suggestion and can never route a finding out.
-- A boundary break landing inside a QUALIFIER is no longer treated as a truncation. `调用cfg.ParseConfig()` breaks at the script boundary, but `cfg.` is discarded by the trailing-segment reduction either way, so the recorded `ParseConfig` is exactly the callee the reviewer wrote. An earlier cut of this work marked it imprecise and withheld a CORRECT suggestion on what is the most common shape in CJK review prose; the question is now asked of the recorded tokens rather than of where the break landed.
-- A barred PROBLEM anchor also VETOES a file the FIX set produced under a matched primary. Without it the barring merely swapped one confident answer for another: measured, a barred `ParseConfig` alongside a FIX naming `readTree` stamped `readTree`'s file where the unbarred call had stamped `ParseConfig`'s. A withheld suggestion is the intended outcome; a differently-wrong file is not.
-- **Accepted cost, disclosed:** the boundary rule fires on ANY accepted spaceless-script break, so ordinary CJK particle prose running into a bare (unqualified) call is barred too, not just genuine mixed names. `設定のParseConfig()` — where `の` is a grammatical particle and `ParseConfig` is unambiguously the callee — is cut to `ParseConfig` and withholds its suggestion, and `call 配置ParseConfig() instead` abandons the FIX anchor set whole. The narrower rule (bar only breaks whose destroyed prefix is itself identifier-plausible) is a design change deferred until measured; until then `atcr_tier4_problem_anchor_imprecise_total` will be dominated by correct-but-withheld CJK particle prose. The genuine-mixed-name harm the rule prevents — a confident suggestion at a file declaring only the tail — is the worse outcome, which is why the cost is accepted rather than reverted.
-
-*Shipped via /execute-epic (epic 35.16.6.8.2)*
-
-## [35.16.6.8.1.1.1] - 2026-09-06
-
-*Epic 35.16.6.8.1.1.1 — post-review residue from epic 35.16.6.8.1.1: anchor-set completeness and Tier-4 counter semantics.*
-
-### Added
-- A sixth Tier-4 counter, `atcr_tier4_fix_set_contradicted_total`, for the dropped-anchor veto. That arm produces a file and withholds it, returns "could not check", changes no field, and renders identically to two other outcomes — so it was the one remaining withhold path attributable only indirectly, through a counter (`atcr_tier4_fix_anchor_dropped_total`) that fires for every narrowing and therefore cannot isolate it. Documented in `docs/metrics.md`, written denial-first.
-
-### Fixed
-- A name the reviewer cited faithfully is no longer counted as an unknowable loss. A silenced span reported that what it destroyed was unknowable even when that exact name sat in the anchor set, cited in backticks two words earlier — so a CORRECT path suggestion (the subject's own file) was withheld and charged to telemetry as a loss. Measured: ``​`設定_a` is broken; pkg.設定_a() returns nil`` stamped `pkg/a.go` before the previous release and nothing after, with `atcr_tier4_problem_set_unaccounted_total` incrementing. The scan now records WHICH token each loss would have named and retracts the claim only for a token that was both cited cleanly and survives the anchor cap into the set the resolver is actually given — so a name the cap drops, and a glued re-reading of a name, still vouch for nothing. The same correction reaches the FIX side through the same field, so an intact precise anchor is no longer discarded alongside the silenced one.
-- `atcr_tier4_fix_set_unaccounted_total` no longer counts findings whose FIX never had an anchor set. The arm claimed a set was "abandoned whole" without the emptiness guard its sibling arm has always carried, so a FIX whose only span was a silenced one incremented an abandonment counter for an abandonment that could not have happened. Anyone summing the FIX-loss counters to estimate suggestions lost to anchor fidelity over-counted by exactly that population.
-
-### Changed
-- `atcr_tier4_problem_set_unaccounted_total`'s documentation named one of the arm's two producers and did not disclose that it undercounts. The arm reads a resolved outcome, and the resolver reaches that from the PROBLEM set AND from the FIX set under a matched primary, so the counter also fires when the PROBLEM set localized nothing. It is also a lower bound: when a finding's FIX is unaccounted too, the secondary branch cannot fire, the arm is never reached, and the counter stays flat although a suggestion was equally lost. Both corrections are now in `docs/metrics.md` and in the constant's own doc.
-- **Correction to the previous release's note:** that entry said `PathWarning` without a `PathSuggestion` conflated *three* distinct meanings. There were four — the dropped-anchor veto renders identically and was uncounted. The counter added there took the ambiguity from four to three, not to one; the veto counter added in this release closes the remaining gap.
-- `docs/metrics.md` and the constant docs now disclose the emptiness guard's exclusion, and a new drift test in `internal/reconcile/` reads the published catalog and fails when a counter constant has no row of its own, when the row's denial is not written first, or when its wording drifts from what the code does. The catalog is published for operators, so a row that over-claims misleads exactly the reader it exists for.
-
-*Shipped via /execute-epic (epic 35.16.6.8.1.1.1)*
-
-## [35.16.6.8.1.1] - 2026-09-05
-
-*Epic 35.16.6.8.1.1 — post-review residue from epic 35.16.6.8.1 rounds 4+5.*
-
-### Added
-- Four Tier-4 telemetry counters, so a suggestion that never landed is attributable after the fact instead of being indistinguishable from a FIX that named nothing: `atcr_tier4_fix_set_capped_total` and `atcr_tier4_fix_set_unaccounted_total` (the FIX anchor set abandoned whole, by the anchor cap or by a fidelity loss that left no member to repair), `atcr_tier4_fix_set_all_dropped_total` (abandoned whole because the imprecise narrowing removed its LAST member — previously counted as a single narrowed anchor, the opposite of what happened), and `atcr_tier4_fix_anchor_dropped_total` (individual anchors narrowed out of an otherwise usable set). All four are documented in `docs/metrics.md`.
-- A fifth Tier-4 counter, `atcr_tier4_problem_set_unaccounted_total`, the PROBLEM-side counterpart of the four above: it counts a path suggestion the resolver produced and the completeness check withheld, which was previously the one such arm with no durable signal at all. Also documented in `docs/metrics.md`.
-
-### Fixed
-- Fixed two Tier-4 anchor guards that tested the RAW text span while the anchor actually recorded is its trailing segment, so both asked their question of a string the search never uses. The two differ by exactly the runes that made the guards leak — a script-neutral rune the word break landed on, and a qualifier that gets stripped. Measured against the merged branch: `parseー_解析()` (U+30FC between the Latin prose and the underscore) escaped as the fragment `ー_解析`, and `parse._解析()` as `_解析`. A fragment is the one outcome nothing downstream can undo, because it can be CONFIDENTLY misattributed to whatever else declares that name — so a finding about one construct could be stamped with a path suggestion pointing at an unrelated file. Both now yield no anchor, and the loss is reported rather than passed off as a clean read.
-- Fixed the same guard's opposite error: a finding whose only underscore lived inside a qualifier that gets stripped was marked imprecise although not one returned anchor was imprecise. Measured: ``データ_モジュール.解析() is wrong, see `retryOnce` `` reported the set as unfaithful because of the `_` inside `データ_モジュール`, which is discarded, leaving `解析`, which contributes nothing. The effect was to refuse a no-match verdict on a set whose every member was a faithful reading — so a fabricated finding stayed in the report instead of being routed to `unresolved.json`, and escaped the scorecard's chargeable denominator. Such findings now route.
-- Fixed a FIX-side anchor loss that cost real findings their correct path suggestion. The secondary anchor set was discarded ENTIRELY whenever any single span in the FIX was imprecise, not only when the anchor cap had dropped anchors. Measured: a FIX naming `parseTree` alongside one genuine Japanese snake_case call (`データ_解析()`) resolved to the right file with the set and to nothing without it — one non-Latin name in a FIX discarded an intact, precise, ASCII sibling anchor. Only the anchors a fidelity loss actually touched are now dropped; the rest stand — and the dropped names ride along as VETO evidence rather than being discarded, so a narrowed-out name declared in a DIFFERENT file still withholds the suggestion. Dropping a member removes it from what may SOURCE an answer, not from what the FIX named.
-
-### Changed
-- A Tier-4 fidelity loss that leaves NO anchor behind — a span the scan declined to decide, or one whose token failed the identifier tests — now discards the FIX-side anchor set whole, the same as the anchor cap does, rather than keeping the remaining anchors. The anchors that remain are each faithful, but the resolver also refuses to answer when two precise anchors disagree, so its verdict needs the set to be complete as well as faithful, and the missing span is exactly the one whose answer is unknowable. Measured: a FIX of ``調用_ParseConfig() then `parseTree` `` produced a confident suggestion where the complete set would have refused on disagreement — the "a wrong guess at the wrong file is worse than no suggestion" rule the resolver states for itself.
-- Four guard clauses that survived deletion with the whole suite still green are now pinned by tests that fail when any is removed, so a later refactor cannot drop them silently: the leading-underscore predicate, the arm that abandons a FIX set whose glued token failed the shape test, the dropped-anchor veto's `declared in exactly one file` boundary, and the two disjuncts that make that veto withhold on an abandoned set. Each was re-confirmed alive before its test was written, and each verified dead after.
-- A narrowed-out FIX anchor now WITHHOLDS a path suggestion when it is declared in exactly one file other than the located one. The resolver already refuses when two precise anchors disagree, so its verdict needs the anchor set complete as well as faithful; discarding the narrowed-out names outright left it incomplete in exactly the way the abandon-whole arm exists to avoid. Measured: a FIX of ``call `parseTree` instead of データ_解析()`` with the two names declared in DIFFERENT files stamped a confident suggestion where the complete set refuses. A veto can only cost a suggestion, never route a finding out.
-- An anchor that a CLEAN span also contributed — a backticked or quoted citation, or an unglued call of the same name — is no longer treated as imprecise just because some other span in the same text glued it. The clean contribution is proof the name was read faithfully at least once, so only a token whose EVERY contribution came from a glued span is dropped. Previously an incidental glued call of a name the reviewer had also cited in backticks cost that citation its standing.
-- A silenced span is now judged a fidelity loss on the whole span NAME, not on the fragment the word break left behind, when the break dropped a spaceless-script prefix. Measured: ``the 設定_a() helper drops the error that `retryOnce` returns`` reported the extraction as a clean read while the searchable name `設定_a` had been destroyed, so a co-cited absent anchor could route a REAL finding to the unresolved sidecar and durably charge the reviewer for it. `버퍼_i()` and `解析_x()` are the same shape. A break that drops a SPACING-script prefix (`parse_解`) is unchanged — there the fragment is the right subject. The same widened loss flows into the FIX-side scan, which abandons its anchor set WHOLE on any unaccounted loss, so for this shape an intact, precise, ASCII sibling anchor is now discarded too and `atcr_tier4_fix_set_unaccounted_total` increments: measured, a FIX of ``call `parseTree` instead of 設定_a()`` yielded `parseTree` before and nothing after. That costs a correct path suggestion and is the safe direction — the abandoned FIX set can only leave a suggestion unstamped, never route a finding out, since the resolver's secondary branch cannot fire on an empty set and a matched primary anchor yields "could not check" rather than "checked and found nothing".
-- A confident path suggestion is now WITHHELD when the PROBLEM anchor set itself lost a member whose name is unknowable. The completeness argument already applied to the FIX set applies to the other set feeding the same lookup: measured, a PROBLEM naming `parse._解析()` alongside a backticked `readTree` pointed at `readTree`'s file for a finding whose subject is declared in `_解析`'s, where the complete set saw the two disagree and refused. Scoped to that loss and not to the anchor cap, which is disclosed in the code rather than folded in.
-- The two set-level FIX-loss counters are now independent rather than a first-match classification, so a finding that is BOTH past the anchor cap and carrying a silenced span increments both. `atcr_tier4_fix_set_unaccounted_total` had been a silent lower bound, while the `unavailable`/`incomplete` pair documented beside it both-increments on the same shape.
-- The widened silence gate above now fires on the QUALIFIED spelling of the same shape. Its full-span question was asked of the RAW backwards run, and the identifier run admits `.`, so the run walked back through the qualifier and the string tested was `pkg.設定_a` — which the identifier-shape test rejects on the `.`, clearing the loss for every qualified spelling of the very shape the gate was added for. Measured end-to-end against a tree declaring `設定_a`: the bare form kept the finding while the qualified form deleted a GENUINE finding from the primary report and durably charged it against the reviewer. The question is now asked of the trailing segment, the same reduction the fragment branch beside it already used, so the two halves of one guard no longer disagree about which string they mean. `obj.解析_x()` and `設定.設定_a()` are the same shape.
-- The withheld PROBLEM-side path suggestion above now emits a counter (`atcr_tier4_problem_set_unaccounted_total`). That arm had no signal of any kind — no counter, no reason field, no field change — so `PathWarning` without a `PathSuggestion` conflated three distinct meanings that render identically: "could not check", "checked and found nothing on a truncated set", and "resolved to exactly one file and withheld as untrustworthy". Documented in `docs/metrics.md` beside the four FIX-side counters.
-- Corrected three justification comments that named the anchor cap as the only reason an anchor set can be reported unfaithful, which had been false for two of the three paths that reach them since the previous release, and qualified the extractor's own contract to name the one unfaithful reading it does NOT report (a mixed-script name with no underscore, which truncates to its Latin tail).
-
-## [35.16.6.8.1] - 2026-09-03
-
-### Fixed
-- Fixed a Tier-4 lookup that treated two spellings of one identifier as two different symbols. Anchors and symbol-index keys are now folded to a single Unicode normalization form (NFC) on both sides, so a name written with a combining mark in the source (`cafe` + U+0301) and the precomposed spelling a reviewer emits (`café`) resolve to the same entry. Previously the byte-exact map lookup missed, and a real finding about a construct plainly in the tree was judged a no-match, deleted from the report, and durably charged to the reviewer as a phantom — an ordinary case in any Spanish, Portuguese, French, or Vietnamese codebase, and the case the alphabet widening below first made reachable. The same fold also stops one name declared in two files under two forms from splitting into two index keys of one file each, which had let a path suggestion be stamped as confident for a name that is actually declared in two places.
-- Fixed a Tier-4 index gap where a documentation sentence whose second word was written in a non-Latin numeral system (e.g. `export module ٣٤, see MyWidget`) was mistaken for a real declaration, letting every word on that line — including a fabricated symbol name — count as "named in the source" and license a confident path suggestion. The equivalent Latin-numeral sentence was already rejected; the two now agree.
-
-### Changed
-- Recorded, in the export-grammar contract itself, that the known prose gap it accepts is not limited to English sentences, and that the identifier alphabet was widened deliberately to recognize real non-Latin declarations. The disclosure quotes measured output so a future reader does not narrow the rule on a false premise.
-- The Tier-4 identifier alphabet was also WIDENED in three predicates, not only narrowed: the anchor-shape predicate now admits combining marks (Mn/Mc), the identifier-signal predicate now carries a lowercase run across uncased runes (digits as well as combining marks), and the export-grammar name class now admits letter-numbers (Nl), Other_ID_Start marks, and connector punctuation (Pc). The digit half changes behaviour in pure-ASCII codebases too, so a Go, TypeScript, or Python repo with no non-Latin identifiers anywhere is still affected: measured old-vs-new, `base64Encode`, `sha256Sum`, `utf8Reader`, `md5Hash`, `x509Cert`, `http2Server`, `oauth2Token`, `v2Config` and `iso8601Format` all now carry an identifier signal and contribute an anchor where they previously contributed none, so a finding citing one of them may resolve or route differently than in 35.16.6.8. The all-lowercase spellings (`base64encode`, `sha256sum`) still carry no signal.
-- Strengthened the export-grammar test suite so each keyword's permitted name forms are pinned as a whole value rather than one form at a time, closing three separate cases where an incorrect widening left the suite passing.
-
-*Shipped via /execute-epic (epic 35.16.6.8.1)*
-
-## [35.16.6.8] - 2026-09-02
-
-### Fixed
-- Fixed a Tier-4 content-check gap where a finding named only in a documentation file (e.g. `CHANGELOG.md`) could still receive a confident path suggestion, even though the shield that judges presence had already been narrowed to exclude doc-only mentions.
-- Fixed misclassification of `.mdx`/`.adoc`/`.rst`/`.txt` files in the Tier-4 index: a genuine code declaration inside a `.mdx` export block is now recognized, instead of being routed out as a phantom finding and durably charged against the reviewer's corroboration rate.
-- Fixed the index `state()` ordering so a run that both lost its parser and its declaration set now reports `incomplete` rather than the misleading `unavailable`, and corrected the published contract wording for all three affected surfaces.
-- Fixed a race window in the MCP `atcr_reconcile` tool where a concurrent reconcile run could rewrite the on-disk unresolved-findings sidecar mid-request, and documented the diagnostic fields the tool now reports.
-- Fixed scorecard era tracking so every emitted record (reviewer and aggregate) carries a consistent era classification, closing a gap where corroboration rates could silently blend pre- and post-epic denominator definitions.
-
-### Changed
-- Documented the `unresolved_reason` field (including `doc_shield`) and the `unresolved` state semantics across `docs/code-review-backend.md`, `docs/scorecard.md`, `docs/benchmark.md`, and the published `reconcile/` module's godoc.
-
-*Shipped via /execute-sprint (sprint 35.16.6.8)*
-
-## [Technical Debt] - 2026-09-01
-
-### Fixed
-- Corrected stale submission-envelope prose describing `checkPublishable`, the suite/case-id validators, and backfill counters so the comments match the code they document.
-- Corrected three stale comments in the taxonomy partition tests that misstated which file drives the partition and where sibling-file faults surface.
-- Corrected the rename-tripwire error message and its accompanying comment to state the actual two-arm condition, and removed an orphaned duplicate comment.
-- Corrected checkpoint/export prose across debt backfill, benchmark checkpoint, export, and leaderboard code to describe actual behavior instead of stale rationale.
-- Removed a "refused permanently" over-claim from the fold guard comment — export's refusal is temporary until the identity is corrected.
-
-## [35.16.6.7] - 2026-08-31
-
-### Fixed
-- **The `out-of-scope` exemption in the CATEGORY doc-drift guard now resolves from the constant, not from two literals that could disagree.** The guard that keeps `docs/findings-format.md`'s Group column honest against `reconcile/category.go` wrote the same exemption twice in two vocabularies — once by constant NAME in the block walk, once by string VALUE in the slice cross-check — and neither side resolved the actual constant, so the two halves could drift in both directions. Changing only `CategoryOutOfScope`'s value made the guard unsatisfiable, with an error whose stated remedy was a provable no-op; changing only its name opened a silent hole that let `out-of-scope` enter the partition while two documented invariants quietly became false. Both sides are now keyed on the constant's identity, and the routing value reaching the vocabulary under any other name is a loud error naming the constant that supplied it. The published `reconcile` module is untouched, and the partition it yields is byte-identical.
-- **The release-lag CI step asserts that its test actually ran.** It previously grepped for `no tests to run`, which covers a renamed or moved test but not a package stripped of its test files — `go test` prints `[no test files]` there and exits 0, so the annotation disarmed itself silently. The step now reads `go test -json` and requires a pass or skip Action for the test's exact name, which covers both cases and does not accept a rename that merely keeps the old name as a prefix.
-- **A `categories` slice fault no longer masquerades as a `category.go` block fault.** The whole-directory read is wrapped, so an unparseable sibling file or a missing slice is distinguishable at the doc-table assertion that surfaces it.
-
-### Changed
-- The remedy text a maintainer sees now names the requirement that actually clears the error — a parenthesized const block opened by a leading comment, in `category.go` specifically — and states the single exemption, so the documented `merge.go` precedent is not read as a general licence.
-- `docs/personas-authoring.md` no longer prints the same `CATEGORY vocabulary` link twice in one sentence.
-
-*Shipped via /execute-epic (epic 35.16.6.7)*
-
-## [35.16.6.6] - 2026-08-29
-
-### Added
-- **Producer-side publication gates for reviewer identity.** Epic 35.16.6.2 taught `atcr benchmark export` to reject a reviewer identity the public scrub cannot carry intact, but nothing stopped `atcr benchmark run` from *producing* one: the fold's scrub provably leaves control (Cc) and format (Cf) runes alone, so a soft hyphen (U+00AD) or zero-width space (U+200B) pasted into a registry `model:` reached a finished run-result that export then refused permanently — after the whole reviewer panel had been paid for. `benchmark run` now rejects such an identity **at load, before any reviewer is invoked**, across both roster lanes (`agents` and `serial_agents`), each agent's transitive `fallback` chain, and the agent name itself where it stands in for an empty `persona`. A second check at the fold catches the one source the load gate cannot see — a model id echoed back in the provider's own usage payload.
-- **`atcr leaderboard --export` applies the same control/format-rune rule.** It is the sibling producer into the same public envelope through the same scrub, so the "no invisible rune reaches the board" invariant now holds for both. The check runs on the records your filters actually select, so a stale record excluded by `--since` or `--model` cannot fail an export it was never part of.
-
-### Changed
-- **Each suite identity field now names itself in its own rejection message.** A bad `suite_version` was reported with "rename the suite in the suite manifest" — an action that does not fix the error and additionally invalidates any existing `--checkpoint`, discarding the paid work of every completed case. The `suite` and case-id messages are unchanged.
-- **`atcr debt backfill-justifications --dry-run` strips format runes from the `<shard>:<line>` locator.** The record id beside it was already escaped, but the shard — the field that literally names the line an in-place rewrite would overwrite — passed a bidi override straight through to the terminal. The rune is stripped rather than escaped so the locator stays one copy-pasteable token.
-
-### Fixed
-- `docs/benchmark.md` documented the pre-35.16.6.2 rules: the suite manifest field table listed only "Required, non-empty" for `suite`/`suite_version`, and the export section's "hand-assembly only" bullet gave a reason that does not hold for the printability rule. Both are corrected, and the three publishable-identity rules are now stated in full.
-- `docs/scorecard.md` now documents the `leaderboard --export` identity rejection, and states plainly which rules the two producers do and do not share.
-
-*Shipped via /execute-epic (epic 35.16.6.6)*
-
-## [35.16.6.5] - 2026-08-28
-
-### Added
-- **Content-based resolution for findings that cite a file which does not exist (Tier 4).** Epic 5.4 added three tiers that all match on the *filename string* — an exact basename elsewhere, a same-directory typo, a case-only difference — so a real issue attributed to a file with a *dissimilar* name had no signal to match on and stayed in the report unresolved. Tier 4 searches the tracked tree's actual content for the construct the finding's prose names, and promotes a single unambiguous hit to the same suggest-only `path_suggestion` field. `file` is never rewritten: a wrong guess is worse than no guess.
-- Anchor extraction is fully deterministic and involves no model call. Backtick spans, quoted spans and call shapes are read out of the `PROBLEM` and `FIX` text; identical text always yields an identical anchor set. A summarizing pass between the raw finding and the match is exactly where a fabricated finding could be paraphrased into something that matches, so there is none.
-- **`reconciled/unresolved.json`**, a new preserved sidecar. A finding whose cited file does not exist, for which no filename-level correction was found, and whose named constructs appear nowhere in the tracked tree is routed out of the primary stream into this file — excluded from `report.md` and from the `findings.json` the skeptic pass reads, counted by the new `unresolved_filtered` summary field, and never deleted. This follows the sidecar precedent the consensus filter already set, and required no change to the verification stage: the exclusion happens upstream at emit time.
-- `unresolved_filtered` on the published `reconcile` module's `Summary`, and a new "Findings excluded from the primary stream" section in `docs/code-review-backend.md` documenting both this filter and the pre-existing consensus filter for backend callers.
-
-### Changed
-- The Tier 4 index is built lazily and at most once per run, reusing the existing shared parser host and the existing `git ls-files` candidate list. A run whose findings all cite real files never touches the AST runtime. `ATCR_DISABLE_AST_GROUPING` disables Tier 4 exactly as it disables AST clustering, degrading to the Tier 1-3 behavior rather than erroring — and, with no search performed, routing nothing to the sidecar.
-
-### Fixed
-- Several paths by which a **real** finding could have been mistaken for a fabricated one and dropped from the report. A no-match verdict now additionally requires the named construct to be absent from the raw source text, not merely from the parser's declaration index — the Go parser names only function declarations, so every Go type, interface, const and var was otherwise invisible. A verdict is also withheld when the cited file has no parser language, when the finding's name came only from the proposed `FIX` (which names code that does not exist yet, by design), when the anchor set hit its size cap, when the cited path differs from a tracked file only by case, and when any eligible file could not be read. Two counters, `atcr_tier4_index_unavailable_total` and `atcr_tier4_index_incomplete_total`, make a silently degraded search visible rather than indistinguishable from a clean run.
-
-*Shipped via /execute-epic (epic 35.16.6.5)*
-
-## [35.16.6.4] - 2026-08-26
-
-### Added
-- **`docs/findings-format.md` now enumerates the closed CATEGORY vocabulary.** A new "CATEGORY vocabulary" section lists all 32 members in the offer order the reviewer prompt uses, each with the class of defect it labels, so a reader no longer has to open Go source to learn the member list. `out-of-scope` and `other` are marked as routing values rather than defect classes: `out-of-scope` is a reserved control token whose findings are annotated instead of promoted, and `other` is the escape hatch that keeps the set closed rather than lossy.
-- A drift guard (`internal/reconcile/findings_format_taxonomy_test.go`) pins that table to the in-tree `reconcile/category.go`, read from source — never to a duplicated literal list, and not to `reconcile.Categories()`, which is ambient (it resolves to the in-tree module under a local `go.work` and to the `go.mod` pin under `GOWORK=off`). Reading the source by path resolves identically in both environments, so adding, removing, or reordering a member without updating the table fails the adding PR's own CI run. A separate release-lag check in the same file reports — via `t.Skip`, because the lag is an expected release-window state rather than a defect — when the `go.mod` pin lags the tree.
-
-### Changed
-- The `CATEGORY` row of the Columns table now links to the full member list. Its "Not enforced at parse time" wording is unchanged — parse-boundary canonicalization remains epic 51.0.
-
-*Shipped via /execute-epic (epic 35.16.6.4)*
-
-## [35.16.6.2] - 2026-08-24
-
-### Added
-- **A benchmark submission now carries its own coverage.** The `benchmark export` envelope gained `suite_case_ids` (the suite's case list) and `reviewer_coverage` (the case ids each reviewer row scored), so a run published with `--allow-partial-coverage` is self-describing: a consumer joins a coverage row to its `reviewers[]` row by `(model, persona)` and compares its `case_ids` against `suite_case_ids` as a set. Previously a partial submission was indistinguishable from a full one on the board.
-- Export now rejects a run-result whose case ids do not survive publication intact — an id that scrubs to empty (it would publish as `""`), or two distinct ids that scrub to the same value (the published denominator would repeat an entry, making a short row read as fully covered). This mirrors the check already applied to reviewer identities.
-
-### Changed
-- **`submission_schema` is now `2`.** The constant is shared, so the production `leaderboard --export` envelope stamps the new number too — but its field set is **unchanged from version 1**: no field of `ExportEnvelope` or `PublicRecord` was added, renamed, retyped, or removed. The bump is additive-only on that producer, and `leaderboard --export --help` now says so.
-- The submission's coverage row is a **trimmed** projection: `model`, `persona`, `case_ids`. The run-result's `outcomes` tally and `fallback_cases` count remain run-result-only, keeping the public envelope allowlist-based.
-- `--allow-partial-coverage`'s warning and help text no longer claim the shortfall stays out of the submission — it no longer does. The gate still fails closed by default, because a short row remains *not comparable* to a full one even once it is visible.
-- Case ids in a submission pass the same privacy scrub as `persona`/`model`.
-
-### Fixed
-- `reviewer_coverage[].case_ids` is always an array in a published submission, never `null`, so consumers can decode it without a null branch.
-
-### Notes
-- **Board coordination is an open item.** This repository only ever *writes* submissions — it contains no ingestion or rendering code — so board acceptance of `submission_schema: 2` and tolerance of the two new keys cannot be verified here and must be confirmed by the board maintainers before version 2 submissions are published.
-- **A benchmark submission publishes case ids verbatim**, and case ids routinely encode repository identity (the bundled importer derives them as `<owner>-<repo>-pr-<number>`). Exporting from a private suite discloses those identifiers; `docs/scorecard.md` now documents this and scopes its "organization names are never exported" guarantee to the production envelope.
-
-*Shipped via /execute-epic (epic 35.16.6.2)*
-
-## [Technical Debt] - 2026-08-23
-
-### Fixed
-- Fixed justification/narrative excerpting to handle fenced code blocks correctly: dangling and unterminated fences no longer swallow or split content, crossed fenced quotes collapse to a single placeholder, and elision placeholders are never cut in half or fused with the truncation ellipsis.
-- Fixed excerpt-budget counting to use runes instead of bytes, preventing incorrect truncation on multi-byte content.
-- Fixed narrative matching to fall back to the next-best anchor when the best anchor yields no prose, and to suppress placeholder-only excerpts instead of treating them as real narrative.
-- Fixed section-block extraction to mask all fenced-content boundaries so a heading or bullet inside a fenced example no longer incorrectly bounds the narrative block.
-- Fixed the SCOPE CONSTRAINT block to be dropped with a warning, instead of silently blanked or mis-capped, under a zero agent budget, a run-level cap, a too-small `chunk_byte_budget`, and chunked `effective_budget` conditions; corrected misattribution of `chunk_byte_budget` vs. the agent's own budget in the drop warning.
-- Fixed `atcr doctor`'s zero-budget hint to report the cap `atcr review` actually resolves rather than the probe's cap, disclaiming the probe cap only when it genuinely differs, and to render review's cap even when the probe applied none.
-- Fixed `debt-resolve` justification checks to reject a dangling-fence-only or placeholder-only justification as a stand-in for `--reason`.
-- Fixed the benchmark scrub-collision message to name both raw identities and to distinguish version skew from hand-assembly as separate causes.
-- Fixed the vocabulary-ceiling check to be inclusive, matching its documented `>=` bound.
-- Hoisted the shared `DefaultOutputTokens` constant so the fan-out, doctor, and CLI output-cap defaults stay in sync.
-
-## [35.16.6.1] - 2026-08-17
-
-### Added
-- `reviewer_vocabulary` on the benchmark run result — the out-of-vocabulary rate broken down **per reviewer**, so the metric can finally name the model that drifted. The run-level scalar is micro-averaged, which is correct (drift is a property of the run's findings) but concealing: a reviewer raising 12 findings that all drifted, pooled against a peer raising 300 clean ones, reports `0.038` — under the ceiling, no warning, run reads clean. Each row carries `findings`, `drifted`, `rate`, and `routing_values`, and is positionally aligned with the matching `reviewers[]` row. Run-result-only: it is not carried into the public submission envelope, and `scorecard.PublicRecord` is unchanged.
-- `routing_values` per reviewer — a count of findings labelled `other` or `out-of-scope` — which makes the all-`other` blind spot legible for the first time. Both are taxonomy members, so a reviewer labelling everything `other` reports drift `0.0`, identical to one that categorized every finding precisely. `routing_values` equal to `findings`, alongside `rate 0.0` and a `corroboration_rate` of `0.0` on the aligned row, is that signature. The rate's own definition is deliberately unchanged: `other` is the escape hatch that makes the category set closed rather than lossy, so counting its correct use as drift would conflate two unrelated failures and strand the measured baseline.
-- `atcr benchmark run` now warns on stderr naming any reviewer whose own drift is at or above `0.50`, quoting `drifted/findings` so a small-n row is visibly small-n. The threshold is deliberately looser than the run-level ceiling rather than reusing it: only one valid run exists under this metric, so the spread between models is unmeasured, and a signal that fires on ordinary variation is one nobody reads.
-- `atcr review` now warns on stderr, naming the agents, when reviewers were **truncated (`finish_reason=length`) with zero surviving findings** and so contributed nothing to the pool. The tally has existed since Epic 19.5 but only ever reached `summary.json`, leaving a per-agent WARN line an operator had to go looking for as the sole console surface — a whole roster can truncate to nothing while the run reports success (observed 2026-08-14 across four models on one baseline scan). Deliberately not an exit-code change: failing a multi-hour run over a diagnostic discards the work it existed to produce. The warning names the input-budget tradeoff its own remedy carries — the output cap comes out of the same context window, so raising it shrinks the diff each reviewer sees, and a cap within 4096 tokens of the resolved window leaves no input budget at all.
-- **`chunk_byte_budget`** (registry and project tiers) — a byte budget that sizes a per-chunk payload independently of `payload_byte_budget`. One key was doing two jobs that want opposite values: it caps the concatenated payload, dropping whole files largest-first, **and** derived the per-chunk line budget. Lowering it to fit a small-window model therefore shed files no reviewer ever saw; raising it to keep those files grew every agent's chunks. Left unset it resolves to whatever `payload_byte_budget` resolved to — including a `--byte-budget` override, because the inheritance is applied after the CLI tier — so a config that never mentions it is sized exactly as before. `0` = unlimited; negative is rejected.
-- **`max_tokens`** as a per-agent registry field, plus **`atcr review --max-tokens`** as the run-wide override. The output cap was a hardcoded 8192 applied to every reviewer call, with no field, no config key and no flag, and one cap cannot serve both model classes: a thinking model spends output budget on chain-of-thought, finishes mid-reasoning, hits `finish_reason=length` with zero parsed findings, and is demoted by the truncation gate — so the lens contributes nothing while the run still reports success (observed 2026-08-14 across glm-5.2, minimax-m2.7, kimi-k3 and minimax-m3). Resolution mirrors `context_window_tokens`: flag → agent declaration → built-in default. Must be within `1..1000000`; an explicit `0` is rejected rather than treated as unset. Consumed by the review fan-out only — the skeptic, debate and executor lanes are unaffected.
-
-### Fixed
-- The **diff-wide byte-budget shed now reaches `status.json` on a successful chunked run**. The chunked strategy renders each chunk-slot with a neutral truncation on purpose (the shed is a whole-payload event, so a per-chunk copy would have every chunk claim files that never appeared in it), and the fact was carried alongside for the merge to promote — but no success-path result copied it, and the one site that did runs only after a slot's whole fallback chain has failed. A `StatusOK` slot returns earlier, so on the case an operator actually hits, `status.json` reported `truncated: false` with an empty `files_dropped` while whole files had been dropped (observed 2026-08-15: 40 of 73 files shed, reviewers saw a quarter of the diff, and the operator was told nothing). This contradicted `AgentStatus`' stated never-silent contract. The baseline `--all` / `--dir` chunked path never recorded the fact at all, and is fixed with it.
-- A persona that both re-packed a chunk and hit the diff-wide shed no longer reports an **incomplete `files_dropped`**. The re-pack record was written first and the diff-wide promotion is deliberately a fallback, so it declined to fill an already-populated record: `truncated: true` stayed honest while the list named only the re-pack's files and omitted the ones no reviewer ever saw. The two lists are now unioned.
-- `atcr doctor` probes each target at the **agent's declared `max_tokens`** rather than always at the `--max-tokens` default. An agent declaring `32000` was probed at `2048`, classified `ok_warning`, and told to "raise `--max-tokens`" — the cap it had already raised, and the hint the field was added to satisfy. An explicit `--max-tokens` still wins.
-- A reviewer's justification excerpt no longer **absorbs its neighbour's narrative**. Reviewer `review.md` files carry raw pipe-delimited finding records on consecutive lines with no blank separator, and the excerpt's block walk recognized only headings and list bullets as boundaries — so several records folded into one block and two findings anchored at different lines received byte-identical justification text, stamping one finding's reasoning onto an unrelated neighbour. Reproduced identically across two independent review runs. Reconciled output changes accordingly.
-- The **stale-review rejection now names a recovery path on both surfaces**: `atcr review --resume <id>` first (the cheap recovery, and CLI-only), then re-running from scratch via `atcr_review`, so an MCP client — which has no resume capability — is not left holding a CLI-only instruction. Visible to both CLI and MCP callers.
-
-### Changed
-- **`atcr doctor --max-tokens` now defaults to `8192`, up from `2048`** — the same default the review fan-out applies. *This changes what doctor reports:* an agent that declares no `max_tokens` was previously probed at a quarter of the budget `atcr review` uses, while the report still labelled the tier `default` as though the two agreed. That produced `ok_warning` on agents review runs fine, and acting on its remedy could make things worse, since the cap is reserved out of the context window. A probe is only evidence about the invocation it reproduces.
-- **An explicit `--max-tokens` now collapses agents that share an endpoint into a single doctor probe.** The override beats every declaration, so those agents make byte-identical calls; keying target identity on the declaration while probing at the override paid for one probe per declared cap. Against a quota-limited upstream the surplus calls returned 429, classified as `rate_limited`, and doctor exited 1 on a roster it had broken itself.
-- **A reviewer's justification excerpt no longer breaks on prose that merely looks like a finding row.** The block-boundary detector accepted a strict superset of what the findings parser treats as a record — indented or lowercase severities, a space before the pipe, degenerate rows with no location, and rows quoted inside a code fence. An ordinary markdown table whose data row began `High | …` truncated the excerpt mid-narrative, with no marker to show it, and `localdebt` persists that text into an append-only store whose id excludes it — so the first reconcile was the only one that could be right. The detector is now pinned against `stream.ParseModelOutput` itself.
-- **The baseline (`--all` / `--dir`) chunked path no longer reports delivered files as shed.** That branch partitions the pre-budget entry set through `PartitionByBudget`, which never drops, so every file the audit-text shed named is still reviewed across chunks — yet `status.json` claimed `truncated: true` and named them, which `reviewer_coverage` reads as `incomplete`. The git-range branch keeps its record: there the shed is real.
-- **The public-identity scrub is now idempotent.** It is applied by four layers on purpose, so scrubbing twice had to equal scrubbing once; it did not, and one reviewer could reach `reviewers[]` and `reviewer_coverage[]` under two different identities, breaking the positional join those arrays document.
-- **A benchmark reviewer that raised findings on a case whose payload was shed is now tallied `incomplete` rather than `findings` in `reviewer_coverage.outcomes`.** The diff-wide byte-budget shed now reaches `AgentStatus.Truncated` (see the first *Fixed* entry), and `Truncated` already outranks `findings` in the outcome ladder — so the new tally is the *correct* one, but a published run-result's outcome counts shift between versions and nothing flags it: the coverage sum check still balances either way. Compare tallies across versions with that in mind rather than reading the movement as a regression in reviewer completeness. Reachable only when the benchmark project config sets `review_strategy: chunked`.
-- **`on_overflow: fail` and `on_overflow: fallback` now hard-fail a zero-input-budget agent under `review_strategy: chunked`, as they already did under `bulk`.** *This is a behaviour change that can fail a run:* a configuration in which an agent's resolved window funds no input budget once its output cap and the fixed prompt overhead are reserved previously produced floor-sized chunks and completed; it now refuses before dispatch. Recording `degradation_action: overflow` while dispatching anyway is what made `on_overflow: fail` a no-op on that path — the two strategies must agree on *when* the policy fires, not only on what it does once it fires. The refusal names the agent, its resolved window, the output cap, and both declarations that can close the budget (`max_tokens`, `context_window_tokens`), because on a `--resume` it is the only signal the operator gets: the zero-budget warning is suppressed on that path, and an unwrapped policy sentinel left a review with intact artifacts looking unresumable for no stated reason.
-- **`MaxOutOfVocabularyRate` tightened from `0.20` to `0.05`**, derived from measurement rather than estimate. The V1 post-merge validation run measured `0.0100` (2 drifted findings of 201); `0.05` keeps five times that headroom. `0.20` had bought room for the words `reconcile`'s merge table treats as meaning a taxonomy member without being one — V1 emitted **zero** of those and **zero** separator/hyphenation variants, retiring that justification entirely. The ceiling still moves one way only: tightened when a further valid run supports it, never loosened because a run failed. It keeps real headroom rather than hugging `0.0100` because n = 1.
-- The out-of-vocabulary documentation now records that this metric is at least as much a **parser-health proxy** as a vocabulary-health one: both of V1's residual drift findings were findings-parser artifacts (body text and bare integers landing in the category field), not models ignoring their prompt. Diagnose a breach by inspecting the emitted words before rewriting a persona.
-- The two boundary fixtures were re-derived (`1/21` and `1/20`) to straddle the new ceiling, preserving their neighbour-pair design — they still differ by exactly one in-vocabulary finding, now pinned by an assertion so a future re-derivation cannot widen the gap into a test any sloppy comparison would satisfy.
-- **`atcr benchmark export` now validates the reviewer identity it will actually publish**, not the raw one. The gate checked `model`/`persona` before the privacy scrub while `BuildSubmission` serializes them after it, so an identity that is non-empty in the file but scrubs away was published as `"model": ""` — the state the gate exists to prevent. Reachable because the scrub now iterates to a fixed point: one pass can expose a match for an earlier rule, so `bedrock@us-east-1/claude` loses its email-shaped prefix to leave `/claude`, which the next pass reads as an absolute path. *This rejects files that previously exported*, which is the point — nothing downstream caught it either, since coverage joins on the scrubbed identity and `("", persona)` matched on both sides. The message names the pre-scrub string, since the scrubbed one is empty by construction.
-- **The `reviewer_vocabulary` rate check no longer rejects the two-decimal rounding it exists to admit.** The bound was compared with a strict `>`, and a two-decimal rounding's worst case is an error of exactly the tolerance, which in float64 lands a few ULP above it — so for an eighth denominator *both* available values were rejected and `findings: 8` (the value in this doc's own canonical example) had no legal hand-authored rate at all. The bound is now inclusive. Its rationale is also corrected: the margin holds at small denominators only, and past ~200 findings a row off by a whole finding is admitted — stated rather than implied, since the array gates nothing and never reaches the submission envelope.
-- **`atcr doctor` now warns when an agent's resolved output cap leaves it no input budget.** doctor is the only surface holding both the resolved window and the resolved cap; it printed them side by side and never compared them, so an agent whose own `max_tokens` closes its budget reported `ok` at exit 0 while `atcr review` would ship only the smallest single file or refuse the run outright under `on_overflow` `fail`/`fallback`. At the 32768 default window that is any cap at or above 28672. The probe cannot see this — the marker prompt is trivial and succeeds at any cap — so the verdict is derived from the two numbers. Where the marker is *also* absent, the new hint replaces the old "raise `max_tokens`" advice, which deepens exactly this failure. Rows that already fail (`auth_failed`, `missing_key`) are untouched.
-
-### Fixed (post-review)
-- A **resumed** review's `summary.json` now carries `fallback_count`. `RebuildPool` is its sole writer on that path and never tallied `fallback_used`, so a resumed run published `"fallback_count": 0` beside its own `agents[].fallback_used: true`. The field is deliberately never `omitempty` so a `0` reads as a measurement, which made this a false number rather than a missing one. The asymmetry was introduced with the truncated-to-zero tally, which was added to the rebuild while its documented sibling was left behind.
-- `summary.json` on the **resume** path now emits `"files_dropped": []` and `"agents": []` where it previously emitted `null`. `RebuildPool` reloads statuses from disk without the nil→empty normalization `statusFor` applies, so one artifact called the shed list *unmeasured* while its neighbour called it *measured and empty*. Consumers that distinguish `null` from `[]` will see the shape change.
-- The **truncated-to-zero warning now writes through the injected logger** rather than `os.Stderr`, so an embedded `cli.MainWithHooks(ctx, stdout, stderr, hooks)` caller receives it alongside every other diagnostic for the first time. The trade is deliberate: a context carrying no logger discards the line, which is correct, since every production entry point installs one and a caller that supplied none asked for no output.
-
-### Added (post-review)
-- `resolved_max_tokens` on each agent's `status.json` / `summary.json` sizing record — the output cap the agent resolved to, present on every sized record. Its neighbour `reserved_output_tokens` reports what the budget could actually *fund*, so it is `0` on the zero-budget arm: the one record where the cap **caused** the degradation was the one record that never named it, and nothing else on disk carries it (`payload.Manifest` records `max_parallel` and `timeout_secs` but no cap, and `--max-tokens` is re-resolved from live config on a resume). Read the two together — equal means the reservation was funded; a cap with no reservation means the window could not fund it, and names the number to lower. Absent on an unsized agent, like its siblings, and absent on a merged multi-chunk record whose promoted budget is zero: that budget is an aggregate across chunks, so naming any one chunk's cap there would point at a number that closed nothing.
-
-## [Technical Debt] - 2026-08-14
-
-### Fixed
-- Benchmark outcome classification now treats a payload-truncated reviewer as incomplete rather than clean, matching how a chunked reviewer with unreviewed bins is already classified — a reviewer whose input was cut short by either route no longer reports a false "reviewed everything, found nothing" signal.
-- Pinned regression coverage for `BuildEntriesFromDiff`'s handling of duplicate-path diff entries against its existing dedup logic.
-
-## [35.16.5.4] - 2026-08-12
-
-### Fixed
-- A fallback reviewer whose own context window cannot hold the payload its primary was sized for now **re-packs that payload against its own byte budget** under `on_overflow: truncate`, instead of shipping a prompt it provably cannot hold. Previously the run warned and dispatched anyway: a declared-128000 primary paired with an undeclared 32768 backup handed that backup a ~405 KB prompt. The re-fit records its own `truncation`, `effective_budget`, `chunk_count: 1`, and `degradation_action: truncate`.
-- Baseline coverage now attributes reviewed files to the agent that **actually served** the slot rather than unconditionally to its primary. This is what makes the re-fit safe: an oversized prompt fails loudly at the provider, but a falsified coverage tag is silent — `CommitBaselineIndex` records the shed files as reviewed and the next incremental scan skips them, so a file nothing ever read is never read again. Both decision points were closed, including the all-succeeded short-circuit, which is the one that fires in practice (a slot served by a successful fallback reports `StatusOK`, so a re-packed fallback produces an all-OK run).
-- A re-packed chunk's degradation record now survives the per-persona chunk merge. The merge inherited its record from the first chunk, so a re-fit on any later chunk was invisible in `status.json` — the persona presented as a clean full-coverage review while a substitute had reviewed strictly less than it was sent.
-- A re-fit never keeps a **zero-byte** file as its surviving entry. Empty tracked files are ordinary (`py.typed`, `__init__.py`, `.gitkeep`), and a plain "fewest bytes" rule selected one every time, shipping a 0-byte payload that comes back as a false-clean "no findings" review.
-- A re-fit that shrank the payload but still cannot reach its budget records `degradation_action: overflow`, not `truncate`, and keeps its stderr warning. Claiming a successful truncate there would drop the only signal saying the review may not have been read in full, precisely when the reviewer is worst off.
-- The promoted `effective_budget` on a merged multi-chunk record is now documented as what it is — the tightest budget any *re-packed* payload was sized to, an aggregate across chunks — and is explicitly contained there. `resolved_window` and `reserved_output_tokens` stay with the `model` named on the same record, since `resolved_window` is derivable from it; promoting them to "match" the aggregate would pair one chunk's model with another agent's window.
-- A shed record can no longer claim files were dropped while naming none. The "keep one file" arms excluded the survivor by PATH, so a payload carrying two entries with the same path (a concatenated diff) recorded `truncated: true` with an empty `files_dropped`, which also suppressed the truncation promotion in the chunk merge.
-
-### Changed
-- `docs/registry.md`'s `on_overflow` row distinguishes `truncate` (re-fits an overflowing fallback) from `chunk` (still warns and ships), and names the one path that cannot re-fit: `review_strategy: chunked` diff chunks are split by text on diff boundaries and carry no per-file list to re-pack, so they keep the pre-existing warn-and-ship behavior. It also no longer claims `effective_budget` is always 0 on the overflow arm — that holds only when the backup's window funds no input budget at all, so a present `effective_budget` does not rule the arm out.
-
-*Shipped via /execute-epic (epic 35.16.5.4)*
-
-## [35.16.5.2] - 2026-08-12
-
-### Fixed
-- `atcr benchmark run` no longer misattributes a failed-over lane's cases to the model that did not serve them. The score accumulator is now keyed on the **realized `(model, persona)` pair** rather than the lane, so a lane whose primary exhausts its provider quota mid-suite emits one row per model actually used, each carrying only the cases it served. This was a live data-integrity defect at exactly the point the public leaderboard consumes: epic 35.16.5.3's Run B credited `qwen3.8-max` with all 17 cases when `llm-large` had served 9 of them. Every quota-limited primary in the registry ships with a cross-provider fallback by design, so this was the routine outcome of a long run, not an exceptional one.
-- A case that **failed after its slot had already failed over** is attributed to the fallback model that attempted it rather than to the configured primary. `fanout` stamps the usage-reported model only when tokens were returned, so a failed call previously resolved to the registry's primary — a model which by definition did not serve that case.
-
-### Added
-- Per-row case coverage on the run-result: `suite_case_ids` (the suite's case list, recorded once) and `reviewer_coverage` (the case ids each reviewer row actually scored, plus its outcome tally). `runs` is a count, not a set, and case difficulty varies enormously across the suite, so a recall computed over one 8-case subset is not comparable to one computed over a different 8 — and splitting rows by realized model makes uneven coverage the normal case.
-- `atcr benchmark export` refuses by default to publish a run-result whose reviewer rows do not each cover the full suite, naming every short row and its shortfall. `--allow-partial-coverage` overrides it with a stderr warning. Coverage is chosen over "degradation" as the gate deliberately: flagging any failover as degraded would mark most real runs and train operators to pass the override reflexively.
-- The export gate also rejects coverage payloads that `atcr benchmark run` cannot produce — a duplicate `(model, persona)` identity, a reviewer row with no coverage row, a `runs` disagreeing with its covered case count, a repeated case id within a row, or a case id absent from the suite. Each indicates a hand-assembled file, and the first would otherwise let a full row mask a short one of the same identity.
-- A per-case reviewer **outcome** (`findings` / `clean` / `unparseable` / `truncated` / `failed` / `unknown`), persisted in the checkpoint and tallied per row. A zero-finding result was previously ambiguous: a reviewer that read the diff and correctly found nothing, one that emitted prose no parser could use, and one whose call failed all raised zero categories and scored identically. The signal was never missing — `fanout` computed it and the benchmark discarded it before scoring.
-- Epic 35.16.5.3's Run B checkpoint is committed as a test fixture (`internal/benchmark/testdata/run-b.ckpt.json`). Its original home is gitignored and so could not serve as CI evidence; 35.16.5.3 had to reconstruct its entire before-side from prose in a code review because the preceding dry-run's output was never kept. The fixture pins all four realized rows (`qwen3.8-max` 8, `llm-large` 9, `kimi-k3` 16, `kimi-k3-256k` 1 — a **second** failover the epic's own acceptance criteria did not record) and the resulting export rejection.
-
-### Changed
-- The reviewer outcome is a string enum rather than a pair of booleans, and absence is the empty string. Two booleans would both default to `false`, so a checkpoint written before the field existed would replay its zero-finding cases as "reviewed and found nothing" — inventing the very claim this change removes. A pre-existing checkpoint replays as `unknown`, pinned against the committed Run B fixture rather than asserted in prose.
-- `scorecard.PublicRecord` and the `benchmark.Submission` envelope are **unchanged**. Coverage lives on the run-result only: `PublicRecord` is shared byte-for-byte with production `leaderboard --export`, and adding a key to the submission envelope would require bumping `submission_schema`, a constant the production exporter also stamps. A consequence is recorded as technical debt — an opted-out partial submission is not self-describing to the board.
-
-### Note
-- Reviewer rows for a run with no failover are byte-identical to the previous scorer, and every existing score and resume fixture passes unmodified. The run-result *document* is not byte-identical: it gains the two coverage keys.
-
-*Shipped via /execute-epic (epic 35.16.5.2)*
-
-## [35.16.5.1] - 2026-08-10
-
-### Added
-- Per-agent `context_window_tokens` in the registry, declaring a model's real context window in tokens. Resolution order is **agent declaration → static model table → the `32768` default**, so a roster that reaches models through bare proxy aliases (`glm-5.2`, `kimi-k3`) is no longer sized as if every agent had a 32,768-token window. Those aliases match no key in the static table — whose keys are provider-qualified ids like `deepseek/deepseek-v4-pro` — so the entire roster silently resolved the conservative default, an under-fill of up to 30×. The table itself gains no proxy-local alias: those names are machine-specific and meaningless to any other user, so the truth belongs in that user's own registry. Declaration, not detection — no network call enters window resolution, matching the precedent set by `supports_function_calling`.
-- Validation of the new field within `1..10000000` (`ContextWindowTokensCap`), rejected at load with an error naming both the field and the file that defined the agent. The ceiling deliberately does not reuse `max_context_lines`' 1,000,000: the static table already resolves exactly 1,000,000 for the Gemini entries, so that ceiling would leave the declaration tier unable to exceed the tier it exists to override.
-
-### Changed
-- `ContextWindowTokens`, `EffectiveByteBudget`, and `ChunkMaxLines` accept a declared window, and the review fan-out threads each agent's own declaration through every one of its nine window/budget resolutions. Both consumers that matter are covered: the payload byte budget **and** the chunked per-chunk line budget, which rises from ≈1,493 lines to ≈8,437 at a `128000` declaration. Updating only the sizing record would have made `status.json` report the declared window while every budget still sized against 32,768.
-- A fallback agent now warns before dispatch, and records an `overflow` degradation, when its own effective budget is smaller than the budget its inherited prompt was sized to. A fallback reviews its primary's already-rendered payload, so a declared primary can hand a smaller backup a payload it cannot hold; the fallback resolves its own window rather than inheriting the primary's, but the payload it receives was still sized elsewhere.
-
-### Fixed
-- `docs/registry.md` documents the new field — default, range, no CLI override, resolution order, and an explicit warning to declare `min(model window, proxy ceiling)` rather than the model's published spec, because a request-body guardrail in front of a model surfaces an over-large payload as an opaque HTTP 400 with no hint that size was the cause. The `max_context_lines` row's derivation formula and three code comments falsified by the widened signature were corrected alongside it.
-
-*Shipped via /execute-epic (epic 35.16.5.1)*
-
-## [35.16.5] - 2026-08-10
-
-### Added
-- Equivalence-class matching in the benchmark scorer: a coarse expected category is now satisfied by any member of the ATCR family it spans, so a reviewer that writes `style` for a planted `maintainability` defect is credited for detecting it. Previously the scorer compared by exact string equality, and aacr-bench's single upstream "Maintainability and Readability" label could only ever be satisfied by the literal word `maintainability` — recall measured vocabulary agreement rather than detection ability. The families are the steering set `reconcile/category.go` names for each coarse word and nothing wider; they are scorer-side only and merge no product category.
-- `out_of_vocabulary_rate` on the benchmark run result — the share of a run's findings whose category is not a member of the closed reviewer vocabulary. Nothing previously measured model drift away from the enumeration: a reviewer that invents its own words quietly zeroes its own recall, and the resulting low score is indistinguishable from one that simply found less. The key is absent (never `0.0`) for a run that raised nothing, so unmeasured and clean stay distinguishable.
-- `MaxOutOfVocabularyRate` (0.20) plus four committed scorer-input fixtures, including a neighbouring boundary pair, so the ceiling is proven to fail as well as to pass.
-- `atcr benchmark run` now warns on stderr when a run's measured `out_of_vocabulary_rate` is at or above the ceiling, naming both the ceiling and the measured value. The constant previously had no non-test consumer: a run measuring 0.72 drift wrote the number to JSON and exited 0 silently, and `--output <path>` prints nothing to stdout, so the documented resumable invocation gave the operator no signal at all. Deliberately a warning and not an exit code — failing a multi-hour validation run at the end over a diagnostic would discard the work the run existed to produce.
-
-### Changed
-- The bundled-suite vocabulary guard now asserts membership against `reconcile.Categories()` directly instead of scraping an allowlist out of the persona prompts. The old guard was inert in two independent ways: its regex matched the `_base.md` phrasing rather than the "CATEGORY is **one** lowercase word" every shipped persona uses, so it extracted nothing, and an "extracted no vocabulary" branch turned that miss into a pass. Verified by mutation — a suite planting a non-taxonomy category passed the old guard and fails the new one.
-- The cost-per-corroborated denominator resolves through the same equivalence relation as recall, so the two never disagree about what counts as a match. Widening only recall would have left a reviewer with perfect recall publishing `cost_per_corroborated_finding_usd` as omitted — the encoding reserved exclusively for a priced reviewer that matched nothing.
-
-### Fixed
-- `docs/benchmark.md`'s scoring table described exact category matching and documented no out-of-vocabulary diagnostic, so every number a run emits would have been mis-read.
-
-*Shipped via /execute-epic (epic 35.16.5)*
-
-## [35.16.4] - 2026-08-09
-
-### Added
-- Closed reviewer CATEGORY vocabulary as an exported, ordered constant in the public `reconcile` module (`reconcile.Categories`, plus `Category*` constants), derived from three sources: the categories the 35.16.2 benchmark dry-run actually emitted, each persona's declared Focus list, and the 14 category words bound in code by the community persona roster.
-- Disambiguation guidance in the injected prompt for the six confusable member pairs (`race`/`concurrency`, `contract`/`api-contract`, `resource-leak`/`leak`, `input-validation`/`validation`, `secret`/`security`, `correctness`/`logic`), so keeping the distinctions does not just relocate the drift.
-- Render tests asserting every vocabulary member reaches the prompt in every payload mode, that the rendered enumeration tracks `reconcile.Categories()`, and a locked-set test so removing any member fails.
-
-### Changed
-- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` rather than written into any persona file, so adding a member reaches every prompt — including the 5 installed outside the repo — with no prompt edit. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary. Injection does not by itself keep the prompt files consistent: `personas/_base.md:44` still carries a six-word literal list, and the worked examples in `personas/ingrid.md`, `penny.md` and `sasha.md` demonstrated non-member words until a follow-up corrected them.
-- `out-of-scope` is now presented to reviewers as a routing value rather than an ordinary defect class.
-- Bumped the `github.com/samestrin/atcr/reconcile` dependency to v0.6.0 — cut from this branch's tip so the pin bump rides the same PR and the merged branch never runs the old library (see [`docs/release-process.md`](docs/release-process.md#where-the-tag-is-cut-from-the-branch-tip-not-main)). v0.6.0 adds the exported `CategoryMerges()` accessor and the widened consensus-filter exemption below; nothing was removed.
-
-### Fixed
-- Removed a duplicate `"security"` literal in `reconcile/consensus.go`, which now uses the vocabulary constant.
-- Corrected the `scope:` example in `docs/registry.md`, which demonstrated a category outside the vocabulary.
-- `secret` and `input-validation` are now exempt from the consensus filter alongside `security`. The disambiguation rule steers credential findings to `secret` and injection findings to `input-validation`, so without this a MEDIUM/LOW single-reviewer credential finding became a drop candidate where it previously survived — a behavior change produced entirely by the prompt. It reaches the `atcr` binary in this release: the `reconcile/v0.6.0` tag and the pin bump to it both ride this PR.
-- Agent `scope:` entries outside the closed vocabulary now warn at registry load, naming the nearest member, and the rendered focus block states that scope entries are focus areas rather than CATEGORY values. The block is appended last in the prompt, so an off-vocabulary entry previously ended the prompt by naming a word the prompt had declared illegal.
-
-- The PR-time `reconcile-module` CI job now runs `gofmt`, `golangci-lint` and `go test -race` — the same three checks as the release gate, where it previously ran `go test` alone. Neither root CI job crosses the nested `go.mod` boundary, so lint on `./reconcile` effectively ran only after merge: a deprecated `parser.ParseDir` call added in this epic passed PR CI and was caught only by running the gate by hand before tagging. Measured, the skipped checks cost ~2s. Both workflows now carry reciprocal `mirrors:` comments so the check sets stay in lockstep.
-- **The three wasm parser modules that had no CI at all now have it.** An audit of every nested `go.mod` found `internal/astgroup/parsers/src/{goparser,pyparser,guestabi}` covered by nothing — root `go test`/`golangci-lint` do not cross their module boundaries, and only `braceparser` had a job (tests only). A source change that failed to compile for `wasip1` was caught by nothing until someone ran `parsers/build.sh` by hand. The `braceparser-module` job is replaced by `parser-modules`, covering all four with `gofmt`, `go vet`, a `wasip1/wasm` build (braceparser across all 8 language build tags, since `active` is selected at compile time), `go test` where tests exist, and `golangci-lint` on the three that are lint-clean. Runs in ~4s.
-- `.githooks/pre-push` now mirrors both nested-module jobs instead of only claiming to: it adds reconcile's `gofmt` + `golangci-lint`, the parser-module checks (skipped with a message on a pre-1.26 toolchain), and a `GOWORK=off go build ./...` pin check — a local `go.work` resolves `reconcile` from the working tree and hides the `go.mod` pin, so root code could compile locally against an unreleased symbol and fail only in CI.
-
-### Documentation
-- [`docs/release-process.md`](docs/release-process.md) now states that merging a `reconcile/` change does not ship it — the root module consumes the nested module through the Go proxy at the pinned version, so a behavioral fix stays inert until a `reconcile/vX.Y.Z` tag is cut *and* the root pin is bumped.
-- Documented that the PR-time job and the release gate run an identical check set on purpose, why that matters for a nested module root CI cannot see, and that adding a check to one without the other produces a defect that merges clean and surfaces mid-release rather than a stricter release.
-- [`docs/architecture.md`](docs/architecture.md) carries both points where the standalone library is introduced, so they are visible before someone edits `reconcile/` rather than at release time.
-- Documented the local `go.work` trap in [`docs/release-process.md`](docs/release-process.md): the workspace resolves `reconcile` from the working tree rather than the pinned version, so a local build proves nothing about the pin, and commands run inside the parser modules need `GOWORK=off` because the workspace does not list them.
-
-*Shipped via /execute-epic (epic 35.16.4)*
-
-## [35.16.3] - 2026-08-09
-
-### Added
-
-- **OS-level sandbox backend (`internal/sandbox`) — a config-gated alternative to `--no-sandbox` for `--auto-fix` validation and `--exec`.** Wraps native process confinement instead of a container: `sandbox-exec` on macOS, `bwrap` (Bubblewrap, namespace-based mount/network/PID isolation) on Linux. Opt in with `sandbox.fallback: os-level` in `.atcr/config.yaml`; it engages only when Docker's preflight has already failed and never as a first-choice backend while Docker is healthy. With `fallback` unset, behavior is byte-identical to before this sprint — a Docker preflight failure remains a hard refusal, and `--no-sandbox` remains the only way to run validation fully unsandboxed.
-- **Deny-by-default sandbox profile generation.** Both platforms generate a strict runtime profile scoped to the project directory (or its writable scratch copy) and `/tmp`: no outbound network egress, no read access to `$HOME` (so `~/.ssh` stays unreadable), and a narrow read-only allowlist for the host toolchain needed to execute at all. Proven with real kernel-level containment tests on both platforms (blocked write outside allowed dirs, blocked network egress) — executed on real macOS and Linux hosts, not merely unit-tested for shape.
-- **`Writable: true` support for the OS-level backend**, so `--auto-fix` (which always validates against a writable copy) can use the fallback, not just read-only `--exec` reproduction. The writable copy is made host-side, in Go, before the sandboxed process spawns — bounded in size/entry count and refuses to traverse a symlink out of the snapshot.
-- **Explicit "neither backend usable" warning**, surfaced identically from both `ResolveExecBackend` and `ResolveAutoFixSandbox` when Docker's preflight fails and the OS-level fallback (if configured) also fails its own preflight — never a silent, partial, or implicit success.
-- `docs/auto-fix.md` documents the new `sandbox.fallback: os-level` field, what it engages under, and what its containment guarantees give up relative to the Docker backend (no resource caps, no image, host toolchain only, no automatic Go module cache warming). `docs/execution.md`'s "Docker is the only implementation today" claim is corrected.
-
-### Fixed
-
-- **Sandboxed child processes now get a sanitized `PATH`** instead of inheriting the operator's verbatim — an empty `PATH` element resolves to the current directory, which is the reviewed repository under the sandbox, so a repo could otherwise supply the `go`/`npm`/etc. binary that runs the trusted validate command. Legitimate group-writable toolchain directories (e.g. Homebrew's `/opt/homebrew/bin`) are still accepted.
-- **URL-embedded credentials are scrubbed unconditionally by the log redactor**, closing a gap where a credential embedded in a logged URL survived the base redaction pass.
-- **The `--exec` snapshot gate now checks the actual directory a dirty-worktree run executes in** (the detached temp-snapshot copy), not just the repo root — closing a case where the gate validated one directory while the run used another.
-- **The os-level fallback no longer engages on a Docker *configuration* fault** (as opposed to a genuine unreachable-daemon preflight failure) — config faults now refuse the run rather than silently downgrading to a weaker backend.
-- **The fallback-engaged warning is deferred until the caller's own gates accept the run**, instead of firing before it's known whether the run will actually proceed.
-- A dedicated review-scoped redactor is now installed on the standalone `atcr verify` context, so it no longer logs absolute repository paths unredacted.
-
-### Changed
-
+- *Epic 35.16.11.1 — standard toon output migration.* (epic 35.25.0)
+- `--axi` output is now canonical, specification-compliant TOON encoded by `go-axi` v0.3.1, readable by any off-the-shelf TOON decoder. The old pipe-delimited form stays available as a deprecated fallback. (epic 35.25.0)
+- `atcr report --format axi`, `atcr review --axi` and `atcr --axi` emit standard comma-delimited TOON (`findings[N]{...}:`) instead of the pipe variant (`findings[N|]{...}:`). Code fields carrying `|`, `||`, quotes, or newlines now survive a stock decode verbatim (fields of at most 500 runes). (epic 35.25.0)
+- On the standard path, a truncated findings payload's header `N` now equals the rows emitted, so it still decodes; the true count moved to the `total` line. The legacy pipe path keeps its old contract byte-for-byte. (epic 35.25.0)
+- Control-byte stripping on the standard path now uses go-axi's sanitizer (invalid UTF-8 is dropped); the hand-rolled `toonQuote`/`toonEscape`/`isTOONControl` encoder is gone. The legacy path keeps its own helper, which still writes U+FFFD for invalid UTF-8. (epic 35.25.0)
+- `--legacy-pipe` without `--axi` is now a usage error (exit 2). (epic 35.25.0)
+- The pool summary now records the model on every completed slot, whether or not the provider reported token usage, so per-model trust scoring no longer leaves those personas permanently neutral. (epic 35.25.0)
+- *Sprint 36.0 — durable lens authority scoring.* (epic 35.24.0)
+- Trust scoring now accounts for outcome eligibility state: a truncated or timeouts-out reviewer that raised findings is not penalized for silent cases that were never shown to it. (epic 35.24.0)
+- Per-model trust scoring on each reconcile path, reading personas' models from pool-summary configuration rather than deriving from runtime agents. (epic 35.24.0)
+- Repository state path now uses the per-model trust scoring for consistent multi-model panel evaluation. (epic 35.24.0)
+- Retention line reports now correctly counts failed slots (not reviewers), reports retained directories by name, and bounds the size walk at 200,000 entries. (epic 35.24.0)
+- *Epic 35.16.10.1 — repo-state partial-failure outcomes.* (epic 35.23.0)
+- **The work dir is now retained on a partial run**, not only on a hard failure, so the scored cases' review artifacts survive for inspection or manual rescoring. A fully clean run still cleans up. (epic 35.23.0)
+- **The export rejection's remedy is tier-aware.** It used to say "re-run the missing or unmeasured cases" on every tier, which is false for `repo-state-v1`: `--checkpoint` is refused there, so the only re-run available is the whole paid suite. The message now says so. Under `--allow-partial-coverage`, a row short because it lost reviewer slots now carries an explicit warning that its `corroboration_rate` is averaged over only the cases that reviewer was shown — it is not penalised for the rest and will read higher than a row scored over the full suite. (epic 35.23.0)
+- `atcr benchmark export` still rejects a partial run by default, but now names the failed case and its stage rather than telling you to re-run cases that never ran. The failure reason vocabulary is closed and fail-closed at that boundary: an entry whose reason is unrecognized, whose case the suite does not declare, whose case some reviewer also scored, or which repeats a case is rejected as malformed. (epic 35.23.0)
+- **A per-case failure no longer makes `atcr benchmark run` exit non-zero for `repo-state-v1`.** A run that loses one case to infrastructure now writes a partial run-result and exits 0; a pipeline that gated on the old all-or-nothing contract can restore it with `--fail-on-case-failure`, or set `--max-case-failures` for a threshold instead of a floor of one. (epic 35.23.0)
+- Nine failure classes still abort the whole run, none of them transient: a total-roster failure, an empty-roster failure, an unwinnable expectation, the scored-twice and identity-collision guards, cancellation (SIGINT/SIGTERM), a run that scored nothing at all, the opt-in --max-consecutive-case-failures abort, a host-level work-dir fault (`ENOSPC`, `EDQUOT`, `EMFILE`/`ENFILE`, `EROFS`), and the realized-identity printability guard. The first two are kept apart deliberately — a total-roster failure is a transient outage the run refuses to score around, while an empty roster is a deterministic configuration defect that would repeat on every case. (epic 35.23.0)
+- *Epic 35.16.10 — repo-state benchmark tier.* (epic 35.22.0)
+- `docs/benchmark.md` documents the second tier and no longer states that `benchmarks/repo-state-v1/` is unrunnable, with a bidirectional doc-vs-code drift test pinning the claims it makes. (epic 35.22.0)
+- **`scorecard.PublicRecord` is unchanged and `corroboration_rate` keeps its category-recall meaning on every suite.** The new metric rides the run-result, never the public submission envelope: forking a frozen shared key's meaning by suite would be worse than the gap it closed. (epic 35.22.0)
+- **The Epic 14.1 grounding gate stays ON during a repo-state run, deliberately.** An out-of-diff finding survives only when pre-fetching actually retrieved the cited span. That is the measurement — the tier's question is whether pre-fetching lets a genuine out-of-diff finding clear the shipped anti-hallucination gate. (epic 35.22.0)
+- **`--checkpoint` is refused on this tier**, not silently ignored. Resumable runs are implemented for the `standard-v1` diff path only. (epic 35.22.0)
+- *Epic 35.16.9 — predicate exhaustiveness persona rule.* (epic 35.21.0)
+- `docs/personas-authoring.md` now documents the rule, both anchor phrases, and the two load-bearing placement constraints for anyone adding a built-in persona. (epic 35.21.0)
+- **Reviewer prompt text changed, so benchmark runs from before and after this release are not directly comparable** on the existing suite. (epic 35.21.0)
+- **Existing installs do not pick this up automatically.** `atcr init` writes editable persona copies that win resolution over the embedded defaults and are never overwritten, even under `--force`. To adopt the rule, add the bullet to your installed persona files under `## Focus`, or delete those copies and re-run `atcr init --force` (add `--offline` to skip the community-persona fetch). `--force` is required because init also writes `.atcr/config.yaml` and `.atcr/.gitignore`, which a bare re-run refuses to overwrite; it is safe for the persona copies themselves — init preserves existing persona files even under `--force` — so it regenerates only the scaffold and the personas you deleted. (epic 35.21.0)
+- *Epic 35.16.8 — context aware prefetching.* (epic 35.20.0)
+- A finding on a pre-fetched file is groundable **only** on the exact line spans that were shown. `payload.FileChange` carries a `PrefetchOnly` marker, and the grounding gate bypasses both of its permissive arms for such files — the file-level (`Line <= 0`) arm and the empty-ranges fail-open arm — so retrieving a consumer cannot become a route for file-level fabricated findings against untouched code. (epic 35.20.0)
+- The reported changed-file count now excludes the engine-rendered sections prepended to a payload. It previously counted the claim ledger, over-reporting by one in the manifest and in the persona-visible `{{.FileCount}}`; a second synthetic section would have doubled that. (epic 35.20.0)
+- The byte-budget shed now funds shed-exempt sections **cumulatively** rather than one at a time. With two such sections each could satisfy its own bound while jointly overrunning a small budget, shedding every reviewable file to fund sections that then left no room for code. Retrieved context is shed before the claim ledger. (epic 35.20.0)
+- *Epic 35.16.7.1 — post residue feature epic 35.16.7 claim ledger verify commit claims.* (epic 35.19.0)
+- `diffPrefixLines`' contract doc described the preamble subtraction as the oversize gate's rule. It is the warning message's file attribution only: the gate deliberately runs on the unsubtracted delivered total, which is why the warning fires by design for a file whose own diff sits inside the cap. (epic 35.19.0)
+- *Epic 35.16.7 — claim ledger verify commit claims.* (epic 35.18.0)
+- `Truncation.AllDropped` (published as `all_dropped` in `status.json`) now means "no reviewable file survived the shed" rather than "the kept slice is empty", so an exempt claim ledger cannot mask a payload that has lost all of its code. (epic 35.18.0)
+- *Epic 35.16.6.9 — post residue feature epic 35.16.6.6 post residue feature epic 35.16.6.2 submission envelope coverage schema.* (epic 35.17.0)
+- The shard-listing filter used by the backfill dry run now exists in exactly one place instead of two copies kept in step by hand, and is pinned by tests covering each half independently. (epic 35.17.0)
+- The pre-serial-lane compatibility arm in the checkpoint roster guard carries one emptiness term instead of two logically redundant ones. (epic 35.17.0)
+- *Epic 35.16.6.8.2.1 — post-review residue from epic 35.16.6.8.2: the skeptic tool-ceiling derivation seam, and three documents describing a clamp the code no longer performed.* (epic 35.16.6.8.2.1)
+- `docs/registry.md` (both the `context_window_tokens` and `tool_budget_bytes` rows) and `docs/verification.md`'s "Per-finding budgets" bullet now describe the clamp the lane actually performs. Three corrections in each place where they applied: the output reservation is the agent's `max_tokens` **when declared, else** the built-in `8192` — a default, never a floor, so `max_tokens: 100` really does reserve `100`; the no-ceiling threshold is **at or below** the prompt overhead, not below it; and the half-room cap is named, including the part of its band that could have funded the full reservation and is capped anyway. The `context_window_tokens` row now cross-references the `tool_budget_bytes` row instead of restating the formula — two descriptions of one clamp is how the pair drifted apart in the first place. (epic 35.16.6.8.2.1)
+- `internal/reconcile/skeptic_budget_docs_test.go` asserts each load-bearing clause in **both** documents, and anchors one operand to `payload.DefaultOutputTokens` itself. The previous guard asserted three substrings that no reworded clause touched, which is why the sweep that corrected one document and left the other behind passed it clean; reverting either document alone, or the production constant, now fails. (epic 35.16.6.8.2.1)
+- *Epic 35.16.6.8.2 — post-review residue from epic 35.16.6.8.1: what a spaceless-script word boundary may and may not be evidence for.* (epic 35.16.6.8.2)
+- A GLUED anchor and a BOUNDARY-CUT one are now recorded as different kinds of imprecision, and the two sides answer them differently. A glued token is the WHOLE run, so a file declaring it entire is evidence the reading was right — the PROBLEM side keeps letting it resolve, as `collectCallAnchors` has always promised for `データ_解析`. A boundary-cut token is a proper SUFFIX of a name whose prefix was destroyed, and a file declaring only that suffix is never such evidence. The FIX side bars both, because a FIX anchor only localizes a finding some primary anchor already matched, so barring one there can cost a suggestion and can never route a finding out. (epic 35.16.6.8.2)
+- A boundary break landing inside a QUALIFIER is no longer treated as a truncation. `调用cfg.ParseConfig()` breaks at the script boundary, but `cfg.` is discarded by the trailing-segment reduction either way, so the recorded `ParseConfig` is exactly the callee the reviewer wrote. An earlier cut of this work marked it imprecise and withheld a CORRECT suggestion on what is the most common shape in CJK review prose; the question is now asked of the recorded tokens rather than of where the break landed. (epic 35.16.6.8.2)
+- A barred PROBLEM anchor also VETOES a file the FIX set produced under a matched primary. Without it the barring merely swapped one confident answer for another: measured, a barred `ParseConfig` alongside a FIX naming `readTree` stamped `readTree`'s file where the unbarred call had stamped `ParseConfig`'s. A withheld suggestion is the intended outcome; a differently-wrong file is not. (epic 35.16.6.8.2)
+- **Accepted cost, disclosed:** the boundary rule fires on ANY accepted spaceless-script break, so ordinary CJK particle prose running into a bare (unqualified) call is barred too, not just genuine mixed names. `設定のParseConfig()` — where `の` is a grammatical particle and `ParseConfig` is unambiguously the callee — is cut to `ParseConfig` and withholds its suggestion, and `call 配置ParseConfig() instead` abandons the FIX anchor set whole. The narrower rule (bar only breaks whose destroyed prefix is itself identifier-plausible) is a design change deferred until measured; until then `atcr_tier4_problem_anchor_imprecise_total` will be dominated by correct-but-withheld CJK particle prose. The genuine-mixed-name harm the rule prevents — a confident suggestion at a file declaring only the tail — is the worse outcome, which is why the cost is accepted rather than reverted. (epic 35.16.6.8.2)
+- *Epic 35.16.6.8.1.1.1 — post-review residue from epic 35.16.6.8.1.1: anchor-set completeness and Tier-4 counter semantics.* (epic 35.16.6.8.1.1.1)
+- `atcr_tier4_problem_set_unaccounted_total`'s documentation named one of the arm's two producers and did not disclose that it undercounts. The arm reads a resolved outcome, and the resolver reaches that from the PROBLEM set AND from the FIX set under a matched primary, so the counter also fires when the PROBLEM set localized nothing. It is also a lower bound: when a finding's FIX is unaccounted too, the secondary branch cannot fire, the arm is never reached, and the counter stays flat although a suggestion was equally lost. Both corrections are now in `docs/metrics.md` and in the constant's own doc. (epic 35.16.6.8.1.1.1)
+- **Correction to the previous release's note:** that entry said `PathWarning` without a `PathSuggestion` conflated *three* distinct meanings. There were four — the dropped-anchor veto renders identically and was uncounted. The counter added there took the ambiguity from four to three, not to one; the veto counter added in this release closes the remaining gap. (epic 35.16.6.8.1.1.1)
+- `docs/metrics.md` and the constant docs now disclose the emptiness guard's exclusion, and a new drift test in `internal/reconcile/` reads the published catalog and fails when a counter constant has no row of its own, when the row's denial is not written first, or when its wording drifts from what the code does. The catalog is published for operators, so a row that over-claims misleads exactly the reader it exists for. (epic 35.16.6.8.1.1.1)
+- *Epic 35.16.6.8.1.1 — post-review residue from epic 35.16.6.8.1 rounds 4+5.* (epic 35.16.6.8.1.1)
+- A Tier-4 fidelity loss that leaves NO anchor behind — a span the scan declined to decide, or one whose token failed the identifier tests — now discards the FIX-side anchor set whole, the same as the anchor cap does, rather than keeping the remaining anchors. The anchors that remain are each faithful, but the resolver also refuses to answer when two precise anchors disagree, so its verdict needs the set to be complete as well as faithful, and the missing span is exactly the one whose answer is unknowable. Measured: a FIX of ``調用_ParseConfig() then `parseTree` `` produced a confident suggestion where the complete set would have refused on disagreement — the "a wrong guess at the wrong file is worse than no suggestion" rule the resolver states for itself. (epic 35.16.6.8.1.1)
+- Four guard clauses that survived deletion with the whole suite still green are now pinned by tests that fail when any is removed, so a later refactor cannot drop them silently: the leading-underscore predicate, the arm that abandons a FIX set whose glued token failed the shape test, the dropped-anchor veto's `declared in exactly one file` boundary, and the two disjuncts that make that veto withhold on an abandoned set. Each was re-confirmed alive before its test was written, and each verified dead after. (epic 35.16.6.8.1.1)
+- A narrowed-out FIX anchor now WITHHOLDS a path suggestion when it is declared in exactly one file other than the located one. The resolver already refuses when two precise anchors disagree, so its verdict needs the anchor set complete as well as faithful; discarding the narrowed-out names outright left it incomplete in exactly the way the abandon-whole arm exists to avoid. Measured: a FIX of ``call `parseTree` instead of データ_解析()`` with the two names declared in DIFFERENT files stamped a confident suggestion where the complete set refuses. A veto can only cost a suggestion, never route a finding out. (epic 35.16.6.8.1.1)
+- An anchor that a CLEAN span also contributed — a backticked or quoted citation, or an unglued call of the same name — is no longer treated as imprecise just because some other span in the same text glued it. The clean contribution is proof the name was read faithfully at least once, so only a token whose EVERY contribution came from a glued span is dropped. Previously an incidental glued call of a name the reviewer had also cited in backticks cost that citation its standing. (epic 35.16.6.8.1.1)
+- A silenced span is now judged a fidelity loss on the whole span NAME, not on the fragment the word break left behind, when the break dropped a spaceless-script prefix. Measured: ``the 設定_a() helper drops the error that `retryOnce` returns`` reported the extraction as a clean read while the searchable name `設定_a` had been destroyed, so a co-cited absent anchor could route a REAL finding to the unresolved sidecar and durably charge the reviewer for it. `버퍼_i()` and `解析_x()` are the same shape. A break that drops a SPACING-script prefix (`parse_解`) is unchanged — there the fragment is the right subject. The same widened loss flows into the FIX-side scan, which abandons its anchor set WHOLE on any unaccounted loss, so for this shape an intact, precise, ASCII sibling anchor is now discarded too and `atcr_tier4_fix_set_unaccounted_total` increments: measured, a FIX of ``call `parseTree` instead of 設定_a()`` yielded `parseTree` before and nothing after. That costs a correct path suggestion and is the safe direction — the abandoned FIX set can only leave a suggestion unstamped, never route a finding out, since the resolver's secondary branch cannot fire on an empty set and a matched primary anchor yields "could not check" rather than "checked and found nothing". (epic 35.16.6.8.1.1)
+- A confident path suggestion is now WITHHELD when the PROBLEM anchor set itself lost a member whose name is unknowable. The completeness argument already applied to the FIX set applies to the other set feeding the same lookup: measured, a PROBLEM naming `parse._解析()` alongside a backticked `readTree` pointed at `readTree`'s file for a finding whose subject is declared in `_解析`'s, where the complete set saw the two disagree and refused. Scoped to that loss and not to the anchor cap, which is disclosed in the code rather than folded in. (epic 35.16.6.8.1.1)
+- The two set-level FIX-loss counters are now independent rather than a first-match classification, so a finding that is BOTH past the anchor cap and carrying a silenced span increments both. `atcr_tier4_fix_set_unaccounted_total` had been a silent lower bound, while the `unavailable`/`incomplete` pair documented beside it both-increments on the same shape. (epic 35.16.6.8.1.1)
+- The widened silence gate above now fires on the QUALIFIED spelling of the same shape. Its full-span question was asked of the RAW backwards run, and the identifier run admits `.`, so the run walked back through the qualifier and the string tested was `pkg.設定_a` — which the identifier-shape test rejects on the `.`, clearing the loss for every qualified spelling of the very shape the gate was added for. Measured end-to-end against a tree declaring `設定_a`: the bare form kept the finding while the qualified form deleted a GENUINE finding from the primary report and durably charged it against the reviewer. The question is now asked of the trailing segment, the same reduction the fragment branch beside it already used, so the two halves of one guard no longer disagree about which string they mean. `obj.解析_x()` and `設定.設定_a()` are the same shape. (epic 35.16.6.8.1.1)
+- The withheld PROBLEM-side path suggestion above now emits a counter (`atcr_tier4_problem_set_unaccounted_total`). That arm had no signal of any kind — no counter, no reason field, no field change — so `PathWarning` without a `PathSuggestion` conflated three distinct meanings that render identically: "could not check", "checked and found nothing on a truncated set", and "resolved to exactly one file and withheld as untrustworthy". Documented in `docs/metrics.md` beside the four FIX-side counters. (epic 35.16.6.8.1.1)
+- Corrected three justification comments that named the anchor cap as the only reason an anchor set can be reported unfaithful, which had been false for two of the three paths that reach them since the previous release, and qualified the extractor's own contract to name the one unfaithful reading it does NOT report (a mixed-script name with no underscore, which truncates to its Latin tail). (epic 35.16.6.8.1.1)
+- Recorded, in the export-grammar contract itself, that the known prose gap it accepts is not limited to English sentences, and that the identifier alphabet was widened deliberately to recognize real non-Latin declarations. The disclosure quotes measured output so a future reader does not narrow the rule on a false premise. (epic 35.16.6.8.1)
+- The Tier-4 identifier alphabet was also WIDENED in three predicates, not only narrowed: the anchor-shape predicate now admits combining marks (Mn/Mc), the identifier-signal predicate now carries a lowercase run across uncased runes (digits as well as combining marks), and the export-grammar name class now admits letter-numbers (Nl), Other_ID_Start marks, and connector punctuation (Pc). The digit half changes behaviour in pure-ASCII codebases too, so a Go, TypeScript, or Python repo with no non-Latin identifiers anywhere is still affected: measured old-vs-new, `base64Encode`, `sha256Sum`, `utf8Reader`, `md5Hash`, `x509Cert`, `http2Server`, `oauth2Token`, `v2Config` and `iso8601Format` all now carry an identifier signal and contribute an anchor where they previously contributed none, so a finding citing one of them may resolve or route differently than in 35.16.6.8. The all-lowercase spellings (`base64encode`, `sha256sum`) still carry no signal. (epic 35.16.6.8.1)
+- Strengthened the export-grammar test suite so each keyword's permitted name forms are pinned as a whole value rather than one form at a time, closing three separate cases where an incorrect widening left the suite passing. (epic 35.16.6.8.1)
+- Documented the `unresolved_reason` field (including `doc_shield`) and the `unresolved` state semantics across `docs/code-review-backend.md`, `docs/scorecard.md`, `docs/benchmark.md`, and the published `reconcile/` module's godoc. (epic 35.16.6.8)
+- The remedy text a maintainer sees now names the requirement that actually clears the error — a parenthesized const block opened by a leading comment, in `category.go` specifically — and states the single exemption, so the documented `merge.go` precedent is not read as a general licence. (epic 35.16.6.7)
+- `docs/personas-authoring.md` no longer prints the same `CATEGORY vocabulary` link twice in one sentence. (epic 35.16.6.7)
+- **Each suite identity field now names itself in its own rejection message.** A bad `suite_version` was reported with "rename the suite in the suite manifest" — an action that does not fix the error and additionally invalidates any existing `--checkpoint`, discarding the paid work of every completed case. The `suite` and case-id messages are unchanged. (epic 35.16.6.6)
+- **`atcr debt backfill-justifications --dry-run` strips format runes from the `<shard>:<line>` locator.** The record id beside it was already escaped, but the shard — the field that literally names the line an in-place rewrite would overwrite — passed a bidi override straight through to the terminal. The rune is stripped rather than escaped so the locator stays one copy-pasteable token. (epic 35.16.6.6)
+- The Tier 4 index is built lazily and at most once per run, reusing the existing shared parser host and the existing `git ls-files` candidate list. A run whose findings all cite real files never touches the AST runtime. `ATCR_DISABLE_AST_GROUPING` disables Tier 4 exactly as it disables AST clustering, degrading to the Tier 1-3 behavior rather than erroring — and, with no search performed, routing nothing to the sidecar. (epic 35.16.6.5)
+- The `CATEGORY` row of the Columns table now links to the full member list. Its "Not enforced at parse time" wording is unchanged — parse-boundary canonicalization remains epic 51.0. (epic 35.16.6.4)
+- **`submission_schema` is now `2`.** The constant is shared, so the production `leaderboard --export` envelope stamps the new number too — but its field set is **unchanged from version 1**: no field of `ExportEnvelope` or `PublicRecord` was added, renamed, retyped, or removed. The bump is additive-only on that producer, and `leaderboard --export --help` now says so. (epic 35.16.6.2)
+- The submission's coverage row is a **trimmed** projection: `model`, `persona`, `case_ids`. The run-result's `outcomes` tally and `fallback_cases` count remain run-result-only, keeping the public envelope allowlist-based. (epic 35.16.6.2)
+- `--allow-partial-coverage`'s warning and help text no longer claim the shortfall stays out of the submission — it no longer does. The gate still fails closed by default, because a short row remains *not comparable* to a full one even once it is visible. (epic 35.16.6.2)
+- Case ids in a submission pass the same privacy scrub as `persona`/`model`. (epic 35.16.6.2)
+- **Board coordination is an open item.** This repository only ever *writes* submissions — it contains no ingestion or rendering code — so board acceptance of `submission_schema: 2` and tolerance of the two new keys cannot be verified here and must be confirmed by the board maintainers before version 2 submissions are published. (epic 35.16.6.2)
+- **A benchmark submission publishes case ids verbatim**, and case ids routinely encode repository identity (the bundled importer derives them as `<owner>-<repo>-pr-<number>`). Exporting from a private suite discloses those identifiers; `docs/scorecard.md` now documents this and scopes its "organization names are never exported" guarantee to the production envelope. (epic 35.16.6.2)
+- **`atcr doctor --max-tokens` now defaults to `8192`, up from `2048`** — the same default the review fan-out applies. *This changes what doctor reports:* an agent that declares no `max_tokens` was previously probed at a quarter of the budget `atcr review` uses, while the report still labelled the tier `default` as though the two agreed. That produced `ok_warning` on agents review runs fine, and acting on its remedy could make things worse, since the cap is reserved out of the context window. A probe is only evidence about the invocation it reproduces. (epic 35.16.6.1)
+- **An explicit `--max-tokens` now collapses agents that share an endpoint into a single doctor probe.** The override beats every declaration, so those agents make byte-identical calls; keying target identity on the declaration while probing at the override paid for one probe per declared cap. Against a quota-limited upstream the surplus calls returned 429, classified as `rate_limited`, and doctor exited 1 on a roster it had broken itself. (epic 35.16.6.1)
+- **A reviewer's justification excerpt no longer breaks on prose that merely looks like a finding row.** The block-boundary detector accepted a strict superset of what the findings parser treats as a record — indented or lowercase severities, a space before the pipe, degenerate rows with no location, and rows quoted inside a code fence. An ordinary markdown table whose data row began `High | …` truncated the excerpt mid-narrative, with no marker to show it, and `localdebt` persists that text into an append-only store whose id excludes it — so the first reconcile was the only one that could be right. The detector is now pinned against `stream.ParseModelOutput` itself. (epic 35.16.6.1)
+- **The baseline (`--all` / `--dir`) chunked path no longer reports delivered files as shed.** That branch partitions the pre-budget entry set through `PartitionByBudget`, which never drops, so every file the audit-text shed named is still reviewed across chunks — yet `status.json` claimed `truncated: true` and named them, which `reviewer_coverage` reads as `incomplete`. The git-range branch keeps its record: there the shed is real. (epic 35.16.6.1)
+- **The public-identity scrub is now idempotent.** It is applied by four layers on purpose, so scrubbing twice had to equal scrubbing once; it did not, and one reviewer could reach `reviewers[]` and `reviewer_coverage[]` under two different identities, breaking the positional join those arrays document. (epic 35.16.6.1)
+- **A benchmark reviewer that raised findings on a case whose payload was shed is now tallied `incomplete` rather than `findings` in `reviewer_coverage.outcomes`.** The diff-wide byte-budget shed now reaches `AgentStatus.Truncated` (see the first *Fixed* entry), and `Truncated` already outranks `findings` in the outcome ladder — so the new tally is the *correct* one, but a published run-result's outcome counts shift between versions and nothing flags it: the coverage sum check still balances either way. Compare tallies across versions with that in mind rather than reading the movement as a regression in reviewer completeness. Reachable only when the benchmark project config sets `review_strategy: chunked`. (epic 35.16.6.1)
+- **`on_overflow: fail` and `on_overflow: fallback` now hard-fail a zero-input-budget agent under `review_strategy: chunked`, as they already did under `bulk`.** *This is a behaviour change that can fail a run:* a configuration in which an agent's resolved window funds no input budget once its output cap and the fixed prompt overhead are reserved previously produced floor-sized chunks and completed; it now refuses before dispatch. Recording `degradation_action: overflow` while dispatching anyway is what made `on_overflow: fail` a no-op on that path — the two strategies must agree on *when* the policy fires, not only on what it does once it fires. The refusal names the agent, its resolved window, the output cap, and both declarations that can close the budget (`max_tokens`, `context_window_tokens`), because on a `--resume` it is the only signal the operator gets: the zero-budget warning is suppressed on that path, and an unwrapped policy sentinel left a review with intact artifacts looking unresumable for no stated reason. (epic 35.16.6.1)
+- **`MaxOutOfVocabularyRate` tightened from `0.20` to `0.05`**, derived from measurement rather than estimate. The V1 post-merge validation run measured `0.0100` (2 drifted findings of 201); `0.05` keeps five times that headroom. `0.20` had bought room for the words `reconcile`'s merge table treats as meaning a taxonomy member without being one — V1 emitted **zero** of those and **zero** separator/hyphenation variants, retiring that justification entirely. The ceiling still moves one way only: tightened when a further valid run supports it, never loosened because a run failed. It keeps real headroom rather than hugging `0.0100` because n = 1. (epic 35.16.6.1)
+- The out-of-vocabulary documentation now records that this metric is at least as much a **parser-health proxy** as a vocabulary-health one: both of V1's residual drift findings were findings-parser artifacts (body text and bare integers landing in the category field), not models ignoring their prompt. Diagnose a breach by inspecting the emitted words before rewriting a persona. (epic 35.16.6.1)
+- The two boundary fixtures were re-derived (`1/21` and `1/20`) to straddle the new ceiling, preserving their neighbour-pair design — they still differ by exactly one in-vocabulary finding, now pinned by an assertion so a future re-derivation cannot widen the gap into a test any sloppy comparison would satisfy. (epic 35.16.6.1)
+- **`atcr benchmark export` now validates the reviewer identity it will actually publish**, not the raw one. The gate checked `model`/`persona` before the privacy scrub while `BuildSubmission` serializes them after it, so an identity that is non-empty in the file but scrubs away was published as `"model": ""` — the state the gate exists to prevent. Reachable because the scrub now iterates to a fixed point: one pass can expose a match for an earlier rule, so `bedrock@us-east-1/claude` loses its email-shaped prefix to leave `/claude`, which the next pass reads as an absolute path. *This rejects files that previously exported*, which is the point — nothing downstream caught it either, since coverage joins on the scrubbed identity and `("", persona)` matched on both sides. The message names the pre-scrub string, since the scrubbed one is empty by construction. (epic 35.16.6.1)
+- **The `reviewer_vocabulary` rate check no longer rejects the two-decimal rounding it exists to admit.** The bound was compared with a strict `>`, and a two-decimal rounding's worst case is an error of exactly the tolerance, which in float64 lands a few ULP above it — so for an eighth denominator *both* available values were rejected and `findings: 8` (the value in this doc's own canonical example) had no legal hand-authored rate at all. The bound is now inclusive. Its rationale is also corrected: the margin holds at small denominators only, and past ~200 findings a row off by a whole finding is admitted — stated rather than implied, since the array gates nothing and never reaches the submission envelope. (epic 35.16.6.1)
+- **`atcr doctor` now warns when an agent's resolved output cap leaves it no input budget.** doctor is the only surface holding both the resolved window and the resolved cap; it printed them side by side and never compared them, so an agent whose own `max_tokens` closes its budget reported `ok` at exit 0 while `atcr review` would ship only the smallest single file or refuse the run outright under `on_overflow` `fail`/`fallback`. At the 32768 default window that is any cap at or above 28672. The probe cannot see this — the marker prompt is trivial and succeeds at any cap — so the verdict is derived from the two numbers. Where the marker is *also* absent, the new hint replaces the old "raise `max_tokens`" advice, which deepens exactly this failure. Rows that already fail (`auth_failed`, `missing_key`) are untouched. (epic 35.16.6.1)
+- `docs/registry.md`'s `on_overflow` row distinguishes `truncate` (re-fits an overflowing fallback) from `chunk` (still warns and ships), and names the one path that cannot re-fit: `review_strategy: chunked` diff chunks are split by text on diff boundaries and carry no per-file list to re-pack, so they keep the pre-existing warn-and-ship behavior. It also no longer claims `effective_budget` is always 0 on the overflow arm — that holds only when the backup's window funds no input budget at all, so a present `effective_budget` does not rule the arm out. (epic 35.16.5.4)
+- The reviewer outcome is a string enum rather than a pair of booleans, and absence is the empty string. Two booleans would both default to `false`, so a checkpoint written before the field existed would replay its zero-finding cases as "reviewed and found nothing" — inventing the very claim this change removes. A pre-existing checkpoint replays as `unknown`, pinned against the committed Run B fixture rather than asserted in prose. (epic 35.16.5.2)
+- `scorecard.PublicRecord` and the `benchmark.Submission` envelope are **unchanged**. Coverage lives on the run-result only: `PublicRecord` is shared byte-for-byte with production `leaderboard --export`, and adding a key to the submission envelope would require bumping `submission_schema`, a constant the production exporter also stamps. A consequence is recorded as technical debt — an opted-out partial submission is not self-describing to the board. (epic 35.16.5.2)
+- Reviewer rows for a run with no failover are byte-identical to the previous scorer, and every existing score and resume fixture passes unmodified. The run-result *document* is not byte-identical: it gains the two coverage keys. (epic 35.16.5.2)
+- `ContextWindowTokens`, `EffectiveByteBudget`, and `ChunkMaxLines` accept a declared window, and the review fan-out threads each agent's own declaration through every one of its nine window/budget resolutions. Both consumers that matter are covered: the payload byte budget **and** the chunked per-chunk line budget, which rises from ≈1,493 lines to ≈8,437 at a `128000` declaration. Updating only the sizing record would have made `status.json` report the declared window while every budget still sized against 32,768. (epic 35.16.5.1)
+- A fallback agent now warns before dispatch, and records an `overflow` degradation, when its own effective budget is smaller than the budget its inherited prompt was sized to. A fallback reviews its primary's already-rendered payload, so a declared primary can hand a smaller backup a payload it cannot hold; the fallback resolves its own window rather than inheriting the primary's, but the payload it receives was still sized elsewhere. (epic 35.16.5.1)
+- The bundled-suite vocabulary guard now asserts membership against `reconcile.Categories()` directly instead of scraping an allowlist out of the persona prompts. The old guard was inert in two independent ways: its regex matched the `_base.md` phrasing rather than the "CATEGORY is **one** lowercase word" every shipped persona uses, so it extracted nothing, and an "extracted no vocabulary" branch turned that miss into a pass. Verified by mutation — a suite planting a non-taxonomy category passed the old guard and fails the new one. (epic 35.16.5)
+- The cost-per-corroborated denominator resolves through the same equivalence relation as recall, so the two never disagree about what counts as a match. Widening only recall would have left a reviewer with perfect recall publishing `cost_per_corroborated_finding_usd` as omitted — the encoding reserved exclusively for a priced reviewer that matched nothing. (epic 35.16.5)
+- Every one of the 29 rendered reviewer prompts now carries the vocabulary, injected through `{{.ScopeRule}}` in `internal/payload` rather than written into any persona file, so adding a member reaches every prompt — including the 5 installed outside the repo — with no prompt edit. Previously no enumeration reached any reviewer, and 72.3% of findings in the dry-run used a category outside ATCR's vocabulary. Injection does not by itself keep the prompt files consistent: `personas/_base.md:44` still carries a six-word literal list, and the worked examples in `personas/ingrid.md`, `penny.md` and `sasha.md` demonstrated non-member words until a follow-up corrected them. (epic 35.16.4)
+- `out-of-scope` is now presented to reviewers as a routing value rather than an ordinary defect class. (epic 35.16.4)
+- Bumped the `github.com/samestrin/atcr/reconcile` dependency to v0.6.0 — cut from this branch's tip so the pin bump rides the same PR and the merged branch never runs the old library (see [`docs/release-process.md`](docs/release-process.md#where-the-tag-is-cut-from-the-branch-tip-not-main)). v0.6.0 adds the exported `CategoryMerges()` accessor and the widened consensus-filter exemption below; nothing was removed. (epic 35.16.4)
+- [`docs/release-process.md`](docs/release-process.md) now states that merging a `reconcile/` change does not ship it — the root module consumes the nested module through the Go proxy at the pinned version, so a behavioral fix stays inert until a `reconcile/vX.Y.Z` tag is cut *and* the root pin is bumped. (epic 35.16.4)
+- Documented that the PR-time job and the release gate run an identical check set on purpose, why that matters for a nested module root CI cannot see, and that adding a check to one without the other produces a defect that merges clean and surfaces mid-release rather than a stricter release. (epic 35.16.4)
+- [`docs/architecture.md`](docs/architecture.md) carries both points where the standalone library is introduced, so they are visible before someone edits `reconcile/` rather than at release time. (epic 35.16.4)
+- Documented the local `go.work` trap in [`docs/release-process.md`](docs/release-process.md): the workspace resolves `reconcile` from the working tree rather than the pinned version, so a local build proves nothing about the pin, and commands run inside the parser modules need `GOWORK=off` because the workspace does not list them. (epic 35.16.4)
 - **Breaking for custom personas — a clean review is now declared, not implied.** Every persona prompt previously ended "if there are no findings, emit nothing", so a reviewer with nothing to report returned an empty response. That made an empty response ambiguous: it is also what a dead call looks like when the provider returns a null completion without setting `finish_reason=length`, and such a slot was recorded as a clean zero-finding review — indistinguishable, on a leaderboard, from a reviewer that actually read the diff. Agent `brad` hit exactly this on four cases of the 35.16.2 dry-run while `kai`, which did set the truncation flag, failed over correctly.
   - A reviewer with nothing to report now emits the literal token `NO FINDINGS` (`stream.NoFindingsSentinel`), matched case-insensitively and whitespace-tolerantly. All 24 bundled prompts (`personas/_base.md`, the nine built-ins, and the fourteen community personas) were updated.
   - An **empty** reviewer response is now failed over to the slot's backup, and fails the slot if there is none — it is treated as a dead call, not a clean review.
   - A response that carries content but yields zero parseable findings is **not** failed over — that would spend the backup model on every plausible clean review. It is recorded instead: `AgentStatus.unparseable_response` in `status.json` separates "reviewed and found nothing" from "emitted prose no parser could use", which `findings_count: 0` alone cannot.
-  - **Custom personas must be updated.** A persona still instructing silence will report failures on exactly the reviews it handled correctly. `personas.TestEveryPersona_InstructsTheCleanReviewSentinel` pins this for bundled personas; `docs/personas-authoring.md` documents it for new ones.
-
-*Shipped via /execute-sprint + /execute-code-review + /resolve-td (sprint 35.16.3)*
-
-## [35.16.2] - 2026-08-07
-
-### Added
-
-- **`standard-v1` benchmark suite content is now bundled at `benchmarks/standard-v1/`.** `docs/benchmark.md` previously pointed at an external `github.com/atcr/benchmark-suite` repo that was never created, so `atcr benchmark verify`/`run`/`export` had nothing real to run against — only the 2-case unit-test fixtures. The suite ships 17 cases spanning `correctness`, `maintainability`, `performance`, and `security`, drawn from a seeded sample of [`alibaba/aacr-bench`](https://github.com/alibaba/aacr-bench) (Apache-2.0, arXiv:2601.19494) — 1,505 review comments over 196 real pull requests across 50 repositories and 10 languages. Attribution is in `benchmarks/standard-v1/NOTICE.md`; the suite is content-addressed by `suite_version` 1.0.0 and a reproducibility hash.
-- **`cmd/ingest-alibaba-benchmark`** regenerates that suite from the upstream dataset. It is an authoring-time tool — its output is committed, so neither CI nor a benchmark run reaches the network. Diffs come from GitHub's compare API by default, with a `-clone` fallback for when that is unavailable. The dataset URL is pinned to an immutable commit so a record added upstream cannot silently reshuffle the seeded selection.
-- **`otto`'s worked example now labels a readability defect `maintainability`**, matching the dominant ground-truth category in the new suite. It previously emitted `style` for exactly that defect shape — the only shipped persona whose example did — which made recall on `maintainability` noisy across the panel.
-
-### Changed
-
-- `docs/benchmark.md`, plus the `internal/benchmark` and `cli/benchmark` package docs, now point at `benchmarks/standard-v1/` instead of the nonexistent external repo.
-
-### Fixed
-
-- **The reviewer `CATEGORY` vocabulary was never an allowlist, and `personas/_base.md` is not a shared prefix.** An earlier revision of this epic added `maintainability` to the vocabulary line in `personas/_base.md` on the premise that reviewers had to be prompted to emit it. That edit reached zero panel members and has been reverted: `_base.md` is a resolution *fallback* (`internal/registry/persona.go` levels 4-5), consulted only for an agent that has no persona file of its own, and all nine shipped personas resolve to their own file. Those files carry no category enumeration at all, so `maintainability` was always emittable — there is no allowlist to widen. Adding one to nine live production prompts would be a new behavioral restriction the epic never scoped, so the constraint stays absent and this note is the record of that decision.
-- `.gitattributes` marks the suite `-text`. The reproducibility hash is computed over raw diff bytes and one vendored diff carries mixed CRLF/LF, so a checkout with `core.autocrlf=true` would otherwise produce a different hash than the published one.
-
-*Shipped via /execute-epic (epic 35.16.2)*
-
-## [Technical Debt] - 2026-08-07
-
-### Changed
-
-- **Breaking — the diff-smell scanner is now top-level `atcr diff-smell`.** `verify` names three unrelated operations and is simultaneously a leaf command and a group, so `atcr verify diff` read as "verify the diff" when it actually means "scan the diff for over-simplification smells". The promotion renames into vocabulary the analyzer, the doc, and the upstream tool already used. `atcr verify diff` keeps working as a **hidden deprecated alias for one minor version**: it is gone from `atcr verify --help` and prints a deprecation note on **stderr** at use (cobra's own `Deprecated` field was unusable — it prints to stdout, which would break the payload-only `--json` guarantee). Flags, output, verdicts, and exit codes are identical under both spellings. The version-discoverability recipe in `docs/diff-smell.md` now probes `atcr diff-smell --help` first with an `atcr verify diff` fallback, so CI hooks pasted during the alias window do not silently skip the gate.
+  - **Custom personas must be updated.** A persona still instructing silence will report failures on exactly the reviews it handled correctly. `personas.TestEveryPersona_InstructsTheCleanReviewSentinel` pins this for bundled personas; `docs/personas-authoring.md` documents it for new ones. (epic 35.16.3)
+- `docs/benchmark.md`, plus the `internal/benchmark` and `cli/benchmark` package docs, now point at `benchmarks/standard-v1/` instead of the nonexistent external repo. (epic 35.16.2)
+- **Breaking — the diff-smell scanner is now top-level `atcr diff-smell`.** `verify` names three unrelated operations and is simultaneously a leaf command and a group, so `atcr verify diff` read as "verify the diff" when it actually means "scan the diff for over-simplification smells". The promotion renames into vocabulary the analyzer, the doc, and the upstream tool already used. `atcr verify diff` keeps working as a **hidden deprecated alias for one minor version**: it is gone from `atcr verify --help` and prints a deprecation note on **stderr** at use (cobra's own `Deprecated` field was unusable — it prints to stdout, which would break the payload-only `--json` guarantee). Flags, output, verdicts, and exit codes are identical under both spellings. The version-discoverability recipe in `docs/diff-smell.md` now probes `atcr diff-smell --help` first with an `atcr verify diff` fallback, so CI hooks pasted during the alias window do not silently skip the gate. (technical debt, 2026-08-07)
 - **Breaking — `--since` and `--prune` now share one grammar.** Two independent `ParseSince` implementations backed the same flag name with different meanings: `atcr history --since 3m` was three MINUTES (it delegated to `time.ParseDuration`), while `atcr leaderboard --since 3m` was three MONTHS. Both accepted the input without a warning and the resulting windows differed by roughly 43,200x. The new `internal/timewindow` package owns the single grammar — `Nd` days, `Nw` weeks, `Nm` 30-day months, or `all` — and both commands parse through it.
   - `3m` now means three months on **every** command, including `atcr history`.
   - Clock units and fractional counts are **rejected** rather than reinterpreted: `48h`, `1h30m`, `30s`, and `1.5d` were accepted by `atcr history` and are now usage errors. Express the window in `d`/`w`/`m` (`2d` for `48h`).
   - `all` now works on `atcr history` as well as `atcr leaderboard`; `atcr history --since all` disables the window.
   - `atcr history --help` now shows `(default "90d")`. The 90-day default was always applied, but it was registered as an empty cobra default and so never advertised.
-  - `atcr history --prune 6m` now means six months and prunes accordingly. It previously computed a six-MINUTE cutoff, which the 28-day safety floor caught only by rejecting the value outright; the hazard is gone at the root and the floor is retained for genuinely short horizons.
+  - `atcr history --prune 6m` now means six months and prunes accordingly. It previously computed a six-MINUTE cutoff, which the 28-day safety floor caught only by rejecting the value outright; the hazard is gone at the root and the floor is retained for genuinely short horizons. (technical debt, 2026-08-07)
 
 ### Fixed
 
-*Technical debt resolved 2026-08-07 — a sweep over the CLI's flag vocabulary, split by what each name actually addresses. Every rename below keeps the old spelling working as a hidden deprecated alias, so no existing invocation breaks.*
+- Model attribution on reviewer records is now preserved through store compaction and append operations. (epic 35.24.0)
+- Per-finding reviewers on ambiguous reconcile paths are normalized consistently (trimmed and case-folded). (epic 35.24.0)
+- `docs/payload-modes.md` and the 35.18.0 note below both stated the claim ledger's third exception with the wrong condition — that a fallback re-fits without the ledger when its own budget is "smaller than the ledger". Measured end to end, the ledger is lost when the fallback's budget cannot fund both the ledger **and** a reviewable file, by either of two routes: the exemption's own `clampSize(Size) <= budget` bound, or the `AllDropped` reroute to `keepSmallestEntry`. That reroute keeps the smallest *entry*, so it drops the ledger only while some reviewable file is smaller than it — when every file is larger, the ledger survives and the fallback receives claims and no code. A budget larger than the ledger therefore does not by itself keep it. (epic 35.19.0)
+- `docs/registry.md`'s `max_context_lines` row promised a warning only for a file larger than the cap. The gate measures a chunk's **delivered** line count, so the warning also fires for a file comfortably inside the cap when engine-rendered preamble lines push the chunk over it — and the lever for those lines is `max_claim_bytes`, not this field. A drift test in `internal/reconcile/` pins that row's load-bearing phrases, so reverting or negating the statement turns it red, and asserts the behavioural owner test in `internal/fanout` still exists by name; the gate itself stays pinned behaviourally there. (epic 35.19.0)
+- Citations in `internal/payload/claims.go` and `internal/fanout/review.go` that pointed at the wrong construct: the changed-file-count consequence cited two build paths that never prepend a claim ledger, and the coalesce-cap citations pointed at `started = true` inside `splitDiffFiles` rather than at the chunk ceiling. Each now names its identifier alongside the line number, so the next insertion above a target cannot silently re-aim it. (epic 35.19.0)
+- `docs/benchmark.md`'s Resume bullet promised an unconditional fail-closed on any roster change, which the binary does not perform: an unstamped (pre-`roster_format`) checkpoint whose recorded roster matches the parallel-lane-only projection resumes across an added serial reviewer. The bullet now names that exception, states that the union upgrade is written back only if the resumed run scores a further case, and a drift test in `internal/reconcile/` fails if either half drifts from the code again. (epic 35.17.0)
+- `atcr leaderboard --export` no longer publishes a whitespace-only `model` or `reviewer` in silence. The record is still kept — that scoping is deliberate — but it is now named on stderr as "blank after trimming", so the operator learns about it locally instead of from the board's rejection. A record already empty in the store is unchanged and still unreported. `docs/scorecard.md` records the new warning. (epic 35.17.0)
+- `atcr benchmark run --checkpoint` now explains why it rejects a checkpoint recording an empty reviewer roster. The rejection itself is unchanged and correct; the previous message reported a generic "recorded [], configured [...]" panel drift, blaming a change that never happened. The new message names the shape a pre-serial-lane binary wrote for a project with no parallel lane, hedges that a truncated or hand-edited file reads the same, and still carries the current panel. (epic 35.17.0)
+- `atcr debt backfill-justifications --dry-run` now resolves its shard locators against the directory snapshot the rewrite was computed from, taken under the store lock, rather than re-listing the directory afterwards. A concurrent writer removing a colliding shard in that window could previously suppress the disambiguating `#hash` suffix, so the dry run printed a bare locator for a name that was ambiguous when the rewrite was computed. (epic 35.17.0)
+- A second `atcr debate` over the same review dir no longer leaves `verification.json` naming the first debate's judge for a verdict the second replaced — the standing judge is now re-stamped on every ruling that touches an already-debated record. (technical debt, 2026-09-08)
+- Unmodelled keys in `verification.json` records no longer disappear when `computeVerificationTruncation` rewrites the file — unrecognized fields are now preserved through the compare-and-write pass. (technical debt, 2026-09-08)
+- `docs/verification.md`'s debate-sync description no longer disagrees with what the code emits; the guarding test now matches the corrected doc. (technical debt, 2026-09-08)
+- A partial-write residue in `verification.json` — left behind when a `WriteGroup` publish fails after `findings.json` lands but before this file does — is now repaired: the next `atcr debate` recovers the judge from `reconciled/debate.json` and restores the record, while a genuine declared-budget voiding record (indistinguishable on disk) is deliberately left alone. (technical debt, 2026-09-08)
+- An empty `model` field in `verification.json` is no longer ambiguous between "no skeptic ran," "a debate withheld it," and "the re-verify guard rejected the prior record." The third case now carries a `modelWithheldReason` marker (`verdict_shifted` or `prior_unreadable`), and that marker now carries forward correctly on subsequent re-verifies instead of being lost after one generation. (technical debt, 2026-09-08)
+- A rejected prior record no longer silently drops the truncation caveat that `survived_skeptic_rate` relies on — the caveat is now re-derived on every arm that rejects a prior verdict. (technical debt, 2026-09-08)
+- The `Extra` contract is narrowed to the skip path it actually covers, closing a gap that let it apply beyond its intended scope. (technical debt, 2026-09-08)
+- Three defensive tag-resolution guards that were previously unreachable in practice are now exercised by tests and made reachable. (technical debt, 2026-09-08)
+- A duplicate record reader is folded into `parseRecord`, removing redundant parsing logic. (technical debt, 2026-09-08)
+- `docs/verification.md` now documents the debate-side residue repair and the `modelWithheldReason` marker's deletion behavior. (technical debt, 2026-09-08)
+- A tie no longer credits tripped budgets to skeptics that lost it. `winningAttribution` credits by who WON, and on a tie it credited every participant — so a tie whose confirmed voter carried an exempted derived trip serialized identically to a verdict a DECLARED budget had voided. `model` still lists every participant (it names who spoke); a budget is a causal claim about the recorded outcome, so on a tie only a participant that was itself unverifiable contributes one. (epic 35.16.6.8.2.1)
+- A skeptic's tool-output ceiling no longer swings ~9000x on a one-token config change. `skepticToolBudget` derived from two discrete formulas — the full output reservation above the reservation's own threshold, NOTHING reserved below it — so it was non-monotonic in both operands: a declared window of `12288` derived `28672` bytes while `12289` derived `3`, and at window `12000` a `max_tokens` of `7903` derived `3` bytes where `7904` derived `27664`. A larger window and a smaller reservation both made the skeptic worse off. One continuous derivation replaces both arms: the resolved output cap, capped at half the window's input room. Every window at or above `2 * reserved + 4096` tokens (`20480` at the built-in default) derives exactly what it derived before, byte for byte — which covers any roster whose declarations all sit at or above that boundary. This repository ships no registry, so that is a property of the formula, not a measurement of a shipped roster. **What the band below `20480` trades away, stated rather than implied:** the reservation there is the half-room cap, which is SMALLER than the agent's own resolved output cap — so the reservation is no longer an upper bound on the reply and the pre-existing overflow class SURVIVES below `20480`. At window `16384` the full `8192` would have fitted (leaving `4096` tokens for the read); the cap reserves `6144` and leaves `6144`, so tool input grows and the reply's funded room shrinks by `2048` tokens. This is the deliberate trade: below `2 * reserved + 4096` the window cannot host both a full-length reply and a usable read, and the alternative — reserving the full cap regardless — is exactly what derived the `3`-byte ceiling at window `12289` that the entry above removes. `skepticToolBudget`'s own doc comment carries the same caveat; this entry no longer files the change as a clean fix without it. (epic 35.16.6.8.2.1)
+- A declared `context_window_tokens` can no longer produce an UNBOUNDED skeptic tool loop. The previous fallback returned the declared `tool_budget_bytes` when no ceiling could be derived, which for the dominant roster shape (no declaration) is `0` — the value `internal/fanout/loop.go` reads as unlimited. A window at or below the prompt overhead with no declared budget now yields a 1-byte floor, and its trip marks the run `unverifiable` rather than letting a skeptic that read one byte hand the CI gate a live verdict. (epic 35.16.6.8.2.1)
+- A negative `tool_budget_bytes` on a programmatically built config is normalised at the top of the derivation instead of being propagated to a caller that has no defined reading for it. (epic 35.16.6.8.2.1)
+- A call name written straight after spaceless prose no longer produces a CONFIDENT path suggestion at a file that declares only its Latin tail. `配置ParseConfig()` is cut to `ParseConfig` by the word-boundary rule, and where the tree declares both the mixed name and the bare tail, the tail located exactly one file and the suggestion was stamped there — a wrong answer at the one seam nothing downstream can undo. Measured: that finding resolved to `internal/cfg/parse.go` before this release and now carries no suggestion at all. The finding itself is KEPT: the cut anchor is barred only from SOURCING a file, never removed from the presence check or the no-match arm, so barring one can never route a real finding out. (epic 35.16.6.8.2)
+- The anchor cap no longer evicts a name the reviewer backticked in favour of one recovered from a bare call shape. UTF-8 sorts every CJK-prefixed token after all ASCII, so the glued pseudo-token was always the first thing a lexical cap dropped; once the boundary rule rewrote it to its ASCII tail, the tail sorted to the FRONT and survived, pushing the lexically-last real anchor out. Measured: a finding backticking eight names alongside `在配置中调用ParseConfig()` resolved to the call's file before this release and resolves to the backticked `zLastThing`'s file now. Provenance decides only WHICH anchors survive — the returned set is still deduped and lexically sorted, and a finding naming one provenance class is capped exactly as before. (epic 35.16.6.8.2)
+- A name the reviewer cited faithfully is no longer counted as an unknowable loss. A silenced span reported that what it destroyed was unknowable even when that exact name sat in the anchor set, cited in backticks two words earlier — so a CORRECT path suggestion (the subject's own file) was withheld and charged to telemetry as a loss. Measured: ``​`設定_a` is broken; pkg.設定_a() returns nil`` stamped `pkg/a.go` before the previous release and nothing after, with `atcr_tier4_problem_set_unaccounted_total` incrementing. The scan now records WHICH token each loss would have named and retracts the claim only for a token that was both cited cleanly and survives the anchor cap into the set the resolver is actually given — so a name the cap drops, and a glued re-reading of a name, still vouch for nothing. The same correction reaches the FIX side through the same field, so an intact precise anchor is no longer discarded alongside the silenced one. (epic 35.16.6.8.1.1.1)
+- `atcr_tier4_fix_set_unaccounted_total` no longer counts findings whose FIX never had an anchor set. The arm claimed a set was "abandoned whole" without the emptiness guard its sibling arm has always carried, so a FIX whose only span was a silenced one incremented an abandonment counter for an abandonment that could not have happened. Anyone summing the FIX-loss counters to estimate suggestions lost to anchor fidelity over-counted by exactly that population. (epic 35.16.6.8.1.1.1)
+- Fixed two Tier-4 anchor guards that tested the RAW text span while the anchor actually recorded is its trailing segment, so both asked their question of a string the search never uses. The two differ by exactly the runes that made the guards leak — a script-neutral rune the word break landed on, and a qualifier that gets stripped. Measured against the merged branch: `parseー_解析()` (U+30FC between the Latin prose and the underscore) escaped as the fragment `ー_解析`, and `parse._解析()` as `_解析`. A fragment is the one outcome nothing downstream can undo, because it can be CONFIDENTLY misattributed to whatever else declares that name — so a finding about one construct could be stamped with a path suggestion pointing at an unrelated file. Both now yield no anchor, and the loss is reported rather than passed off as a clean read. (epic 35.16.6.8.1.1)
+- Fixed the same guard's opposite error: a finding whose only underscore lived inside a qualifier that gets stripped was marked imprecise although not one returned anchor was imprecise. Measured: ``データ_モジュール.解析() is wrong, see `retryOnce` `` reported the set as unfaithful because of the `_` inside `データ_モジュール`, which is discarded, leaving `解析`, which contributes nothing. The effect was to refuse a no-match verdict on a set whose every member was a faithful reading — so a fabricated finding stayed in the report instead of being routed to `unresolved.json`, and escaped the scorecard's chargeable denominator. Such findings now route. (epic 35.16.6.8.1.1)
+- Fixed a FIX-side anchor loss that cost real findings their correct path suggestion. The secondary anchor set was discarded ENTIRELY whenever any single span in the FIX was imprecise, not only when the anchor cap had dropped anchors. Measured: a FIX naming `parseTree` alongside one genuine Japanese snake_case call (`データ_解析()`) resolved to the right file with the set and to nothing without it — one non-Latin name in a FIX discarded an intact, precise, ASCII sibling anchor. Only the anchors a fidelity loss actually touched are now dropped; the rest stand — and the dropped names ride along as VETO evidence rather than being discarded, so a narrowed-out name declared in a DIFFERENT file still withholds the suggestion. Dropping a member removes it from what may SOURCE an answer, not from what the FIX named. (epic 35.16.6.8.1.1)
+- Fixed a Tier-4 lookup that treated two spellings of one identifier as two different symbols. Anchors and symbol-index keys are now folded to a single Unicode normalization form (NFC) on both sides, so a name written with a combining mark in the source (`cafe` + U+0301) and the precomposed spelling a reviewer emits (`café`) resolve to the same entry. Previously the byte-exact map lookup missed, and a real finding about a construct plainly in the tree was judged a no-match, deleted from the report, and durably charged to the reviewer as a phantom — an ordinary case in any Spanish, Portuguese, French, or Vietnamese codebase, and the case the alphabet widening below first made reachable. The same fold also stops one name declared in two files under two forms from splitting into two index keys of one file each, which had let a path suggestion be stamped as confident for a name that is actually declared in two places. (epic 35.16.6.8.1)
+- Fixed a Tier-4 index gap where a documentation sentence whose second word was written in a non-Latin numeral system (e.g. `export module ٣٤, see MyWidget`) was mistaken for a real declaration, letting every word on that line — including a fabricated symbol name — count as "named in the source" and license a confident path suggestion. The equivalent Latin-numeral sentence was already rejected; the two now agree. (epic 35.16.6.8.1)
+- Fixed a Tier-4 content-check gap where a finding named only in a documentation file (e.g. `CHANGELOG.md`) could still receive a confident path suggestion, even though the shield that judges presence had already been narrowed to exclude doc-only mentions. (epic 35.16.6.8)
+- Fixed misclassification of `.mdx`/`.adoc`/`.rst`/`.txt` files in the Tier-4 index: a genuine code declaration inside a `.mdx` export block is now recognized, instead of being routed out as a phantom finding and durably charged against the reviewer's corroboration rate. (epic 35.16.6.8)
+- Fixed the index `state()` ordering so a run that both lost its parser and its declaration set now reports `incomplete` rather than the misleading `unavailable`, and corrected the published contract wording for all three affected surfaces. (epic 35.16.6.8)
+- Fixed a race window in the MCP `atcr_reconcile` tool where a concurrent reconcile run could rewrite the on-disk unresolved-findings sidecar mid-request, and documented the diagnostic fields the tool now reports. (epic 35.16.6.8)
+- Fixed scorecard era tracking so every emitted record (reviewer and aggregate) carries a consistent era classification, closing a gap where corroboration rates could silently blend pre- and post-epic denominator definitions. (epic 35.16.6.8)
+- Corrected stale submission-envelope prose describing `checkPublishable`, the suite/case-id validators, and backfill counters so the comments match the code they document. (technical debt, 2026-09-01)
+- Corrected three stale comments in the taxonomy partition tests that misstated which file drives the partition and where sibling-file faults surface. (technical debt, 2026-09-01)
+- Corrected the rename-tripwire error message and its accompanying comment to state the actual two-arm condition, and removed an orphaned duplicate comment. (technical debt, 2026-09-01)
+- Corrected checkpoint/export prose across debt backfill, benchmark checkpoint, export, and leaderboard code to describe actual behavior instead of stale rationale. (technical debt, 2026-09-01)
+- Removed a "refused permanently" over-claim from the fold guard comment — export's refusal is temporary until the identity is corrected. (technical debt, 2026-09-01)
+- **The `out-of-scope` exemption in the CATEGORY doc-drift guard now resolves from the constant, not from two literals that could disagree.** The guard that keeps `docs/findings-format.md`'s Group column honest against `reconcile/category.go` wrote the same exemption twice in two vocabularies — once by constant NAME in the block walk, once by string VALUE in the slice cross-check — and neither side resolved the actual constant, so the two halves could drift in both directions. Changing only `CategoryOutOfScope`'s value made the guard unsatisfiable, with an error whose stated remedy was a provable no-op; changing only its name opened a silent hole that let `out-of-scope` enter the partition while two documented invariants quietly became false. Both sides are now keyed on the constant's identity, and the routing value reaching the vocabulary under any other name is a loud error naming the constant that supplied it. The published `reconcile` module is untouched, and the partition it yields is byte-identical. (epic 35.16.6.7)
+- **The release-lag CI step asserts that its test actually ran.** It previously grepped for `no tests to run`, which covers a renamed or moved test but not a package stripped of its test files — `go test` prints `[no test files]` there and exits 0, so the annotation disarmed itself silently. The step now reads `go test -json` and requires a pass or skip Action for the test's exact name, which covers both cases and does not accept a rename that merely keeps the old name as a prefix. (epic 35.16.6.7)
+- **A `categories` slice fault no longer masquerades as a `category.go` block fault.** The whole-directory read is wrapped, so an unparseable sibling file or a missing slice is distinguishable at the doc-table assertion that surfaces it. (epic 35.16.6.7)
+- `docs/benchmark.md` documented the pre-35.16.6.2 rules: the suite manifest field table listed only "Required, non-empty" for `suite`/`suite_version`, and the export section's "hand-assembly only" bullet gave a reason that does not hold for the printability rule. Both are corrected, and the three publishable-identity rules are now stated in full. (epic 35.16.6.6)
+- `docs/scorecard.md` now documents the `leaderboard --export` identity rejection, and states plainly which rules the two producers do and do not share. (epic 35.16.6.6)
+- Several paths by which a **real** finding could have been mistaken for a fabricated one and dropped from the report. A no-match verdict now additionally requires the named construct to be absent from the raw source text, not merely from the parser's declaration index — the Go parser names only function declarations, so every Go type, interface, const and var was otherwise invisible. A verdict is also withheld when the cited file has no parser language, when the finding's name came only from the proposed `FIX` (which names code that does not exist yet, by design), when the anchor set hit its size cap, when the cited path differs from a tracked file only by case, and when any eligible file could not be read. Two counters, `atcr_tier4_index_unavailable_total` and `atcr_tier4_index_incomplete_total`, make a silently degraded search visible rather than indistinguishable from a clean run. (epic 35.16.6.5)
+- `reviewer_coverage[].case_ids` is always an array in a published submission, never `null`, so consumers can decode it without a null branch. (epic 35.16.6.2)
+- Fixed justification/narrative excerpting to handle fenced code blocks correctly: dangling and unterminated fences no longer swallow or split content, crossed fenced quotes collapse to a single placeholder, and elision placeholders are never cut in half or fused with the truncation ellipsis. (technical debt, 2026-08-23)
+- Fixed excerpt-budget counting to use runes instead of bytes, preventing incorrect truncation on multi-byte content. (technical debt, 2026-08-23)
+- Fixed narrative matching to fall back to the next-best anchor when the best anchor yields no prose, and to suppress placeholder-only excerpts instead of treating them as real narrative. (technical debt, 2026-08-23)
+- Fixed section-block extraction to mask all fenced-content boundaries so a heading or bullet inside a fenced example no longer incorrectly bounds the narrative block. (technical debt, 2026-08-23)
+- Fixed the SCOPE CONSTRAINT block to be dropped with a warning, instead of silently blanked or mis-capped, under a zero agent budget, a run-level cap, a too-small `chunk_byte_budget`, and chunked `effective_budget` conditions; corrected misattribution of `chunk_byte_budget` vs. the agent's own budget in the drop warning. (technical debt, 2026-08-23)
+- Fixed `atcr doctor`'s zero-budget hint to report the cap `atcr review` actually resolves rather than the probe's cap, disclaiming the probe cap only when it genuinely differs, and to render review's cap even when the probe applied none. (technical debt, 2026-08-23)
+- Fixed `debt-resolve` justification checks to reject a dangling-fence-only or placeholder-only justification as a stand-in for `--reason`. (technical debt, 2026-08-23)
+- Fixed the benchmark scrub-collision message to name both raw identities and to distinguish version skew from hand-assembly as separate causes. (technical debt, 2026-08-23)
+- Fixed the vocabulary-ceiling check to be inclusive, matching its documented `>=` bound. (technical debt, 2026-08-23)
+- Hoisted the shared `DefaultOutputTokens` constant so the fan-out, doctor, and CLI output-cap defaults stay in sync. (technical debt, 2026-08-23)
+- The **diff-wide byte-budget shed now reaches `status.json` on a successful chunked run**. The chunked strategy renders each chunk-slot with a neutral truncation on purpose (the shed is a whole-payload event, so a per-chunk copy would have every chunk claim files that never appeared in it), and the fact was carried alongside for the merge to promote — but no success-path result copied it, and the one site that did runs only after a slot's whole fallback chain has failed. A `StatusOK` slot returns earlier, so on the case an operator actually hits, `status.json` reported `truncated: false` with an empty `files_dropped` while whole files had been dropped (observed 2026-08-15: 40 of 73 files shed, reviewers saw a quarter of the diff, and the operator was told nothing). This contradicted `AgentStatus`' stated never-silent contract. The baseline `--all` / `--dir` chunked path never recorded the fact at all, and is fixed with it. (epic 35.16.6.1)
+- A persona that both re-packed a chunk and hit the diff-wide shed no longer reports an **incomplete `files_dropped`**. The re-pack record was written first and the diff-wide promotion is deliberately a fallback, so it declined to fill an already-populated record: `truncated: true` stayed honest while the list named only the re-pack's files and omitted the ones no reviewer ever saw. The two lists are now unioned. (epic 35.16.6.1)
+- `atcr doctor` probes each target at the **agent's declared `max_tokens`** rather than always at the `--max-tokens` default. An agent declaring `32000` was probed at `2048`, classified `ok_warning`, and told to "raise `--max-tokens`" — the cap it had already raised, and the hint the field was added to satisfy. An explicit `--max-tokens` still wins. (epic 35.16.6.1)
+- A reviewer's justification excerpt no longer **absorbs its neighbour's narrative**. Reviewer `review.md` files carry raw pipe-delimited finding records on consecutive lines with no blank separator, and the excerpt's block walk recognized only headings and list bullets as boundaries — so several records folded into one block and two findings anchored at different lines received byte-identical justification text, stamping one finding's reasoning onto an unrelated neighbour. Reproduced identically across two independent review runs. Reconciled output changes accordingly. (epic 35.16.6.1)
+- The **stale-review rejection now names a recovery path on both surfaces**: `atcr review --resume <id>` first (the cheap recovery, and CLI-only), then re-running from scratch via `atcr_review`, so an MCP client — which has no resume capability — is not left holding a CLI-only instruction. Visible to both CLI and MCP callers. (epic 35.16.6.1)
+- A **resumed** review's `summary.json` now carries `fallback_count`. `RebuildPool` is its sole writer on that path and never tallied `fallback_used`, so a resumed run published `"fallback_count": 0` beside its own `agents[].fallback_used: true`. The field is deliberately never `omitempty` so a `0` reads as a measurement, which made this a false number rather than a missing one. The asymmetry was introduced with the truncated-to-zero tally, which was added to the rebuild while its documented sibling was left behind. (epic 35.16.6.1)
+- `summary.json` on the **resume** path now emits `"files_dropped": []` and `"agents": []` where it previously emitted `null`. `RebuildPool` reloads statuses from disk without the nil→empty normalization `statusFor` applies, so one artifact called the shed list *unmeasured* while its neighbour called it *measured and empty*. Consumers that distinguish `null` from `[]` will see the shape change. (epic 35.16.6.1)
+- The **truncated-to-zero warning now writes through the injected logger** rather than `os.Stderr`, so an embedded `cli.MainWithHooks(ctx, stdout, stderr, hooks)` caller receives it alongside every other diagnostic for the first time. The trade is deliberate: a context carrying no logger discards the line, which is correct, since every production entry point installs one and a caller that supplied none asked for no output. (epic 35.16.6.1)
+- Benchmark outcome classification now treats a payload-truncated reviewer as incomplete rather than clean, matching how a chunked reviewer with unreviewed bins is already classified — a reviewer whose input was cut short by either route no longer reports a false "reviewed everything, found nothing" signal. (technical debt, 2026-08-14)
+- Pinned regression coverage for `BuildEntriesFromDiff`'s handling of duplicate-path diff entries against its existing dedup logic. (technical debt, 2026-08-14)
+- A fallback reviewer whose own context window cannot hold the payload its primary was sized for now **re-packs that payload against its own byte budget** under `on_overflow: truncate`, instead of shipping a prompt it provably cannot hold. Previously the run warned and dispatched anyway: a declared-128000 primary paired with an undeclared 32768 backup handed that backup a ~405 KB prompt. The re-fit records its own `truncation`, `effective_budget`, `chunk_count: 1`, and `degradation_action: truncate`. (epic 35.16.5.4)
+- Baseline coverage now attributes reviewed files to the agent that **actually served** the slot rather than unconditionally to its primary. This is what makes the re-fit safe: an oversized prompt fails loudly at the provider, but a falsified coverage tag is silent — `CommitBaselineIndex` records the shed files as reviewed and the next incremental scan skips them, so a file nothing ever read is never read again. Both decision points were closed, including the all-succeeded short-circuit, which is the one that fires in practice (a slot served by a successful fallback reports `StatusOK`, so a re-packed fallback produces an all-OK run). (epic 35.16.5.4)
+- A re-packed chunk's degradation record now survives the per-persona chunk merge. The merge inherited its record from the first chunk, so a re-fit on any later chunk was invisible in `status.json` — the persona presented as a clean full-coverage review while a substitute had reviewed strictly less than it was sent. (epic 35.16.5.4)
+- A re-fit never keeps a **zero-byte** file as its surviving entry. Empty tracked files are ordinary (`py.typed`, `__init__.py`, `.gitkeep`), and a plain "fewest bytes" rule selected one every time, shipping a 0-byte payload that comes back as a false-clean "no findings" review. (epic 35.16.5.4)
+- A re-fit that shrank the payload but still cannot reach its budget records `degradation_action: overflow`, not `truncate`, and keeps its stderr warning. Claiming a successful truncate there would drop the only signal saying the review may not have been read in full, precisely when the reviewer is worst off. (epic 35.16.5.4)
+- The promoted `effective_budget` on a merged multi-chunk record is now documented as what it is — the tightest budget any *re-packed* payload was sized to, an aggregate across chunks — and is explicitly contained there. `resolved_window` and `reserved_output_tokens` stay with the `model` named on the same record, since `resolved_window` is derivable from it; promoting them to "match" the aggregate would pair one chunk's model with another agent's window. (epic 35.16.5.4)
+- A shed record can no longer claim files were dropped while naming none. The "keep one file" arms excluded the survivor by PATH, so a payload carrying two entries with the same path (a concatenated diff) recorded `truncated: true` with an empty `files_dropped`, which also suppressed the truncation promotion in the chunk merge. (epic 35.16.5.4)
+- `atcr benchmark run` no longer misattributes a failed-over lane's cases to the model that did not serve them. The score accumulator is now keyed on the **realized `(model, persona)` pair** rather than the lane, so a lane whose primary exhausts its provider quota mid-suite emits one row per model actually used, each carrying only the cases it served. This was a live data-integrity defect at exactly the point the public leaderboard consumes: epic 35.16.5.3's Run B credited `qwen3.8-max` with all 17 cases when `llm-large` had served 9 of them. Every quota-limited primary in the registry ships with a cross-provider fallback by design, so this was the routine outcome of a long run, not an exceptional one. (epic 35.16.5.2)
+- A case that **failed after its slot had already failed over** is attributed to the fallback model that attempted it rather than to the configured primary. `fanout` stamps the usage-reported model only when tokens were returned, so a failed call previously resolved to the registry's primary — a model which by definition did not serve that case. (epic 35.16.5.2)
+- `docs/registry.md` documents the new field — default, range, no CLI override, resolution order, and an explicit warning to declare `min(model window, proxy ceiling)` rather than the model's published spec, because a request-body guardrail in front of a model surfaces an over-large payload as an opaque HTTP 400 with no hint that size was the cause. The `max_context_lines` row's derivation formula and three code comments falsified by the widened signature were corrected alongside it. (epic 35.16.5.1)
+- `docs/benchmark.md`'s scoring table described exact category matching and documented no out-of-vocabulary diagnostic, so every number a run emits would have been mis-read. (epic 35.16.5)
+- Removed a duplicate `"security"` literal in `reconcile/consensus.go`, which now uses the vocabulary constant. (epic 35.16.4)
+- Corrected the `scope:` example in `docs/registry.md`, which demonstrated a category outside the vocabulary. (epic 35.16.4)
+- `secret` and `input-validation` are now exempt from the consensus filter alongside `security`. The disambiguation rule steers credential findings to `secret` and injection findings to `input-validation`, so without this a MEDIUM/LOW single-reviewer credential finding became a drop candidate where it previously survived — a behavior change produced entirely by the prompt. It reaches the `atcr` binary in this release: the `reconcile/v0.6.0` tag and the pin bump to it both ride this PR. (epic 35.16.4)
+- Agent `scope:` entries outside the closed vocabulary now warn at registry load, naming the nearest member, and the rendered focus block states that scope entries are focus areas rather than CATEGORY values. The block is appended last in the prompt, so an off-vocabulary entry previously ended the prompt by naming a word the prompt had declared illegal. (epic 35.16.4)
+- The PR-time `reconcile-module` CI job now runs `gofmt`, `golangci-lint` and `go test -race` — the same three checks as the release gate, where it previously ran `go test` alone. Neither root CI job crosses the nested `go.mod` boundary, so lint on `./reconcile` effectively ran only after merge: a deprecated `parser.ParseDir` call added in this epic passed PR CI and was caught only by running the gate by hand before tagging. Measured, the skipped checks cost ~2s. Both workflows now carry reciprocal `mirrors:` comments so the check sets stay in lockstep. (epic 35.16.4)
+- **The three wasm parser modules that had no CI at all now have it.** An audit of every nested `go.mod` found `internal/astgroup/parsers/src/{goparser,pyparser,guestabi}` covered by nothing — root `go test`/`golangci-lint` do not cross their module boundaries, and only `braceparser` had a job (tests only). A source change that failed to compile for `wasip1` was caught by nothing until someone ran `parsers/build.sh` by hand. The `braceparser-module` job is replaced by `parser-modules`, covering all four with `gofmt`, `go vet`, a `wasip1/wasm` build (braceparser across all 8 language build tags, since `active` is selected at compile time), `go test` where tests exist, and `golangci-lint` on the three that are lint-clean. Runs in ~4s. (epic 35.16.4)
+- `.githooks/pre-push` now mirrors both nested-module jobs instead of only claiming to: it adds reconcile's `gofmt` + `golangci-lint`, the parser-module checks (skipped with a message on a pre-1.26 toolchain), and a `GOWORK=off go build ./...` pin check — a local `go.work` resolves `reconcile` from the working tree and hides the `go.mod` pin, so root code could compile locally against an unreleased symbol and fail only in CI. (epic 35.16.4)
+- **Sandboxed child processes now get a sanitized `PATH`** instead of inheriting the operator's verbatim — an empty `PATH` element resolves to the current directory, which is the reviewed repository under the sandbox, so a repo could otherwise supply the `go`/`npm`/etc. binary that runs the trusted validate command. Legitimate group-writable toolchain directories (e.g. Homebrew's `/opt/homebrew/bin`) are still accepted. (epic 35.16.3)
+- **URL-embedded credentials are scrubbed unconditionally by the log redactor**, closing a gap where a credential embedded in a logged URL survived the base redaction pass. (epic 35.16.3)
+- **The `--exec` snapshot gate now checks the actual directory a dirty-worktree run executes in** (the detached temp-snapshot copy), not just the repo root — closing a case where the gate validated one directory while the run used another. (epic 35.16.3)
+- **The os-level fallback no longer engages on a Docker *configuration* fault** (as opposed to a genuine unreachable-daemon preflight failure) — config faults now refuse the run rather than silently downgrading to a weaker backend. (epic 35.16.3)
+- **The fallback-engaged warning is deferred until the caller's own gates accept the run**, instead of firing before it's known whether the run will actually proceed. (epic 35.16.3)
+- A dedicated review-scoped redactor is now installed on the standalone `atcr verify` context, so it no longer logs absolute repository paths unredacted. (epic 35.16.3)
+- **The reviewer `CATEGORY` vocabulary was never an allowlist, and `personas/_base.md` is not a shared prefix.** An earlier revision of this epic added `maintainability` to the vocabulary line in `personas/_base.md` on the premise that reviewers had to be prompted to emit it. That edit reached zero panel members and has been reverted: `_base.md` is a resolution *fallback* (`internal/registry/persona.go` levels 4-5), consulted only for an agent that has no persona file of its own, and all nine shipped personas resolve to their own file. Those files carry no category enumeration at all, so `maintainability` was always emittable — there is no allowlist to widen. Adding one to nine live production prompts would be a new behavioral restriction the epic never scoped, so the constraint stays absent and this note is the record of that decision. (epic 35.16.2)
+- `.gitattributes` marks the suite `-text`. The reproducibility hash is computed over raw diff bytes and one vendored diff carries mixed CRLF/LF, so a checkout with `core.autocrlf=true` would otherwise produce a different hash than the published one. (epic 35.16.2)
+- *Technical debt resolved 2026-08-07 — a sweep over the CLI's flag vocabulary, split by what each name actually addresses. Every rename below keeps the old spelling working as a hidden deprecated alias, so no existing invocation breaks.* (technical debt, 2026-08-07)
+- **`--repo` split.** `--repo-root <path>` is now the canonical filesystem-path flag on `atcr verify`, `atcr diff-smell`, and `atcr reconcile`, where `--repo` had collided with the `owner/name` GitHub slug that `atcr review` and `atcr github` spell the same way. `--repo` remains a deprecated alias on the path-taking commands; the slug flag is unchanged. (technical debt, 2026-08-07)
+- **`--dir` split three ways** by what it addresses: `--store` (the local debt store on `atcr debt`), `--scope` (the reviewed subtree on `atcr review`), and `--dest` (the install target on `atcr skill install`). `--dir` remains a hidden alias on each. (technical debt, 2026-08-07)
+- **`--fresh` on `atcr review` split** into `--reverify` (with `--verify`: re-verify findings that already carry a verdict) and `--no-file-cache` (with `--all`/`--scope`: bypass the file-hash skip and re-review every in-scope file). One flag name had meant two unrelated things depending on the run's mode. `--fresh` still resolves to whichever the mode implies. `atcr verify --fresh` is a separate flag and is unchanged. (technical debt, 2026-08-07)
+- **`atcr benchmark run --output`** is canonical, matching every other writer in the CLI; `--out` is a hidden alias. (technical debt, 2026-08-07)
+- **`--dry-run`** is the canonical show-don't-do flag; `--preview` is a hidden alias. (technical debt, 2026-08-07)
+- **`atcr debt resolve <id>`** takes the id positionally, replacing the `--resolve <id>` / `--list` flag stutter on a command whose name already said what it does. (technical debt, 2026-08-07)
+- **`LOG_LEVEL` is now `ATCR_LOG_LEVEL`.** Every other atcr-owned variable is `ATCR_*`-namespaced, and a bare `LOG_LEVEL` set for an unrelated tool in CI would silently retune atcr's logging. Bare `LOG_LEVEL` is honored as a deprecated fallback. (technical debt, 2026-08-07)
+- **`atcr doctor --agents` is a repeatable string slice**, so `--agents a --agents b` accumulates instead of the last one silently winning. (technical debt, 2026-08-07)
+- **`atcr benchmark export --in`** no longer loses its help-text placeholder to pflag's backquote capture. (technical debt, 2026-08-07)
+- **`atcr leaderboard --model` matches as a case-insensitive substring**, documented as such alongside the other filter flags' matching modes. (technical debt, 2026-08-07)
+- **`atcr debt resolve --max` and `atcr debt dashboard --top` state their distinction in their own help strings** — `--max` is an action cap (`0` = no cap), `--top` is a ranked-display cutoff (`0` suppresses the list). The two read as synonyms and behaved oppositely at `0`. (technical debt, 2026-08-07)
+- **Docs:** `docs/registry.md` documents the config-key-to-flag mapping; `docs/skill-usage.md` documents each filter flag's matching mode; the README records the singular-noun convention for command groups (`atcr debt`, not `atcr debts`), grandfathering `models` and `personas`. (technical debt, 2026-08-07)
 
-- **`--repo` split.** `--repo-root <path>` is now the canonical filesystem-path flag on `atcr verify`, `atcr diff-smell`, and `atcr reconcile`, where `--repo` had collided with the `owner/name` GitHub slug that `atcr review` and `atcr github` spell the same way. `--repo` remains a deprecated alias on the path-taking commands; the slug flag is unchanged.
-- **`--dir` split three ways** by what it addresses: `--store` (the local debt store on `atcr debt`), `--scope` (the reviewed subtree on `atcr review`), and `--dest` (the install target on `atcr skill install`). `--dir` remains a hidden alias on each.
-- **`--fresh` on `atcr review` split** into `--reverify` (with `--verify`: re-verify findings that already carry a verdict) and `--no-file-cache` (with `--all`/`--scope`: bypass the file-hash skip and re-review every in-scope file). One flag name had meant two unrelated things depending on the run's mode. `--fresh` still resolves to whichever the mode implies. `atcr verify --fresh` is a separate flag and is unchanged.
-- **`atcr benchmark run --output`** is canonical, matching every other writer in the CLI; `--out` is a hidden alias.
-- **`--dry-run`** is the canonical show-don't-do flag; `--preview` is a hidden alias.
-- **`atcr debt resolve <id>`** takes the id positionally, replacing the `--resolve <id>` / `--list` flag stutter on a command whose name already said what it does.
-- **`LOG_LEVEL` is now `ATCR_LOG_LEVEL`.** Every other atcr-owned variable is `ATCR_*`-namespaced, and a bare `LOG_LEVEL` set for an unrelated tool in CI would silently retune atcr's logging. Bare `LOG_LEVEL` is honored as a deprecated fallback.
-- **`atcr doctor --agents` is a repeatable string slice**, so `--agents a --agents b` accumulates instead of the last one silently winning.
-- **`atcr benchmark export --in`** no longer loses its help-text placeholder to pflag's backquote capture.
-- **`atcr leaderboard --model` matches as a case-insensitive substring**, documented as such alongside the other filter flags' matching modes.
-- **`atcr debt resolve --max` and `atcr debt dashboard --top` state their distinction in their own help strings** — `--max` is an action cap (`0` = no cap), `--top` is a ranked-display cutoff (`0` suppresses the list). The two read as synonyms and behaved oppositely at `0`.
-- **Docs:** `docs/registry.md` documents the config-key-to-flag mapping; `docs/skill-usage.md` documents each filter flag's matching mode; the README records the singular-noun convention for command groups (`atcr debt`, not `atcr debts`), grandfathering `models` and `personas`.
-
-## [35.16.1] - 2026-08-06
-
-Canonicalizes the persona digest before telemetry collection begins. `HashPersonaID` performed no normalization, so `bruce`, `Bruce`, and `" bruce "` produced three different digests for one persona. That is normally untidy; here it is permanent — an ingestion backend re-keys the received digest under a never-rotated secret and discards the original, so a variant becomes a second backend identity that no backfill can merge. Landing this before any rows are collected is the whole point of its ordering.
-
-### Changed
-
-- `scorecard.HashPersonaID` now reduces its input to `strings.ToLower(strings.TrimSpace(raw))` before hashing, so every casing and padding variant of one persona yields one digest. **Digests produced by earlier releases will not match digests produced by this one** for any name that was not already lowercase and trimmed (i.e., free of leading/trailing whitespace).
-- `telemetry.NewQualitySignal` applies the identical transform to its inlined hash, and evaluates its empty-persona sentinel on the **canonical** value — so a whitespace-only persona (e.g. `"   "`) now canonicalizes to the empty string and returns the zero sentinel, instead of previously hashing the literal whitespace value (`sha256("   ")`) as if it were a legitimate persona identity.
-- `--sync-cloud` persona digests change with the same transform: `cloudsync.go` is the second consumer of `HashPersonaID`, and its call-site `TrimSpace` remains as defense in depth (its empty-agent gate still depends on it).
-- `docs/telemetry.md` and `docs/scorecard.md` document the canonical form and the JS a backend uses to reproduce it. That cross-language equivalence is **scoped to ASCII**, which is what the `personas/community/` catalog contains: Go and JS disagree on Greek final sigma, dotted capital I, and a leading BOM. A divergence there is a dictionary **miss** (the persona reads as unrecognized), never a split identity — digests are only ever produced by the Go client.
-
-### Added
-
-- `TestHashPersonaID_PinnedPublishedPersonaDigests` pins the digests of real catalog personas against values computed **independently in node**, so the cross-language contract is verified rather than assumed.
-- `TestHashPersonaID_GoJSDivergenceIsASCIIScoped` pins the known limits of that contract so a future change cannot silently re-assert a total equivalence that does not hold.
-- `TestQualitySignal_PersonaHashedNotRaw` now exercises **non-canonical** inputs. With only canonical fixtures the two producers agreed whether or not either canonicalized, so the anti-drift guard was vacuous; it now fails if either producer is changed alone.
-
-*Shipped via /execute-epic (epic 35.16.1)*
-
-## [35.15.0] - 2026-08-06
-
-Puts `atcr leaderboard` on the windowed scorecard read Epic 35.11 built. The leaderboard is the one surface with a user-facing time window — `--since` defaults to 30 days — yet it read every month file the store had ever written and then filtered in memory, so displaying one month of data cost the whole history. The window now selects month files before opening them.
-
-### Changed
-
-- `atcr leaderboard` sizes its store read from `--since`, so a windowed query opens only the month files its window intersects. Output, columns, exit codes, and every flag are unchanged.
-- Month selection is coarser than the day-precision `--since`, so the filter still runs over the windowed result: the month containing the cutoff is read whole, and records inside it that predate the cutoff are excluded exactly as before. The two compose; neither alone is correct.
-- `--since all` and `--since 0` still read all history, and an invalid `--since` still reports the same error at the same exit code — including against an empty store, where the graceful "no scorecard data found" state continues to take precedence over the window value.
-- `--export` deliberately keeps its all-history read: whether the export surface should be windowed is a question about export semantics, not a performance fix, and windowing it would swap its empty-store failure for the no-match one.
-- Two consequences follow from selecting files rather than filtering records, both accepted: an unreadable month file *outside* the window no longer fails the command (a file that is never opened cannot be diagnosed — `--since all` still surfaces it), and a record stamped in a future calendar month drops out of the table, since the store's windowing is fail-closed at its upper edge.
-
-*Shipped via /execute-epic (epic 35.15)*
-
-## [35.14.0] - 2026-08-05
-
-Moves the finding-history ledger under `.atcr/`, alongside the debt store Epic 35.13 unified. `atcr history` previously resolved its monthly shards to `.planning/history/`, so a standalone atcr user — who has no `.planning/` directory — had nowhere to record or query trend data. The move also turns month sharding into a real read index: a `--since` query now selects shards by filename and opens only the months its window touches.
-
-### Added
-
-- `atcr history --prune <horizon>` deletes whole monthly shards older than a retention horizon and names every shard it removes. Strictly opt-in with no default: nothing else in atcr ever trims the ledger, and pruning is deliberately file-granular — there is no record-level compaction, because folding a trend ledger by finding id would destroy the trend it exists to report.
-- [docs/history.md](docs/history.md) — the ledger's storage layout, record schema, deduplication rule, windowed reads, and retention, including how to carry forward shards from the previous `.planning/history/` layout.
-
-### Changed
-
-- The finding-history ledger now lives at `.atcr/history/YYYY-MM.jsonl`. `atcr review` (including `--resume`) writes there, and `atcr history` reads it unioned with the pre-19.4 flat ledger `.atcr/findings-history.jsonl`, which stays queryable in place and is never moved or rewritten.
-- A `--since` query selects shards by their `YYYY-MM` filename before opening them, so a narrow window costs proportionally to the window rather than to the size of the ledger. Selection may over-select but never under-select: a month containing the cutoff is read whole, and a shard whose name is not a month is always read.
-- The union of the two read locations is deduplicated on (timestamp, finding id) — one occurrence per finding per run. A finding's recurrence across runs is preserved, since that is the trend being reported; a duplicate resolves to the highest severity seen, matching how a single run's records are already collapsed.
-- History directories are now created `0700` and new ledger files `0600`, matching the sibling `.atcr/debt/` store. Existing files keep their current mode.
-- An empty result is no longer reported as "no history recorded yet" when history exists outside the query window; the first-run hint is shown only for a genuinely empty ledger.
-
-### Removed
-
-- atcr's history code no longer resolves any path under `.planning/`. Shards left there by the previous layout are not read, moved, or deleted — see the upgrade note in [docs/history.md](docs/history.md) for copying them into `.atcr/history/`. Because `.atcr/` is gitignored, trend data is per-checkout and is no longer shared through version control.
-
-*Shipped via /execute-epic (epic 35.14)*
-
-## [35.13.0] - 2026-08-05
-
-Unifies atcr's technical-debt tooling onto a single store. `atcr debt` previously split across two stores that never reconciled — `.planning/technical-debt/` (`list`/`add`/`dashboard`) and `.atcr/debt/` (`resolve`/`compact`) — so an item filed by `add` could never be closed by `resolve`. All five subcommands now read and write the same append-only, month-sharded `.atcr/debt/` store, with corrected resolution semantics, automatic bounded growth, and MCP write parity.
-
-### Added
-
-- Schema v3: records gain `origin` (`review`|`manual`), `occurrences`, `first_seen`, and `counted_through`, carried forward through compaction so a resolved-then-regressed item's history survives.
-- `--origin` filter and an `ORIGIN` column on `atcr debt list`.
-- Finding ids as the leading column in `atcr debt list`, `atcr debt dashboard`, and `--json` output, so `atcr debt resolve <id>` is copy-pasteable from what was just read.
-- Automatic compaction: the store now compacts itself after a reconcile append once it crosses a persisted watermark past 100k records or 100 MB, instead of requiring a manual `atcr debt compact`.
-- A minimal streaming-decode read path for dedup seeding and the open-backlog fold, replacing full-record materialization on the hot path.
-- The review manifest now records the repository root at review time; `atcr reconcile` and the MCP `atcr_reconcile` handler resolve the local-debt store via `explicit --repo > manifest > CWD`, closing the gap where MCP-driven reconciles never persisted findings.
-- `atcr debt dashboard --output <file>`, mirroring `atcr report`; stdout is now the default.
-
-### Changed
-
-- `atcr debt list` / `add` / `dashboard` now read and write `.atcr/debt/` instead of `.planning/technical-debt/`.
-- Resolution semantics now split by status: `wontfix` stays terminal, while `resolved` and `deferred` re-open on re-detection of the same finding id — a regression or an unlanded fix is surfaced again rather than silently suppressed forever.
-- `atcr debt list --severity` / `--status` now validate against the same enums `resolve` / `add` already enforce, returning a usage error (exit `2`) on an unrecognized value. **Breaking for scripts:** a typo'd filter previously matched nothing and exited `0`, indistinguishable from a genuinely empty backlog.
-- Every `atcr debt` subcommand resolves its store by walking up from the working directory to the nearest `.git`/`.atcr` marker when `--dir` is unset, so a subdirectory invocation reads the same store as the repo root does.
-
-### Removed
-
-- `internal/debt`, `internal/tdmigrate`, and `cmd/td-migrate`, along with the `--readme` / `--items` flags on `atcr debt`. No atcr code reads or writes `.planning/technical-debt/` anymore; that tree is left untouched for external tooling to drain on its own schedule.
-- The `.planning/technical-debt/DASHBOARD.md` default output path — `atcr debt dashboard` writes to stdout by default now.
-
-*Shipped via /execute-sprint + /resolve-td (sprint 35.13)*
-
-## [35.12.0] - 2026-08-02
-
-Activates the compiled-in telemetry endpoints and removes the `--sync-cloud` placeholder destination. The anonymous usage ping and the community quality signal previously compiled in an empty endpoint, making every send a no-op; both now name their live `atcr.dev` host. **The usage ping is on by default** (opt out with `ATCR_TELEMETRY=0` or `atcr config set telemetry false`); the quality signal remains opt-in and off by default. Neither consent gate changed — only whether a permitted send has somewhere to go.
-
-### Added
-
-- `telemetry.NewWithQualitySignal(usage, quality)` — a two-destination client constructor. The backend serves the usage ping and the quality signal as separate handlers with separate closed key allowlists, so routing the quality signal's JSON array at the usage-ping handler earns a `400` that the fail-open path drops silently. Each destination is independently empty-able, and an empty one silences only its own surface.
-- `defaultQualitySignalEndpoint` — the compiled-in quality-signal destination, distinct from `defaultTelemetryEndpoint`.
-
-### Changed
-
-- `defaultTelemetryEndpoint` is now `https://atcr.dev/api/v1/telemetry` and `defaultQualitySignalEndpoint` is `https://atcr.dev/api/v1/quality-signal`. Both are HTTPS-only; plaintext http is refused per path.
-- `telemetry.New(endpoint)` keeps its signature and its documented single-destination meaning — both payloads share the given endpoint. Production uses the two-destination constructor.
-- `docs/telemetry.md` no longer states that nothing is transmitted; it now names each live endpoint and how to opt out.
-
-### Removed
-
-- The `--sync-cloud` placeholder default (`https://atcr.dev/dashboard`), which resolved to a live HTML page — a user with `ATCR_API_KEY` exported could POST a scorecard at a web page. `defaultCloudEndpoint` is now empty: the scorecard ingest contract is owned by atcr-enterprise, and no community API-key issuance flow exists.
-
-### Fixed
-
-- `--sync-cloud` without `--cloud-endpoint` now refuses with a usage error (exit `2`) naming the absent destination and pushes nothing, replacing a warning that let the run proceed. **Breaking for CI:** a `--sync-cloud` invocation relying on the compiled-in default must now pass `--cloud-endpoint` explicitly. Because the destination is validated before the credential, a run missing both now exits `2` (missing destination) rather than `3` (missing key); `docs/ci-integration.md` and `docs/agentic-consumption.md` record the ordering.
-
-*Shipped via /execute-epic (epic 35.12)*
-
-## [35.11.0] - 2026-07-31
-
-Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scorecard.ResolveTrustPriors()` into all four `RunReconcile` call sites, which turned an on-demand cost — previously reachable only via `atcr scorecard leaderboard` — into an unconditional read of *every* month file the scorecard store has ever written, on every review and reconcile, with no time window and no record cap. The store has no rotation, so that cost grew without bound. Reads are now windowed to the last 180 days by selecting which month files to open, rather than filtering records after the whole store has already been read and parsed.
+## [0.2.0] - 2026-08-06
 
 ### Added
 
-- `scorecard.ReadSince(dir, since, now, opts)` — a windowed counterpart to `ReadAll` that reads only the month files whose calendar month overlaps `[now-since, now]`. A month file outside the window is never opened. An unparseable month stem is read fail-open, and `since <= 0` delegates to `ReadAll`, so the windowed and all-history paths share one enumeration.
-- `reconcile.Summary.TrustPriorsResolved` (`trust_priors_resolved` in `summary.json`) records how many reviewers' trust priors the caller attached — `len(Options.TrustPriors)`. Because that map now comes from a windowed read, a reviewer with no runs inside the window drops out of it and silently loses trust exemption/demotion, while `atcr personas list --scores` still reads all history and reports that reviewer as healthy. This count is the only place that divergence is observable without an all-history read; a drop between runs is the signal. It is logged by `atcr reconcile`, `atcr review`, `atcr resume`, and the MCP `atcr_reconcile` handler. Observability only — it changes no finding, no confidence, and no exit code.
-
-### Changed
-
-- `scorecard.ResolveTrustPriors()` now reads a 180-day window instead of all history — roughly 4x faster and 4x less allocated against a 24-month store (5.9ms vs 24.2ms, 11.5MB vs 51.0MB). One consequence: a reviewer with no runs in any month file overlapping the last 180 days falls back to the neutral "no history" state, the same state a brand-new reviewer occupies. Selection is per month file, so the whole calendar month containing the cutoff is included and effective retention is 180 days plus however far into that month the cutoff falls — up to roughly 210 days. The window is an internal constant; no new flag or config key.
-- `scorecard.TrustPriors(dir, minRuns)` is unchanged — same signature, same all-history semantics — so `atcr personas list --scores` still reports on the whole store.
-
-*Shipped via /execute-epic (epic 35.11)*
-
-## [35.10] - 2026-07-30
-
-Exposes the diff-smell analyzer as `atcr verify diff`. Epic 35.3 ported the analyzer into `internal/verify/diffsmell.go` and wired it into the auto-fix fix-selection gate, but explicitly scoped out "any subprocess or CLI shell-out" — so the detection logic was reachable only from inside this binary, and a consumer's only alternatives were a second dependency or a third copy of the analyzer. This adds the surface and no new analysis: no new smells, no threshold changes, and no change to which verdict a given diff earns.
-
-### Added
-
-- `atcr verify diff`: scans a unified diff for over-simplification ("reward-hack") fingerprints — `test_only`, `test_deleted`, `test_skipped`, `test_renamed_away`, `weakened_assertion`, `suppression`, `empty_catch`, `stub_body` — and reports a `clean` / `soft_only` / `hard` verdict. Deterministic and model-free: no agent, no provider, no API key, no network. Diff sources, exactly one at a time: `--rev <rev>` (the default, `HEAD`), `--staged`, `--diff <path>`, or `--diff -` for stdin; naming two is a usage error that names both. `--repo` targets a tree other than the CWD. Git is always invoked with `--no-ext-diff --no-textconv --no-color`: the first two are safety, not formatting — `--repo` invites pointing the scanner at a tree you do not control, and a repo-local `diff.external` **or** a `[diff "x"] textconv = <program>` driver (armed by a worktree `.gitattributes`) would otherwise execute an arbitrary program with your privileges. They are separate vectors; disabling one does not disable the other. `--no-color` keeps a `color.ui = always` config from feeding ANSI escapes to a parser expecting a plain unified diff. Every diff source is capped at 2 MiB and refuses larger input with a "too large to scan" usage error — the relocation check is O(added × removed), so unbounded input costs minutes of CPU rather than just memory.
-- `--fail-on hard|soft|none` on `atcr verify diff` gates the exit code. Gating is **opt-in**: without the flag the verdict is reported and the command exits `0` for every verdict, preserving drop-in parity with the upstream `diff-smell` tool. The standard exit table is reused unchanged — `1` for a tripped gate, `2` for usage errors — so no new exit code is introduced. An invalid value is rejected before any git process is spawned, and a tripped gate still prints the full report. An explicitly **empty** value is unset rather than an error — matching `atcr verify --min-severity` and `atcr reconcile --fail-on` — so `--fail-on "$LEVEL"` with `LEVEL` unset is a no-op instead of hard-failing CI. Note the values are diff-smell **verdicts**, not the finding **severities** `atcr review` / `atcr reconcile` / `atcr github` take; the disjoint value sets mean a severity passed here is a usage error rather than a silent misread.
-- `--json` on `atcr verify diff` emits the scan as the sole content of stdout, with upstream's field names so a consumer written against `llm-support diff-smell --json` can repoint without reshaping. Empty collections render as `[]` / `{}`, never `null`.
-- `summary.dropped` — present only when a scan exceeded the 1000-smell cap, reporting how many findings were omitted from the `smells` array. `omitempty` keeps the key absent from every realistic result. The counts and the verdict are tallied **before** the cap, so truncation can never soften a gate.
-- Merge commits are diffed against their **first parent** (`--first-parent -m`), so `--rev <merge>` reports what the merge introduces to the branch it lands on. Plain `git show` prints nothing for a merge, which made the gate a silent no-op precisely where CI runs it: `--rev` defaults to `HEAD`, and both `refs/pull/N/merge` checkouts and post-merge branches have a merge there. Single-parent commits are unaffected.
-- `Smell.Line` — the new-file line number of the offending added line, so a consuming gate can cite `file:line` in the same vocabulary its technical-debt rows already use. Populated for the added-line detectors (`suppression`, `empty_catch`, `stub_body`, `test_skipped`); the file-level and count-derived smells omit the key via `omitempty` rather than emit a misleading `0`. A malformed hunk header yields no line rather than numbering from the previous hunk.
-- `docs/diff-smell.md` — the command's contract: the smell catalogue, the three atcr-only HARD smells and the reward hack each closes, the full JSON shape with a worked example, the exit table, the stability contract, a version-probe recipe, a pre-commit-hook example, and the relationship to upstream.
-
-### Changed
-
-- The diff-smell result types are now **exported under upstream's own names** with upstream's snake_case json tags: `Smell`, `SmellFiles`, `SmellSummary`, `SmellResult`, `AnalyzeDiff`, `LooksLikeUnifiedDiff`, plus the `Verdict*` / `Severity*` constants. Detector helpers stay unexported and `smell*`-prefixed. This **shortens** `diffsmell.go`'s divergence list rather than growing it — the types were unexported only because nothing outside the package needed them. Internal rename with no behavior change; `TestAnalyzeDiff_Corpus` passes unchanged.
-- `atcr verify` becomes a parent command while remaining a leaf that takes `[id-or-path]`. Cobra resolves a matching child before positional args, so a review id or path literally named `diff` must now be passed as `atcr verify -- diff`. The parent's own flags and args are otherwise unchanged.
-- `docs/ci-integration.md`'s authoritative exit table records `atcr verify diff`'s inverted default (0 on every verdict unless `--fail-on`), and `docs/agentic-consumption.md`, `docs/verification.md`, `docs/README.md`, and `README.md` carry matching entries. Both exit tables now enumerate every exit-`2` cause, including the size cap, an explicitly empty `--rev`/`--diff`, and a `--rev` value starting with `-`.
-- `--rev` is passed after git's `--end-of-options` and before a `--` separator. The leading-`-` refusal remains as defense in depth, but only the separator closes rev/pathspec ambiguity: `--rev foo.go` was previously run as `git show HEAD -- foo.go`, silently narrowing the scan to one path and exiting `0`, so a typo'd or stale rev in a CI gate reduced coverage instead of failing.
-- Smell `evidence` and `file` are bounded and stripped of control characters where the smell is stamped, so every consumer inherits it. Both are verbatim attacker-controlled diff content, and `file` was previously uncapped; an added line carrying `\x1b[2K\x1b[1A…` could erase the verdict line and print a forged all-clear.
-- `empty_catch` reports the line that actually contains `catch`, exactly once, and only joins genuinely adjacent added lines. It previously emitted a duplicate and cited the preceding line — which may contain no `catch` at all — and could join lines from different hunks hundreds apart.
-
-### Notes
-
-- **The JSON shape is a public contract from this release.** Committed: the three top-level keys, the smell object's field names, the closed verdict set (`clean`/`soft_only`/`hard`), the closed severity set, and the exit mapping. Adding a new smell **type**, or a new optional `summary` field such as `dropped`, is additive and non-breaking — consumers key on `severity` and `summary.verdict`. Renaming a key, removing a field, or changing either vocabulary is **breaking** and will earn a Breaking entry here. `TestSmellResult_GoldenJSON` pins the marshaled shape, and `TestDiffSmellDocExampleMatchesAnalyzer` runs the analyzer over `docs/diff-smell.md`'s own worked example and compares it to the doc's own JSON block — so the documented half of the contract cannot drift either.
-- `test_only` is **not** suppressed on this surface. The in-process fix gate suppresses it when the finding's own file is a test path; a standalone caller has no finding to key that exemption on, so a test-only diff reads as `hard`.
-- An empty diff and content that is not a unified diff both report `clean` and exit `0`, with the explanation on stderr — so a pre-commit hook on a nothing-staged commit is a no-op rather than a spurious block, and `--json` output is always a parseable document.
-- A tagged release is what makes this usable by an external consumer; merging to `main` does not. `v0.1.0` does not contain the command.
-
-## [35.9.1] - 2026-07-30
-
-Makes the epic-14.2 consensus filter's corroboration bar configurable via `--consensus=off|lenient|strict` and a matching `consensus:` config key, with `strict` (today's hardcoded behavior) as the default — then uses those levels to close the half of epic 35.9's AC2 that was unverifiable without them. Supersedes epic 35.6, which reached `completed/` without ever being implemented.
-
-### Added
-
-- `atcr reconcile --consensus <level>`: `strict` (default) sidecars every uncorroborated singleton below `HIGH` confidence; `lenient` raises the kept-bar to `MEDIUM`, keeping `MEDIUM`-confidence singletons and sidecarring only `LOW` ones; `off` makes the consensus filter inert — not a return to pre-14.2 output, since epic 35.9's trust demotion still applies and `off` output can therefore carry `LOW`-confidence findings pre-14.2 output never did. Levels are case- and whitespace-insensitive; an invalid value is a usage error (exit 2) naming the valid levels.
-- `consensus:` config key on the standard precedence chain — explicit flag/argument > `.atcr/config.yaml` > `~/.config/atcr/registry.yaml` > embedded `strict` — resolved by the new `registry.ResolveConsensus`, which mirrors `ResolveGateThreshold` (no embedded default inside the resolver; the call site maps `""` to `strict`). `atcr init` seeds `consensus: strict` with a levels-comment; existing configs are untouched.
-- `consensus` argument on the MCP `atcr_reconcile` tool, resolved through the same chain so the CLI and MCP entry points cannot fork. An invalid value returns a tool error naming the valid levels.
-- `reconcile.Options.Consensus` plus the exported `ConsensusStrict`/`ConsensusLenient`/`ConsensusOff` constants, `ConsensusLevels()` (an accessor returning a fresh slice, so a consumer cannot corrupt the shared vocabulary), and `NormalizeConsensus` — the closed vocabulary every surface validates against. An empty or unrecognized value resolves to `strict`, so the filter can never be silently disabled by a value that bypassed boundary validation.
-
-- `reconcile.Summary.ConsensusLevel` (`consensus_level` in `summary.json`) records the level the filter actually ran at, and `report.md` names it unconditionally. `consensus_filtered: 0` alone is ambiguous between `off` and `strict with nothing to filter`, and `off` is reachable with no flag at all, so the artifacts previously carried no trace of the configuration that produced them. An unset or unrecognized level is recorded as the `strict` the filter fails safe to, never echoed back raw.
-
-- `scorecard.Record.ConsensusLevel` (`consensus_level`, omitted when empty) records the consensus level a run's reviewer counts were measured under, and `TrustPriors` now aggregates **only `strict` runs**. Reviewer counts come from the post-consensus-filter finding set, so a `lenient`/`off` run inflated `findings_raised` without `findings_corroborated` and durably depressed the trust priors `trustExempt`/`demoteByTrust` applied on later `strict` runs — a cross-run feedback loop. A record with no `consensus_level` counts as `strict` (every pre-35.9.1 run was strict by construction), so existing stores are unaffected. The leaderboard is deliberately not filtered.
-
-### Changed
-
-- Only the singleton corroboration bar is configurable. The 3-distinct-reviewer panel floor (`consensusMinReviewers`) and every exemption (`consensusExempt`: security-related, `HIGH`/`CRITICAL`, out-of-scope, confirmed; and `trustExempt`: high-trust sole reviewer) behave identically at all three levels — the internal confidence ladder and exemption rules stay out of the public API.
-- The `consensus:` level now also resolves for `atcr review` (one-shot) and `atcr review --resume` from the config and registry tiers, so the key is honored at every reconcile entry point rather than only by `atcr reconcile`. Neither command takes a `--consensus` flag. Both resolve and validate it up front, before any fan-out, so a bad configured value fails fast instead of after a paid review.
-- Epic 35.9's trust-prior demotion is documented as independent of the level: it runs ahead of the filter and is gated only by the panel floor, so a low-trust singleton is `LOW` at every level — the level decides only whether that `LOW` finding is then sidecarred.
-- `docs/registry.md`, `docs/scorecard.md`, `reconcile/README.md`, the `reconcile` command long help, and the `atcr init` config template document the knob. `docs/scorecard.md` additionally warns that a non-`strict` run skews the reviewer corroboration rates it later reads back as trust priors, and recommends `--no-scorecard` for exploratory runs.
-
-### Fixed
-
-- Epic 35.9's AC2 is now fully verified. `TestDemoteByTrust_ObservableViaConsensusLevel` drops the security-category escape hatch the original demotion test needed to stay observable under `strict`, and pins a plain non-exempt low-trust-demoted singleton as sidecarred under both `strict` and `lenient` and kept under `off` carrying `Confidence == LOW`.
-
-*Shipped via /execute-epic (epic 35.9.1)*
-
-## [35.9.0] - 2026-07-29
-
-Consumes the per-reviewer trust prior (epic 35.8) at reconcile time, so the epic-14.2 consensus filter's drop/keep decision on an uncorroborated singleton finding is informed by a reviewer's measured track record, not just in-run reviewer count.
-
-### Added
-
-- `reconcile.Options.TrustPriors`: a caller-supplied map of lowercase reviewer name to historical corroboration rate. A singleton whose sole reviewer's prior is at or above the high-trust threshold survives the consensus filter without in-run corroboration or PageRank authority. A singleton whose sole reviewer's prior is at or below the low-trust threshold is demoted to `LOW` confidence — the first reconcile-time path to `ConfLow`, previously reachable only post-verify via a refuted verdict. Both effects are scoped to the same panel-size floor the consensus filter itself gates on (>= 3 distinct reviewers); a nil/empty map is a complete no-op.
-- `scorecard.ResolveTrustPriors()`: resolves the default scorecard store and reads `TrustPriors` at `DefaultTrustMinRuns`, degrading to a nil map on any failure (missing store, unresolvable config dir) rather than erroring. Every `atcr reconcile`, `atcr review --resume`, `atcr review` (one-shot mode), and MCP `atcr_reconcile` call site now resolves and attaches it.
-
-### Changed
-
-- `docs/scorecard.md` and `reconcile/README.md` document the trust-prior mechanism and its cold-start contract: a reviewer needs `DefaultTrustMinRuns` (20) summed runs before its prior applies at all.
-
-*Shipped via /execute-epic (epic 35.9)*
-
-## [35.8.0] - 2026-07-29
-
-Promotes the reviewer→corroboration-rate resolver already backing `atcr personas list --scores` out of `cli/personas.go` and into `internal/scorecard` as a shared, minimum-history-aware resolver, so skeptic selection and future trust-aware consensus filtering reuse one aggregation instead of growing a second copy.
-
-### Added
-
-- `scorecard.TrustPriors(dir, minRuns)`: the shared per-reviewer corroboration-rate resolver, keyed by lowercase reviewer name, summed across a reviewer's `(reviewer, model)` rows. A reviewer below `minRuns` is omitted from the map rather than present at zero, so callers can distinguish "no history" from "measured untrustworthy". A missing, empty, or unreadable scorecard store yields an empty map and a nil error. `scorecard.DefaultTrustMinRuns` (20) is the conservative default floor for a caller that does not pick its own.
-
-### Changed
-
-- `atcr personas list --scores` now delegates to `scorecard.TrustPriors(dir, 0)` instead of its own private aggregation; output is unchanged (no floor applies at this call site).
-
-### Removed
-
-- The private `cli.reviewerCorroborationRates` helper, superseded by `scorecard.TrustPriors`.
-
-## [35.7.0] - 2026-07-29
-
-Completes Epic 8.0's deferred Phase 3 for the reconcile core. Consumers that only need a pure re-export now import the extracted `reconcile/` library directly, and the dead half of the `internal/reconcile` compatibility shim is gone. No behavior change: the full suite's output is byte-identical to the pre-migration baseline.
-
-### Changed
-
-- `cli/reconcile.go` and its test now qualify pure re-export symbols (`CategoryOutOfScope`, `VerdictRefuted`, `Verification`) through the `reclib "github.com/samestrin/atcr/reconcile"` library import instead of the `internal/reconcile` shim, matching the convention the rest of the consumer set already followed. The remaining 29 consumer files across `cli/`, `internal/debate`, `internal/ghaction`, `internal/mcp`, `internal/report`, `internal/repro`, and `internal/verify` were verified already correct; `internal/scorecard/reconcile.go` stays on `internal/reconcile` because its only reference is the ATCR-internal `Result`.
-- The four stale `TD-006` comments in `internal/reconcile/{lib,emit,helpers_test}.go` and `internal/reconcile/adapter/adapter.go` no longer point at a tracking row that does not exist. The still-open structural fix they conflated with themselves — routing `lib.go`'s inlined `stream.Finding` field map through `adapter.ToFinding` — is recorded as tracked debt instead, since it stays blocked while `JSONFinding` remains in `internal/reconcile`.
-
-### Removed
-
-- 11 dead re-export declarations from `internal/reconcile/lib.go` (aliases, constants, and delegating wrappers with no remaining callers anywhere). `Result`, `Reconcile`, the `JSONFinding` schema, the `MergeJSONFindings` family, the disagreement radar, the gate, path validation, source discovery, adjudication, and file I/O are unchanged and stay ATCR-internal by design. Declarations still called unqualified from inside `internal/reconcile` itself were deliberately retained — deleting them requires rewriting those call sites first.
-
-## [35.5.0] - 2026-07-28
-
-Makes the shipped Agent Skill installable in one command and internally coherent. The install root becomes `skills/` with one directory per skill, the `debt-resolve` sub-skill collapses back into the single `/atcr` dispatcher it was always meant to be, the dispatcher finally learns the baseline-review routes Epic 35.0 shipped, and the documented two-line `cp` install is replaced by `atcr skill export`.
-
-### Added
-
-- `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the embedded skill tree to disk, so installing no longer requires a source checkout. `--harness` selects a known convention (default `claude`); an unrecognized value exits non-zero listing the known harnesses and naming `--dir` rather than guessing a path. Refuses to overwrite a non-empty destination without `--force`, and warns about files it left in place that it did not write.
-- Harness→path table covering `claude`, `codex`, `kimi`, `opencode`, `antigravity`, and the vendor-neutral `agents`, pinned by test so external convention drift is visible rather than silent. Because `.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode, and `.agents/skills/` by Kimi CLI, opencode, and Antigravity CLI, one export usually serves several tools.
-- The `/atcr` dispatcher now accepts `--all` (whole repository) and `--dir <path>` (subtree) as review inputs, with their mutual exclusivity against `--base`/`--head`/`--merge-commit` and the `--fresh` file-hash-index bypass documented. Baseline review shipped in Epic 35.0 but was unreachable from the skill.
-
-### Changed
-
-- Install root renamed `skill/` → `skills/atcr/`, one directory per skill with the directory name matching its `name:` frontmatter. `cp -r skills/* <dest>` is now correct in one line, and a second skill can land beside the first without another rename.
-- `debt-resolve/SKILL.md` flattened to `skills/atcr/debt-resolve.md` and stripped of its YAML frontmatter. It was a nested second `SKILL.md` declaring a top-level skill name while describing itself as both a dispatcher sub-route and an independently-triggered skill; it is now unambiguously an on-demand reference reached through the `atcr debt` routing row.
-- `docs/skill-usage.md`'s Installation section prescribes `atcr skill export` and documents the harness table and cross-reading behavior, replacing the two `cp` lines and their nested-directory footgun.
-
-### Fixed
-
-- The `CONVENTIONS.md` reference inside the debt-resolve route resolved to a path that did not exist (`debt-resolve/CONVENTIONS.md`); flattening makes it a true sibling. A test now asserts every on-demand reference resolves in the referencing file's own directory.
-- `atcr skill export` replaces an existing entry rather than writing through it, so a symlinked skill file cannot redirect a write outside the destination.
-
-### Removed
-
-- **Breaking (Go API):** the public package `github.com/samestrin/atcr/skill` and its exported `SkillMD`/`HostReviewMD`/`AmbiguityAdjudicationMD`/`FindingsFormatMD`/`ConventionsMD`/`DebtResolveMD` vars are gone, replaced by `github.com/samestrin/atcr/skills`. The package existed for build-time embed verification and had no importers in this repository, but any downstream importer must update the path.
-
-*Shipped via /execute-epic (epic 35.5)*
-
-## [35.4.0] - 2026-07-28
-
-Retunes the per-file payload-escalation defaults against a measured replay of real history. Escalation shipped in 35.1 with thresholds chosen by reasoning rather than measurement, and they promoted 37% of changed Go files above their configured mode at a cost of +48% payload bytes — an operator who configured `diff` was effectively not getting `diff`. The new defaults measure 21.5% promoted at +34% bytes, and the acceptance target they were tuned to now ships in the code so the next change to them has a baseline to re-validate against.
-
-### Changed
-
-- **Default escalation thresholds** (`internal/payload/escalation.go`): `min_hunks` 4 → **8**, `hunk_gap_lines` 10 → **2**, `min_cyclomatic` 15 → **20**. `churn_ratio`, `max_files`, and `max_skeleton_lines` are unchanged. Every one remains overridable via the registry's `payload_escalation:` block, so an operator who prefers the old behavior can restore it without a code change.
-- Hunk adjacency was the largest single offender (28.5% of changed Go files, now 13.0%): under `--unified=0` a single logical change routinely leaves hunks a few lines apart, so a 10-line window measured the ordinary shape of a diff rather than genuine same-region churn.
-- `min_cyclomatic` rose because the score is now scoped to the functions the diff CHANGED (35.1), where ordinary validation code clears 15 without being unreadable from hunks.
-
-### Added
-
+- `TestHashPersonaID_PinnedPublishedPersonaDigests` pins the digests of real catalog personas against values computed **independently in node**, so the cross-language contract is verified rather than assumed. (epic 35.16.1)
+- `TestHashPersonaID_GoJSDivergenceIsASCIIScoped` pins the known limits of that contract so a future change cannot silently re-assert a total equivalence that does not hold. (epic 35.16.1)
+- `TestQualitySignal_PersonaHashedNotRaw` now exercises **non-canonical** inputs. With only canonical fixtures the two producers agreed whether or not either canonicalized, so the anti-drift guard was vacuous; it now fails if either producer is changed alone. (epic 35.16.1)
+- `atcr history --prune <horizon>` deletes whole monthly shards older than a retention horizon and names every shard it removes. Strictly opt-in with no default: nothing else in atcr ever trims the ledger, and pruning is deliberately file-granular — there is no record-level compaction, because folding a trend ledger by finding id would destroy the trend it exists to report. (epic 35.14.0)
+- [docs/history.md](docs/history.md) — the ledger's storage layout, record schema, deduplication rule, windowed reads, and retention, including how to carry forward shards from the previous `.planning/history/` layout. (epic 35.14.0)
+- Schema v3: records gain `origin` (`review`|`manual`), `occurrences`, `first_seen`, and `counted_through`, carried forward through compaction so a resolved-then-regressed item's history survives. (epic 35.13.0)
+- `--origin` filter and an `ORIGIN` column on `atcr debt list`. (epic 35.13.0)
+- Finding ids as the leading column in `atcr debt list`, `atcr debt dashboard`, and `--json` output, so `atcr debt resolve <id>` is copy-pasteable from what was just read. (epic 35.13.0)
+- Automatic compaction: the store now compacts itself after a reconcile append once it crosses a persisted watermark past 100k records or 100 MB, instead of requiring a manual `atcr debt compact`. (epic 35.13.0)
+- A minimal streaming-decode read path for dedup seeding and the open-backlog fold, replacing full-record materialization on the hot path. (epic 35.13.0)
+- The review manifest now records the repository root at review time; `atcr reconcile` and the MCP `atcr_reconcile` handler resolve the local-debt store via `explicit --repo > manifest > CWD`, closing the gap where MCP-driven reconciles never persisted findings. (epic 35.13.0)
+- `atcr debt dashboard --output <file>`, mirroring `atcr report`; stdout is now the default. (epic 35.13.0)
+- `telemetry.NewWithQualitySignal(usage, quality)` — a two-destination client constructor. The backend serves the usage ping and the quality signal as separate handlers with separate closed key allowlists, so routing the quality signal's JSON array at the usage-ping handler earns a `400` that the fail-open path drops silently. Each destination is independently empty-able, and an empty one silences only its own surface. (epic 35.12.0)
+- `defaultQualitySignalEndpoint` — the compiled-in quality-signal destination, distinct from `defaultTelemetryEndpoint`. (epic 35.12.0)
+- `scorecard.ReadSince(dir, since, now, opts)` — a windowed counterpart to `ReadAll` that reads only the month files whose calendar month overlaps `[now-since, now]`. A month file outside the window is never opened. An unparseable month stem is read fail-open, and `since <= 0` delegates to `ReadAll`, so the windowed and all-history paths share one enumeration. (epic 35.11.0)
+- `reconcile.Summary.TrustPriorsResolved` (`trust_priors_resolved` in `summary.json`) records how many reviewers' trust priors the caller attached — `len(Options.TrustPriors)`. Because that map now comes from a windowed read, a reviewer with no runs inside the window drops out of it and silently loses trust exemption/demotion, while `atcr personas list --scores` still reads all history and reports that reviewer as healthy. This count is the only place that divergence is observable without an all-history read; a drop between runs is the signal. It is logged by `atcr reconcile`, `atcr review`, `atcr resume`, and the MCP `atcr_reconcile` handler. Observability only — it changes no finding, no confidence, and no exit code. (epic 35.11.0)
+- `atcr verify diff`: scans a unified diff for over-simplification ("reward-hack") fingerprints — `test_only`, `test_deleted`, `test_skipped`, `test_renamed_away`, `weakened_assertion`, `suppression`, `empty_catch`, `stub_body` — and reports a `clean` / `soft_only` / `hard` verdict. Deterministic and model-free: no agent, no provider, no API key, no network. Diff sources, exactly one at a time: `--rev <rev>` (the default, `HEAD`), `--staged`, `--diff <path>`, or `--diff -` for stdin; naming two is a usage error that names both. `--repo` targets a tree other than the CWD. Git is always invoked with `--no-ext-diff --no-textconv --no-color`: the first two are safety, not formatting — `--repo` invites pointing the scanner at a tree you do not control, and a repo-local `diff.external` **or** a `[diff "x"] textconv = <program>` driver (armed by a worktree `.gitattributes`) would otherwise execute an arbitrary program with your privileges. They are separate vectors; disabling one does not disable the other. `--no-color` keeps a `color.ui = always` config from feeding ANSI escapes to a parser expecting a plain unified diff. Every diff source is capped at 2 MiB and refuses larger input with a "too large to scan" usage error — the relocation check is O(added × removed), so unbounded input costs minutes of CPU rather than just memory. (epic 35.10)
+- `--fail-on hard|soft|none` on `atcr verify diff` gates the exit code. Gating is **opt-in**: without the flag the verdict is reported and the command exits `0` for every verdict, preserving drop-in parity with the upstream `diff-smell` tool. The standard exit table is reused unchanged — `1` for a tripped gate, `2` for usage errors — so no new exit code is introduced. An invalid value is rejected before any git process is spawned, and a tripped gate still prints the full report. An explicitly **empty** value is unset rather than an error — matching `atcr verify --min-severity` and `atcr reconcile --fail-on` — so `--fail-on "$LEVEL"` with `LEVEL` unset is a no-op instead of hard-failing CI. Note the values are diff-smell **verdicts**, not the finding **severities** `atcr review` / `atcr reconcile` / `atcr github` take; the disjoint value sets mean a severity passed here is a usage error rather than a silent misread. (epic 35.10)
+- `--json` on `atcr verify diff` emits the scan as the sole content of stdout, with upstream's field names so a consumer written against `llm-support diff-smell --json` can repoint without reshaping. Empty collections render as `[]` / `{}`, never `null`. (epic 35.10)
+- `summary.dropped` — present only when a scan exceeded the 1000-smell cap, reporting how many findings were omitted from the `smells` array. `omitempty` keeps the key absent from every realistic result. The counts and the verdict are tallied **before** the cap, so truncation can never soften a gate. (epic 35.10)
+- Merge commits are diffed against their **first parent** (`--first-parent -m`), so `--rev <merge>` reports what the merge introduces to the branch it lands on. Plain `git show` prints nothing for a merge, which made the gate a silent no-op precisely where CI runs it: `--rev` defaults to `HEAD`, and both `refs/pull/N/merge` checkouts and post-merge branches have a merge there. Single-parent commits are unaffected. (epic 35.10)
+- `Smell.Line` — the new-file line number of the offending added line, so a consuming gate can cite `file:line` in the same vocabulary its technical-debt rows already use. Populated for the added-line detectors (`suppression`, `empty_catch`, `stub_body`, `test_skipped`); the file-level and count-derived smells omit the key via `omitempty` rather than emit a misleading `0`. A malformed hunk header yields no line rather than numbering from the previous hunk. (epic 35.10)
+- `docs/diff-smell.md` — the command's contract: the smell catalogue, the three atcr-only HARD smells and the reward hack each closes, the full JSON shape with a worked example, the exit table, the stability contract, a version-probe recipe, a pre-commit-hook example, and the relationship to upstream. (epic 35.10)
+- `atcr reconcile --consensus <level>`: `strict` (default) sidecars every uncorroborated singleton below `HIGH` confidence; `lenient` raises the kept-bar to `MEDIUM`, keeping `MEDIUM`-confidence singletons and sidecarring only `LOW` ones; `off` makes the consensus filter inert — not a return to pre-14.2 output, since epic 35.9's trust demotion still applies and `off` output can therefore carry `LOW`-confidence findings pre-14.2 output never did. Levels are case- and whitespace-insensitive; an invalid value is a usage error (exit 2) naming the valid levels. (epic 35.9.1)
+- `consensus:` config key on the standard precedence chain — explicit flag/argument > `.atcr/config.yaml` > `~/.config/atcr/registry.yaml` > embedded `strict` — resolved by the new `registry.ResolveConsensus`, which mirrors `ResolveGateThreshold` (no embedded default inside the resolver; the call site maps `""` to `strict`). `atcr init` seeds `consensus: strict` with a levels-comment; existing configs are untouched. (epic 35.9.1)
+- `consensus` argument on the MCP `atcr_reconcile` tool, resolved through the same chain so the CLI and MCP entry points cannot fork. An invalid value returns a tool error naming the valid levels. (epic 35.9.1)
+- `reconcile.Options.Consensus` plus the exported `ConsensusStrict`/`ConsensusLenient`/`ConsensusOff` constants, `ConsensusLevels()` (an accessor returning a fresh slice, so a consumer cannot corrupt the shared vocabulary), and `NormalizeConsensus` — the closed vocabulary every surface validates against. An empty or unrecognized value resolves to `strict`, so the filter can never be silently disabled by a value that bypassed boundary validation. (epic 35.9.1)
+- `reconcile.Summary.ConsensusLevel` (`consensus_level` in `summary.json`) records the level the filter actually ran at, and `report.md` names it unconditionally. `consensus_filtered: 0` alone is ambiguous between `off` and `strict with nothing to filter`, and `off` is reachable with no flag at all, so the artifacts previously carried no trace of the configuration that produced them. An unset or unrecognized level is recorded as the `strict` the filter fails safe to, never echoed back raw. (epic 35.9.1)
+- `scorecard.Record.ConsensusLevel` (`consensus_level`, omitted when empty) records the consensus level a run's reviewer counts were measured under, and `TrustPriors` now aggregates **only `strict` runs**. Reviewer counts come from the post-consensus-filter finding set, so a `lenient`/`off` run inflated `findings_raised` without `findings_corroborated` and durably depressed the trust priors `trustExempt`/`demoteByTrust` applied on later `strict` runs — a cross-run feedback loop. A record with no `consensus_level` counts as `strict` (every pre-35.9.1 run was strict by construction), so existing stores are unaffected. The leaderboard is deliberately not filtered. (epic 35.9.1)
+- `reconcile.Options.TrustPriors`: a caller-supplied map of lowercase reviewer name to historical corroboration rate. A singleton whose sole reviewer's prior is at or above the high-trust threshold survives the consensus filter without in-run corroboration or PageRank authority. A singleton whose sole reviewer's prior is at or below the low-trust threshold is demoted to `LOW` confidence — the first reconcile-time path to `ConfLow`, previously reachable only post-verify via a refuted verdict. Both effects are scoped to the same panel-size floor the consensus filter itself gates on (>= 3 distinct reviewers); a nil/empty map is a complete no-op. (epic 35.9.0)
+- `scorecard.ResolveTrustPriors()`: resolves the default scorecard store and reads `TrustPriors` at `DefaultTrustMinRuns`, degrading to a nil map on any failure (missing store, unresolvable config dir) rather than erroring. Every `atcr reconcile`, `atcr review --resume`, `atcr review` (one-shot mode), and MCP `atcr_reconcile` call site now resolves and attaches it. (epic 35.9.0)
+- `scorecard.TrustPriors(dir, minRuns)`: the shared per-reviewer corroboration-rate resolver, keyed by lowercase reviewer name, summed across a reviewer's `(reviewer, model)` rows. A reviewer below `minRuns` is omitted from the map rather than present at zero, so callers can distinguish "no history" from "measured untrustworthy". A missing, empty, or unreadable scorecard store yields an empty map and a nil error. `scorecard.DefaultTrustMinRuns` (20) is the conservative default floor for a caller that does not pick its own. (epic 35.8.0)
+- `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the embedded skill tree to disk, so installing no longer requires a source checkout. `--harness` selects a known convention (default `claude`); an unrecognized value exits non-zero listing the known harnesses and naming `--dir` rather than guessing a path. Refuses to overwrite a non-empty destination without `--force`, and warns about files it left in place that it did not write. (epic 35.5.0)
+- Harness→path table covering `claude`, `codex`, `kimi`, `opencode`, `antigravity`, and the vendor-neutral `agents`, pinned by test so external convention drift is visible rather than silent. Because `.claude/skills/` is read natively by Claude Code, Kimi CLI, and opencode, and `.agents/skills/` by Kimi CLI, opencode, and Antigravity CLI, one export usually serves several tools. (epic 35.5.0)
+- The `/atcr` dispatcher now accepts `--all` (whole repository) and `--dir <path>` (subtree) as review inputs, with their mutual exclusivity against `--base`/`--head`/`--merge-commit` and the `--fresh` file-hash-index bypass documented. Baseline review shipped in Epic 35.0 but was unreachable from the skill. (epic 35.5.0)
 - Escalation-rate replay harness (`internal/payload/escalation_replay_test.go`). Replays a configurable window of real commits through the shipped heuristic and reports per-signal rates, the overall promotion rate, and the payload-byte delta; a companion sweep reports what candidate threshold sets would have measured over the same window. Opt-in and report-only — it asserts no band, because a live-history assertion would drift as commits land and would break on a shallow clone:
 
       ATCR_REPLAY=1 ATCR_REPLAY_REF=main ATCR_REPLAY_COMMITS=40 \
-        go test ./internal/payload/ -run TestEscalationReplay -v
-
-- Deterministic fixture gate for the tuned defaults (`internal/payload/escalation_tuned_defaults_test.go`), including at-threshold and one-below-threshold cases for each signal.
-- The acceptance target — 15–25% of changed Go files promoted at ≤ +40% payload bytes, with the measured before/after and the re-measurement command — is documented in the `DefaultEscalation*` comment block and in `docs/payload-modes.md`.
-
-### Fixed
-
-- `docs/payload-modes.md` described the churn signal as summing added **and** deleted lines; it has measured `max(added, deleted)` since the 35.1 double-counting fix. The cyclomatic row likewise described the file's most complex function rather than the most complex **changed** function.
-- `internal/registry/config.go`'s field comments cited the pre-35.4 default values.
-
-*Shipped via /execute-epic (epic 35.4)*
-
-## [35.3.0] - 2026-07-28
-
-Adds an adversarial diff-smell gate to the fix-generation phase, so a model-generated patch is checked for reward-hacking before it is ever written to a finding. The failure mode this blocks is the one an executor discovers on its own: the cheapest way to make a failing test pass is to delete the test, and the cheapest way to clear a lint is to suppress it. The gate is always on and has no configuration knob, matching the local Go syntax guard alongside it.
-
-### Added
-
-- Diff-smell gate on every generated fix (`internal/verify`). HARD smells — `test_only`, `test_deleted`, `weakened_assertion` — withhold the patch and trigger exactly one self-correction retry with the rejection evidence in the prompt; a second HARD verdict halts the finding through the existing skip-and-log contract. SOFT smells — `suppression`, `empty_catch`, `stub_body`, and one-for-one assertion replacement — accept the patch but flag it for review.
-- `fix_review` field on findings, carrying the `NEEDS_REVIEW` annotation for an accepted-but-smelly fix. Rendered by `atcr report` as a `🔍 Fix review:` line alongside the fix. Omitted entirely when empty, so output for a clean fix is byte-identical to previous releases.
-- Ported diff-smell analyzer (`internal/verify/diffsmell.go`), adapted from `llm-tools` v1.5.0. No new module dependency — stdlib only.
-
-### Changed
-
-- The gate covers both fix-generation paths. A rejected agent-mode fix retries through the agent path rather than downgrading to the single-shot snippet path.
-- Only diff-shaped fixes are scanned; free-form fix content passes through untouched, matching how `--auto-fix` already skips a fix it cannot parse as a diff.
-- `test_only` is suppressed when the finding itself cites a test file, where a test-only fix is expected by construction. `test_deleted` and `weakened_assertion` are never suppressed.
-
-### Fixed
-
-- The local Go syntax guard no longer reports a bogus `invalid_syntax` on an unfenced unified diff — the exact fix shape `--auto-fix` consumes. The exemption requires the diff to lead the content, so a Go fix that merely embeds a diff fixture in a string literal is still parsed and still reports real syntax errors.
-
-*Shipped via /execute-epic (epic 35.3)*
-
-## [35.2.0] - 2026-07-27
-
-Makes the baseline (`--all`/`--dir`) file-hash-index write-back resilient to partial chunk failure. Previously a single failed chunk out of as many as 64 discarded the entire run's index update, so every successfully-reviewed file was re-scanned on the next baseline run. The write-back now records the files covered by the chunks that succeeded and excludes only the genuinely uncovered ones, so the next scan re-reviews just those. The safety direction is unchanged: an uncovered file is always re-reviewed, never silently skipped.
-
-### Changed
-
-- A baseline run with a partially-failed chunk set now persists the hash entries for the files in the succeeded chunks instead of skipping the write-back entirely. The next `--all`/`--dir` re-reviews only the uncovered files.
-- Coverage is unioned across personas: because each persona partitions the repository against its own model window, a file counts as reviewed once any succeeded chunk carried it. This matches what the previous gate already did for a wholly-failed persona, so no file that was recorded before is dropped now.
-- The resume path's write-back gate (TD-011) and the fresh path's are now the same function rather than two byte-for-byte copies, so they can no longer drift.
-- The partial-coverage warning now states an upper bound on what is recorded rather than announcing a write that may not happen.
-
-### Fixed
-
-- A run whose every chunk failed writes no index at all, including no self-trim, so a zero-coverage scan can never leave a partially-written index behind.
-
-### Notes
-
-- A run with zero unreviewed chunks behaves exactly as before: full write-back, self-trim semantics unchanged.
-- Chunk coverage is attributed inside the engine before per-chunk results are merged, because the merge collapses per-chunk outcomes into a bare count. No exported type gained a field, so `status.json`/`summary.json` and MCP consumers are unaffected; `unreviewed_chunks` keeps its exact meaning.
-- Slots that cannot be attributed to a file set (the `review_strategy: chunked` fan-out over a payload carrying diff markers) vouch for no coverage, so such a run falls back to re-review rather than risking a skip.
-
-*Shipped via /execute-epic (epic 35.2)*
-
-## [35.1.0] - 2026-07-27
-
-Makes the payload mode a floor rather than a ceiling: the payload builder now promotes individual files above the configured mode when their change is structurally confusing, and prepends an AST skeleton of the file at `head` so reviewers reason from the final architecture instead of mentally replaying a multi-commit patch. Targets the "mental patch application" hallucination, where a reviewer reconstructs a superseded intermediate state from a net diff, without paying whole-repository `--payload files` token costs for simple changes.
-
-### Added
-
-- Per-file payload escalation. Two independent signal families are scored per changed file: diff-native (churn ratio over added+deleted lines, hunk count, hunk adjacency) and per-function McCabe cyclomatic complexity. Either family promotes a file `diff` → `blocks`; both together promote it to `files`. A file already at `blocks` can only move up to `files`, and a run configured for `files` never de-escalates.
-- AST skeleton injection for files reviewed in `diff` or `blocks` mode — one line per top-level declaration of the resolved `head` file, with line anchors, spliced after the file's entry-start line so the rendered-payload round-trip is unaffected. Extracted for Go files, built on the existing `internal/astgroup` node tree via line-range slicing rather than new parser node kinds, so wasm parser Merkle hashes (and the reconciler's finding grouping) are untouched.
-- `payload_escalation:` registry block tuning every threshold (`churn_ratio`, `min_hunks`, `hunk_gap_lines`, `min_cyclomatic`, `max_files`, `max_skeleton_lines`). Registry-only, matching the `verify:`/`debate:` precedent — no project-config mirror, no CLI flag. Each key is optional; `0` disables that signal, and `max_files: 0` turns the feature off entirely.
-- `manifest.json` now records `per_file_payload` (the mode each file was actually rendered in, for files that escalated) and `escalation_degraded` (the change set exceeded the file cap, so the pass was skipped). Both are `omitempty`, so a review where nothing escalated writes a manifest byte-identical to earlier versions'.
-- A payload holding any full-file body now carries the wider `files`-mode scope rule, so a reviewer handed whole files is never told to stay on the diff.
-
-### Changed
-
-- Escalation and skeleton extraction are skipped wholesale above `max_files` (default 50) changed files, restoring the constant git-process profile; each analyzed file otherwise costs one `git show`, memoized per range and shared with the files-mode render.
-- Grounding after a `blocks`-mode payload build no longer spawns its own `--unified=0` subprocess — the escalation pass already populated that cache.
-- `docs/payload-modes.md` and `docs/registry.md` document the escalation ladder, the skeleton format and its cap, the cost cap, and the new configuration block.
-
-> **Correction (35.4.0).** The Added entry above describes the churn signal as a "churn ratio over added+deleted lines". That was the shipped behavior only briefly: the 35.1 double-counting fix changed it to `max(added, deleted)`, so a pure move or a rewrite is not scored twice. The historical text is left as written; `docs/payload-modes.md` and `internal/payload/escalation.go` carry the current definition.
-
-*Shipped via /execute-epic (epic 35.1)*
-
-## [35.0.0] - 2026-07-27
-
-Adds a non-diff, full-repository baseline review mode: `atcr review --all` and the subtree-scoped `atcr review --dir <path>`, for onboarding a project with no PR history, surfacing latent bugs in untouched legacy code, and seeding an initial `.atcr/debt`/`.planning/technical-debt/README.md` backlog.
-
-### Added
-
-- `atcr review --all` — scans every non-ignored, git-tracked file in the repository as a single baseline pass, reusing the existing traversal, ignore-filtering, fan-out, and reconciliation engines rather than a parallel pipeline. Mutually exclusive with `--base`/`--head`/`--merge-commit`.
-- `atcr review --dir <path>` — scopes the same baseline scan to one subdirectory, with path containment and existence validation (including a symlink-escape guard).
-- A persisted `path → hash → last-reviewed-run-id` file-hash index that skips unchanged files pre-chunking on repeat `--all`/`--dir` runs, degrading gracefully on a missing or corrupt index; `--fresh`/`--force` bypass it, mirroring `--verify`'s existing `--fresh` semantics.
-- Multi-chunk × multi-persona fan-out for baseline scans, collapsing to one source per persona via the existing chunk-merge path, then reconciled by unmodified `atcr reconcile`.
-- Baseline reviews are resumable, and `atcr debt add`/`atcr report` operate identically on baseline output as on diff output.
-- `cli.MainWithHooks`'s graceful-shutdown moment is now exposed to registered hooks via a dedicated signal, so a hook can bound its own cleanup on shutdown distinctly from a per-agent timeout.
-
-### Fixed
-
-- A resumed baseline run now persists its file-hash index write-back, and index write-back correctly excludes globally-shed files and honors the actually-reviewed set rather than a narrower per-agent bound.
-- Baseline enumeration now enforces the total in-memory repo-byte cap (`DefaultMaxRepoBytes`) and a per-file read cap, and honors context cancellation during the read loop.
-- Empty baseline scans are now classified accurately (all-unchanged exits 0; all-ignored surfaces a `--no-ignore` hint), and the truncation warning no longer misreports a fully-chunked baseline scan as a partial subset.
-- `--dir`/`--all` mutual exclusion, `--auto-fix` rejection, and `--fresh` resume-rejection messaging are now consistent and correctly named across flag combinations.
-
-## [0.2.0] - 2026-07-25
-
-Adds an exported model-invocation observation seam so an external module can build a compliant audit trail of AI interactions. **No breaking changes** — the release is purely additive, and behaviour with no hook registered is byte-for-byte identical to `0.1.0`.
-
-### Added
-
+        go test ./internal/payload/ -run TestEscalationReplay -v (epic 35.4.0)
+- Deterministic fixture gate for the tuned defaults (`internal/payload/escalation_tuned_defaults_test.go`), including at-threshold and one-below-threshold cases for each signal. (epic 35.4.0)
+- The acceptance target — 15–25% of changed Go files promoted at ≤ +40% payload bytes, with the measured before/after and the re-measurement command — is documented in the `DefaultEscalation*` comment block and in `docs/payload-modes.md`. (epic 35.4.0)
+- Diff-smell gate on every generated fix (`internal/verify`). HARD smells — `test_only`, `test_deleted`, `weakened_assertion` — withhold the patch and trigger exactly one self-correction retry with the rejection evidence in the prompt; a second HARD verdict halts the finding through the existing skip-and-log contract. SOFT smells — `suppression`, `empty_catch`, `stub_body`, and one-for-one assertion replacement — accept the patch but flag it for review. (epic 35.3.0)
+- `fix_review` field on findings, carrying the `NEEDS_REVIEW` annotation for an accepted-but-smelly fix. Rendered by `atcr report` as a `🔍 Fix review:` line alongside the fix. Omitted entirely when empty, so output for a clean fix is byte-identical to previous releases. (epic 35.3.0)
+- Ported diff-smell analyzer (`internal/verify/diffsmell.go`), adapted from `llm-tools` v1.5.0. No new module dependency — stdlib only. (epic 35.3.0)
+- Per-file payload escalation. Two independent signal families are scored per changed file: diff-native (churn ratio over added+deleted lines, hunk count, hunk adjacency) and per-function McCabe cyclomatic complexity. Either family promotes a file `diff` → `blocks`; both together promote it to `files`. A file already at `blocks` can only move up to `files`, and a run configured for `files` never de-escalates. (epic 35.1.0)
+- AST skeleton injection for files reviewed in `diff` or `blocks` mode — one line per top-level declaration of the resolved `head` file, with line anchors, spliced after the file's entry-start line so the rendered-payload round-trip is unaffected. Extracted for Go files, built on the existing `internal/astgroup` node tree via line-range slicing rather than new parser node kinds, so wasm parser Merkle hashes (and the reconciler's finding grouping) are untouched. (epic 35.1.0)
+- `payload_escalation:` registry block tuning every threshold (`churn_ratio`, `min_hunks`, `hunk_gap_lines`, `min_cyclomatic`, `max_files`, `max_skeleton_lines`). Registry-only, matching the `verify:`/`debate:` precedent — no project-config mirror, no CLI flag. Each key is optional; `0` disables that signal, and `max_files: 0` turns the feature off entirely. (epic 35.1.0)
+- `manifest.json` now records `per_file_payload` (the mode each file was actually rendered in, for files that escalated) and `escalation_degraded` (the change set exceeded the file cap, so the pass was skipped). Both are `omitempty`, so a review where nothing escalated writes a manifest byte-identical to earlier versions'. (epic 35.1.0)
+- A payload holding any full-file body now carries the wider `files`-mode scope rule, so a reviewer handed whole files is never told to stay on the diff. (epic 35.1.0)
+- `atcr review --all` — scans every non-ignored, git-tracked file in the repository as a single baseline pass, reusing the existing traversal, ignore-filtering, fan-out, and reconciliation engines rather than a parallel pipeline. Mutually exclusive with `--base`/`--head`/`--merge-commit`. (epic 35.0.0)
+- `atcr review --dir <path>` — scopes the same baseline scan to one subdirectory, with path containment and existence validation (including a symlink-escape guard). (epic 35.0.0)
+- A persisted `path → hash → last-reviewed-run-id` file-hash index that skips unchanged files pre-chunking on repeat `--all`/`--dir` runs, degrading gracefully on a missing or corrupt index; `--fresh`/`--force` bypass it, mirroring `--verify`'s existing `--fresh` semantics. (epic 35.0.0)
+- Multi-chunk × multi-persona fan-out for baseline scans, collapsing to one source per persona via the existing chunk-merge path, then reconciled by unmodified `atcr reconcile`. (epic 35.0.0)
+- Baseline reviews are resumable, and `atcr debt add`/`atcr report` operate identically on baseline output as on diff output. (epic 35.0.0)
+- `cli.MainWithHooks`'s graceful-shutdown moment is now exposed to registered hooks via a dedicated signal, so a hook can bound its own cleanup on shutdown distinctly from a per-agent timeout. (epic 35.0.0)
 - `cli.MainWithHooks(ctx, stdout, stderr, hooks) int` — `cli.Main` plus a caller-supplied observer bundle, running the identical lifecycle (signal handling, telemetry drain, exit-code mapping) because both entry points delegate to the same implementation rather than a forked copy. With a zero `cli.Hooks` no decorator is installed at all, so the fan-out engine receives the same `*llmclient.Client` it always has and every capability type-assertion resolves exactly as before.
 - `cli.Hooks`, `cli.ModelInvocationObserver`, `cli.ModelInvocation`, `cli.ModelMessage`, and `cli.ModelToolCall` — the exported hook surface. An observer implements `OnModelInvocation(context.Context, ModelInvocation)`; the context is the one the model call was made with. Note it is the *per-agent* context, cancelled by that agent's own `--timeout` as well as by a shutdown, so an observer must not read cancellation as "the process is exiting" — see `cli.ShutdownSignal` for that distinction. There is deliberately no error return — an observer cannot fail the run it is observing. Every field is a plain type: the intended consumer is a separate Go module (the private `atcr-enterprise` wrapper), for which anything under `internal/` is unreachable by Go's internal-package rule, so no `internal/` type may appear here. A test enforces that structurally.
 - Per invocation, an observer receives: run id, reviewer persona, pipeline stage, and a process-monotonic sequence number (so an interleaved concurrent stream can be grouped and ordered); model and provider identity and the endpoint; the exact prompt and response, plus requested tool calls and the message history on multi-turn tool-loop turns; provider-reported token counts, estimated cost, and the sampling parameters the call used; HTTP attempt count, truncation signal, UTC start timestamp, and wall-clock duration; and the error message on failure. A failed invocation fires exactly once with whatever partial data was recovered, so a ledger can account for it.
@@ -1244,6 +520,114 @@ Adds an exported model-invocation observation seam so an external module can bui
 - `cli.ShutdownSignal(ctx) <-chan struct{}` — a channel closed when the process begins a graceful shutdown, so a hook can bound its own cleanup without misreading an ordinary per-agent timeout as a shutdown. Context cancellation alone cannot carry that distinction: the context an observer receives is the fan-out engine's per-agent context, which is cancelled by that agent's `--timeout` on an otherwise healthy run. An observer that treats every cancelled context as a shutdown abandons work — including the record for the timed-out call itself, which is exactly the one an audit trail needs — while one that treats none of them as a shutdown can hold the process past the graceful-shutdown budget and turn a clean `Ctrl-C` into a forced exit. This channel closes only when a signal actually arrived, at the same instant the root context is cancelled. It returns nil when absent, and a nil channel blocks forever in a `select`, so an observer written against it degrades to the previous always-wait behaviour rather than to a new failure mode.
 - Cost is computed at the seam rather than left to the consumer, because the rate table lives in an internal package that another module cannot import.
 - Coverage spans every client built through the new seam: the review and resume fan-out, `benchmark`, the MCP server, `verify`'s skeptics, `verify`'s fix executor (`--auto-fix`), and `debate`'s seats — so `atcr review` including its `--verify`/`--debate`/`--auto-fix` stages, the standalone `atcr verify` and `atcr debate`, and their MCP tool equivalents. Two gaps are documented on the type: `atcr doctor` (its self-test uses a separate completer interface and never reaches the seam) and diff-cache hits (a replayed reviewer output makes no model call, so nothing is observed — use `--no-cache` when a complete per-run record matters).
+
+### Changed
+
+- Canonicalizes the persona digest before telemetry collection begins. `HashPersonaID` performed no normalization, so `bruce`, `Bruce`, and `" bruce "` produced three different digests for one persona. That is normally untidy; here it is permanent — an ingestion backend re-keys the received digest under a never-rotated secret and discards the original, so a variant becomes a second backend identity that no backfill can merge. Landing this before any rows are collected is the whole point of its ordering. (epic 35.16.1)
+- `scorecard.HashPersonaID` now reduces its input to `strings.ToLower(strings.TrimSpace(raw))` before hashing, so every casing and padding variant of one persona yields one digest. **Digests produced by earlier releases will not match digests produced by this one** for any name that was not already lowercase and trimmed (i.e., free of leading/trailing whitespace). (epic 35.16.1)
+- `telemetry.NewQualitySignal` applies the identical transform to its inlined hash, and evaluates its empty-persona sentinel on the **canonical** value — so a whitespace-only persona (e.g. `"   "`) now canonicalizes to the empty string and returns the zero sentinel, instead of previously hashing the literal whitespace value (`sha256("   ")`) as if it were a legitimate persona identity. (epic 35.16.1)
+- `--sync-cloud` persona digests change with the same transform: `cloudsync.go` is the second consumer of `HashPersonaID`, and its call-site `TrimSpace` remains as defense in depth (its empty-agent gate still depends on it). (epic 35.16.1)
+- `docs/telemetry.md` and `docs/scorecard.md` document the canonical form and the JS a backend uses to reproduce it. That cross-language equivalence is **scoped to ASCII**, which is what the `personas/community/` catalog contains: Go and JS disagree on Greek final sigma, dotted capital I, and a leading BOM. A divergence there is a dictionary **miss** (the persona reads as unrecognized), never a split identity — digests are only ever produced by the Go client. (epic 35.16.1)
+- Puts `atcr leaderboard` on the windowed scorecard read Epic 35.11 built. The leaderboard is the one surface with a user-facing time window — `--since` defaults to 30 days — yet it read every month file the store had ever written and then filtered in memory, so displaying one month of data cost the whole history. The window now selects month files before opening them. (epic 35.15.0)
+- `atcr leaderboard` sizes its store read from `--since`, so a windowed query opens only the month files its window intersects. Output, columns, exit codes, and every flag are unchanged. (epic 35.15.0)
+- Month selection is coarser than the day-precision `--since`, so the filter still runs over the windowed result: the month containing the cutoff is read whole, and records inside it that predate the cutoff are excluded exactly as before. The two compose; neither alone is correct. (epic 35.15.0)
+- `--since all` and `--since 0` still read all history, and an invalid `--since` still reports the same error at the same exit code — including against an empty store, where the graceful "no scorecard data found" state continues to take precedence over the window value. (epic 35.15.0)
+- `--export` deliberately keeps its all-history read: whether the export surface should be windowed is a question about export semantics, not a performance fix, and windowing it would swap its empty-store failure for the no-match one. (epic 35.15.0)
+- Two consequences follow from selecting files rather than filtering records, both accepted: an unreadable month file *outside* the window no longer fails the command (a file that is never opened cannot be diagnosed — `--since all` still surfaces it), and a record stamped in a future calendar month drops out of the table, since the store's windowing is fail-closed at its upper edge. (epic 35.15.0)
+- Moves the finding-history ledger under `.atcr/`, alongside the debt store Epic 35.13 unified. `atcr history` previously resolved its monthly shards to `.planning/history/`, so a standalone atcr user — who has no `.planning/` directory — had nowhere to record or query trend data. The move also turns month sharding into a real read index: a `--since` query now selects shards by filename and opens only the months its window touches. (epic 35.14.0)
+- The finding-history ledger now lives at `.atcr/history/YYYY-MM.jsonl`. `atcr review` (including `--resume`) writes there, and `atcr history` reads it unioned with the pre-19.4 flat ledger `.atcr/findings-history.jsonl`, which stays queryable in place and is never moved or rewritten. (epic 35.14.0)
+- A `--since` query selects shards by their `YYYY-MM` filename before opening them, so a narrow window costs proportionally to the window rather than to the size of the ledger. Selection may over-select but never under-select: a month containing the cutoff is read whole, and a shard whose name is not a month is always read. (epic 35.14.0)
+- The union of the two read locations is deduplicated on (timestamp, finding id) — one occurrence per finding per run. A finding's recurrence across runs is preserved, since that is the trend being reported; a duplicate resolves to the highest severity seen, matching how a single run's records are already collapsed. (epic 35.14.0)
+- History directories are now created `0700` and new ledger files `0600`, matching the sibling `.atcr/debt/` store. Existing files keep their current mode. (epic 35.14.0)
+- An empty result is no longer reported as "no history recorded yet" when history exists outside the query window; the first-run hint is shown only for a genuinely empty ledger. (epic 35.14.0)
+- Unifies atcr's technical-debt tooling onto a single store. `atcr debt` previously split across two stores that never reconciled — `.planning/technical-debt/` (`list`/`add`/`dashboard`) and `.atcr/debt/` (`resolve`/`compact`) — so an item filed by `add` could never be closed by `resolve`. All five subcommands now read and write the same append-only, month-sharded `.atcr/debt/` store, with corrected resolution semantics, automatic bounded growth, and MCP write parity. (epic 35.13.0)
+- `atcr debt list` / `add` / `dashboard` now read and write `.atcr/debt/` instead of `.planning/technical-debt/`. (epic 35.13.0)
+- Resolution semantics now split by status: `wontfix` stays terminal, while `resolved` and `deferred` re-open on re-detection of the same finding id — a regression or an unlanded fix is surfaced again rather than silently suppressed forever. (epic 35.13.0)
+- `atcr debt list --severity` / `--status` now validate against the same enums `resolve` / `add` already enforce, returning a usage error (exit `2`) on an unrecognized value. **Breaking for scripts:** a typo'd filter previously matched nothing and exited `0`, indistinguishable from a genuinely empty backlog. (epic 35.13.0)
+- Every `atcr debt` subcommand resolves its store by walking up from the working directory to the nearest `.git`/`.atcr` marker when `--dir` is unset, so a subdirectory invocation reads the same store as the repo root does. (epic 35.13.0)
+- Activates the compiled-in telemetry endpoints and removes the `--sync-cloud` placeholder destination. The anonymous usage ping and the community quality signal previously compiled in an empty endpoint, making every send a no-op; both now name their live `atcr.dev` host. **The usage ping is on by default** (opt out with `ATCR_TELEMETRY=0` or `atcr config set telemetry false`); the quality signal remains opt-in and off by default. Neither consent gate changed — only whether a permitted send has somewhere to go. (epic 35.12.0)
+- `defaultTelemetryEndpoint` is now `https://atcr.dev/api/v1/telemetry` and `defaultQualitySignalEndpoint` is `https://atcr.dev/api/v1/quality-signal`. Both are HTTPS-only; plaintext http is refused per path. (epic 35.12.0)
+- `telemetry.New(endpoint)` keeps its signature and its documented single-destination meaning — both payloads share the given endpoint. Production uses the two-destination constructor. (epic 35.12.0)
+- `docs/telemetry.md` no longer states that nothing is transmitted; it now names each live endpoint and how to opt out. (epic 35.12.0)
+- Bounds the reviewer trust-prior read at file selection. Epic 35.9 wired `scorecard.ResolveTrustPriors()` into all four `RunReconcile` call sites, which turned an on-demand cost — previously reachable only via `atcr scorecard leaderboard` — into an unconditional read of *every* month file the scorecard store has ever written, on every review and reconcile, with no time window and no record cap. The store has no rotation, so that cost grew without bound. Reads are now windowed to the last 180 days by selecting which month files to open, rather than filtering records after the whole store has already been read and parsed. (epic 35.11.0)
+- `scorecard.ResolveTrustPriors()` now reads a 180-day window instead of all history — roughly 4x faster and 4x less allocated against a 24-month store (5.9ms vs 24.2ms, 11.5MB vs 51.0MB). One consequence: a reviewer with no runs in any month file overlapping the last 180 days falls back to the neutral "no history" state, the same state a brand-new reviewer occupies. Selection is per month file, so the whole calendar month containing the cutoff is included and effective retention is 180 days plus however far into that month the cutoff falls — up to roughly 210 days. The window is an internal constant; no new flag or config key. (epic 35.11.0)
+- `scorecard.TrustPriors(dir, minRuns)` is unchanged — same signature, same all-history semantics — so `atcr personas list --scores` still reports on the whole store. (epic 35.11.0)
+- Exposes the diff-smell analyzer as `atcr verify diff`. Epic 35.3 ported the analyzer into `internal/verify/diffsmell.go` and wired it into the auto-fix fix-selection gate, but explicitly scoped out "any subprocess or CLI shell-out" — so the detection logic was reachable only from inside this binary, and a consumer's only alternatives were a second dependency or a third copy of the analyzer. This adds the surface and no new analysis: no new smells, no threshold changes, and no change to which verdict a given diff earns. (epic 35.10)
+- The diff-smell result types are now **exported under upstream's own names** with upstream's snake_case json tags: `Smell`, `SmellFiles`, `SmellSummary`, `SmellResult`, `AnalyzeDiff`, `LooksLikeUnifiedDiff`, plus the `Verdict*` / `Severity*` constants. Detector helpers stay unexported and `smell*`-prefixed. This **shortens** `diffsmell.go`'s divergence list rather than growing it — the types were unexported only because nothing outside the package needed them. Internal rename with no behavior change; `TestAnalyzeDiff_Corpus` passes unchanged. (epic 35.10)
+- `atcr verify` becomes a parent command while remaining a leaf that takes `[id-or-path]`. Cobra resolves a matching child before positional args, so a review id or path literally named `diff` must now be passed as `atcr verify -- diff`. The parent's own flags and args are otherwise unchanged. (epic 35.10)
+- `docs/ci-integration.md`'s authoritative exit table records `atcr verify diff`'s inverted default (0 on every verdict unless `--fail-on`), and `docs/agentic-consumption.md`, `docs/verification.md`, `docs/README.md`, and `README.md` carry matching entries. Both exit tables now enumerate every exit-`2` cause, including the size cap, an explicitly empty `--rev`/`--diff`, and a `--rev` value starting with `-`. (epic 35.10)
+- `--rev` is passed after git's `--end-of-options` and before a `--` separator. The leading-`-` refusal remains as defense in depth, but only the separator closes rev/pathspec ambiguity: `--rev foo.go` was previously run as `git show HEAD -- foo.go`, silently narrowing the scan to one path and exiting `0`, so a typo'd or stale rev in a CI gate reduced coverage instead of failing. (epic 35.10)
+- Smell `evidence` and `file` are bounded and stripped of control characters where the smell is stamped, so every consumer inherits it. Both are verbatim attacker-controlled diff content, and `file` was previously uncapped; an added line carrying `\x1b[2K\x1b[1A…` could erase the verdict line and print a forged all-clear. (epic 35.10)
+- `empty_catch` reports the line that actually contains `catch`, exactly once, and only joins genuinely adjacent added lines. It previously emitted a duplicate and cited the preceding line — which may contain no `catch` at all — and could join lines from different hunks hundreds apart. (epic 35.10)
+- **The JSON shape is a public contract from this release.** Committed: the three top-level keys, the smell object's field names, the closed verdict set (`clean`/`soft_only`/`hard`), the closed severity set, and the exit mapping. Adding a new smell **type**, or a new optional `summary` field such as `dropped`, is additive and non-breaking — consumers key on `severity` and `summary.verdict`. Renaming a key, removing a field, or changing either vocabulary is **breaking** and will earn a Breaking entry here. `TestSmellResult_GoldenJSON` pins the marshaled shape, and `TestDiffSmellDocExampleMatchesAnalyzer` runs the analyzer over `docs/diff-smell.md`'s own worked example and compares it to the doc's own JSON block — so the documented half of the contract cannot drift either. (epic 35.10)
+- `test_only` is **not** suppressed on this surface. The in-process fix gate suppresses it when the finding's own file is a test path; a standalone caller has no finding to key that exemption on, so a test-only diff reads as `hard`. (epic 35.10)
+- An empty diff and content that is not a unified diff both report `clean` and exit `0`, with the explanation on stderr — so a pre-commit hook on a nothing-staged commit is a no-op rather than a spurious block, and `--json` output is always a parseable document. (epic 35.10)
+- A tagged release is what makes this usable by an external consumer; merging to `main` does not. `v0.1.0` does not contain the command. (epic 35.10)
+- Makes the epic-14.2 consensus filter's corroboration bar configurable via `--consensus=off|lenient|strict` and a matching `consensus:` config key, with `strict` (today's hardcoded behavior) as the default — then uses those levels to close the half of epic 35.9's AC2 that was unverifiable without them. Supersedes epic 35.6, which reached `completed/` without ever being implemented. (epic 35.9.1)
+- Only the singleton corroboration bar is configurable. The 3-distinct-reviewer panel floor (`consensusMinReviewers`) and every exemption (`consensusExempt`: security-related, `HIGH`/`CRITICAL`, out-of-scope, confirmed; and `trustExempt`: high-trust sole reviewer) behave identically at all three levels — the internal confidence ladder and exemption rules stay out of the public API. (epic 35.9.1)
+- The `consensus:` level now also resolves for `atcr review` (one-shot) and `atcr review --resume` from the config and registry tiers, so the key is honored at every reconcile entry point rather than only by `atcr reconcile`. Neither command takes a `--consensus` flag. Both resolve and validate it up front, before any fan-out, so a bad configured value fails fast instead of after a paid review. (epic 35.9.1)
+- Epic 35.9's trust-prior demotion is documented as independent of the level: it runs ahead of the filter and is gated only by the panel floor, so a low-trust singleton is `LOW` at every level — the level decides only whether that `LOW` finding is then sidecarred. (epic 35.9.1)
+- `docs/registry.md`, `docs/scorecard.md`, `reconcile/README.md`, the `reconcile` command long help, and the `atcr init` config template document the knob. `docs/scorecard.md` additionally warns that a non-`strict` run skews the reviewer corroboration rates it later reads back as trust priors, and recommends `--no-scorecard` for exploratory runs. (epic 35.9.1)
+- Consumes the per-reviewer trust prior (epic 35.8) at reconcile time, so the epic-14.2 consensus filter's drop/keep decision on an uncorroborated singleton finding is informed by a reviewer's measured track record, not just in-run reviewer count. (epic 35.9.0)
+- `docs/scorecard.md` and `reconcile/README.md` document the trust-prior mechanism and its cold-start contract: a reviewer needs `DefaultTrustMinRuns` (20) summed runs before its prior applies at all. (epic 35.9.0)
+- Promotes the reviewer→corroboration-rate resolver already backing `atcr personas list --scores` out of `cli/personas.go` and into `internal/scorecard` as a shared, minimum-history-aware resolver, so skeptic selection and future trust-aware consensus filtering reuse one aggregation instead of growing a second copy. (epic 35.8.0)
+- `atcr personas list --scores` now delegates to `scorecard.TrustPriors(dir, 0)` instead of its own private aggregation; output is unchanged (no floor applies at this call site). (epic 35.8.0)
+- Completes Epic 8.0's deferred Phase 3 for the reconcile core. Consumers that only need a pure re-export now import the extracted `reconcile/` library directly, and the dead half of the `internal/reconcile` compatibility shim is gone. No behavior change: the full suite's output is byte-identical to the pre-migration baseline. (epic 35.7.0)
+- `cli/reconcile.go` and its test now qualify pure re-export symbols (`CategoryOutOfScope`, `VerdictRefuted`, `Verification`) through the `reclib "github.com/samestrin/atcr/reconcile"` library import instead of the `internal/reconcile` shim, matching the convention the rest of the consumer set already followed. The remaining 29 consumer files across `cli/`, `internal/debate`, `internal/ghaction`, `internal/mcp`, `internal/report`, `internal/repro`, and `internal/verify` were verified already correct; `internal/scorecard/reconcile.go` stays on `internal/reconcile` because its only reference is the ATCR-internal `Result`. (epic 35.7.0)
+- The four stale `TD-006` comments in `internal/reconcile/{lib,emit,helpers_test}.go` and `internal/reconcile/adapter/adapter.go` no longer point at a tracking row that does not exist. The still-open structural fix they conflated with themselves — routing `lib.go`'s inlined `stream.Finding` field map through `adapter.ToFinding` — is recorded as tracked debt instead, since it stays blocked while `JSONFinding` remains in `internal/reconcile`. (epic 35.7.0)
+- Makes the shipped Agent Skill installable in one command and internally coherent. The install root becomes `skills/` with one directory per skill, the `debt-resolve` sub-skill collapses back into the single `/atcr` dispatcher it was always meant to be, the dispatcher finally learns the baseline-review routes Epic 35.0 shipped, and the documented two-line `cp` install is replaced by `atcr skill export`. (epic 35.5.0)
+- Install root renamed `skill/` → `skills/atcr/`, one directory per skill with the directory name matching its `name:` frontmatter. `cp -r skills/* <dest>` is now correct in one line, and a second skill can land beside the first without another rename. (epic 35.5.0)
+- `debt-resolve/SKILL.md` flattened to `skills/atcr/debt-resolve.md` and stripped of its YAML frontmatter. It was a nested second `SKILL.md` declaring a top-level skill name while describing itself as both a dispatcher sub-route and an independently-triggered skill; it is now unambiguously an on-demand reference reached through the `atcr debt` routing row. (epic 35.5.0)
+- `docs/skill-usage.md`'s Installation section prescribes `atcr skill export` and documents the harness table and cross-reading behavior, replacing the two `cp` lines and their nested-directory footgun. (epic 35.5.0)
+- Retunes the per-file payload-escalation defaults against a measured replay of real history. Escalation shipped in 35.1 with thresholds chosen by reasoning rather than measurement, and they promoted 37% of changed Go files above their configured mode at a cost of +48% payload bytes — an operator who configured `diff` was effectively not getting `diff`. The new defaults measure 21.5% promoted at +34% bytes, and the acceptance target they were tuned to now ships in the code so the next change to them has a baseline to re-validate against. (epic 35.4.0)
+- **Default escalation thresholds** (`internal/payload/escalation.go`): `min_hunks` 4 → **8**, `hunk_gap_lines` 10 → **2**, `min_cyclomatic` 15 → **20**. `churn_ratio`, `max_files`, and `max_skeleton_lines` are unchanged. Every one remains overridable via the registry's `payload_escalation:` block, so an operator who prefers the old behavior can restore it without a code change. (epic 35.4.0)
+- Hunk adjacency was the largest single offender (28.5% of changed Go files, now 13.0%): under `--unified=0` a single logical change routinely leaves hunks a few lines apart, so a 10-line window measured the ordinary shape of a diff rather than genuine same-region churn. (epic 35.4.0)
+- `min_cyclomatic` rose because the score is now scoped to the functions the diff CHANGED (35.1), where ordinary validation code clears 15 without being unreadable from hunks. (epic 35.4.0)
+- Adds an adversarial diff-smell gate to the fix-generation phase, so a model-generated patch is checked for reward-hacking before it is ever written to a finding. The failure mode this blocks is the one an executor discovers on its own: the cheapest way to make a failing test pass is to delete the test, and the cheapest way to clear a lint is to suppress it. The gate is always on and has no configuration knob, matching the local Go syntax guard alongside it. (epic 35.3.0)
+- The gate covers both fix-generation paths. A rejected agent-mode fix retries through the agent path rather than downgrading to the single-shot snippet path. (epic 35.3.0)
+- Only diff-shaped fixes are scanned; free-form fix content passes through untouched, matching how `--auto-fix` already skips a fix it cannot parse as a diff. (epic 35.3.0)
+- `test_only` is suppressed when the finding itself cites a test file, where a test-only fix is expected by construction. `test_deleted` and `weakened_assertion` are never suppressed. (epic 35.3.0)
+- Makes the baseline (`--all`/`--dir`) file-hash-index write-back resilient to partial chunk failure. Previously a single failed chunk out of as many as 64 discarded the entire run's index update, so every successfully-reviewed file was re-scanned on the next baseline run. The write-back now records the files covered by the chunks that succeeded and excludes only the genuinely uncovered ones, so the next scan re-reviews just those. The safety direction is unchanged: an uncovered file is always re-reviewed, never silently skipped. (epic 35.2.0)
+- A baseline run with a partially-failed chunk set now persists the hash entries for the files in the succeeded chunks instead of skipping the write-back entirely. The next `--all`/`--dir` re-reviews only the uncovered files. (epic 35.2.0)
+- Coverage is unioned across personas: because each persona partitions the repository against its own model window, a file counts as reviewed once any succeeded chunk carried it. This matches what the previous gate already did for a wholly-failed persona, so no file that was recorded before is dropped now. (epic 35.2.0)
+- The resume path's write-back gate (TD-011) and the fresh path's are now the same function rather than two byte-for-byte copies, so they can no longer drift. (epic 35.2.0)
+- The partial-coverage warning now states an upper bound on what is recorded rather than announcing a write that may not happen. (epic 35.2.0)
+- A run with zero unreviewed chunks behaves exactly as before: full write-back, self-trim semantics unchanged. (epic 35.2.0)
+- Chunk coverage is attributed inside the engine before per-chunk results are merged, because the merge collapses per-chunk outcomes into a bare count. No exported type gained a field, so `status.json`/`summary.json` and MCP consumers are unaffected; `unreviewed_chunks` keeps its exact meaning. (epic 35.2.0)
+- Slots that cannot be attributed to a file set (the `review_strategy: chunked` fan-out over a payload carrying diff markers) vouch for no coverage, so such a run falls back to re-review rather than risking a skip. (epic 35.2.0)
+- Makes the payload mode a floor rather than a ceiling: the payload builder now promotes individual files above the configured mode when their change is structurally confusing, and prepends an AST skeleton of the file at `head` so reviewers reason from the final architecture instead of mentally replaying a multi-commit patch. Targets the "mental patch application" hallucination, where a reviewer reconstructs a superseded intermediate state from a net diff, without paying whole-repository `--payload files` token costs for simple changes. (epic 35.1.0)
+- Escalation and skeleton extraction are skipped wholesale above `max_files` (default 50) changed files, restoring the constant git-process profile; each analyzed file otherwise costs one `git show`, memoized per range and shared with the files-mode render. (epic 35.1.0)
+- Grounding after a `blocks`-mode payload build no longer spawns its own `--unified=0` subprocess — the escalation pass already populated that cache. (epic 35.1.0)
+- `docs/payload-modes.md` and `docs/registry.md` document the escalation ladder, the skeleton format and its cap, the cost cap, and the new configuration block.
+
+> **Correction (35.4.0).** The Added entry above describes the churn signal as a "churn ratio over added+deleted lines". That was the shipped behavior only briefly: the 35.1 double-counting fix changed it to `max(added, deleted)`, so a pure move or a rewrite is not scored twice. The historical text is left as written; `docs/payload-modes.md` and `internal/payload/escalation.go` carry the current definition. (epic 35.1.0)
+- Adds a non-diff, full-repository baseline review mode: `atcr review --all` and the subtree-scoped `atcr review --dir <path>`, for onboarding a project with no PR history, surfacing latent bugs in untouched legacy code, and seeding an initial `.atcr/debt`/`.planning/technical-debt/README.md` backlog. (epic 35.0.0)
+- Adds an exported model-invocation observation seam so an external module can build a compliant audit trail of AI interactions. **No breaking changes** — the release is purely additive, and behaviour with no hook registered is byte-for-byte identical to `0.1.0`.
+
+### Removed
+
+- atcr's history code no longer resolves any path under `.planning/`. Shards left there by the previous layout are not read, moved, or deleted — see the upgrade note in [docs/history.md](docs/history.md) for copying them into `.atcr/history/`. Because `.atcr/` is gitignored, trend data is per-checkout and is no longer shared through version control. (epic 35.14.0)
+- `internal/debt`, `internal/tdmigrate`, and `cmd/td-migrate`, along with the `--readme` / `--items` flags on `atcr debt`. No atcr code reads or writes `.planning/technical-debt/` anymore; that tree is left untouched for external tooling to drain on its own schedule. (epic 35.13.0)
+- The `.planning/technical-debt/DASHBOARD.md` default output path — `atcr debt dashboard` writes to stdout by default now. (epic 35.13.0)
+- The `--sync-cloud` placeholder default (`https://atcr.dev/dashboard`), which resolved to a live HTML page — a user with `ATCR_API_KEY` exported could POST a scorecard at a web page. `defaultCloudEndpoint` is now empty: the scorecard ingest contract is owned by atcr-enterprise, and no community API-key issuance flow exists. (epic 35.12.0)
+- The private `cli.reviewerCorroborationRates` helper, superseded by `scorecard.TrustPriors`. (epic 35.8.0)
+- 11 dead re-export declarations from `internal/reconcile/lib.go` (aliases, constants, and delegating wrappers with no remaining callers anywhere). `Result`, `Reconcile`, the `JSONFinding` schema, the `MergeJSONFindings` family, the disagreement radar, the gate, path validation, source discovery, adjudication, and file I/O are unchanged and stay ATCR-internal by design. Declarations still called unqualified from inside `internal/reconcile` itself were deliberately retained — deleting them requires rewriting those call sites first. (epic 35.7.0)
+- **Breaking (Go API):** the public package `github.com/samestrin/atcr/skill` and its exported `SkillMD`/`HostReviewMD`/`AmbiguityAdjudicationMD`/`FindingsFormatMD`/`ConventionsMD`/`DebtResolveMD` vars are gone, replaced by `github.com/samestrin/atcr/skills`. The package existed for build-time embed verification and had no importers in this repository, but any downstream importer must update the path. (epic 35.5.0)
+
+### Fixed
+
+- `--sync-cloud` without `--cloud-endpoint` now refuses with a usage error (exit `2`) naming the absent destination and pushes nothing, replacing a warning that let the run proceed. **Breaking for CI:** a `--sync-cloud` invocation relying on the compiled-in default must now pass `--cloud-endpoint` explicitly. Because the destination is validated before the credential, a run missing both now exits `2` (missing destination) rather than `3` (missing key); `docs/ci-integration.md` and `docs/agentic-consumption.md` record the ordering. (epic 35.12.0)
+- Epic 35.9's AC2 is now fully verified. `TestDemoteByTrust_ObservableViaConsensusLevel` drops the security-category escape hatch the original demotion test needed to stay observable under `strict`, and pins a plain non-exempt low-trust-demoted singleton as sidecarred under both `strict` and `lenient` and kept under `off` carrying `Confidence == LOW`. (epic 35.9.1)
+- The `CONVENTIONS.md` reference inside the debt-resolve route resolved to a path that did not exist (`debt-resolve/CONVENTIONS.md`); flattening makes it a true sibling. A test now asserts every on-demand reference resolves in the referencing file's own directory. (epic 35.5.0)
+- `atcr skill export` replaces an existing entry rather than writing through it, so a symlinked skill file cannot redirect a write outside the destination. (epic 35.5.0)
+- `docs/payload-modes.md` described the churn signal as summing added **and** deleted lines; it has measured `max(added, deleted)` since the 35.1 double-counting fix. The cyclomatic row likewise described the file's most complex function rather than the most complex **changed** function. (epic 35.4.0)
+- `internal/registry/config.go`'s field comments cited the pre-35.4 default values. (epic 35.4.0)
+- The local Go syntax guard no longer reports a bogus `invalid_syntax` on an unfenced unified diff — the exact fix shape `--auto-fix` consumes. The exemption requires the diff to lead the content, so a Go fix that merely embeds a diff fixture in a string literal is still parsed and still reports real syntax errors. (epic 35.3.0)
+- A run whose every chunk failed writes no index at all, including no self-trim, so a zero-coverage scan can never leave a partially-written index behind. (epic 35.2.0)
+- A resumed baseline run now persists its file-hash index write-back, and index write-back correctly excludes globally-shed files and honors the actually-reviewed set rather than a narrower per-agent bound. (epic 35.0.0)
+- Baseline enumeration now enforces the total in-memory repo-byte cap (`DefaultMaxRepoBytes`) and a per-file read cap, and honors context cancellation during the read loop. (epic 35.0.0)
+- Empty baseline scans are now classified accurately (all-unchanged exits 0; all-ignored surfaces a `--no-ignore` hint), and the truncation warning no longer misreports a fully-chunked baseline scan as a partial subset. (epic 35.0.0)
+- `--dir`/`--all` mutual exclusion, `--auto-fix` rejection, and `--fresh` resume-rejection messaging are now consistent and correctly named across flag combinations. (epic 35.0.0)
 
 ### Security
 
@@ -1254,2514 +638,16 @@ Adds an exported model-invocation observation seam so an external module can bui
 
 ## [0.1.0] - 2026-07-24
 
-First **git-tagged** release. The tag series restarts at `0.1.0` (independent semantic versioning) so the `atcr` module is importable by other modules — under Go semantic-import versioning a `v2.0.0+` tag would require a `/vN` module-path suffix, which `github.com/samestrin/atcr` does not have. The epic-numbered entries below (`[1.0.0]`–`[33.2.0]`) are untagged historical **development** notes and are no longer 1:1 with git tags; see [docs/release-process.md](docs/release-process.md). No behavior change to the `atcr` binary versus `[33.2.0]`.
-
 ### Changed
 
+- First **git-tagged** release. The tag series restarts at `0.1.0` (independent semantic versioning) so the `atcr` module is importable by other modules — under Go semantic-import versioning a `v2.0.0+` tag would require a `/vN` module-path suffix, which `github.com/samestrin/atcr` does not have. The epic-numbered entries in [docs/changelog-history.md](docs/changelog-history.md) (`[1.0.0]`–`[33.2.0]`) are untagged historical **development** notes and are no longer 1:1 with git tags; see [docs/release-process.md](docs/release-process.md). No behavior change to the `atcr` binary versus `[33.2.0]`.
 - Extracted the entire `cmd/atcr` command tree into a new importable, top-level package `github.com/samestrin/atcr/cli` (exporting `NewRootCmd`/`NewRootCmdWithClient` plus a single `cli.Main(ctx, stdout, stderr) int` entry point), reducing `cmd/atcr/main.go` to a thin shim. This lets a second binary — the private `atcr-enterprise` wrapper — build the identical CLI without vendoring `package main`, with zero behavior change to the public `atcr` binary (Sprint 34.0, Task 03).
 
 ### Fixed
 
 - Updated stale `cmd/atcr/...` comment cross-references and the `newRootCmd` symbol name to `cli/...`/`NewRootCmdWithClient` in ~12 non-relocated files, closing out documentation drift left by the Sprint 34.0 CLI relocation.
 
-## [33.2.0] - 2026-07-24
-
-Public launch: flipped the `atcr` repository from private to public and made `go install github.com/samestrin/atcr/cmd/atcr@latest` genuinely work for external developers, with the `reconcile` module published as a real versioned dependency and the finalized docs launched on atcr.dev.
-
-### Added
-
-- `install.sh`, a thin Go-toolchain-aware installer wrapper for `go install github.com/samestrin/atcr/cmd/atcr@latest`, with a real (unstubbed) integration test and a documented README Quickstart step.
-
-### Changed
-
-- Documented `go install` as the primary installation path in `docs/skill-usage.md` and `docs/code-review-backend.md`, and added a `git worktree` Pro-Tip to the README.
-- Hardened `install.sh`'s PATH detection to honor `GOBIN`, correctly segment a colon-delimited `GOPATH`, and normalize trailing slashes when comparing PATH segments.
-- Enforced the documented Go 1.25+ minimum toolchain version during `install.sh` preflight.
-
-### Fixed
-
-- Broadened `.gitignore`'s `.env` rule to `.env*` so all secret-file variants are excluded.
-
-*Shipped via /execute-sprint (sprint 33.2)*
-
-## [33.1.0] - 2026-07-23
-
-Launch content strategy: auto-generated a backlog of technical marketing blog outlines from the shipped feature set. Each outline is grounded in a real CHANGELOG entry (no vaporware) and slotted into the existing Awareness → Education → Enterprise Trust publication schedule.
-
-### Added
-
-- 10 net-new technical blog post outlines in `.planning/product/content/blog/`, each grounded in a shipped feature: the benchmark leaderboard (epics 10.x), deterministic finding dedup via AST-isomorphism + Kuhn-Munkres + DBSCAN (13.1/13.2), the community persona registry + `personas submit` (19.6/19.9), `--auto-fix` detection-to-PR (17.0), won't-fix/false-positive dismissal (24.0), live model resolution (19.7), the local Ollama zero-egress persona pack (27.0), the append-only audit ledger + sharded findings history (19.1/19.4), SARIF 2.1.0 output (25.0), and `.atcrignore` review-payload exclusion (26.0).
-- Extended `.planning/product/content/blog/README.md`'s publication schedule (Phase 2 Education, Phase 3 Enterprise Trust) with all 10 new outlines and their target audiences.
-
-*Shipped via /execute-epic (epic 33.1)*
-
-## [33.0.0] - 2026-07-22
-
-Final pre-launch code review and documentation sweep: dogfooded atcr's own multi-agent reviewer against its production codebase, triaged and resolved all findings, and audited README/docs/CLI help for accuracy ahead of the repository going public.
-
-### Fixed
-
-- Reviewer pool parser no longer scrapes hallucinated findings out of fenced example blocks in agent review prose.
-- Reconcile now collapses byte-identical duplicate findings during clustering instead of double-counting them.
-- `repoRoot` now uses `Lstat` so a `.git`/`.atcr` symlink can no longer misidentify the repository root.
-- `openReadOnly` now rejects non-regular files instead of silently accepting them.
-
-### Changed
-
-- Audited and corrected `README.md`, `skill/SKILL.md`, and `docs/` against the finalized CLI surface; confirmed zero legacy persona-slug references remain and validated `docs/` for `atcr.dev` import.
-
-*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 33.0)*
-
-## [32.4.0] - 2026-07-22
-
-Harden `--auto-fix` against Indirect Sandbox Escape / Host Trust Transposition attacks by blocking writes to protected host-configuration paths and hardening every host git subprocess invocation.
-
-### Added
-
-- `internal/security/pathguard.go`: blocks `--auto-fix` from writing to `.git/`, `.githooks/`, `.github/workflows/`, `.gitlab-ci.yml`, `.vscode/`, `.idea/`, `.env*`, `.planning/`, and `.atcr` unless the new `--allow-config-edits` flag is set.
-- `internal/gitexec`: shared git subprocess wrapper injecting `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, migrated across all host git call sites to close config-hijacking exposure.
-- Non-blocking `FlagsForReview` check surfaces executable-bit and build-script changes as a `## Review Warnings` section in generated `--auto-fix` PR bodies.
-- `docs/security.md` documenting the security architecture, indexed from `docs/README.md`.
-
-*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.4)*
-
-## [32.3.0] - 2026-07-21
-
-Add an opt-in ephemeral-copy writable overlay to the Docker sandbox so `--auto-fix` validation works for non-Go ecosystems (Node, Rust, Python) that need to write into their working directory during testing.
-
-### Added
-
-- `RunSpec.Writable` / `DockerConfig.WorkSize`: an opt-in writable overlay that mounts the project snapshot read-only at `/src` and backs `/work` with a writable tmpfs seeded from the snapshot, defaulting to today's read-only behavior for every existing caller.
-- `--auto-fix` validation now opts into the writable overlay, so `npm run build`, `cargo build`, and similar non-Go commands no longer fail closed with `EROFS`.
-
-### Fixed
-
-- The overlay's seed copy no longer fails on file-ownership mismatches (switched from `cp -a` to `cp -R` with a sentinel exit on failure).
-- `/work` and `/scratch` tmpfs mounts now pin a mode that the non-root sandbox user can write to.
-- Sandbox preflight now rejects malformed `WorkSize`/`ScratchSize` values instead of passing them through to Docker unchecked.
-
-*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.3)*
-
-## [32.2.0] - 2026-07-20
-
-Close two deferred defense-in-depth gaps in the `--auto-fix` sandbox path surfaced during Sprint 32.0 review.
-
-### Changed
-
-- `--auto-fix` host validation now requires an explicit `--no-sandbox` opt-out at the dispatch, not merely a nil sandbox backend: a caller that bypasses the setup gate can no longer inherit a silent unsandboxed run on the host — it fails closed, reverting the patch and making no GitHub call.
-
-### Fixed
-
-- A cancelled sandbox validation (parent-context cancellation, e.g. Ctrl-C) is now classified as a timeout in the Docker backend rather than a spurious backend fault, mirroring the host-path timeout handling.
-
-*Shipped via /execute-epic (epic 32.2)*
-
-## [32.1.0] - 2026-07-20
-
-Add a configurable complexity ceiling to the fix executor so cheap/local models can safely skip findings beyond their capability, enabling a two-tier cheap-then-frontier auto-fix workflow.
-
-### Added
-
-- `max_estimated_minutes` / `max_severity_for_fix` executor config fields: findings above the configured complexity ceiling are skipped (and logged) before dispatch instead of attempted, with full range/cross-field validation at load time.
-- Self-gating decline: the executor can now decline a fix it judges too complex mid-generation, surfacing as an explicit skip rather than a hallucinated partial fix.
-- Two-tier auto-fix workflow: a second, independently-configured executor run picks up exactly the findings a lower-ceiling tier skipped, with fix attribution preventing double-processing across tiers.
-- `docs/registry.md` / `docs/findings-format.md` documentation and a worked cheap-tier + frontier-tier example (`examples/registry-with-executor.yaml`, `examples/registry-with-executor-tier2.yaml`).
-
-*Shipped via /init-plan + /execute-sprint + /execute-code-review (sprint 32.1)*
-
-## [32.0.0] - 2026-07-20
-
-Route `--auto-fix` validation through the existing `internal/sandbox` container isolation so LLM-generated build/test commands never run directly on the host, sandboxed by default with a loudly-warned `--no-sandbox` opt-out.
-
-### Added
-
-- `--auto-fix` validation now runs inside a Docker sandbox by default via `internal/sandbox`, isolating LLM-generated build/test commands from the host machine; refuses to run (fail-closed) rather than silently falling back to unsandboxed execution when no sandbox is configured.
-- `--no-sandbox` opt-out flag for environments without Docker, printing a security warning to stderr on every invocation.
-- `docs/auto-fix.md` — documents the sandboxed-by-default posture, the `auto_fix:` config block, and the `--no-sandbox` risk.
-
-### Changed
-
-- The `--auto-fix` gate now resolves and preflights the sandbox backend as a fourth all-or-nothing setup check, alongside the existing apply-target/validation-command/GitHub-credential checks.
-
-*Shipped via /execute-sprint + /execute-code-review (sprint 32.0)*
-
-## [31.1.0] - 2026-07-18
-
-Deliver axi.md Principle 8 ("Content First"): a bare `atcr` (no subcommand) now renders a live home view — the executable path, atcr's one-line description, and the current review state — instead of static help text, so an orchestrator can sanity-check state in one cheap call.
-
-### Added
-
-- Content-First home view on a bare `atcr` invocation: the `~`-relativized executable path, atcr's one-line description, and the current review's id/status — or an explicit no-reviews-yet line on first run (never an error, even with no `.atcr/latest`).
-- `atcr --axi` (bare) renders the home view as a token-dense single-row `home` TOON payload, reusing the existing AXI context-propagation and TOON serializer plumbing rather than a parallel renderer; documented in `docs/agentic-consumption.md`.
-
-### Changed
-
-- A bare `atcr` (no subcommand) now shows the live home view instead of the static help/usage text. `atcr --help`, `atcr -h`, `atcr --version`, and every subcommand are unchanged.
-
-*Shipped via /execute-epic (epic 31.1)*
-
-## [31.0.0] - 2026-07-18
-
-Add a first-class `--axi` (Agent eXperience Interface) output mode to `atcr review`/`atcr report`, so an autonomous agent can consume findings as a clean, token-dense TOON/JSON payload instead of ANSI-colored/Markdown human output.
-
-### Added
-
-- `--axi` flag on `atcr review`/`atcr report` emitting a token-dense TOON payload (superset of the `atcr-findings/v1` schema) instead of human-formatted output, with zero ANSI escapes or Markdown syntax on stdout.
-- `ATCR_AXI_MAX_LINES` environment override for the AXI payload's default 500-line pagination cap, with a `truncated` flag and true total count always present.
-- `docs/agentic-consumption.md` — orchestration guide for autonomous agents, with a worked exit-code-branching sweeper example, cross-referenced from `docs/ci-integration.md`.
-
-### Changed
-
-- Reconciled `--axi`'s exit codes with the existing 0/1/2/3 contract (`atcr verify` precedent) instead of introducing a new internal-error code; documented in `docs/ci-integration.md`.
-- `atcr review --resume --axi` now gates all human-oriented stdout writes and rejects chained-stage flags (`--auto-fix`/`--debate`/`--single-model`/`--exec`) instead of silently dropping them.
-- Hardened `resolveOutputPath` to resolve a symlinked parent directory for a not-yet-existing `--output` file, closing a symlink-follow bypass.
-
-### Fixed
-
-- AXI stdout no longer leaks raw C1 control bytes (e.g. `0x9b`/`0x9d`) through unquoted fields.
-- macOS's `/private/var/folders` temp tree is now exempt from the system-directory validation guard, fixing spurious rejection of temp-dir writes.
-
-*Shipped via /execute-sprint + /execute-code-review (sprint 31.0)*
-
-## [30.0.0] - 2026-07-17
-
-Add an opt-in, aggregate, content-free quality signal that tells the maintainer which reviewer prompts (persona+model pairs) are over- or under-reporting, derived entirely from existing dismissal outcomes — closing the persona living-library flywheel.
-
-### Added
-
-- `atcr config set quality_signal <bool>` — independent opt-in gate for the quality signal, off by default and structurally isolated from the existing `telemetry` opt-out.
-- `--preview` flag on `review`/`reconcile` showing exactly what quality-signal payload would be sent, with nothing transmitted.
-- `atcr quality-report` — maintainer-facing report ranking reviewer prompts by dismissal rate (`--format md|json`).
-- `atcr debt compact` — folds the local append-only debt store and reports before/after/dropped record counts.
-- Gated, content-free quality-signal transmission: per-persona+model dismissed/confirmed counts only, fail-open on any transport failure.
-- `docs/telemetry.md` now documents the quality-signal field allowlist, opt-in mechanism, `--preview` behavior, and the absolute no-code/no-finding-content guarantee.
-
-### Fixed
-
-- Local-debt lock timeout and shard-removal errors no longer leak the full username-bearing file path.
-- Lock wait timing corrected so a legitimate long-running operation no longer times out before it could be declared stale.
-- Quality-signal aggregation no longer drops a real outcome when a model-less terminal record folds over a model-attributed one.
-- `debt resolve`'s list now agrees with the quality signal on which occurrence of a re-raised finding is authoritative.
-
-### Changed
-
-- `atcr init`'s generated config template now documents the `quality_signal` opt-in key alongside `telemetry`.
-
-*Shipped via /execute-sprint + /execute-code-review (sprint 30.0)*
-
-## [29.0.0] - 2026-07-17
-
-Ship a new community persona, `simon`, hyper-focused on hunting down AI-generated code bloat, backed by a passing fixture test and a refreshed marketing blog outline.
-
-### Added
-
-- `simon` community persona targeting AI-generated code bloat — tautological comments, unnecessary design patterns, defensive-programming overkill, and dead/hallucinated code paths (`personas/community/simon.yaml`, `personas/community/simon.md`).
-- Synthetic slop fixture and `simon` roster/index registration, closing out the 14-persona test-gate suite (`personas/community/testdata/simon_fixture.patch`, `personas/community_test.go`, `personas/community/index.json`).
-
-### Fixed
-
-- Replaced the invalid `atcr review --persona simon` CLI reference in the Slopfix blog outline with the working `atcr personas install simon` / `atcr personas test simon` commands (`.planning/product/content/blog/slopfix-ai-code-bloat.md`).
-- Corrected `simon`'s registry metadata: normalized `index.json` tag arity to the 4-tag cloud-persona schema, added the missing description lens descriptor, fixed the fixture's hunk-header formatting, and planted the `bloat` category word in the fixture.
-
-*Shipped via /execute-sprint + /resolve-td (sprint 29.0)*
-
-## [Technical Debt] - 2026-07-16
-
-### Fixed
-
-- Fired review telemetry from a deferred post-gate `Send` so its status reflects the `--fail-on` gate outcome instead of the pre-gate fanout result (`cmd/atcr/review.go`).
-- Hardened `withConfigLock` with atomic stale-lock reclaim (CAS rename), a deadline past the stale threshold, an owner-write error abort, and a symlink TOCTOU check inside the lock (`internal/registry/telemetry_setting.go`).
-- Bounded in-flight telemetry `Send` goroutines with a drop-on-full semaphore (`internal/telemetry/client.go`).
-- Made cloud-sync `Push` fail closed on a missing API key (`internal/scorecard/cloudsync.go`).
-- Trimmed the agent name once before hashing in `NewCloudSyncRecord` (`internal/scorecard/cloudsync.go`).
-- Standardized `PreRunE` chain ordering to prev-first in `addRangeFlags` (`cmd/atcr/flags.go`).
-- Replaced an `unsafe.Slice` conversion with a plain conversion in `HashPersonaID` (`internal/scorecard/telemetry.go`).
-- Resolved a dead `requestTimeout == 0` guard in `send()` (`internal/telemetry/client.go`).
-- Corrected misleading or outdated comments across the telemetry and cloud-sync code paths (drain keep-alive claims, `trust.go` crash-safety note, `cloudHTTPClient` isolation, a dead `coded-runErr` branch, the `defaultCloudEndpoint` migration path, `dominantLang`'s empty-label contract, and the `config set` I/O failure exit code).
-- Replaced the byte-for-byte leaderboard export checksum test with structured semantic assertions covering aggregation, sort order, the verification block, and absence of a `persona_id_hash` leak.
-- Added placeholder-warning absence tests for `--sync-cloud` (`cmd/atcr/flags_test.go`).
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [28.0.0] - 2026-07-16
-
-Introduce opt-in, lightweight telemetry to measure real-world adoption, gather anonymous data for a crowdsourced Persona Leaderboard, and add a `--sync-cloud` mechanism to push local scorecard data toward the upcoming `atcr.dev/dashboard`.
-
-### Added
-
-- Fire-and-forget, panic-safe usage telemetry ping (`internal/telemetry`) on `review`/`reconcile` completion — bounded timeout, fails open, currently a wired no-op pending a live endpoint.
-- `ATCR_TELEMETRY=0` env var and `atcr config set telemetry <bool>` persisted opt-out, strict-OR'd across both surfaces (disabled always wins).
-- Deterministic SHA-256 Persona ID hashing for the Persona Leaderboard, isolated from the existing `PublicRecord`/`scrubField` export path — the leaderboard `--export` output remains byte-for-byte unchanged.
-- `--sync-cloud` / `--cloud-endpoint` flags on `review`/`reconcile`: authenticated `Bearer <ATCR_API_KEY>` push of an anonymized, allowlisted scorecard payload, with a dedicated `exitAuth` exit code on a missing or rejected key.
-- `docs/telemetry.md` documenting the telemetry/opt-out/cloud-sync data paths, linked from `docs/README.md`, with a cross-reference from `docs/scorecard.md`'s Privacy Model section.
-
-### Fixed
-
-- Cloud-sync client now blocks redirect-following so the `Bearer` API key is never forwarded to a redirect target, and redacts endpoint userinfo credentials from transport-error messages.
-- A deferred `--sync-cloud` push no longer fires on (or masks the exit code of) an in-process reconcile/verify/debate infra failure — auth-rejection overrides now only ever supersede a success or a plain findings-gate failure.
-
-*Shipped via /execute-sprint + /resolve-td (sprint 28.0)*
-
-## [27.0.0] - 2026-07-15
-
-Ship a "zero data egress" persona pack for privacy-conscious teams that refuse to send proprietary code to any external API. Three reviewer personas tuned for a local Ollama/llama.cpp/vLLM endpoint join the community library — the review runs entirely on your own hardware, with no external network calls once your registry points at `localhost`.
-
-### Added
-
-- Three local reviewer personas tuned for hardware tiers: `gerald` (32 GB dense, secrets & data-egress), `orson` (32 GB long-context, duplication & repo-wide redundancy), and `liam` (64 GB+ heavyweight, invariants & state-consistency).
-- `local` as a sanctioned provider routing key for community personas, alongside `openrouter`.
-- A Local / Privacy-First zero-egress setup walkthrough in the persona install docs, including the `api_key_env` placeholder requirement (a non-empty value is required even for a keyless local endpoint).
-
-### Changed
-
-- `atcr models check` no longer reports a `local/<model>` persona slug as drift `missing`; such a slug is resolved by the user's own local endpoint, not the OpenRouter catalog snapshot.
-
-*Shipped via /execute-epic (epic 27.0)*
-
-## [26.0.0] - 2026-07-14
-
-Stop ATCR from spending LLM tokens (and money) reviewing generated code, vendored dependencies, or massive lockfiles: the review payload now excludes files matched by the repository's `.gitignore` and a new repo-root `.atcrignore`, filtered out before the diff ever reaches the byte-budget pass or a reviewer.
-
-### Added
-
-- Repo-root `.gitignore` support: files matched by the repository's `.gitignore` are excluded from the review payload.
-- Repo-root `.atcrignore` support: a dedicated, additive ignore file (one `.gitignore`-syntax pattern per line, no negation) for files committed to git that should never reach the AI reviewer (e.g. `go.sum`, `package-lock.json`, `docs/`).
-- `atcr review --no-ignore` flag to bypass ignore filtering and review normally-excluded files on demand.
-- Files skipped by the ignore rules are logged at debug level.
-
-### Changed
-
-- The review payload now filters ignored files out of the changed-file list ahead of the byte-budget truncation pass; pre-flight changed-file counts reflect the same filtered set.
-
-*Shipped via /execute-epic (epic 26.0)*
-
-## [Technical Debt] - 2026-07-14
-
-### Fixed
-
-- Resolved empty SARIF `ruleId` for category-level findings.
-- Removed a data race on the SARIF diagnostic sink by threading it through function parameters instead of a package-level variable.
-- Derived the MCP `report` tool's format enum from `report.FormatList()` so it can no longer drift from the CLI's supported formats.
-- De-duplicated the per-render SARIF unrecognized-severity diagnostic so it no longer repeats once per finding.
-- Defaulted blank SARIF `artifactLocation.uri` to a sentinel value instead of emitting an empty URI.
-
-## [25.0.0] - 2026-07-14
-
-Add SARIF 2.1.0 output support so ATCR's reconciled review findings can feed GitHub Advanced Security's Code Scanning "Security" tab and GitLab CI's native SAST report widget — centralized surfaces the existing `atcr github` PR-check/inline-comment integration does not reach.
-
-### Added
-
-- `atcr report --format=sarif` renders reconciled findings as a schema-conformant SARIF 2.1.0 document (`$schema`, `runs[]`, `tool.driver`, `rules[]`, `results[]`), validated against the SARIF 2.1.0 schema.
-- Severity-to-SARIF-`level` mapping (CRITICAL/HIGH→`error`, MEDIUM→`warning`, LOW→`note`) reusing ATCR's canonical severity rubric.
-- Line-level anchoring for findings, with a synthesized fallback region for file-level findings so every result still displays in GitHub's Security tab.
-- CI integration documentation for uploading SARIF to GitHub Code Scanning and for GitLab CI's native SAST report widget.
-- MCP `report` tool's format enum now accepts `sarif` over the wire, matching CLI/MCP output parity.
-
-### Changed
-
-- `atcr report --format` help text and command description now list `sarif` alongside the existing formats.
-
-*Shipped via /execute-sprint (sprint 25.0)*
-
-## [24.0.0] - 2026-07-13
-
-Give developers a way to permanently dismiss a technical-debt finding as won't-fix / false-positive so ATCR's agents stop re-surfacing it in later review loops.
-
-### Added
-
-- `atcr debt resolve --resolve <id> --status wontfix` dismisses a finding as won't-fix / false-positive: a `wontfix` record is a terminal status that folds the item out of the open backlog (`--list`/`--json`) exactly like `resolved`, and the existing `atcr reconcile` dedup-by-id suppresses re-persisting it when the same finding is re-detected.
-- `--reason "<text>"` flag on `atcr debt resolve` records why a finding was dismissed or resolved, populating the record's `Justification` field (an empty `--reason` preserves any existing justification).
-
-### Changed
-
-- `atcr debt resolve` now rejects `--status`/`--reason` supplied without `--resolve <id>` with a usage error, instead of silently ignoring them and printing the open list.
-
-*Shipped via /execute-epic (epic 24.0)*
-
-## [22.5.0] - 2026-07-13
-
-Close the last residual test gap from the backup-swap hardening work: cover `backupExisting`'s non-`ErrNotExist` `Lstat(backup)` probe-failure branch, which filesystem permissions could not isolate because the staging siblings share a parent directory.
-
-### Added
-
-- Test coverage for `backupExisting`'s non-`ErrNotExist` `os.Lstat(backup)` probe-failure branch, via a new injectable `lstatFn` fault-injection seam (defaults to `os.Lstat`; no production behavior change).
-
-*Shipped via /execute-epic (epic 22.5)*
-
-## [22.4.0] - 2026-07-13
-
-Reuse the payload builder's already-computed diff when building grounding data, eliminating the duplicate `git` subprocesses the grounding gate re-spawned for every review and every resume.
-
-### Changed
-
-- `computeGroundingData` now reuses the payload builder's memoized `gitRunner` for the same `base..head` range instead of constructing a throwaway runner, so grounding no longer re-runs `validateRange` + `--name-status` + `--unified=0` (~4 fewer git subprocess spawns per review and per resume). Grounding behavior is unchanged — same findings dropped/exempted.
-
-*Shipped via /execute-epic (epic 22.4)*
-
-## [22.3.0] - 2026-07-13
-
-Make the `pyparser` structural parser quote- and escape-aware so adversarial Python source no longer corrupts the structural hash by silently dropping real code.
-
-### Fixed
-
-- `pyparser` no longer treats a triple-quote (`"""`/`'''`) appearing inside a `#` comment as the start of a multi-line string — previously this flipped the scanner into string mode and swallowed every following line (including real `def`/`class` blocks) out of structural hashing.
-- `pyparser` no longer treats a triple-quote embedded inside a single-line string literal as a multi-line-string delimiter.
-- `pyparser`'s comment stripping is now string- and escape-aware: a `#` inside a string literal is no longer mistaken for a comment start, which had broken block-header detection and body nesting.
-
-*Shipped via /execute-epic (epic 22.3)*
-
-## [22.2.0] - 2026-07-13
-
-Extract the duplicated Wasm guest ABI (alloc/free/emit/pins) shared by the `goparser`, `pyparser`, and `braceparser` AST plugins into one internal `guestabi` module, with the non-moving-GC pointer-packing assumption documented in a single canonical location.
-
-### Changed
-
-- `goparser`, `pyparser`, and `braceparser` now import a shared `guestabi` package instead of each defining its own alloc/free/emit/pins boilerplate.
-
-### Fixed
-
-- Guarded `goparser`/`pyparser`'s `parse()` against negative-length host inputs, matching `braceparser`'s existing bounds check.
-- Freed the result pin on the oversized-result reject path in the astgroup host, closing a pin leak on that error branch.
-- Added the missing `//go:build wasip1` tag to `pyparser/main.go` so host-GOOS tooling no longer breaks on the shared `guestabi` import.
-- Raised `build.sh`'s Go-version guard to 1.26 to match the parser modules' `go.mod` directive.
-
-*Shipped via /execute-sprint (sprint 22.2)*
-
-## [22.1.0] - 2026-07-12
-
-Thread the reviewed-repo root through `atcr reconcile` and `atcr verify` via a new `--repo` flag, so validating findings against a repo other than the current directory (or running from a non-repo-root CWD) no longer falsely flags every finding as "file not found."
-
-### Added
-
-- `atcr reconcile --repo <path>` — validates finding file paths against the given repo root instead of the current directory. Defaults to `.`, preserving prior behavior.
-- `atcr verify --repo <path>` — threads the same reviewed-repo root into the skeptics' code snapshot and the evidence redactor, kept consistent with `atcr reconcile --repo`. Defaults to `.`.
-
-### Fixed
-
-- An explicit empty `--repo` on either command now normalizes to the current directory rather than silently disabling path validation.
-
-*Shipped via /execute-epic (epic 22.1)*
-
-## [22.0.0] - 2026-07-12
-
-Reap the entire process group when a local auto-fix validation command times out, so grandchild processes spawned by shells like `sh -c make ...` are killed instead of left running past the deadline.
-
-### Fixed
-
-- Validation-command timeouts now SIGKILL the whole process group on unix (via `Setpgid` + a group-targeted cancel) instead of only the direct child, reaping shell-spawned grandchildren that previously survived the deadline. `cmd.WaitDelay` is retained as a platform-independent pipe backstop; Windows keeps the existing direct-child behavior.
-
-*Shipped via /execute-epic (epic 22.0)*
-
-## [21.0.0] - 2026-07-12
-
-Automate release packaging: a tag-triggered GoReleaser pipeline that builds reproducible, version-stamped binaries and publishes a GitHub Release on `vX.Y.Z` tag push, plus the release-process documentation and CI hardening around it.
-
-### Added
-
-- `.goreleaser.yaml` build configuration with dual ldflags version/commit/date stamping, `-trimpath`, and reproducible archive mtimes.
-- Tag-triggered release workflow (`.github/workflows/release.yml`) that runs GoReleaser and publishes a GitHub Release on `vX.Y.Z` tag push.
-- `docs/release-process.md` documenting the `vX.Y.Z` tagging convention, the local `goreleaser release --snapshot --clean` dry-run prerequisite, and the git release strategy.
-
-### Changed
-
-- Hardened the release workflow: scoped the tag trigger glob to real release tags and disabled cancel-in-progress so an in-flight publish is never aborted.
-
-### Security
-
-- Pinned every GitHub Actions `uses:` reference and the GoReleaser binary to exact commit SHAs across `release.yml`, `ci.yml`, and `reconcile-module.yml` (TD-006).
-
-## [20.1.0] - 2026-07-12
-
-Give standalone/public `atcr` users the review-and-fix loop the private `.planning/technical-debt/` + `/resolve-td` pipeline already provides, via a local `.atcr/`-scoped technical-debt store and an autonomous `atcr debt resolve` skill route.
-
-### Added
-
-- New `internal/localdebt` append-only JSONL store package (structurally modeled on `internal/scorecard`) with dedup by `FindingID` and tolerant reads.
-- `atcr reconcile` persistence hook that appends reconciled findings across runs, with a `--no-local-debt` opt-out.
-- `atcr debt resolve` CLI subcommand and `skill/debt-resolve/SKILL.md` documenting the four-stage RED→GREEN→ADVERSARIAL→REFACTOR resolution cycle.
-- Shared `skill/CONVENTIONS.md` extracted from `skill/SKILL.md` for reuse across public skills.
-- Documented the new `atcr debt resolve` capability in `docs/skill-usage.md`.
-
-### Fixed
-
-- Reconcile no longer persists gate-excluded or path-warned findings to the local debt store.
-- `localdebt` record decoding now rejects records missing required `run_id` or `id` fields.
-- `ReadAll` no longer leaks an absolute shard path in non-ENOENT open errors.
-
-## [20.0.0] - 2026-07-11
-
-Rewrite the standalone `skill/SKILL.md` into a single `/atcr <command>` dispatcher skill for public OSS distribution, and lock the private-skill `--output-dir` + `atcr reconcile` backend contract with a repo-local regression test.
-
-### Added
-
-- `/atcr <command>` dispatcher: `skill/SKILL.md` now routes to the full live `atcr` command surface instead of a single linear review-only flow, with detailed Host Review, Ambiguity Adjudication, and Findings Format instructions moved to on-demand secondary files (`skill/host-review.md`, `skill/ambiguity-adjudication.md`, `skill/findings-format.md`).
-- A repo-local `cmd/atcr/backend_contract_test.go` locking the documented `--output-dir` + `atcr reconcile` output tree (including id-or-path resolution) that private `.planning/` skill consumers depend on.
-- A bidirectional test asserting the dispatcher's routed commands and the live Cobra command registry never drift apart.
-- `docs/external-migration.md` documenting the private `claude-prompts` skill migration to the dispatcher pattern as a manual operator follow-up.
-
-### Changed
-
-- Completed the README `## Commands` table to list all 22 registered commands.
-- Aligned README's documented Go version to 1.25 to match `go.mod`.
-- `skill/findings-format.md` now inlines the minimal findings contract so it stays self-contained in a standalone skill install, rather than depending on a repo-relative `docs/` path.
-- Documented the shipped `--sprint-plan` scope-constraint flag in the backend-contract docs (previously described as unshipped).
-
-## [19.10.0] - 2026-07-11
-
-Size each multi-agent reviewer's payload to its own model's token window and degrade gracefully via a configurable `on_overflow` policy instead of shipping every reviewer the same global byte budget — fixing the confirmed failure where an oversized diff returned findings from only 1 of 11 reviewers.
-
-### Added
-
-- Per-model context-window resolver (`ContextWindowTokens`) sizing each reviewer's payload to its own model's token window, reserving the output-token budget so input can no longer overflow a small-window model by exactly the unreserved output cap.
-- Window-aware diff chunking: an over-window payload is delivered whole across appropriately-sized chunks per model (more chunks for a small-window model, fewer for a large one) instead of being shed — zero content loss on the default degradation path.
-- Configurable `on_overflow` degradation policy (`chunk` default, `truncate`, `fallback`, `fail`) with per-agent dispatch, replacing the previous hardcoded shed-or-fail behavior.
-- Fallback-model provenance recording in `summary.json`/`status.json` so a reviewer served by a substituted model is never silently counted as an independent distinct reviewer.
-- Load-scaled request timeout (per-call and aggregate, across both serial and parallel lanes) so a small-window model fanned into many chunks on a slow backend no longer hits the flat timeout wall.
-- Per-agent diagnosability fields (`effective_budget`, `resolved_window`, `reserved_output_tokens`, `chunk_count`, `degradation_action`) recorded for every reviewer in `summary.json`.
-- Configurable `max_sprint_plan_bytes` setting (`.atcr/config.yaml`, default 64KB) replacing the previous hardcoded 16KB sprint-plan scope-constraint limit.
-- A standalone, env-coupled live-audit harness (`examples/19.10-live-audit.sh`) that re-runs a known-bad diff range against the real model roster and hard-gates on zero context-window overflows.
-
-### Fixed
-
-- The fan-out diff cache now folds each reviewer's effective sizing/chunk plan into its cache key, so a per-agent-sized payload can never be served a stale, differently-sized cache hit.
-- The sprint-plan `--sprint-plan` SCOPE CONSTRAINT block is now counted and capped against each reviewer's own budget, closing an overflow it could otherwise reintroduce on small-window models.
-- A reviewer whose entire payload exceeds its model's window is no longer dispatched with an indistinguishable-from-healthy status; the overflow is now recorded explicitly.
-- Reconcile's findings CONFIDENCE score is recomputed after fallback-model de-weighting, so two reviewers silently served by the same substituted model no longer inflate a finding's confidence.
-- Assorted hardening: a negative output-token count can no longer inflate a reviewer's byte budget; an oversized final diff chunk at the chunk-count ceiling is now flagged instead of shipped silently oversized; a pathological sprint-plan byte limit can no longer silently blank the plan or integer-overflow the read ceiling; the live-audit skip guard now checks the specific previously-failing agents rather than any reachable agent.
-
-## [19.9.0] - 2026-07-10
-
-Add a GitHub-native `atcr personas submit <name>` command that runs the local fixture gate then forks the repo and opens a pull request via `gh`, plus a `submitted` status for two-tier curation of community persona contributions.
-
-### Added
-
-- `atcr personas submit <name>`: runs the existing fixture gate locally, then forks `samestrin/atcr` and opens a pull request via the user's own `gh` CLI session — no marketplace, website, or hosted registry.
-- A `submitted` status for persona contributions, orthogonal to the existing `Source` provenance field, marking a fixture-passing but unvetted submission pending maintainer graduation into the vetted `personas/community/` library.
-- Documentation for the `submit` subcommand and the `submitted` → graduated two-tier curation model in `docs/personas-install.md` and `docs/personas-authoring.md`.
-
-## [19.8.0] - 2026-07-10
-
-Add an opt-in, off-by-default CI workflow that auto-merges mechanical persona slug-bump PRs, plus the hermes maintenance-agents configuration doc covering host provisioning, drift-judgment classification, and the drafting-agent contract for maintainer-side model/persona upkeep.
-
-### Added
-
-- `.github/workflows/hermes-auto-merge.yml`: opt-in, off-by-default CI workflow that auto-merges mechanical persona slug-bump PRs only after the required CI check passes, gated by a fail-closed structural path/label filter that never keys on PR authorship.
-- `docs/hermes-maintenance-agents.md`: documents the hermes maintenance-agent configuration surface, host provisioning runbook, judgment classification rule, and drafting agent contract.
-
-### Fixed
-
-- Closed a TOCTOU gap in the auto-merge workflow by pinning the PR's head SHA across the file filter, CI-status gate, and merge step.
-- Auto-merge filter now rejects renamed files, closing a `.md`→`.yaml` bypass, and requires the `github-actions` app slug on the CI check-run to prevent a name-collision bypass.
-- Auto-merge workflow now retries the check-runs API with backoff and fails closed on exhaustion, matches `hermes:mechanical` labels case-insensitively, bounds runtime with a job-level timeout, restricts merges to PRs targeting `main`, and handles an inaccessible PR gracefully.
-
-## [19.7.0] - 2026-07-09
-
-Layer live, auto-updating model resolution over persona `model` bindings — personas now bind to a vendor family/channel and resolve to a concrete slug recorded in a lock, so reviews stay reproducible by default and only change on an explicit `atcr personas upgrade`.
-
-### Added
-
-- `atcr personas upgrade` now resolves family/channel bindings against the live OpenRouter catalog and reports a before→after slug per persona.
-- `atcr models check [--json]` reports model drift (newer family member available), deprecation, and missing-slug conditions with machine-readable output and exit codes.
-- `atcr models refresh` regenerates the checked-in catalog snapshot from the live OpenRouter catalog (maintainer-only, never runs in CI).
-- Persona bindings support a family/channel grammar (`<family>@stable`/`@latest`, `pin:<slug>`) resolved via provider aliases, a created-timestamp vendor scan, or an explicit pin that never floats.
-- A major-version model jump now gates on the persona's fixture still passing and surfaces a "verify" flag; a minor jump auto-locks.
-
-### Changed
-
-- Online `atcr init`/`atcr quickstart` now derive the installed community persona roster from the fetched index itself, instead of a hardcoded built-in list, eliminating misleading "not found in community index" warnings.
-- `atcr personas upgrade` classifies OpenRouter fetch failures as usage errors (exit code 2), matching `atcr models`' exit-code contract.
-
-### Fixed
-
-- A single malformed community-index entry no longer aborts online `init`/`quickstart` for every user (invalid names are now skipped with a warning).
-- `appendExport` now warns when appending an API key to an existing group/other-readable shell profile.
-- `atcr models check` no longer reports a false "missing" condition for alias-bound personas.
-- Model family-prefix detection now correctly handles a non-trailing version segment (e.g. `gpt-5.4-mini`).
-- Model version extraction now handles vendor-glued version tokens (qwen/glm), preventing a bound persona's lock from silently freezing.
-- `atcr models refresh` now persists only substantive catalog entries and bounds its env-override snapshot read.
-- Persona binding configuration now rejects control characters and oversized values at load time.
-
-## [19.6.0] - 2026-07-08
-
-Make the community persona channel canonical (fetched from `samestrin/atcr`, not compiled into the binary), add structured provider/model metadata for discover-by-model search, ship a model-indexed human-named persona library, and lead onboarding docs with the monetizing Synthetic path.
-
-### Added
-
-- Model-indexed community persona library: 10 new personas bound to specific provider/model pairs across Claude, GPT, Gemini, DeepSeek, Qwen, Kimi, and GLM, each with vendor-tuned prompt phrasing and a passing fixture.
-- `atcr personas search --model`/`--provider` flags for structured discover-by-model search, plus Provider/Model columns in search output.
-- `--offline` flag for `atcr init`/`atcr quickstart` to scaffold from embedded built-ins without a network fetch.
-
-### Changed
-
-- Default community persona registry now fetches from `samestrin/atcr` (fetch-and-pinned, with `atcr personas upgrade` to advance the pin) instead of the external `atcr/personas` registry.
-- Renamed built-in personas `sentinel`→`sasha`, `tracer`→`penny`, `idiomatic`→`ingrid` (all-human-names convention; `ingrid` generalized beyond Go).
-- `README.md` Quickstart now leads with the Synthetic onboarding path; frontier-provider personas repositioned as opt-in "bring your own key."
-- `atcr personas list` now labels sources consistently across all three tiers (project/community/built-in).
-
-### Fixed
-
-- `init`/`quickstart` no longer overwrite existing on-disk persona files, even with `--force`.
-- Sanitized control characters in persona search/list table output.
-- Guarded persona install/fetch paths against symlink escapes and added retry/backoff for transient 5xx/429 fetch errors.
-
-*Shipped via /execute-sprint (sprint 19.6)*
-
-## [Technical Debt] - 2026-07-06
-
-### Fixed
-
-- Reviewer runs no longer parse a truncated model response twice — the parsed-finding count is now cached on the result and reused instead of being recomputed on each lookup.
-- `mergeResultGroup` now aggregates the `ResponseTruncated` flag across all chunks in a group instead of only reflecting the first chunk's truncation state.
-- `ResponseTruncated` is now always serialized in `status.json`/`summary.json`, even when false, so downstream field-presence checks can distinguish "not truncated" from "field missing."
-- The snippet-generation fix path now prioritizes a truncated-response flag over a generic error, so a truncated fix is reported as truncated rather than as an unrelated failure.
-- `mergeResultGroup` no longer drops chunked findings due to a stale parsed-finding memo.
-- Corrected comments describing `truncated_zero_findings` to state it tracks GROUNDED vs RAW count divergence, and resolved two related documentation technical-debt items.
-- Disabled `actions/setup-go`'s network cache on self-hosted gauntlet CI runners.
-
-## [19.5.0] - 2026-07-06
-
-Detect a truncated model response (`finish_reason=length`) that yields no usable output and route it into the existing fallback chain, instead of silently recording it as a clean "no issues found" review or an empty fix.
-
-### Added
-
-- Reviewer runs now fail over on a truncated, zero-finding response: a reviewer whose reply hit the token ceiling with nothing parseable is marked failed so the slot's fallback agent runs, instead of recording a silent false all-clear. A truncated reply that still parsed at least one finding keeps its findings and is flagged.
-- Per-agent `response_truncated` marker and a run-level `truncated_zero_findings` count in `status.json`/`summary.json`, so runaway rates are observable across runs.
-
-### Fixed
-
-- The fixer/executor no longer silently emits a no-op "success" when its response is truncated: a cut-off fix is flagged (`fix generation truncated`) and never presented as a usable patch.
-- A truncated runaway response is no longer written to the diff cache, so it cannot be replayed as a clean review on a later same-diff run.
-
-*Shipped via /execute-epic (epic 19.5)*
-
-## [Technical Debt] - 2026-07-06
-
-### Fixed
-
-- `internal/history/shard.go`: `LoadAll` now returns legacy and sharded history entries in correct chronological order instead of interleaving them incorrectly.
-- `internal/history/shard.go`: `LoadShards` no longer silently skips unreadable shard files, and glob metacharacters in shard paths are now handled correctly.
-- `atcr review`/`atcr resume`: deduplicated the history-recording logic into a shared `recordHistory` helper backed by centralized `history.ShardDir`/`LegacyLedgerPath`, so `atcr history` correctly merges legacy and sharded entries without mutating the legacy ledger.
-
-## [19.4.0] - 2026-07-05
-
-Time-based sharding for the findings history so it can be committed to version control (Team Edition) without a single, ever-growing file bloating the repo.
-
-### Added
-
-- Findings history is now sharded by month: each `atcr review`/`atcr resume` run appends to `.planning/history/YYYY-MM.jsonl` (the month is derived from the run time in UTC). Once a month rolls over, its shard stops receiving writes, so old shards no longer churn new git blobs.
-- `atcr history` transparently queries across every monthly shard — no need to name a shard — before applying the `--since` and `--package` filters.
-
-### Changed
-
-- Findings history moved from the git-ignored `.atcr/findings-history.jsonl` to the version-controlled `.planning/history/` directory, so a team can commit and share trend data. A pre-existing `.atcr/findings-history.jsonl` is still read in place as read-only legacy data and merged into query results; it is never moved or rewritten.
-
-*Shipped via /execute-epic (epic 19.4)*
-
-## [Technical Debt] - 2026-07-05
-
-### Fixed
-
-- `internal/registry/overlay.go`: the insecure-registry warning is now keyed per distinct URL instead of a single process-global `sync.Once`, so a long-lived process that loads two different insecure `http` registry URLs warns for both instead of only the first.
-- `internal/registry/overlay.go`: registry-fetch redirects now re-validate the URL scheme (and re-emit the insecure-URL warning) on every hop instead of only the initial URL, closing a path where an `https` registry could be silently downgraded to `http` via a redirect.
-- `internal/registry/overlay.go`: documented that the package-level test seams (`remoteFetchTimeout`, `remoteRegistryBodyLimit`, `insecureRegistryWarnWriter`) must not be mutated by parallel tests.
-
-## [19.2.0] - 2026-07-05
-
-### Added
-
-- `ATCR_REGISTRY_URL`: point atcr at a remote `registry.yaml` to share one team registry. When set, the user-level registry is fetched over HTTP (the config-repo pattern — commit `registry.yaml` to a shared repo and point every workstation and CI runner at its raw URL) instead of read from `~/.config/atcr/registry.yaml`; unset keeps the local-file behavior unchanged.
-
-### Changed
-
-- The remote registry flows through the same strict parser, validation, and env-var key contract as a local one: API keys are never read from the registry file (only `api_key_env` names travel — a literal `api_key` is a hard load error), and a set-but-unreachable/invalid URL fails loudly with no silent fallback to a local copy. Only the user registry is remote; the project overlay and trust store stay local. A non-`https` registry URL draws a one-time warning, and fetch errors and warnings redact embedded credentials and query-string tokens.
-
-*Shipped via /execute-epic (epic 19.2)*
-
-## [Technical Debt] - 2026-07-05
-
-### Fixed
-
-- `atcr audit-report`: no longer accepts `--pr 0` and silently aggregates unrelated local (non-PR) runs under a bogus "PR #0" report — non-positive PR numbers are now rejected as a usage error.
-- `atcr audit-report`: an unknown `--pr` and a missing `--pr` flag now both exit with the same usage-error exit code as sibling commands, instead of a plain exit-1 error.
-- Audit ledger writes that fail now print a visible stderr warning in addition to the existing log warning, so a systematically failing compliance ledger (permissions/full disk) is no longer silent.
-- `atcr review --resume` no longer appends a duplicate audit record when re-running an already-complete review.
-- An explicit `--pr 0` or `--pr -1` on `atcr review` no longer loses to a `GITHUB_REF`-derived PR number — an explicit flag always wins.
-- The audit compliance report no longer silently drops findings with a blank/whitespace severity from its totals; they are now counted under an `UNKNOWN` column, matching `atcr history`'s behavior.
-- The audit compliance report's empty-input handling now matches `atcr history`'s contract instead of carrying an unreachable, contradictory empty-state branch.
-- Fixed a `sanitizeCell` escaping gap in the audit report renderer that could let a backslash-pipe sequence corrupt the rendered table.
-- Fixed unescaped HTML and backticks in audit report cells (stored-injection hardening for a compliance artifact).
-- Audit records are no longer silently dropped when the reviewed pool findings file has a malformed or unrecognized version header.
-- The audit compliance report now renders full base/head commit SHAs instead of a truncated 12-character prefix.
-- Corrected the audit package's documentation to no longer overstate tamper-evidence guarantees it does not implement, and documented the audit ledger's CLI-only hook scope and unbounded-growth read tradeoff.
-- Documented the CWD==repo-root operating assumption for `atcr` subcommands (config load, git-range resolution, and audit/history ledger writes all assume the command runs from the repository root).
-- Technical-debt README: audited and corrected deferral citations — genuinely deferred items now cite a real epic plan (added epics for process-group reaping on validation timeout, `reconcile`/`verify` `--repo` threading, shared Wasm guest ABI extraction, quote-aware `pyparser` scanning, grounding gitrunner reuse, and a backup-swap test seam), two mis-citations were corrected, and 23 rows citing already-completed work were removed.
-
-## [19.1.0] - 2026-07-05
-
-### Added
-
-- Audit trail: every `atcr review` run now appends one tamper-evident record — run timestamp, resolved base/head SHA, PR number, and a findings-by-severity summary — to an append-only `.atcr/audit.log.jsonl` compliance ledger (a repo-level accumulator, written regardless of `--output-dir`). Resumed reviews (`--resume`) record too.
-- `atcr review --pr <n>`: stamp a pull-request number on the run's audit record; falls back to parsing `GITHUB_REF` (`refs/pull/<n>/...`) when unset.
-- `atcr audit-report --pr <n>`: render a one-page markdown compliance report of a PR's recorded review runs (SHAs, timestamps, findings summary); a PR with no recorded runs exits non-zero with a clear message.
-- `internal/audit` package: audit record type with an append-only JSONL writer, a tolerant reader, per-run capture, and a markdown compliance-report renderer.
-
-*Shipped via /execute-epic (epic 19.1)*
-
-## [Technical Debt] - 2026-07-05
-
-### Fixed
-
-- `internal/tdmigrate`: `DecodeShardStrict` now rejects a shard file containing a second YAML document instead of silently truncating to the first (a harmless trailing `---` marker with no content is still accepted).
-- `internal/tdmigrate`: `LoadShards` and `ValidateDir` now error on a missing shard directory instead of silently treating it as zero shards.
-- `internal/tdmigrate`: `WriteShards` now rejects a shard `Date` that isn't in `YYYY-MM-DD` format instead of composing an invalid file path from it.
-- `internal/tdmigrate`: `ParseREADME` now hard-errors on a malformed section header (bad date, or missing the colon after the source type) instead of silently skipping it.
-- `internal/tdmigrate`: `ParseREADME` now hard-errors on a section with zero parseable data rows instead of silently dropping it.
-- `internal/tdmigrate`: `ParseREADME` now hard-errors on a data row that lost its leading pipe instead of silently discarding it as prose.
-- `internal/tdmigrate`: `Item.Validate` now reports the first blank required field in a fixed, deterministic order instead of a nondeterministic one.
-- `td-migrate migrate/generate/validate`: `-h`/`--help` now exits 0 with usage on stdout instead of exiting 2 with usage on stderr.
-
-## [Technical Debt] - 2026-07-04
-
-### Fixed
-
-- `internal/history`: `ParseSince` now rejects out-of-range duration values instead of silently accepting them.
-- `internal/history`: `Load` no longer fails outright when the ledger contains an oversized line — it now skips the line instead.
-- `internal/history`: deduplication now keeps the maximum severity for a repeated finding instead of whichever record happened to load first.
-- `internal/history`: a warning is now logged when history capture skips a malformed pool row, instead of discarding it silently.
-- `internal/history`: `review --resume` now appends its findings to the history ledger, closing a gap where resumed reviews were missing from the trend data.
-- `atcr history` now works correctly when run from a subdirectory instead of only from the repo root.
-- Corrected an overstated atomicity guarantee in the `Append` doc comment for O_APPEND writes.
-- `RenderTable`: cell values now escape pipe and control characters, preventing markdown injection from unescaped input.
-
-## [19.0.0] - 2026-07-04
-
-Persisted review findings to a durable, queryable ledger and added an `atcr history` command so a package's finding trend can be inspected over time.
-
-### Added
-
-- `atcr history`: query the finding-history ledger with `--since` (a duration window that supports `d`/`w` units in addition to Go's `h`/`m`/`s`) and `--package` (a separator-aware path-prefix filter), rendering a markdown table of finding counts by severity per package. Absent or fully-filtered history exits 0 with a "no history" notice rather than an error.
-- `internal/history`: an append-only JSONL ledger at `.atcr/findings-history.jsonl` recording one record per finding per review run — run timestamp, package, severity, a stable content id (hash of file+line+problem, severity-independent), file, and category — deduped by id within a run.
-
-### Changed
-
-- `atcr review`: every successful run now appends its findings to `.atcr/findings-history.jsonl`. The write is non-fatal (a history failure never fails an otherwise-successful review) and always targets the repo-level `.atcr/`, independent of `--output-dir`.
-
-*Shipped via /execute-epic (epic 19.0)*
-
-## [Technical Debt] - 2026-07-04
-
-### Fixed
-
-- `internal/reconcile`: bounded `review.md` reads and `extractSection` growth, and hardened matching against source-file drift, preventing unbounded memory growth and misattributed narratives when a `review.md` grows large or its filename drifts.
-- `internal/reconcile`: removed a dead tier-1 branch in `anchorTier` that could never execute.
-- `internal/reconcile`: rejected non-positive line numbers in `anchorTier`, preventing spurious proximity matches from line-zero anchors.
-- `internal/reconcile`: `extractSection` now absorbs a list-item marker line when the anchor sits on a continuation line, preventing malformed markdown extraction.
-- `internal/reconcile`: logged a warning when `review.md` narratives exist but match zero findings, surfacing a previously silent no-op.
-- `internal/reconcile`: pre-indexed `review.md` anchors so `matchNarrative` scans only candidate lines instead of rescanning the full narrative per finding, fixing an O(findings × narrativeBytes) performance issue.
-- `internal/reconcile`: switched per-line anchor dedup to a slice-based approach, avoiding a map allocation.
-
-## [18.2.0] - 2026-07-04
-
-Enriched the shared reconciliation engine so each finding's originating `review.md` narrative survives past reconciliation, giving downstream technical-debt-resolution consumers the reviewer's reasoning without re-deriving it from raw review logs.
-
-### Added
-
-- Reconciler: `reconciled/findings.json` findings now carry a `justification` field — the narrative section extracted best-effort from the finding's originating source `review.md`, matched by `FILE:LINE` — plus a `source_report` back-reference (`{path, line, section}`) pointing at that review.md section. Both are additive and `omitempty`, so a finding with no matched narrative stays byte-identical to prior output.
-- `docs/findings-format.md`: documents the new fields under the JSON form section, and notes under Source discovery that a source's `review.md` is now read at reconcile time.
-
-### Changed
-
-- The reconcile pipeline reads each source's `review.md` (alongside its `findings.txt`) and correlates it to findings by `FILE:LINE`. A line-level, proximity-bounded match is required, so an unrelated same-file mention never attaches a misleading narrative. The pair lands only in `findings.json` — never the technical-debt table's frozen `Problem` cell (per Epic 18.1's column-stability constraint).
-
-*Shipped via /execute-epic (epic 18.2)*
-
-## [Technical Debt] - 2026-07-04
-
-### Fixed
-
-- `internal/reconcile`: logged a debug summary (anchored/total counts) of symbol anchors stamped in `stampSymbolAnchors`, closing a gap where anchoring outcomes were invisible without a debugger.
-- `docs/technical-debt-format.md`: documented that the `(symbolName)` anchor is rendered verbatim by every in-repo consumer of `JSONFinding.Problem` — the GitHub Action PR comment, check-run summary table, and human-readable report — not only the technical-debt table.
-
-## [18.1.0] - 2026-07-04
-
-Anchored each reconciled finding to the name of its enclosing code symbol so technical-debt items keep a stable relocation key when intervening edits drift their line numbers.
-
-### Added
-
-- Reconciler: each finding's `problem` is now prefixed with `(symbolName)` — the nearest enclosing named AST block (function/method/class/type) — resolved via the existing `internal/astgroup` parsers. The anchor is a drift-stable `RELOCATE_KEY` for downstream technical-debt resolution.
-- `docs/technical-debt-format.md`: documents the `(symbolName)` Problem-cell contract — placement, resolution semantics, graceful degradation, table safety, and how a consumer parses it.
-
-### Changed
-
-- The anchor is omitted (Problem cell byte-identical to before) when no named block resolves — unsupported language, absent/unparseable file, file-level finding, or `ATCR_DISABLE_AST_GROUPING` — and when the resolved name would not be table-safe, so the technical-debt table format stays backward-compatible.
-
-*Shipped via /execute-epic (epic 18.1)*
-
-## [Technical Debt] - 2026-07-03
-
-### Fixed
-
-- `atcr debt add`: seed the interactive wizard from partial flags when run on a TTY instead of discarding them.
-- `atcr debt add`: name the specific missing flags on a partial invocation rather than emitting a generic error.
-- `atcr debt add`: validate the `--date` value as `YYYY-MM-DD`, rejecting malformed dates that produced bogus month buckets.
-- `atcr debt add`: normalize status and source-type enums so casing no longer causes inconsistent values.
-- `atcr debt add`: surface scanner errors from the wizard prompt instead of silently ignoring them.
-- `internal/debt`: serialize `AppendItem` with a shared mkdir-based README lock, and roll back the README when a post-write shard sync or stats refresh fails.
-- `atcr debt dashboard`: distinguish a zero `--top` cap from an empty backlog, and reject the conflicting `--check --stdout` combination.
-- `atcr debt dashboard`: sanitize `File` and `Component` cells so table-breaking content is escaped, and distinguish filenames containing spaces from prose in the `Component` column.
-- `atcr debt`: guard the table truncation helper against a non-positive width, and skip shard sync when `--check` is set so a drift check no longer mutates the working tree.
-- `internal/tdmigrate`: preserve content between the Stats table and the Last Modified line in `RefreshStats`, validate the month prefix before bucketing in `monthHistogram`, and correct the `Sort` doc comment to match the implemented tiebreak chains.
-
-## [18.0.0] - 2026-07-03
-
-Added an `atcr debt` command namespace for querying, capturing, and reporting technical debt directly from the Epic-12.1 sharded store, making the structured YAML shards a read source for the first time.
-
-### Added
-
-- `atcr debt list`: filter (severity/status/category/component/group) and sort (severity/age/est/file) technical-debt items into a terminal table; `--sync` regenerates the shards from the authoritative README before reading.
-- `atcr debt add`: file a new item into the authoritative README table and regenerate the shards in one step — flag-driven for scripting, with an interactive wizard on a TTY when required flags are omitted. Keeps the README's Stats summary self-consistent after each add.
-- `atcr debt dashboard`: generate a deterministic, read-only aggregated Markdown dashboard (totals, by severity, by component, by age, top priority) at `.planning/technical-debt/DASHBOARD.md`, with a `--check` drift mode for CI and pre-commit hooks and secret-token scrubbing of finding text.
-- `internal/debt`: a query/aggregation/render layer over `internal/tdmigrate`, reusing its Item/Shard types, shard loader, and README↔shard migration rather than re-parsing the format.
-- `docs/technical-debt.md`: `atcr debt` usage plus pre-commit and GitHub Actions integration examples.
-
-*Shipped via /execute-epic (epic 18.0)*
-
-## [17.0.0] - 2026-07-03
-
-Added an opt-in `--auto-fix` flow that closes the loop from detection to a ready-to-review pull request: ATCR now applies the fixes it generates, validates them locally, reverts automatically on failure, and only then orchestrates a Git branch, commit, and PR through the GitHub API.
-
-### Added
-
-- `atcr review --auto-fix`: opt-in flag (off by default) that parses a model-generated diff, applies it to the local working tree, runs a configurable local validation command, reverts on failure, and — only after validation passes — creates a branch, commit, and pull request. Guarded by an all-or-nothing refuse-without-backend gate.
-- `internal/autofix`: safe patch apply and revert over `atomicfs`, wrapping `go-gitdiff` — per-file backups, symlink-escape guard at the write boundary, refusal to clobber an existing target on a create diff, and full restore of touched files when validation fails.
-- `internal/verify`: configurable local validation runner with a conservative exit-code-only pass/fail gate, default timeout handling, and directory/argv guards.
-- `internal/ghaction.Client`: `CreateBranch`, `CreateCommit`, `CreatePullRequest`, and `UpdatePullRequest` via the GitHub Git Data API, reusing existing retry/backoff/redaction plumbing, with an open-PR existence check before creating a duplicate.
-- A commented `auto_fix` stanza documented in the `atcr init` config template.
-
-### Changed
-
-- `CreateCommit` now redacts the commit message before sending it to GitHub and guards against an empty parent tree SHA.
-- `sendDo`/`get` honor `Retry-After` on 403 secondary rate limits; `FindOpenPullRequest` requests the maximum page size.
-
-### Fixed
-
-- `copyFile` now honors permissions on an existing destination so backup/restore round trips preserve file mode.
-- Validation errors (`ErrWaitDelay`/`context.Canceled`) are classified as run failures rather than start errors.
-- A stranded backup left on apply write/delete failure is now cleaned up; duplicate-path skipped fixes are surfaced.
-- The `--auto-fix` gate rejects a malformed or insecure `api-url` and resolves the apply target to an absolute, repo-root-only path.
-- No GitHub-mutating call is reachable before local validation passes; the empty-selection message distinguishes all-below-threshold from no-fix.
-
-*Shipped via /execute-sprint (sprint 17.0)*
-
-## [Technical Debt] - 2026-07-02
-
-### Fixed
-
-- Resolved a scanner error silently discarded in `cmd/atcr/quickstart.go`'s `readLine`, so I/O failures during interactive prompts are now surfaced instead of swallowed.
-- Extracted an `expandHome` helper so `~/`-prefixed paths expand consistently across the quickstart flow.
-- Fixed `appendExport` leaving the profile world-readable after appending an API key; the file is now chmod'd to `0600`.
-- Fixed invalid `SignupURL` handling and referral-link fragment mishandling by validating and building the link via `url.Parse`.
-- Fixed the agents header rendering bare when the roster is empty.
-- Closed a symlink-follow race in quickstart's check-then-write file creation by switching to an atomic `O_EXCL` create.
-- Fixed a symlink profile that could leak the API key into `.atcr` by resolving symlinks before the `profileIsAtcrOwned` guard.
-- Fixed a case-insensitive bypass of the `.ATCR` ownership guard by comparing ownership via inode identity instead of string prefix.
-- Fixed unchecked control characters in provider fields by scanning them during manifest validation.
-- Fixed unsafe plain YAML scalars (model ids, provider fields) being accepted by manifest validation; they are now rejected.
-- Fixed an inlined GitHub Actions expression in a workflow run line by passing `base_ref` via an environment variable instead.
-- Pinned the refresh-manifest workflow's actions to commit SHAs.
-- Corrected a stale prefix-comparison comment in `profileIsAtcrOwned`.
-- Documented why the quickstart scaffold intentionally keeps `go install @latest` unpinned.
-
-## [16.0.0] - 2026-07-02
-
-Added `atcr quickstart`, an interactive onboarding wizard that scaffolds a working synthetic-provider setup so a new user reaches their first review without hand-editing `registry.yaml`.
-
-### Added
-
-- `atcr quickstart` command: reuses `atcr init`'s writers for the `.atcr/` workspace, then sets up the synthetic provider + agents in `~/.config/atcr/registry.yaml`, walks the user through the `LLM_SYNTHETIC_API_KEY` environment variable (the key is never written into any atcr-owned file), and scaffolds a `.github/workflows/atcr.yml` CI workflow. Flags: `--open` (open the signup link in a browser) and `--force` (regenerate existing files).
-- A bundled synthetic-provider manifest and a scheduled GitHub Action that refreshes it from the live `/models` endpoint.
-
-### Changed
-
-- The referral signup link is shown as an OSC-8 terminal hyperlink; the scaffolded workflow and generated registry both key off the synthetic provider.
-
-*Shipped via /execute-epic (epic 16.0)*
-
-## [Technical Debt] - 2026-07-02
-
-### Fixed
-
-- Clamped the running cost accumulator in benchmark export to prevent +Inf/NaN from propagating into scorecard JSON output.
-- Restored `os.Stderr` correctly when a resumed benchmark run errors during stderr capture.
-- Excluded empty-`Expected` cases from the `CorroborationRate` denominator so it reflects only cases with a defined expected result.
-- Guarded invalid `CostUSD` values in `scoreOne` and removed duplicate `normalize()` calls in the matched-findings loop.
-- Clamped negative `CostUSD` before computing `CostPerCorroboratedFindingUSD`.
-
-## [15.1.0] - 2026-07-02
-
-Fixed a public leaderboard schema ambiguity where a paid-but-ineffective reviewer (real cost, zero corroborated findings) rendered byte-identical to a genuinely free reviewer.
-
-### Changed
-
-- `cost_per_corroborated_finding_usd` in the public leaderboard/benchmark submission schema is now `omitempty`: the key is omitted entirely when there are zero corroborated findings (cost-per is undefined), and present with a real value — including `0.0` — only when corroborated findings exist. This mirrors the existing `survived_skeptic_rate` pattern.
-- Updated the benchmark scorer (`atcr benchmark run`/`export`) to compute the identical N/A representation as the production leaderboard export path.
-
-### Fixed
-
-- A paid reviewer that matched zero planted/defect categories no longer reads identically to a free reviewer on the public leaderboard.
-
-*Shipped via /execute-epic (epic 15.1)*
-
-## [Technical Debt] - 2026-07-01
-
-### Fixed
-
-- Validated documented CLI flags per-command instead of against a global flag union, catching flags documented on the wrong subcommand.
-- Fixed subcommand validation to catch bypasses where flags appear after the subcommand token.
-- Fixed docs-index link parsing to strip quoted titles before matching, avoiding false negatives on titled index links.
-- Anchored config-block detection in the docs audit to headings or fenced YAML keys, rejecting prose-only false matches.
-- Strengthened the architecture-doc guard test to assert load-bearing reconciler facts rather than just keyword presence.
-
-## [15.0.0] - 2026-07-01
-
-Audited the documentation against the current engine and eliminated the drift found, so `docs/` is a trustworthy single source of truth for the upcoming website build.
-
-### Added
-
-- `docs/architecture.md` — an architecture overview of the multi-model reviewer panel and the deterministic reconcile → verify → debate pipeline.
-- `docs/README.md` — a documentation index that links every doc, establishing `docs/` as the single source of truth.
-- Documentation-audit regression tests that assert the docs reference only real CLI commands, subcommands, and flags, and that the docs index covers every doc.
-
-### Fixed
-
-- Corrected the persona-resolution chain in `docs/registry.md` to stop documenting a non-existent `--task-message` CLI flag; that override is an internal resolution seam, not a flag.
-
-*Shipped via /execute-epic (epic 15.0)*
-
-## [Technical Debt] - 2026-07-01
-
-### Fixed
-
-- Hardened the `buildOneAgent` fan-out review test helper to return an explicit error when its single-slot roster assumption is violated (empty or chunked config) instead of panicking on `slots[0]` or silently returning a partial-payload agent.
-- Renamed the stale `TestBuildAgent_*` fan-out tests to `TestBuildOneAgent_*` to match the actual `buildOneAgent` helper seam after `buildAgent` was removed in epic 14.4.
-
-## [14.4.0] - 2026-07-01
-
-Removed the orphaned `buildAgent` helper and consolidated fan-out reviewer mode/payload resolution to a single production seam, eliminating divergent duplicate logic.
-
-### Changed
-
-- Fan-out agent mode/payload resolution now lives solely in `buildSlots`' slot-build path (via `renderAgent`); its tests were retargeted at that production seam, so future payload-mode or error-message changes only need updating in one place.
-
-### Removed
-
-- Dead `buildAgent` function in `internal/fanout/review.go`, which had no production caller after epic 14.3 inlined resolution into `buildSlots`.
-
-*Shipped via /execute-epic (epic 14.4)*
-
-## [14.3.0] - 2026-07-01
-
-Added an opt-in context-aware diff chunking strategy so large reviews can be split into smaller, attention-friendly chunks per reviewer without inflating API cost by default.
-
-### Added
-
-- `review_strategy` setting (`bulk` | `chunked`, default `bulk`): `chunked` bin-packs each reviewer persona's diff into multiple context-limited calls to curb the attention-degradation hallucination that large single-prompt diffs trigger, while `bulk` keeps the whole diff in one prompt per persona to bound API cost. Resolves once per run across the registry and project config tiers.
-- Per-agent `max_context_lines` (default 1500) capping a single chunk's diff line count, letting each model use a context window tuned to its capabilities and cost profile. Bin packing groups multiple files per call to minimize request duplication; a file larger than the cap is sent as its own chunk (never split) with a warning.
-
-### Changed
-
-- In `chunked` mode, all of a persona's chunk findings merge into a single reviewer source, so a multi-chunk review attributes to one persona and the consensus filter counts it as one voter rather than many.
-
-*Shipped via /execute-epic (epic 14.3)*
-
-## [Technical Debt] - 2026-07-01
-
-### Fixed
-
-- Broadened the consensus-filter security exemption to recognize common security synonyms (`vulnerability`, `auth`, `injection`) so genuine security singletons are not dropped as uncorroborated noise.
-- Normalized the ambiguous sidecar wire shape for isolated findings so DBSCAN-isolated noise and consensus-filtered singletons both emit a raw per-source finding with `Reviewer` set and `Reviewers`/`Confidence` cleared.
-- Added a regression test confirming PageRank authority-promoted singletons survive the consensus filter.
-- Recorded partial chunk coverage as `UnreviewedChunks` in `summary.json`.
-- Gated the oversize-file warning on single-file diffs and warned when chunked reviews produced no actionable files.
-- Bounded per-agent chunk count via `maxChunksPerAgent`.
-- Applied neutral truncation to individual chunks instead of copying whole-payload truncation into every chunk.
-- Suppressed oversized-file warning on resume rebuilds.
-- Hoisted redundant chunk scans in `internal/fanout/review.go`.
-- Recognized combined-diff boundary markers in the chunker.
-- Validated `review_strategy` values during project-config loading.
-- Fixed `FallbackFrom` being overwritten during chunk fallback.
-- Fixed serial chunked `DurationMS` under-counting.
-- Clamped non-positive `EffectiveMaxContextLines` to the default value.
-- Fixed trailing partial-line undercount in chunk boundaries.
-- Fixed no-prefix diff chunking.
-- Clarified that `review_strategy` has no CLI tier.
-- Corrected a misleading `max_context_lines` comment in `internal/registry/config.go`.
-
-## [14.2.0] - 2026-06-30
-
-Made the reconciliation layer a strict gatekeeper against hallucinated technical-debt items by filtering uncorroborated singleton findings and hardening the host review prompt.
-
-### Added
-
-- The reconciler now applies a consensus filter: on a panel of at least three distinct reviewers, a finding raised by only a single reviewer (below `HIGH` confidence) is routed to the ambiguous sidecar instead of the promoted `findings.json` and the CI gate — unless it is security-related, `HIGH`/`CRITICAL` severity, out-of-scope, or independently confirmed. A `consensus_filtered` count in `summary.json` and the report records how many were routed. The filter is inert below three reviewers, so the single-API-key (host + 1 pool persona) workflow is untouched. Reviewer count is measured across findings, not source directories, so it fires correctly even though pool personas are flattened into one `pool` source.
-
-### Changed
-
-- The host review prompt now instructs the host to aggressively reject any finding it cannot ground in the diff, and frames ambiguity adjudication as a strict gatekeeper against false positives — never merging an ungrounded finding into a real one.
-
-*Shipped via /execute-epic (epic 14.2)*
-
-## [Technical Debt] - 2026-06-30
-
-### Fixed
-
-- Recorded `grounding_enabled` and its disabled reason in pool `summary.json`.
-- Documented that renamed-file old-path citations are dropped as ungrounded.
-- Corrected grounding-drop comment to stop claiming `status.json` parity with `enforceConstraints`.
-- Exported `reconcile.LineProximity` and bound grounding tolerance to it.
-- Raised grounding evidence floor to 18 and counted runes instead of bytes so boilerplate/multibyte evidence no longer grounds.
-- Made `changed` a required nil-able parameter for `WritePool`/`findingsFor`/`writeResumedAgents`.
-- Capped evidence length to prevent amplification in grounding.
-- Resolved `a/` `b/` prefix over-normalization in grounding.
-- Resolved empty `ChangedLines` map fail-open bug in grounding.
-- Stated hard-drop rule in `scopeFiles` for out-of-range findings.
-- Qualified `scopeChangedOnly` discard clause by grounding condition.
-- Reused `hunkHeaderRe` in `parseFileChange` for consistent hunk detection.
-
-## [14.1.0] - 2026-06-30
-
-Grounded multi-agent review findings in the actual diff so reviewer models can no longer report hallucinated technical-debt items.
-
-### Added
-
-- `atcr review` now runs a grounding gate that drops any finding whose cited `FILE:LINE` is not anchored in the reviewed patch — the fabricated-file and invented-line hallucinations that flooded large reviews — before findings reach the reconciler. A finding is kept when its line falls within a changed range (with a ±3-line tolerance for reviewer drift), when its evidence quotes a changed line, or when it is tagged `CATEGORY out-of-scope`; the per-agent drop count is logged to stderr. The gate covers both fresh and resumed reviews and is disabled only for the range-less `atcr reconcile <dir>` path, which has no diff to check against.
-
-### Changed
-
-- Reviewer persona prompts now require every finding to cite an exact `FILE:LINE` drawn from the diff and forbid reporting code outside the changed lines, with `CATEGORY out-of-scope` the sole sanctioned way to raise a genuine pre-existing issue in unchanged code.
-
-*Shipped via /execute-epic (epic 14.1)*
-
-## [13.6.0] - 2026-06-30
-
-Expanded AST-isomorphism finding grouping to four more brace-based language families.
-
-### Added
-
-- AST-isomorphism finding grouping now covers Java (`.java`), Kotlin (`.kt`/`.kts`), C/C++ (`.c`/`.cpp`/`.cc`/`.cxx`/`.h`/`.hpp`), and C# (`.cs`) source, so `atcr reconcile` clusters findings in those languages by their enclosing code block across line-number drift instead of falling back to ±3 line proximity.
-
-### Changed
-
-- The shared brace parser now names methods that carry modifiers/return types (e.g. `public void execute()`, `void Foo::bar()`) so they group as named blocks, and treats `"""` triple-quoted strings (Kotlin multiline strings, Java text blocks, C# raw string literals) as opaque so their braces never skew block structure.
-
-*Shipped via /execute-epic (epic 13.6)*
-
-## [Technical Debt] - 2026-06-30
-
-### Fixed
-
-- Fixed missing `authority_promoted` count in report output.
-- Hardened `countAuthorityFlips` oracle to mirror the base-confidence flip predicate.
-- Fixed `classifyHeader` else-if chains being misclassified by preferring `else` classification.
-- Fixed control headers (e.g., `if`/`while`/`for`) being misnamed as functions in `parse_core.go`.
-- Rejected statement-keyword prefixed call headers in `funcParenName` so they no longer masquerade as functions.
-- Extended `funcParenName` reserved-word guard to cover `try`, `synchronized`, `using`, `lock`, and `fixed`.
-- Locked control-word `funcParen` guards for C# and Java to prevent false function positives.
-- Pinned triple-quote degrade edges for empty, unterminated, and four-quote literals.
-- Documented and degraded Java escaped triple-quote and C# nested interpolation limitations.
-- Documented `funcParenName` expression-statement false positives and added coverage tests.
-- Added per-language keyword→kind mapping tests and verified tables reach each brace WASM.
-- Added `funcParen` coverage for trailing-token cases and Kotlin constructor configurations.
-- Updated brace parser header comments for all eight supported languages.
-- Made the parser build script portable on macOS.
-- Resolved `.h` / `.hpp` Objective-C note handling in `LanguageForExt`.
-
-## [13.5.0] - 2026-06-29
-
-### Added
-
-- Added an `authority_promoted` field to the reconcile run summary
-  (`reconcile-json/v1`) recording how many findings PageRank authority promotion
-  raised from MEDIUM to HIGH confidence in a run — observability for the epic 13.3
-  promotion signal, which was previously silent.
-
-### Changed
-
-- The reconcile summary wire schema gained the additive `authority_promoted` key.
-  This is a v2 wire-schema change (sanctioned by this epic); existing consumers are
-  unaffected unless they decode `reconcile-json/v1` with strict unknown-field
-  rejection.
-
-*Shipped via /execute-epic (epic 13.5)*
-
-## [Technical Debt] - 2026-06-29
-
-### Fixed
-
-- Fixed PHP attributes (`#[...]`) being swallowed as comments in the brace parser.
-- Corrected typed arrow annotations (`foo<T>() => ...`) being mislabeled as functions.
-- Stopped Bash arithmetic shifts (`<<` / `>>`) from being misdetected as heredoc starts.
-- Added handling for Bash brace expansion so it no longer opens spurious blocks.
-- Fixed heredoc strip-tab logic so PHP `<<<` heredocs no longer incorrectly strip leading tabs.
-- Fixed multi-byte escape sequences (`\u{7f}`) being dropped due to `charLiteralLen` returning zero.
-- Relaxed `funcParenName` so TypeScript method modifiers no longer defeat function detection.
-- Fixed `identAfter` to skip generic parameters after keywords like `impl`, preserving the real identifier name.
-- Stopped `classifyHeader` from treating `catch (e)` as a function when TypeScript `funcParen` is enabled.
-- Corrected `classifyHeader` arrow-function detection to consider arrow position rather than just the last `=>` index.
-- Reduced inefficient string allocation in the brace parser core scanner.
-- Documented regex-as-unhandled in the brace parser normal state and added a dedicated CI job for the brace parser module.
-
-## [13.4.0] - 2026-06-28
-
-### Added
-
-- AST-isomorphism grouping now covers TypeScript/JavaScript (`.ts`/`.tsx`/`.cts`/`.mts`/`.js`/`.jsx`/`.mjs`), PHP (`.php`), Rust (`.rs`), and Bash (`.sh`/`.bash`): duplicate findings in those languages group by their smallest covering block across line drift > 3, instead of falling back to the ±3 line-proximity gate.
-- A shared brace-block parser (`braceparser`) compiled once per language into a vendored wasip1 `.wasm`, parameterized by a per-language keyword/comment/string/heredoc table — adding the next brace language is a config-table plus corpus change, not new parser code.
-
-*Shipped via /execute-epic (epic 13.4)*
-
-## [Technical Debt] - 2026-06-28
-
-### Fixed
-
-- Capped distinct reviewers per agreement group and sorted them deterministically, eliminating an unbounded quadratic loop in `addAgreement`
-- Stored PageRank edge weights as `float64` to avoid repeated int-to-float conversions
-- Replaced manual absolute-value delta logic with `math.Abs` for consistent convergence
-- Precomputed the authority baseline once per reconcile run and added an explicit authority map lookup before promotion
-- Renamed the `any` variable to `hasAgreement` to avoid shadowing the Go builtin
-- Preallocated the `allGroups` slice with known capacity
-- Updated `Confidence` documentation to reflect that `HIGH` can result from authority promotion, not only multiple reviewers
-- Annotated dangling-mass redistribution as defensive-only for the always-connected agreement graph
-- Documented the strict authority baseline boundary assumption
-- Added invariant tests for symmetric K4/K5/cycle graphs, disconnected components, never-agreed isolated findings, and run-twice determinism
-- Reworded `BenchmarkModelAuthority` to characterize rather than validate the NFR
-- Fixed undefined `merged` variable and removed dead code in `reconcile/reconcile.go`
-
-## [13.3.0] - 2026-06-28
-
-### Added
-
-- Deterministic per-run PageRank "authority" signal over a model-agreement graph (nodes are models, count-weighted edges are cross-model agreements), built once per reconcile run with a damped power iteration (damping 0.85, strict iteration backstop) — fully offline and stdlib-only.
-
-### Changed
-
-- Confidence scoring now factors model authority: an isolated (single-reviewer) finding is promoted from `MEDIUM` to `HIGH` when its model's run authority exceeds the uniform `1/N` baseline. Promotion is one-directional (authority never lowers confidence), and confidence stays identical to the prior reviewer-count behavior when a run has no cross-model agreement.
-
-*Shipped via /execute-epic (epic 13.3)*
-
-## [Technical Debt] - 2026-06-28
-
-### Fixed
-
-- Cached per-cluster relation and similarity matrix once and read it from all three sites in `reconcile/dedupe.go`
-- Collapsed unattributed findings to one density source so duplicate hallucinations no longer self-corroborate
-- Namespaced real versus anonymous source keys disjointly to block reviewer spoofing
-- Capped location clusters at `maxClusterSize`, degrading to singletons to prevent unbounded memory growth
-- Locked DBSCAN single-pass neighbor invariant and documented why no adjacency cache is needed
-- Added complete-linkage acceptance to `bipartiteGroups` to prevent merge-strength chain over-merges
-- Short-circuited `hungarianAssign` single-row/column paths to an O(n) argmin
-- Added a maximum matrix size guard to the Hungarian algorithm
-- Added `AmbiguousCount` and `NoiseCount` fields to the reconciler summary
-- Skipped gray recording for findings that share an AST key
-- Validated key length in `dedupeCluster`
-- Deduplicated the DBSCAN seed queue to avoid O(n²) growth
-- Added a safety iteration limit to the Hungarian algorithm
-- Derived `noMatchSentinel` from the distance ceiling
-- Resolved documentation accuracy for bipartite matching
-
-## [13.2.0] - 2026-06-28
-
-The reconciler now deduplicates findings with optimal bipartite matching instead of greedy clustering, and deterministically isolates uncorroborated single-model noise into the ambiguity sidecar — so consensus findings stay trustworthy and the sidecar can be trusted as strictly uncorroborated noise.
-
-### Changed
-
-- Reconciler deduplication now aligns findings across models with Kuhn-Munkres (Hungarian) bipartite matching, replacing the greedy single-linkage clustering that could transitively over-merge non-duplicate findings; each consensus issue gathers at most one finding per model
-- Duplicate edge weights combine the 13.1 AST-isomorphism signal (structurally isomorphic findings match at distance 0) with token-set Jaccard distance, computed in-tree with no new dependencies and no floating-point boundary drift
-
-### Added
-
-- DBSCAN-based noise isolation: a single model's uncorroborated finding standing alone where other models corroborate each other is deterministically moved to the `ambiguous.json` sidecar and removed from the consensus output, with no arbitrary cluster-count threshold
-
-*Shipped via /execute-epic (epic 13.2)*
-
-## [Technical Debt] - 2026-06-28
-
-### Fixed
-
-- Documented AST grouping behavior, the `ATCR_DISABLE_AST_GROUPING` opt-out, and Python clause-sibling grouping
-- Wired the reconciler to a shared wasm parser Host to amortize wazero runtime across reconciles
-- Eliminated serialized parsing in the AST grouper by moving parse work outside the mutex with per-file singleflight
-- Memoized group keys by line and Merkle hashes by address to reduce redundant AST work
-- Resolved lazy AST grouper construction, canonicalized cache paths, and normalized cross-platform path checks
-- Gave sibling non-block wrappers distinct addresses so sibling function literals no longer collide
-- Hardened wasm parser lifecycle: enforced parse timeouts, detected use-after-close, recreated modules after timeout, and discarded instances after guest-call traps
-- Added resource guards: capped wasm linear memory at 256 MiB, bounded alloc/parse result sizes, and made `maxSourceBytes` configurable
-- Hardened AST safety: bounded MerkleHash recursion depth, rejected over-deep decoded trees, and logged degradation instead of silently falling back to line proximity
-- Fixed Python parsing edge cases: folded multi-line bracket-continued headers, corrected tab-stop indent, and improved compound-keyword `isHeader` detection
-- Fixed Go parser edge cases: handled empty-input file nodes, dropped dead TypeSpec cases, and added a wasip1 build guard
-- Added a committed SHA256SUMS manifest for embedded `.wasm` parsers and regenerated it during build
-- Marked wazero as a direct dependency and pinned the Go toolchain in `parsers/build.sh`
-- Guarded benchmark recall against division by zero and relaxed AST false-positive assertion to <1%
-
-## [13.1.0] - 2026-06-27
-
-AST plugin architecture for the reconciler: findings that refer to the same logical code block now group together even when their reported line numbers drift, using language parsers compiled to WebAssembly and run on a zero-CGO wazero host.
-
-### Added
-
-- AST-isomorphism grouping for reconciler findings: a finding's line is mapped to its smallest covering AST block and a structural Merkle hash of that block becomes the grouping key, so whitespace/blank-line/model line-skew no longer splits duplicate findings
-- WebAssembly parser plugins for Go and Python, vendored and embedded via `go:embed` and executed on a pure-Go wazero runtime (no CGO; the binary still cross-compiles to every target out of the box)
-- A runtime parser-override directory so new languages can be enabled by dropping in a `.wasm` file, and an `ATCR_DISABLE_AST_GROUPING` env opt-out that reverts to the legacy line-proximity behavior
-
-### Changed
-
-- The reconciler now uses AST block identity as the primary clustering signal, with ±3 line proximity as the fallback when no parser is available for a finding's language (benchmark: AST recall 1.00 / precision 1.00 vs line-proximity recall ~0.79 with false merges of adjacent-but-different blocks)
-
-*Shipped via /execute-epic (epic 13.1)*
-
-## [Technical Debt] - 2026-06-27
-
-### Fixed
-
-- Documented the closed caller set for `WithExecEligibility` and restricted lint references to `fanout`/`verify` only
-- Made exec-name lint match whole tokens instead of substrings, and documented the non-exhaustive verb list
-- Made `WriteShards` stage shard writes to temp files and atomically swap, preventing partial wipes of `items/` on failure
-- Added a warning when `Item.Notes` are dropped from a regenerated ToC
-- Made `generate`/`validate` reject migrate-only `--readme` via the items-only flag set
-- Made `sprintPlanPath` assert `--sprint-plan` flag existence in `cmd/atcr/review.go`
-- Made resume recover the scope constraint from the persisted artifact
-- Called `resolveScopeConstraint` in `PrepareResume` so the scope constraint is preserved on resume
-- Wrote `scope-constraint.txt` artifact in `finalizePreparedReview` for scoped reviews
-- Capped `SCOPE CONSTRAINT` plan body relative to `PayloadByteBudget`
-- Neutralized `BEGIN`/`END` markers in `ScopeConstraint` to prevent delimiter-collision injection
-- Made `registerExec` reject tool names not in `ExecutionTools` instead of panicking
-
-## [12.2.0] - 2026-06-27
-
-### Added
-
-- **Sprint-plan scoping (epic 12.2):** `atcr review --sprint-plan <path>` accepts a markdown sprint/epic plan and injects it as a `SCOPE CONSTRAINT` block immediately before the diff in every reviewer's prompt, so reviewer personas suppress findings for changes unrelated to the plan's active work items (dependency bumps, formatter-only reformatting, mechanical refactors). The constraint is a soft scope — genuinely critical out-of-scope issues are still reported. Restores the capability dropped in epic 12.0.
-- The plan is read once per review and capped at 16 KiB on a UTF-8 boundary before injection, so it cannot inflate agent prompts past the payload byte budget. A missing or empty plan is ignored (the review proceeds diff-wide); an unreadable plan warns on stderr and proceeds. Because the constraint is part of the rendered prompt, the diff cache key invalidates automatically when the plan changes.
-- The ingestion path (`PrepareReviewFromDiff`) honors `--sprint-plan` too; `ReviewRequest.SprintPlanPath` exposes the field to library and MCP callers.
-
-*Shipped via /execute-epic (epic 12.2)*
-
-## [12.1.0] - 2026-06-26
-
-### Added
-
-- **Technical-debt storage sharded by source (epic 12.1):** every item in `.planning/technical-debt/README.md` is now also stored as a structured YAML file under `.planning/technical-debt/items/`, one shard per `### [date] From <Sprint|Review>:` section. A 50–100 finding review is one shard file (not 50–100), and concurrent review/sprint runs each write their own file, so they no longer merge-conflict on TD storage. Each item supports unconstrained multi-line `problem`/`fix`/`notes`.
-- Added `cmd/td-migrate` (logic in `internal/tdmigrate/`): `migrate` (README table → shards), `generate` (shards → regenerated ToC table to stdout), and `validate` (strict-load + schema-check; a malformed shard fails loudly). Migration of the live corpus is lossless (28 sections / 55 items round-tripped), proven by the Go test suite including an adversarial YAML footgun corpus.
-- Documented the sharded format additively in the TD README and added `items/SCHEMA.md` (shard schema, file naming, YAML-safety guarantees).
-
-*Additive and not yet canonical: the README Markdown table remains authoritative and machine-read by all existing tooling; the shards are generated alongside it. The canonical cutover is deferred to a follow-on epic.*
-
-*Shipped via /execute-epic (epic 12.1)*
-
-## [12.0.0] - 2026-06-26
-
-### Added
-
-- **Code-review skill integration (epic 12.0):** atcr is now the multi-agent reviewer backend for the external `execute-code-review` skill, replacing the legacy `llm-support` backend. The skill drives `atcr review --output-dir` + `atcr reconcile`; its reconcile step consumes the 8-column per-source pool stream directly. Validated end-to-end against a live sprint review (real fan-out → reconcile → cross-source REVIEWERS/CONFIDENCE merge into the technical-debt store).
-- Added `atcr --version` flag and `atcr version` subcommand (both report the same string, derived from ldflags, the installed module version, or the VCS revision) — previously `atcr --version` exited 2 with "unknown flag", which broke downstream pre-flight checks that probe the binary that way.
-- Added `docs/code-review-backend.md` documenting the `--output-dir` contract for driving atcr as the reviewer backend of a separate code-review skill or pipeline (invocation, output tree, 8-column pool vs 9-column reconciled streams, partial-run and finding-count behavior).
-
-*Skill backend integration (epic 12.0) — atcr-side enablers and documentation; no behavioral change to review/reconcile.*
-
-## [Technical Debt] - 2026-06-26
-
-### Fixed
-
-- Fixed a data race between `Dispatcher.SetLimits` and `capResult` by guarding `limits` (and the exec backend fields) under the dispatcher mutex
-- Replaced the zero-size `struct{}` context keys with distinct `iota`-typed keys, eliminating a latent collision where Go may give two zero-size keys the same address
-- Made the verify determinism re-run's exec-eligibility grant structural at the function boundary (`reproduceAgain` now takes an explicit `exec` flag), so a non-exec flow cannot re-introduce a non-exec → exec escalation
-- Rejected `run_tests` with an empty configured test command and `run_script`/`run_tests` with a non-positive execution timeout, instead of forwarding an unusable spec to the sandbox
-
-### Added
-
-- Surfaced exec-eligibility refusals operator-side via a context-injected `RefusalLogger` sink (wired in the fan-out tool loop), so an operator can see when a read-only agent attempts `run_tests`/`run_script` — previously the refusal reached only the model
-
-*Resolved from the unmerged td/2026-06-26 run, rebased onto the Epic 11.2 exec-registration boundary*
-
-## [11.2.0] - 2026-06-26
-
-### Changed
-
-- Closed the registration-side gap in the structural exec boundary: the public `Dispatcher.RegisterTool` API now rejects execution-verb tool names (run/exec/eval/shell), so a code-executing handler can no longer be registered ungated — Epic 11.1 had hardened only the dispatch-time gate
-- Routed `EnableExecution` through a single trusted `registerExec` path that atomically co-sets each exec handler with its `execTools` gate under one lock, superseding the prior gate-first ordering with strict atomicity (no fail-open window)
-
-### Added
-
-- Invariant test asserting every execution tool is gated with no orphan gates, plus a behavioral test that an exec-named handler offered to the public API is refused, never silently ungated
-
-*Shipped via /execute-epic (epic 11.2)*
-
-## [11.1.0] - 2026-06-26
-
-### Changed
-
-- Made the read-only tool boundary structural at the dispatch layer: `Dispatcher.Execute` now refuses `run_tests`/`run_script` from any agent not granted exec eligibility, independent of how callers wire `EnableExecution`
-- Threaded per-agent exec eligibility through the fan-out tool loop and the verify determinism re-run, default-deny (fail-closed)
-- Closed a fail-open window in `EnableExecution` by marking exec tools gated before registering their handlers
-
-*Shipped via /execute-epic (epic 11.1)*
-
-## [Technical Debt] - 2026-06-26
-
-### Fixed
-
-- Redacted `evidence_exec` output at the stamp site and wired the `Redactor` at all verify entry points
-- Gated `evidence_exec` on deterministic two-run reproduction before surfacing execution evidence
-- Parsed skeptic exec results and stamped `evidence_exec` into findings via repro write-back
-- Clamped `run_script` per-call timeout to `execTimeout` and rejected flag-like `run_tests` targets
-- Capped `run_script` content size to prevent unbounded input
-- Validated sandbox `Memory`/`CPUs` fields in registry loading
-- Validated memory/CPU caps against host resources via `docker info` in Preflight
-- Named each container and ran `docker kill` on timeout to reclaim caps and avoid orphaned containers
-- Lazily initialized the DockerBackend concurrency semaphore so struct literals cannot fail open
-- Gated the `Reproduced` badge on a confirmed verdict and non-zero exit code
-- Reordered `resolveExec` after `LoadReviewConfig` and accepted the loaded `ProjectConfig`
-
-## [11.0.0] - 2026-06-25
-
-### Added
-
-- Opt-in `--exec` execution-reproduction mode (`atcr verify --exec`, `atcr review --verify --exec`): lets adversarial skeptics reproduce findings by running tests/scripts inside a container-isolated sandbox. Off by default; refuses to run without a configured `[sandbox]` block in `.atcr/config.yaml` that passes a preflight check
-- `internal/sandbox`: a pluggable, Docker-backed executor that runs every command in an ephemeral container with no network, a read-only snapshot mounted at `/work`, all Linux capabilities dropped, `no-new-privileges`, a non-root user, memory/CPU/PID caps, a writable `/scratch` tmpfs, a per-run timeout, and a bound on concurrent container spawns
-- `run_tests` / `run_script` tools, offered only to execution-enabled agents (the read-only tool set is unchanged for every other agent)
-- `evidence_exec` block on findings (`command`, `exit_code`, `output_excerpt`) and a "Reproduced" badge in `report.md`; a reproduced finding is `VERIFIED` by the existing confidence/gate rules. Determinism is enforced by a two-run rule so flaky tests cannot poison evidence
-- `docs/execution.md` documenting the opt-in flow, sandbox guarantees, and security posture
-
-### Notes
-
-- This release ships the execution building blocks (sandbox, tools, `--exec` gate, `evidence_exec` data model, two-run determinism, badge renderer), all tested. The final wiring that automatically stamps `evidence_exec` from a live skeptic reproduction is gated behind the Epic 11.0 security review, since it executes untrusted, model-authored code
-
-*Shipped via /execute-epic (epic 11.0)*
-
-## [Technical Debt] - 2026-06-25
-
-### Fixed
-
-- Hardened benchmark checkpoint resume against nil rosters, duplicate/out-of-range/empty case IDs, and oversized reads; integrity validation now fails closed on mismatch
-- Made resumed benchmark runs replay scored cases with zero additional LLM cost and produce byte-identical `RunResult` output compared to an uninterrupted run
-- Guarded checkpoint case-id drift with a dedicated sentinel and ensured no LLM calls are spent before the drift guard
-- Included persona and usage/latency details in the checkpoint roster signature so replay reproduces the original run conditions
-- Switched checkpoint serialization to compact JSON and made saves durable via atomic temp-file + rename
-- Fixed silent resume paths in `cmd/atcr/benchmark_run.go` and documented the no-shared-checkpoint-path constraint
-- Clarified `Score.Expected` non-empty requirement, `GeneratedAt` wall-clock behavior, and the accepted O(n²) checkpoint I/O trade-off
-
-## [10.3.0] - 2026-06-25
-
-### Added
-
-- `atcr benchmark run --checkpoint <path>`: opt-in run checkpointing — each case's scored outcome is durably recorded (atomic temp-file + rename) before the next case begins, so a transient mid-suite failure no longer forfeits the completed, already-paid-for work of earlier cases
-- Re-running the same suite with the same `--checkpoint` resumes from the first unscored case: already-scored cases are replayed from the checkpoint with zero additional LLM cost, and the resumed run produces a byte-identical run-result to an uninterrupted one
-- Resume is guarded by suite identity (reproducibility hash + suite + version) and reviewer-roster identity (each agent and its configured model); any drift fails closed rather than silently mixing inconsistent work into a new run
-
-*Shipped via /execute-epic (epic 10.3)*
-
-## [10.2.0] - 2026-06-25
-
-### Added
-
-- `atcr benchmark run --suite-path <dir> [--out <file>]`: executes a benchmark suite through the review pipeline (via the diff-file ingestion path), scores each reviewer's findings against every case's planted-defect `expected_categories`, and writes the suite-tagged `benchmark.RunResult` that `atcr benchmark export` consumes — completing the `run → export` loop
-- Benchmark scorer folds per-reviewer category recall into the shared public reviewer schema's `corroboration_rate` (with `findings_raised_avg` for volume), re-scrubbing each record via `scorecard.ScrubPublicRecord`; `generated_at` is injectable so two runs over the same suite and transcript are byte-identical
-
-### Fixed
-
-- Corrected the malformed hunk header in the `suite-valid` fixture's `case-02.diff` so it parses as a valid unified diff
-
-*Shipped via /execute-epic (epic 10.2)*
-
-## [Technical Debt] - 2026-06-25
-
-### Fixed
-
-- Trailing empty lines and no-newline markers no longer abort diff section parsing
-- Inflated loose hunk counts are now rejected instead of silently swallowing the next file
-- Diff ingestion hot path uses IndexByte walking and pre-sized builders to cut allocations
-- Traversal and absolute paths in diff content are rejected as unsafe
-- Spaced git-header paths now parse correctly via symmetric midpoint detection
-- Diff-file paths that symlink outside the working tree are rejected
-- `--no-prefix` binary git headers recover the symmetric path correctly
-- Roster and mutual-exclusion checks hoisted into shared `validateReviewRequest`; `readCapped` extracted to pin TOCTOU +1/recheck invariant
-- Combined/merge diffs rejected with a clear unsupported-format diagnostic; partial truncation at `PrepareReviewFromDiff` now logged
-- `PrepareReviewFromDiff` error messages use parameter names; removed unused `t.Setenv` in test
-
-## [10.1.0] - 2026-06-25
-
-### Added
-
-- Diff-file ingestion path: the review pipeline can now build a payload from a standalone unified diff — both loose `--- `/`+++ `/`@@ ` diffs and full `git diff` patches — instead of only a git `base..head` range, via `payload.BuildEntriesFromDiff` / `BuildEntriesFromDiffFile` and the exported `fanout.PrepareReviewFromDiff`
-- Diff ingestion preserves byte-exact round-trip parity with the source diff, enforces a size cap, and rejects path traversal on the file-path variant; the resulting `PreparedReview` is accepted unchanged by `ExecuteReview`, with every reviewer seeing the ingested diff regardless of its configured payload mode
-
-*Shipped via /execute-epic (epic 10.1)*
-
-## [Technical Debt] - 2026-06-25
-
-### Fixed
-
-- Hardened benchmark manifest `Load` against symlink traversal and non-regular diff files
-- Rejected empty and duplicate `expected_categories` during suite validation
-- Blocked dot-path components in `isSafeRelPath`
-- Capped reproducibility-hash diff reads and streamed hashing via `io.Copy`
-- Eliminated redundant manifest loads in reproducibility hashing
-- Added overflow-safe even-count median computation and documented integer-floor p50 behavior
-- Fixed `--output` help text in the leaderboard command
-- Hardened `scrubField` backstop against glued FHS roots, UNC paths, no-TLD emails, and `sk_`/`AIza` key prefixes
-- Re-scrubbed reviewer PII in `BuildSubmission` via the public-record scrubber
-- Omitted `survived_skeptic_rate` when no verification verdicts or stored rates support it
-- Clamped non-finite floats (NaN/Inf) in `clampNonNegF` and `clampRate`
-- Documented safe-to-ignore error paths for hash writes and `GetString`
-- Documented the benchmark privacy model's export-time re-scrub backstop
-- Added suite-field validation and documented the `GetString` convention
-- Used `rr.GeneratedAt` for `submitted_at` in benchmark exports
-- Closed clarified technical-debt items (5 via Q1-Q5, 9 post-clarification, 12 from model-eval review)
-- Added regression coverage for by-design merge of distinct identities that scrub equal
-
-## [10.0.0] - 2026-06-24
-
-### Added
-
-- `atcr benchmark` command with `verify` (validate a suite manifest + print its reproducibility hash) and `export` (emit a suite-tagged public submission, distinct from the production export) subcommands
-- `internal/benchmark` package: versioned suite-manifest contract (`Load`/`Validate` with a path-traversal guard), a deterministic content-based reproducibility hash, the run-result input contract, and the suite-tagged submission envelope
-- `internal/version` package supplying `atcr_version` for public submissions (ldflags-overridable; `0.0.0` in dev builds)
-- `docs/benchmark.md` benchmark-suite guide (suite contract, verify, export, run-result contract, privacy model)
-
-### Changed
-
-- Reshaped the public leaderboard submission schema (`atcr leaderboard --export`) to the Epic 10.0 spec: envelope `{submission_schema, atcr_version, submitted_at, reviewers[]}`; per-reviewer `{model, persona, runs, findings_raised_avg, corroboration_rate, survived_skeptic_rate, cost_per_corroborated_finding_usd, latency_p50_ms}`
-- Shrank the public submission allowlist: dropped the `filters` envelope, token counts, `role`, `index`, and the corroborated/solo/verified/refuted internals; `cost_per_corroborated_finding_usd` and `latency_p50_ms` are now real metrics (cost÷corroborated; true median) rather than the prior total/mean
-- `survived_skeptic_rate` is now omitted entirely when no verification ran (distinguishable from a genuine `0.0`)
-- Decoupled the public submission schema version (`submission_schema`) from the on-disk store schema version (`schema_version`)
-- Updated `docs/scorecard.md` to document the new submission schema and privacy model
-
-*Note: `atcr benchmark run` (live execution + scoring) and the curated standard-v1 suite content are deferred to Epic 10.1 and the external benchmark-suite repo.*
-
-*Shipped via /execute-epic (epic 10.0)*
-
-## [9.0.0] - 2026-06-24
-
-### Added
-
-- `internal/personas` lifecycle package with install, upgrade, list, search, score, and bundle support
-- `atcr personas` CLI command with 6 subcommands: install, upgrade, list, search, test, init
-- Language-aware two-partition skeptic routing in the verification pipeline
-- Domain bundle support with `bundle/` install delegation
-- `list --scores` corroboration display for reviewer-aggregated persona scoring
-- Embedded bonus personas: sentinel, tracer, idiomatic
-- `AgentConfig.Language` field with extension normalization via `normalizeExt`
-- Persona install and authoring documentation with registry cross-references
-
-### Changed
-
-- Score-map key normalized to lowercase in `SelectEligibleSkeptics` for case-insensitive routing
-- Per-reviewer score aggregation with bundle member deduplication in personas list
-
-### Fixed
-
-- Guarded `AgentConfig.Persona` against control characters and over-length values
-- Hardened persona install with atomic writes, restricted permissions (0o600/0o700), and symlink rejection at destination
-- Added HTTP timeout and body-size cap to personas fetch client
-- Validated bundle manifest members up front before processing
-- Resolved NaN score ordering hazard in skeptic selection
-- Guarded dotfile inputs in `SelectEligibleSkeptics` to prevent spurious language matches
-- Stripped all leading dots in `NormalizeLanguageToken` for consistent canonicalization
-- Fixed `isNewer` to treat mixed semver validity as up-to-date
-- Surfaced `versionOf` unmarshal errors and aborted upgrade on corrupt YAML
-- Guarded `Total==0` edge case in persona test command to warn instead of false-pass
-- Fixed empty bundle argument and empty search keyword edge cases
-
-*Shipped via /execute-sprint (sprint 9.0_persona_ecosystem)*
-
-## [8.0.0] - 2026-06-23
-
-Extracted `internal/reconcile` into a standalone nested Go module with its own `go.mod`, independent CI scorecard, and JSON adapter. All consumer packages now import types, severity helpers, and core reconcile logic from the library rather than from the top-level module.
-
-### Added
-
-- `internal/reconcile` nested Go module with `replace` directive, full type/IO split, and independent CI scorecard job
-- JSON adapter for the reconcile library with input routing, validation, and edge-case handling (non-object/non-array rejection, required-field validation)
-- `Verification.Valid()` method to enforce the verdict enum contract
-- Length-prefix encoding for `AmbiguousID` fields to prevent NUL byte field-boundary aliasing
-
-### Changed
-
-- All consumer packages (`cmd/atcr`, `mcp`, `ghaction`, `report`, `debate`, `verify`, `registry`, `fanout`) now import types and severity helpers from `internal/reconcile`
-- `AmbiguousHash` returns a sentinel error instead of panicking on marshal failure
-- `sortMerged` uses a `Problem` tiebreak for a strict total order
-
-### Fixed
-
-- Source JSON wire names normalized to `lower_snake` via JSON struct tags
-- `MaxEstMinutes` calculation corrected for empty and negative estimate groups
-- `PerSourceCounts` populated in `sampleResult` for byte-stable golden fixture output
-- `ConfidenceForVerdict` normalizes non-canonical prior confidence pass-through
-- `Decode` validates required finding fields before accepting input
-- Escaped source names in the markdown Summary section in `emit.go`
-- `firstNonSpace` replaced with `bytes.TrimLeft` to correctly handle empty input
-- Pre-push hook extended to include the reconcile module test suite
-- CI reconcile module job granted `permissions: contents: read`
-
-*Shipped via /execute-sprint (sprint 8.0_reconciler_library)*
-
-## [Technical Debt] - 2026-06-23
-
-### Fixed
-
-- Made `BuildFileIndex` cancellation-aware so `git ls-files` honors context cancellation.
-- Honored context cancellation before skeptic dispatch in the verify pipeline.
-- Added best-effort cleanup of superseded `.bak` backups in `internal/atomicfs`.
-- Validated the `--output` path for `atcr leaderboard --export` through `validation.FilePath`.
-- Capped server-advertised `Retry-After` values to prevent unbounded or overflowing backoff waits.
-- Scrubbed `base_url` userinfo from `atcr doctor` `HTTPStatusError` snippets.
-- Stripped markdown link/image injection vectors from the GitHub Action defang path.
-- Warned on `GITHUB_OUTPUT` open/write failures in `atcr github` instead of swallowing errors.
-- Redacted GitHub tokens from `internal/ghaction` error messages.
-- Replaced `math/rand` with `crypto/rand` for the skeptic prompt-injection sentinel.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [Production-Readiness Review] - 2026-06-23
-
-Pre-Epic-8 production-readiness audit (component axis, adversarially verified across the five subsystem clusters). Verdict: ship-with-fixes — 0 critical, 1 high, 11 hardening items. The high-severity item is fixed below; the 11 hardening items are logged to technical-debt tracking.
-
-### Fixed
-
-- `atcr github --inline-comments` now paginates the existing-comment fetch in `ListReviewComments`. The GitHub REST list endpoint returns at most 30 comments per page by default, so on a pull request already carrying more than 30 ATCR inline comments the dedup pass silently missed the older comments and re-posted duplicates on every run. The fetch now walks every page (`per_page=100`) until a short page signals the end.
-
-*Shipped via /code-review production-readiness audit*
-
-## [Technical Debt] - 2026-06-23
-
-### Fixed
-
-- Verified deduplication count correctness on the fallback comment path.
-- Suppressed stdout summary when all fallback comments are 422-skipped.
-- Ensured fallback hard errors return a coded `exitFailure`.
-- Verified partial-fallback hard error count remains correct.
-- Confirmed `BuildCheckOutput` returns a neutral conclusion for non-empty findings when the threshold is empty.
-- Documented non-atomicity and dedup-on-retry idempotency in the fallback comment path.
-- Paced fallback comment posts and honored cancellation between them.
-- Capped individual fallback comment posts to bound GitHub API calls.
-- Noted that 404 fallback may mask a bad `--pr` value in `cmd/atcr/github.go`.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [7.6.0] - 2026-06-22
-
-GitHub Action API efficiency improvements for posting reconciled findings to pull requests.
-
-### Added
-
-- `atcr github --inline-comments` now falls back to posting comments individually when the batched review endpoint is unavailable (HTTP 404/405), so inline comments work on older GitHub Enterprise versions that do not support it. A per-comment off-diff rejection (422) stays a non-fatal skip, matching the batch path.
-
-### Changed
-
-- Removed a redundant gate-conclusion computation in the `github` command: `BuildCheckOutput` now returns the conclusion and blocking-finding count it already computes, so the findings slice is traversed once instead of twice.
-
-*Shipped via /execute-epic (epic 7.6)*
-
-## [Technical Debt] - 2026-06-22
-
-### Fixed
-
-- Distinguished absent from malformed reconciled findings in `readReconciledFindings` with separate exit codes.
-- Treated GitHub API 422 errors from `CreatePRReview` as non-fatal via a new `APIError` type.
-- Replaced raw conclusion literals in `internal/ghaction` with typed constants.
-- Backtick-wrapped `cell()` output in `internal/ghaction/render.go` to neutralize markdown injection.
-- Removed duplicate `FixAttribution` grammar from `internal/ghaction/render.go`.
-- Added fetch-depth and event-type guard steps to the composite GitHub Action.
-- Pinned the `escTrunc` 500-rune cap boundary and closed related false-positive TD citations.
-- Locked in dispatcher reuse and read_file dispatch assertions in executor tests.
-- Documented `FixWarning` and `ToolBudgetBytes` ownership boundaries.
-- Tightened `looksLikeNonGoBraces` documentation and residual config false-positive notes.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [7.5.0] - 2026-06-22
-
-Refined the local syntax guard so it no longer raises a spurious "invalid syntax" warning on a generated fix that is unfenced JSON/config rather than Go. Fix-quality flagging is unchanged for actual Go.
-
-### Fixed
-
-- The Epic 7.1 syntax guard no longer flags an unfenced multi-line JSON/config object (block braces, quoted keys) as `invalid_syntax`. Detection keys on JSON object-member shape (a quoted key at line start with no Go declaration keyword) and only ever *suppresses* a flag — it can never add one — so the conservative-recall guarantee is preserved and no previously-clean fix becomes newly flagged.
-
-*Shipped via /execute-epic (epic 7.5)*
-
-## [7.4.0] - 2026-06-22
-
-Added an opt-in agent mode for the executor: instead of generating a fix from a single fixed code snippet, the executor can now explore the codebase with read-only tools before proposing a change — better for cross-file findings whose fix depends on a type, interface, or caller defined elsewhere. Default behavior is unchanged.
-
-### Added
-
-- `agent_mode` (default `false`) and `max_tool_calls` (default `10`, bounded `1..1000`) on the `executor:` registry block. When `agent_mode: true`, the executor borrows the skeptics' already-open read-only tool harness and runs a `read_file`/`grep`/`list_files` loop to gather context before proposing the minimal fix, reusing the existing snapshot (no second checkout). On reaching the tool-call budget it emits the best fix from the context gathered; a tool-loop timeout, provider error, or unparseable response records a fix warning on the finding and never fails the run. When the harness is unavailable it degrades to the unchanged snippet path with a logged warning.
-
-*Shipped via /execute-epic (epic 7.4)*
-
-## [7.3.0] - 2026-06-22
-
-Shipped a maintained GitHub Action that runs the atcr panel on a pull request and surfaces findings where developers work — a PR check that gates the merge and, optionally, inline comments rendering the suggested fix.
-
-### Added
-
-- A composite GitHub Action (`action.yml`) that builds atcr, runs `atcr review` + `atcr reconcile` on a pull request, and posts the result as a PR check honoring `--fail-on`, with opt-in inline comments. Context and inputs flow through `env:` to avoid Actions script injection.
-- `atcr github` subcommand: renders reconciled findings onto a pull request as a check run (with a findings table and a pass/fail conclusion), and — behind the default-off `--inline-comments` toggle — posts inline comments formatted "ATCR found: <problem>. Fix: <fix>. Suggested by: <executor>", parsing the executor from the finding's evidence attribution token.
-- `docs/github-action.md` documenting usage, inputs, required permissions, the `fetch-depth: 0` requirement, and a manual real-PR smoke-test procedure; referenced from `docs/ci-integration.md`.
-
-*Shipped via /execute-epic (epic 7.3)*
-
-## [7.2.0] - 2026-06-22
-
-Consolidated the two divergent disagreement-radar renderers into a single shared, parameterized implementation, eliminating the risk of escaping/formatting drift between the reconciled and display report paths. Rendered output is unchanged.
-
-### Changed
-
-- The disagreements radar is now produced by one shared renderer in `internal/reconcile` (`WriteRadarSection` / `WriteRadarItems`), parameterized by a heading prefix and a free-text body renderer (`RadarTextRenderer`). `internal/report` calls it with display-oriented truncation (`escTrunc`, 500-rune cap); the reconciled report passes verbatim escaping (`esc`). Output is byte-identical.
-
-### Removed
-
-- The duplicate radar-rendering code in `internal/report` (`writeRadarSection`, `writeRadarItems`) and its now-dead `formatScore` and `reviewerOrUnknown` helpers.
-
-*Shipped via /execute-epic (epic 7.2)*
-
-## [Technical Debt] - 2026-06-22
-
-### Fixed
-
-- Narrowed `blockOpenRe` so it only matches a single trailing block-open brace, closing the false-fire on any brace-ending line.
-- Hardened `fenceRe` to accept `c#`/`f#` language tags, require an anchored close fence, support four-backtick fences, and tolerate trailing whitespace.
-- Capped the input size in `validateGoFixSyntax` so oversized fixes cannot cause unbounded parsing cost.
-- Guarded `generateFixes` against a nil registry to prevent runtime panics.
-- Documented the `FixWarning` ownership boundary in `generateFixes`.
-- Locked in `FixWarning` JSON round-tripping, markdown golden rendering, and injection/truncation coverage with tests.
-- Corrected the `InvalidShortAssign` rationale and characterized the conservative-recall boundary.
-- Recorded the conservative-recall WONTFIX rationale in `parseGoFix` and `extractFencedCode`.
-- Removed the misleading "compile" wording from the syntax-guard header (it parses only, no type checking).
-- Resolved TD items 137, 94, and 167; deferred item 130 per clarification answers.
-- Created epic 7.5 syntax-guard refinements and pointed the deferred TD row at it.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [7.1.0] - 2026-06-22
-
-A fast, local validation layer that checks generated fixes are syntactically valid before they are presented, so syntax-broken fixes are caught immediately without running the full test suite.
-
-### Added
-
-- Local Go syntax guard for generated fixes: each executor-generated fix is parsed with `go/parser` before it is presented. A fix that is plausibly Go code yet fails to parse is flagged with an `invalid_syntax: <parser error>` warning while the attempted fix stays visible.
-- Fix-generation warnings (including the new `invalid_syntax` flag) now surface in the markdown review report.
-
-### Changed
-
-- The guard is deliberately conservative: free-form prose change-instructions and explicitly non-Go fenced blocks pass through unflagged, so a legitimate fix is never falsely marked invalid.
-
-*Shipped via /execute-epic (epic 7.1)*
-
-## [Technical Debt] - 2026-06-22
-
-### Fixed
-
-- Added a `---` delimiter between executor instructions and finding data in `buildFixPrompt`, closing the prompt-injection surface for forged metadata lines.
-- Guarded `buildFixPrompt` against a nil executor pointer to prevent runtime panics.
-- Enforced a maximum rule-count cap on executor `rules` so the list cannot defeat the per-rule length limit.
-- Rejected Unicode control characters and line separators in executor persona, name, rules, and agent scope.
-- Fixed persona default re-derivation in `buildFixPrompt` by relying on the loaded-registry invariant.
-- Rejected `NaN` and `Inf` values in executor `temperature` validation.
-- Documented the `system_prompt` control-character trust boundary and the direct-call temperature caveat in `registry.md`.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [7.0.1] - 2026-06-22
-
-Executor model configuration — tightly control fix-generation determinism and style from the registry without editing ATCR source.
-
-### Added
-
-- Executor `temperature` setting (validated to `[0, 2]`) — controls the API temperature for fix generation. It is sent on every fix call and defaults to `0.0` when omitted, so generated fixes are deterministic and reproducible.
-- Executor `system_prompt` override — when set, it fully replaces the default `"You are <persona>, a code-fix executor…"` framing (the `persona` is superseded for that call); the finding metadata, rules, and code snippet are still appended after it. Capped at 4096 characters.
-- Executor `rules` list — project coding guidelines appended to the fix prompt as a constraints block so generated fixes match your conventions (and pass linters on the first CI run). Each rule is validated at load: non-empty, free of control characters, and at most 512 characters.
-
-### Changed
-
-- The executor now always sends a `temperature` to the provider (defaulting to `0.0`), whereas previously it sent none and inherited the provider's own — often non-deterministic — default. Existing `executor:` configs without an explicit `temperature` will now produce deterministic fixes; set `temperature` explicitly to opt into a higher value.
-
-*Shipped via /execute-epic (epic 7.0.1)*
-
-## [Technical Debt] - 2026-06-22
-
-### Fixed
-
-- Removed the unused `ExecutorConfig.BatchFixes` field to eliminate a silently misleading registry option.
-- Hardened `validateExecutor` provider and model checks with `strings.TrimSpace` so whitespace-only values report a clear missing-field error.
-- Made agent and executor role validation case-insensitive and canonicalized stored role values.
-- Validated executor `persona` at load time (control characters and length cap) and documented `buildFixPrompt` untrusted-data boundaries.
-- De-scoped epic 7.0 AC9 (fix-generation performance benchmark) with rationale against the fake-completer test harness.
-- Added `ExecutorConfig.EffectiveFixMinSeverity()` and replaced duplicated inline fix-severity-floor fallbacks.
-- Replaced substring-based executor attribution with a delimited-token guard and validated executor names against the agents map.
-- Applied an effective per-call executor timeout even when `fix_timeout` is nil, preventing unbounded blocking on a hung provider.
-- Parallelized fix generation with a bounded worker pool, capping wall-clock cost for many eligible findings.
-- Bailed `generateFixes` early on context cancellation so SIGINT stops new executor calls promptly.
-- Cleared stale `FixWarning` values when a fix succeeds, removing contradictory finding records on re-runs.
-- Logged `fix_snippet_unavailable` debug warnings instead of silently swallowing snippet-read failures.
-- Removed a redundant `TrimSpace` short-circuit in `readFixSnippet`.
-- Constructed the executor client lazily after the first fix-eligible finding, avoiding unused client allocation.
-- De-scoped epic 7.0 AC10 (quantitative cost analysis) and added a reflection drift-guard test for `JSONFindings()` field coverage.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [7.0.0] - 2026-06-21
-
-Executor model for fix generation — multi-model review breadth plus a single, more capable model that generates fixes for the findings worth fixing.
-
-### Added
-
-- Optional top-level `executor:` registry block: a single model that generates fixes for verified findings during `atcr verify`, `atcr review --verify`, and the `atcr_verify` MCP tool. Opt-in and fully backward-compatible — with no `executor:` block, no fix phase runs and behavior is unchanged.
-- Fix targeting gates on HIGH-or-better confidence (so skeptic-confirmed `VERIFIED` findings are included) AND severity at or above `min_severity_for_fix` (default MEDIUM). The executor reads a code snippet around each finding from the review snapshot for context, writes the fix into the finding's `fix` column, and appends `fix by <name>` to its evidence (no new column — the 9-column schema is preserved).
-- Executor configuration: `min_severity_for_fix`, `batch_fixes`, and `fix_timeout`; a `fix_warning` field on findings recording non-fatal fix-generation failures; and the `reconcile.ConfidenceAtOrAbove` confidence-ordering helper.
-- Example registries (`examples/registry-with-executor.yaml`, `examples/registry-without-executor.yaml`) and an executor section in `docs/registry.md`.
-
-### Notes
-
-- Fix generation is failure-isolated: an executor error or empty completion leaves the reviewer's own fix in place and never fails the verify run.
-- Posting these fixes as inline PR comments is owned by Epic 7.3 (the GitHub Action), which consumes the `fix` column populated here.
-
-*Shipped via /execute-epic (epic 7.0)*
-
-## [Technical Debt] - 2026-06-21
-
-### Fixed
-
-- Hardened `filterMergedClusters` against empty `ClusterID` lookups and added debug logging of suppressed-item counts.
-- Refused empty-ID cluster merges in `applyOneClusterMerge` to prevent re-debate loops on malformed clusters.
-- Collapsed duplicated `clusterDisplayProblem` logic into a single `reconcile.ClusterDisplayProblem` helper and added a round-trip test to pin the coupling.
-- Added a location-keyed fallback for drifted gray-zone items so merged clusters stay merged even when the representative problem text diverges.
-- Detected colliding display keys in `indexClusters` with a sentinel so distinct clusters sharing the same canonical key no longer overwrite each other.
-- Avoided empty cluster-index allocation and documented nil-safety for `filterMergedClusters`.
-- Extended `filterMergedClusters` tests to cover mixed legacy/new-ID survivor cases and separate-ruling `ClusterID` absence.
-- Updated `JSONFinding` type docs to reflect the additive `cluster_id`/`cluster_merged` schema extensions and cross-referenced the `ClusterID` field scope.
-- Pinned the reconcile-path-never-stamps-cluster-fields invariant with a test to guard AC1 byte-identity.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [6.2.0] - 2026-06-21
-
-### Added
-
-- `cluster_id` field on `findings.json` records (omitempty): the stable, content-addressed ID of the gray-zone cluster that produced an inline-merged survivor. Non-merged records stay byte-identical to pre-6.2 output.
-
-### Fixed
-
-- Gray-zone merge idempotency is now keyed on cluster identity (`cluster_id`) rather than File+Line alone, so a second distinct cluster co-located at the same canonical File+Line is no longer over-suppressed once the first is merged.
-
-*Shipped via /execute-epic (epic 6.2)*
-
-## [6.1.0] - 2026-06-21
-
-### Added
-
-- Inline application of judge gray-zone cluster rulings: a `merge` ruling now physically unions the cluster's member findings in `findings.json` during the debate stage (no `adjudication.json` round-trip), and a `separate` ruling leaves them unmerged.
-- `cluster_merged` marker on merged findings so a re-run never re-merges an already-applied cluster.
-
-### Changed
-
-- Gray-zone cluster decisions are applied inline (Option A) instead of being recorded only for the Skill adjudication path; the authored `adjudication.json` path is unchanged and remains a manual override.
-
-*Shipped via /execute-epic (epic 6.1)*
-
-## [Technical Debt] - 2026-06-21
-
-### Fixed
-
-- Documented that debate `pickDistinct` enforces distinctness by exact model string only.
-- Left finding severity untouched when a split ruling carries no `settled_severity`.
-- Validated debate verdict enum before persisting `Verification` so empty/invalid verdicts cannot be written.
-- Generated the debate prompt-injection sentinel from `crypto/rand` with 128-bit entropy.
-- Added a bounded worker pool for debate item processing to parallelize provider calls.
-- Preserved original verify skeptic list and notes when `applyRulings` mutates `Verification`.
-- Flattened untrusted newlines inside debate item blocks to block in-block prompt injection.
-- Rendered a `challenge-survived` badge on upheld and split contested findings.
-- Truncated unresolved reason text in the contested report with `escTrunc`.
-- Annotated overturned findings as excluded so severity tags no longer appear live.
-- Disclosed single-model fallback usage at the contested section level and on unresolved items.
-- Allowed `--require-verified` alongside `--debate` without requiring `--verify` in the CLI.
-- Consolidated debate trigger defaulting to a single source of truth in `ResolveConfig`.
-- Rejected `--single-model` on `atcr review` when `--debate` is not set.
-- Added a shared representative-problem function for `BuildDisagreements` and `clusterDisplayProblem`, pinning the gray-zone cluster coupling with a round-trip test.
-- Fixed `applyOneClusterMerge` cross-line drift recovery so an unrelated lone finding at a member location is no longer absorbed into the merge.
-- Skipped single-member clusters in the merge-applied count, removing the misleading "could not be applied" warning.
-- Captured and logged errors from reading `ambiguous.json` instead of silently degrading to zero clusters.
-- Normalized judge `cluster_decision` input before the merge/separate equality check.
-- Added a defensive assertion that gray-zone member locations never collide with the single-finding rulings keyspace.
-- Recorded a distinct no-decision reason in `debate.json` for empty or unparseable judge cluster rulings.
-- Preserved each member's existing `Disagreement` lower bound in `MergeJSONFindings` so merged records keep the full reviewer tension range.
-- Preserved the first non-empty `PathWarning`/`PathSuggestion` across cluster members instead of copying only the first group member.
-- Split and deduplicated comma-joined skeptic names in `mergeVerification`, guarding against empty tokens and corrupted provenance.
-- Replaced the evidence-join loop in `MergeJSONFindings` with `strings.Join`.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [6.0.0] - 2026-06-21
-
-Cross-examination (debate) stage: resolve reviewer disagreements through a bounded proposer/challenger/judge debate instead of a heuristic. Where reviewers dispute severity, the reconciler leaves a gray-zone cluster, or a skeptic vote ties, the judge's ruling — not severity-max — settles the finding, and survivors form the top confidence tier.
-
-### Added
-
-- `atcr debate [id-or-path]` command, `atcr review --verify --debate` chaining, and the `atcr_debate` MCP tool — all sharing one orchestrator. `--single-model` opts into a same-model persona fallback when fewer than three distinct models are available.
-- `debate.*` registry config (`triggers`, `max_items`, `allow_single_model`), validated in lockstep with the config schema.
-- A `challenge_survived` marker on upheld findings (folded into the existing `VERIFIED` tier, not a new tier), the `reconciled/debate.json` ruling record, and replayable per-item transcripts under `debate/`.
-- A "Contested findings" report section showing judge rulings with one-line rationales, severity transitions, single-model disclosure, and recorded overflow.
-
-### Changed
-
-- Disputed findings — severity splits (≥2 tiers), gray-zone clusters, and verification disagreements — route through a debate that settles them: `uphold`/`split` confirm (split replaces severity-max with the judge's settled severity), `overturn` refutes. Distinct-model enforcement spans all three seats; the protocol is bounded (hard 3-turn cap, `max_items` cost cap with recorded overflow) and idempotent across re-runs.
-
-*Shipped via /execute-epic (epic 6.0)*
-
-## [Technical Debt] - 2026-06-21
-
-### Fixed
-
-- Documented `CopyPath`'s actual merge-into-existing-destination behavior.
-- Documented the `SecretValues` construction-time snapshot contract for environment keys.
-- Documented the `minSecretLen` over-redaction tradeoff.
-- Documented the intentional `PathWarning` omission in `RenderText`.
-- Rendered the actual `PathWarning` value for non-default warnings in human reports.
-- Surfaced `SecretValues` misconfiguration (unset or below-minimum values) via returned warnings.
-- Covered backup straggler-cleanup failure legs in tests.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [Technical Debt] - 2026-06-21
-
-### Fixed
-
-- Normalized backslash path separators in file-index lookups so cited paths match regardless of the build OS.
-- Clarified that path case folding uses ASCII-lowercase, not full Unicode case folding.
-- Prevented path-suggestion from offering a sibling correction when the cited path itself is tracked.
-- Added a length-difference early-out before Levenshtein distance computation in Tier 2 suggestions.
-- Surfaced corrupt cache-entry removal errors instead of failing silently.
-- Documented the deliberate cache eviction error-swallow asymmetry under the store mutex.
-- Added observability for indeterminate path existence checks via a metrics counter.
-- Logged discarded git failures during file-index builds instead of swallowing them.
-- Made path-escape containment checks separator-independent across platforms.
-- Surfaced swallowed EvalSymlinks root errors via a metrics counter.
-- Committed the `.atcr/` ignore rule so cache and review outputs are ignored in fresh clones and CI.
-- Carried `ToolsRequested` on synthesized cache-hit results to match live invocation shape.
-- Protected the newest cache entry during eviction so oversized writes survive their own eviction pass.
-- Made `atcr init` emit `.atcr/.gitignore` so cache and reviews are never committed by default.
-- Folded backend provider identity into diff-cache keys to prevent cross-provider cache collisions.
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [5.4.0] - 2026-06-21
-
-A flagged file path now comes with a way forward. When a reviewer cites a path that does not exist, the reconcile pipeline builds a one-time index of the repository's real tracked files (`git ls-files`) and suggests the file the finding most likely meant — a wrong directory, a basename typo, or a case-only difference — rendered as a `(did you mean …)` line next to the warning. Suggestions are advisory only: the original cited path is always preserved and never rewritten. The existence check is also now symlink-safe, closing an oracle where a repo symlink could report a file outside the repo as present, and case-only typos are caught even on case-insensitive macOS/Windows filesystems where they previously resolved silently.
-
-### Added
-
-- Candidate file index built once per reconcile run from `git ls-files` (gitignore-pruned, tracked files only), backing path-correction suggestions
-- `path_suggestion` field on the `findings.json` record (omitempty — absent and byte-identical to prior output when there is no suggestion) and a `⚠️ File not found: <path> (did you mean <real>?)` line in `report.md`, `atcr report`, and the checklist and refuted views
-- Tiered path matching: exact basename in another directory (no edit-distance threshold), a same-directory basename typo above a tuned similarity threshold (with a guard against pluralization/derivation siblings), and case-only differences
-
-### Changed
-
-- The finding existence check resolves symlinks and re-verifies containment under the repo root (`filepath.EvalSymlinks`) instead of a bare `os.Stat`, so a symlinked path segment can no longer probe for files outside the reviewed repository
-
-### Fixed
-
-- Case-only path typos (e.g. `Parser.go` for `parser.go`) are now flagged and corrected even on case-insensitive filesystems, where the prior existence check reported them as valid
-
-*Shipped via /execute-epic (epic 5.4)*
-
-## [5.2.0] - 2026-06-20
-
-Repeated reviews of an unchanged diff no longer re-spend tokens. Each reviewer's output is now content-addressed under `.atcr/cache` and replayed on a re-run when the rendered prompt, model, and temperature are identical — so iterating with `atcr review` on a branch that has not changed (or changed elsewhere) skips the LLM call for every cached agent. Caching is scoped to the single-shot review fan-out only; tool-enabled agents (which read live code) and the verification stage are never cached. A failed or timed-out review is never cached.
-
-### Added
-
-- Diff cache for the review fan-out: an unchanged payload+model+temperature replays the prior reviewer output instead of calling the provider, cutting cost and latency on repeated runs. Cache keys derive from the full rendered prompt (which subsumes payload, persona, per-agent scope focus, and refs), the model id, and the temperature, so any change that alters the LLM input invalidates the entry
-- `cache_max_bytes` config key (registry and project tiers; default 50 MiB, `0` = unbounded) bounding the cache with least-recently-used eviction
-- `atcr review --no-cache` flag to bypass cache reads and force a fresh review (fresh results are still written back so subsequent runs benefit)
-- `cache_hit` field in a per-agent `status.json` (present only on a replayed result) so a cache hit is auditable rather than indistinguishable from a live call
-
-*Shipped via /execute-epic (epic 5.2)*
-
-## [5.0.0] - 2026-06-20
-
-Reviewer-hallucinated file paths are now caught. The reconcile pipeline validates each finding's file path against the reviewed repository and flags the ones that do not exist, so a good finding that cites a wrong path (a typo, or the right file in the wrong directory) is surfaced for correction instead of silently shipping an unopenable location. The finding is always preserved — validation only annotates, it never discards.
-
-### Added
-
-- File-path existence validation in the reconcile pipeline — a finding whose path does not resolve under the repo root is flagged with `path_warning: "file not found"` in `findings.json` and a `⚠️ File not found: <path>` line in `report.md`, `atcr report`, and the checklist view
-- `path_valid` / `path_warning` fields on the `findings.json` record (`path_warning` is the authoritative signal; paths that escape the repo root are treated as invalid rather than probed)
-
-*Shipped via /execute-epic (epic 5.0)*
-
-## [4.11.0] - 2026-06-20
-
-Per-call client telemetry now backs accurate API-call counting and per-call latency: the LLM client surfaces one record per HTTP attempt — retries included, with a precise wire-reached signal — up through the fan-out engine, fixing a counter undercount during provider degradation and populating a latency histogram.
-
-### Added
-
-- `atcr_api_call_duration_seconds` histogram recording the wall-clock latency of every completed HTTP attempt that reached the wire
-
-### Changed
-
-- `atcr_api_calls_total` now counts provider round-trips per HTTP attempt (retries included) and correctly counts a single-shot agent whose context expires mid-flight as 1 (previously 0); a request cancelled before any bytes were sent — or a circuit-open fail-fast — still counts 0. Dashboards comparing values across this change will see a one-time step up as retries begin to count.
-
-*Shipped via /execute-epic (epic 4.11)*
-
-## [4.9.0] - 2026-06-20
-
-Exact-value secret redaction is now live in production: resolved registry API key values are threaded into the log redactor at both per-review construction sites, so provider keys are scrubbed by their actual value rather than relying solely on the `sk-`/`Bearer` token-shape patterns.
-
-### Security
-
-- Provider API keys that lack an `sk-`/`Bearer` prefix (Google `AIzaSy…`, Azure, JWTs) are now scrubbed by exact value from both `atcr review`/`--resume` and serve-mode logs, closing a gap where such keys could otherwise leak verbatim
-
-### Added
-
-- `PreparedReview.SecretValues` enumerates the resolved registry API key values (deduped, with a minimum-length guard against over-redaction) for the log redactor at the review, resume, and serve-mode construction sites
-
-*Shipped via /execute-epic (epic 4.9)*
-
-## [Technical Debt] - 2026-06-20
-
-### Fixed
-
-- `backupCrossDevice` now restores the prior `.bak` when the EXDEV fallback copy fails, covering the previously untested failure leg
-- `backupCrossDevice` cleans up the staged `backupNew` on copy failure so a stranded `.bak.new` no longer survives a failed fallback
-- `BackupToDotBak` sweeps stale `.bak.tmp-*` siblings at entry, reconciling artifacts from an earlier interrupted run
-- `swapStagedBackup` and `restorePriorBackup` now log and surface rename failures instead of swallowing them silently
-- `BackupToDotBak`'s staging branch now sets `staged` explicitly for non-regular, non-directory entries, eliminating the use-uninitialized path
-- `backupCrossDevice` documents the accepted TOCTOU window between `Lstat` and the subsequent `Rename` given the single-user trust model
-- `backupCrossDevice`'s postcondition comment no longer claims the cross-device fallback is atomic; documents the duplicated-tree window
-- Vacate failure in `backupCrossDevice` now reports that the durable backup completed and names the preserved backup path
-
-## [4.7.1] - 2026-06-20
-
-### Fixed
-
-- `--force` re-run backups are now crash-safe at both backup sites: a failed or interrupted swap (cross-filesystem `EXDEV`, disk-full, or `SIGKILL`) no longer destroys the prior `.bak` generation.
-- `backupExisting` (review-dir move path) stages the prior `.bak` aside before swapping, restores it on failure, and falls back to copy-then-vacate on cross-filesystem `EXDEV`.
-- `BackupToDotBak` (copy path) stages the prior generation to `.bak.old` and restores it if the staged-temp swap fails, closing the rename-window backup loss the prior implementation left open.
-- Stale atcr-owned staging artifacts (`.bak.old`/`.bak.new`) from an interrupted run are reconciled away on the next `--force`, preserving the one-generation contract across a crash-then-retry sequence.
-
-*Shipped via /execute-epic (epic 4.7.1)*
-
-## [Technical Debt] - 2026-06-19
-
-### Fixed
-
-- Floored negative `initialBackoff` in `WithRetryOverride` to prevent fire-immediately behavior; added first-sleep clamp test
-- Extracted `validateRetryBounds` helper to unify retry validation across config/agent/global paths with consistent error format
-- Added per-agent `max_retries`/`initial_backoff_ms` to the invoke debug log for rate-limit diagnostics
-- Documented the three-state retry-override sentinel contract in the Agent struct comment
-- Added test coverage for MCP handler error paths (handleVerify, parseOptionalSeverity, rangeError, loadVerifyRegistry, handleReport, handleStatus, registerTool); raised `internal/mcp` coverage to 91.6%
-- `BackupToDotBak` now skips symlink sources via `os.Lstat` instead of following them
-- `copyFile` uses streaming `io.Copy` instead of unbounded in-memory reads
-- Added `tmp.Sync()` and parent-directory fsync in `WriteFileAtomic` for crash durability
-- `PrepareReview` now enforces the system-path reject (`/etc`, `/proc`, `/sys`) for all callers, not only the CLI
-- `--force` with a derived id emits a stderr notice instead of silently no-oping
-- `ScaffoldReviewDir`/`ScaffoldOutputDir` collision errors now name the id only, not the resolved filesystem path
-- `forceBackupReviewDir`/`forceBackupOutputDir` return and emit the backup path on `--force`
-- `guardForeignBackup` returns a specific error when the backup path is a regular file
-- `guardForeignBackup`/`looksLikeReviewTree` now require a `manifest.json` provenance marker before treating a directory as an atcr backup
-- `WriteVerification` documented as test-only seam; `BackupExistingVerification` unexported
-- Scoped verify backup to `verification.json`-only; removed false `reconciled.bak/` coverage claim
-- Moved `reconciled.bak` snapshot to just before `Emit`, after adjudication validation, so a failed validation no longer leaves a misleading backup
-- Accepted 79.5% coverage for `internal/atomicfs` defensive-error branches as a documented exception
-
-## [4.7.0] - 2026-06-19
-
-Idempotency and safe retry: retrying a failed review no longer silently duplicates or overwrites artifacts. Existing review/reconcile/verify outputs are backed up before being overwritten, and atomic writes prevent partial writes from corrupting existing files.
-
-### Added
-
-- `--force` flag on `atcr review` that backs up an existing review directory to `<dir>.bak` and scaffolds a fresh one.
-- `atomicfs.WriteJSON`, an atomic JSON writer (marshal + write-to-temp + rename) wrapping the existing `WriteFileAtomic`.
-
-### Changed
-
-- The review-directory-already-exists error now names both recovery paths: `--resume` to continue the prior run or `--force` to overwrite. Passing both `--resume` and `--force` is a usage error.
-- `atcr reconcile` backs up an existing `reconciled/` directory to `reconciled.bak/` before re-emitting.
-- `atcr verify` backs up an existing `verification.json` to `verification.json.bak` before re-writing.
-
-### Fixed
-
-- Atomic writes prevent a partial or aborted write from corrupting an existing file.
-- `--force` on an arbitrary `--output-dir` refuses to clobber a foreign sibling `<dir>.bak` it did not create, instead of silently deleting it.
-
-*Shipped via /execute-epic (epic 4.7)*
-
-## [4.6.0] - 2026-06-19
-
-Robust rate-limit & backoff handling: exposed the existing LLM retry engine (exponential backoff with jitter + `Retry-After` honoring) through configuration and raised the default retry budget so transient 429/5xx rate-limits are absorbed before a review chunk fails.
-
-### Added
-
-- Configurable `max_retries` (0–10) and `initial_backoff_ms` (1–30000) retry tunables at the registry (global) tier and per-agent tier, resolving over the shared-settings precedence chain like `timeout_secs`. Per-agent overrides take effect per call without rebuilding the shared client.
-
-### Changed
-
-- Raised the default LLM retry budget for the review/resume fan-out from 3 attempts to 6 (`max_retries` 5) so sustained rate-limiting is retried with backoff before a chunk is marked failed. A 429 is still owned by the backoff path and never trips the Epic 4.5 circuit breaker.
-
-### Fixed
-
-- Clamped the first retry backoff sleep to the 30s ceiling (previously only subsequent sleeps were capped).
-
-*Shipped via /execute-epic (epic 4.6)*
-
-## [Technical Debt] - 2026-06-19
-
-### Fixed
-
-- Guarded `gauge.Set` against NaN/Inf inputs to match `histogram.Observe`; updated `Registry.Reset` doc comment to include gauges
-- Added debug warning when a tools-enabled production agent has an empty provider, making silent circuit breaker bypasses observable
-- Documented in `classifyStatus` that `CircuitOpenError` deliberately classifies as `StatusFailed` so the fan-out chain advances to the fallback (AC6)
-- Extracted `writeFamily` helper in `prometheus.go` to eliminate three near-identical family-grouping blocks
-- Documented 3xx responses as health-neutral in the circuit breaker `send` switch
-- Clamped non-positive `threshold` and `cooldown` values in `New()` to defaults so a zero-config breaker cannot trip on the first failure
-- Documented the max probe slot-hold bound (= caller HTTP timeout) in `Allow`; corrected `ReleaseProbe` comment to accurately state it always clears `probeInFlight`
-- Emitted structured log (`slog.Info`) on every circuit breaker state transition with provider name and new state
-- Cached gauge pointer in `Breaker` at construction time to remove cross-package lock acquisition under `b.mu` on each state transition
-- `Registry.Get("")` now returns a fresh throwaway always-closed breaker instead of caching a real stateful one under the empty key
-- `isBreakerFailure` now distinguishes caller-initiated deadline expiry from a provider stall, preventing false breaker failures when the caller's own budget expires against a healthy provider
-- Extended error snippet redaction to cover foreign fleet key prefixes (`AIza`, `gsk_`, `xai-`) in `HTTPStatusError.Snippet`
-- Documented the deliberate ~8KB error-body drain bound as an accepted trade-off in `readErrorSnippet`
-- Added deferred probe slot release in `send()` so a panic in `dispatch()` cannot wedge the circuit breaker half-open permanently
-
-## [4.5.0] - 2026-06-19
-
-### Added
-
-- Per-provider circuit breaker: after 3 consecutive provider failures (5xx, timeouts, or connection-level transport errors) a provider's circuit opens and subsequent agents fail fast without wasted API calls, then recovers automatically via a 60-second half-open probe
-- `CircuitOpenError` makes the fan-out engine treat an open circuit as a permanent failure and fall straight through to an agent's fallback chain
-- `atcr_circuit_breaker_state{provider}` gauge (0 closed / 1 open / 2 half-open), documented in `docs/metrics.md`; adds a settable gauge primitive to the in-process metrics collector
-
-### Changed
-
-- 4xx provider responses — including 429 rate-limits and 401 auth errors — never trip the breaker; only outages do, and `atcr_api_calls_total` no longer counts a fail-fast circuit-open as a provider round-trip
-
-*Shipped via /execute-epic (epic 4.5)*
-
-## [Technical Debt] - 2026-06-19
-
-### Fixed
-
-- The end-of-review summary now prints on the all-agents-failed and `--resume` paths, not only on a fresh successful review
-- `Agents X/Y` summary line now sources its denominator from the per-attempt `agents_total` registry so numerator and denominator share one granularity; counts are taken from a per-review registry diff rather than the process-global registry
-- `WritePrometheus` snapshots registry pointers and renders lock-free, sorting each histogram once instead of per-quantile
-- `escapeLabelValue` now escapes carriage returns, closing the Prometheus exposition-injection gap its doc comment claimed
-- Unknown/empty finding severities are clamped to an `UNKNOWN` bucket instead of adding unbounded label cardinality
-- `histogram.Percentile` caches its sorted snapshot and invalidates on each `Observe`, avoiding a full re-sort per call
-- `histogram.Observe` drops NaN/Inf inputs so a single bad sample can no longer poison the sum or sort order
-- API call counting no longer inflates for context-cancelled single-shot agents, and negative `Turns` / non-positive HTTP status codes can no longer corrupt the monotonic counters
-- Recovered agent panics now record a terminal outcome and duration, preserving the `reviews_total == succeeded+failed+interrupted` invariant
-- Review-duration output relabeled `Total elapsed` to reflect that it is wall-clock, not the fan-out window the histogram measures
-- Ring-buffer full check uses `>=` and percentile ranking uses `math.Ceil` for clarity and boundary correctness
-- Added `docs/metrics.md` cataloging counters/histograms, the CLI summary, and the `atcr_metrics` tool (local-only), linked from the README; documented the no-schema `atcr_metrics` registration and its accepted local-only security posture
-
-## [4.4.0] - 2026-06-19
-
-In-process metrics and observability: a new `internal/metrics` package collects counters and histograms with no external dependencies, the fan-out engine and review flow are instrumented, `atcr review` prints an end-of-review summary, and the MCP server exposes metrics in Prometheus text format.
-
-### Added
-
-- New `internal/metrics` package: monotonic counters and bounded histograms (10k-sample window) in a registry with a process-wide `DefaultRegistry`, plus Prometheus text exposition with label-value escaping
-- Fan-out engine records agent invocation counts, per-agent latency, API calls (one per provider round-trip), API errors by HTTP status, and tool-call totals
-- Review flow records review counts, total duration, and findings (total and by severity)
-- `atcr review` prints an end-of-review summary: duration, agent success/failure/timeout counts, API calls, and findings by severity
-- New `atcr_metrics` MCP tool returns the in-process metrics in Prometheus text format (cumulative since server start; local-only — do not expose the server publicly)
-
-*Shipped via /execute-epic (epic 4.4)*
-
-## [Technical Debt] - 2026-06-19
-
-### Fixed
-
-- `validation.FilePath` now rejects Windows volume/system paths (`C:\Windows`, `C:\Program Files`) in addition to Unix system dirs
-- `report --output` resolves symlinks before validation and threads the validated absolute path to the write call, closing the symlink bypass
-- Extended FilePath deny list to include macOS `/private/etc` and `/private/var` (symlink targets of `/etc` and `/var`) to prevent bypass on macOS
-- `FilePath` traversal check is now segment-aware: rejects `/../` components but accepts legitimate `..`-in-filename paths (e.g. `my..file`)
-- `GitRef` tightened to reject all control characters, shell/git metacharacters (`\ ? * [`), and a leading `-`, matching the doc comment guarantee
-- Hoisted `Severity` valid-set map to package-level var to avoid a map allocation on every call
-
-## [4.3.0] - 2026-06-18
-
-Centralized input validation: a new `internal/validation` package gives the CLI consistent, field-aware validation errors, and path inputs are now rejected at the input layer before any work begins.
-
-### Added
-
-- New `internal/validation` package with validators for git refs, file paths, review IDs, severity levels, and enums; each returns a field-aware `ValidationError` that wraps as a usage error (exit 2)
-- `atcr review --output-dir` and `atcr report --output` now reject paths under system directories (`/etc`, `/proc`, `/sys`) via the input-validation layer before execution, instead of failing late on the filesystem
-
-*Shipped via /execute-epic (epic 4.3)*
-
-## [Technical Debt] - 2026-06-18
-
-### Fixed
-
-- Added structured Warn log when MCP server shutdown interrupts an in-flight detached review, so serve-mode interruptions are now observable in logs (`internal/mcp/handlers.go:231`)
-- Added Warn log in `shutdownReviews` before cancelling in-flight reviews, making server-shutdown events diagnosable from stderr alone (`internal/mcp/server.go:48`)
-- Documented that `withShutdownCancel`'s returned cancel is safe to call twice — the second call via AfterFunc is a deliberate idempotent no-op (`internal/mcp/handlers.go:120`)
-- Added assertion that config-validation failure exits before creating any review output directory, guarding the AC7 fail-fast guarantee against silent regression (`cmd/atcr/review_test.go:386`)
-- Documented that the staged `validate → ValidateFallbacks` call order in `validateMerged` and `LoadRegistry` is intentional (`internal/registry/overlay.go:224`)
-
-## [Technical Debt] - 2026-06-18
-
-### Fixed
-
-- Removed redundant `strings.TrimSpace` call from payload error string formatting (`internal/registry/config.go:248`)
-- Replaced unidiomatic type assertion with `errors.As` for multi-error unwrapping in attribution (`internal/registry/attribution.go:48`)
-- Fixed `validateProvider` silently appending an empty error slice for valid providers (`internal/registry/config.go:233`)
-- Removed stale "Nothing to do here" comment from `walkFallbacks` after lead-in node blackening was added (`internal/registry/graph.go:67`)
-
-## [4.2.0] - 2026-06-18
-
-Configuration validation now reports every error at once, so a bad `registry.yaml` is fixed in a single pass instead of one error per run.
-
-### Changed
-
-- Registry validation (required fields, enum values, numeric ranges, review-constraint guardrails, and fallback-chain dangling/cycle checks) now accumulates and reports all faults together via `errors.Join` instead of stopping at the first; output is deterministic (providers and agents are validated in sorted order), and in a merged user+project config each fault still names the file that defined the offending entry
-
-### Fixed
-
-- A fallback graph with a lead-in chain feeding a cycle (e.g. `a→b`, `b↔c`, `d→a`) no longer panics `atcr` at config-load time; the cycle is reported as a clean validation error
-
-*Shipped via /execute-epic (epic 4.2)*
-
-## [Technical Debt] - 2026-06-18
-
-### Fixed
-
-- Added structured Warn log when MCP server shutdown interrupts an in-flight detached review (`review interrupted by server shutdown`) and when `shutdownReviews` begins cancelling in-flight reviews
-- Documented that `withShutdownCancel`'s cancel function may run twice concurrently via AfterFunc — the second call is an intentional idempotent no-op
-- Fixed `blockingCompleter` to return `context.Canceled` directly instead of `ctx.Err()` string; removed a timing-sensitive `RunInProgress` assertion in the disconnect shutdown test
-- Documented that `shutdownCtx` is immutable after construction, clarifying concurrent access safety at `handlers.go:230`
-- Added a Serve-level shutdown integration test exercising the `ctx.Err() != nil` discriminator through a transport seam, preventing regressions from boolean inversions or call-order changes
-- Documented that `shutdownDrain` must comfortably exceed worst-case interrupt-flush latency to guarantee the on-disk interrupted status persists before process exit
-
-## [4.1.2] - 2026-06-18
-
-Serve-mode detached reviews are now marked `interrupted` on server shutdown, matching CLI semantics.
-
-### Fixed
-
-- A background MCP review still in flight when the server shuts down (SIGINT/SIGTERM) is now cancelled like the CLI's interrupt path and recorded `interrupted` on disk, instead of being left `in_progress` with no signal — a clean client disconnect still lets a near-complete review finish and be recorded `completed`
-
-*Shipped via /execute-epic (epic 4.1.2)*
-
-## [Technical Debt] - 2026-06-18
-
-### Fixed
-
-- `agentStatusName` now emits a structured Warn (with path) on a corrupt or unreadable `status.json` instead of silently re-running the agent (re-spending tokens) with no operator signal
-- `RebuildPool` hard-fails on a completed agent's unparseable findings instead of silently dropping them; merges per-agent findings in roster order so a resumed pool matches an equivalent fresh run; rejects roster names that collapse to the same sanitized dirname; bounds per-agent `findings.txt` reads with a size limit; and writes a best-effort `Interrupted` marker when the final manifest write fails on an interrupted resume
-- Rejected `status.json` symlinks that escape the review tree during the agent scan
-- Recompute the Review tool-stage from the union of resumed statuses instead of preserving the original run's stage verbatim
-- `writeResumedAgents` preserves a prior failed status (and its error) for agents the resumed engine never ran
-- A signal-interrupted resume now emits a structured, `review_id`-correlated Warn, matching the fresh review path for log greppability
-- Guarded a nil result from `gitrange.Resolve`; mapped `ErrEmptyRoster` to usage error (exit 2); rejected `--fresh`/`--thorough`/`--min-severity` when combined with `--resume`; and early-returned for empty pending slots
-- Deduplicated the redaction/interrupt-reporting and review-stage-classifier logic shared by `runReview`/`runResume` and the fresh/resume manifest paths
-- Test hygiene: `require.NoError` in fixtures, a checked `writeResumedAgents` error return for errcheck, a context timeout on `execResume`, and a `testReviewKeyEnv` constant
-
-## [4.1.1] - 2026-06-18
-
-Resume support: finish an interrupted or partially-failed review without re-spending tokens on the agents that already completed.
-
-### Added
-
-- `atcr review --resume <latest|id|path>` re-runs only the pending/failed agents of an existing review into the same directory, then reconciles — completed agents (those whose per-agent `status.json` records `ok`, including clean reviewers that found nothing) are skipped, so their tokens are never re-spent
-- Resume locks the panel: it re-resolves the current git range and compares it (plus the configured roster) against the interrupted run's `manifest.json`, aborting with exit code 2 when the range or roster changed, so a resume can never mix inconsistent results or silently run a different panel
-
-### Changed
-
-- The interrupt notice now points at `atcr review --resume <id>` to finish the remaining agents, alongside `atcr status <id>` to inspect
-
-*Shipped via /execute-epic (epic 4.1.1)*
-
-## [4.1.0] - 2026-06-17
-
-Graceful shutdown and signal handling: Ctrl-C during a review no longer loses completed work.
-
-### Added
-
-- SIGINT/SIGTERM handling: an interrupt cancels the root context so the reviewer fan-out drains cooperatively — no new agents start, and the results of agents that already finished are preserved on disk
-- New `interrupted` review state reported by `atcr review`, `atcr status`, and the MCP `atcr_status` tool, distinguishing a signal-cancelled run from a clean completion, an all-agents failure, or a timeout
-- A 10-second grace period after the first interrupt, after which the process force-exits with code 1 to guard against a hang
-
-### Changed
-
-- A signal-interrupted `atcr review` now prints how many agents completed and where the partial results were saved (`atcr status <id>` to inspect), then exits 1 — instead of dying immediately and discarding the partial run
-
-*Shipped via /execute-epic (epic 4.1)*
-
-## [Technical Debt] - 2026-06-17
-
-### Fixed
-
-- Anchored `sk-`/`Bearer` redaction patterns to token charsets to prevent over-redacting adjacent JSON fields; extended coverage to URL-encoded (`Bearer%20`), base64, and path-escaped secret forms
-- Added ASCII case-fold prefilter and precomputed per-secret encodings for a zero-alloc no-match fast path in `Redact`; benchmarks document the sub-millisecond per-record target
-- Redacted secrets in non-error `KindAny` attributes; non-secret values preserve native slog rendering
-- Made `skKeyPattern` case-insensitive in `llmclient.Client` to match the log-package behavior
-- Re-applied the no-redirect guard onto `WithHTTPClient`-injected clients to prevent `Authorization` header leaks on redirects
-- Scrubbed secret-shaped tokens at root-logger construction so MCP base-logger lines are covered before any per-review redactor layer (AC5)
-- Exempted `review_id`/`agent_name` correlation keys from value redaction to resolve AC9 vs AC5 tension
-- Resolved symlinks in `resolveRedactRoot` so macOS real-form paths (`/private/var/...`) relativize correctly under the review root (AC6)
-- Emitted a warn-level log line when `filepath.Abs` fails on the redact root so silent loss of path relativization is observable
-- Based scorecard store paths in error messages to avoid absolute `~/.config/atcr` path disclosure
-- Routed all `ExecuteReview` and `verify/pipeline.go` stderr warnings through the context logger, enforcing single-sink discipline
-- Validated nil writer in `log.New` to surface misconfiguration at construction rather than first write
-- Wrapped `LevelFromString`/`New` errors with exported `ErrInvalidLevel`/`ErrInvalidFormat` sentinels so callers can branch programmatically
-- Bounded echoed `LOG_LEVEL` and `--log-format` strings in error messages to prevent unbounded user-input reflection
-- Fixed `ClassifiedError.Error` nil-`Err` diagnostic to produce unmistakably diagnostic output instead of a bare classification label
-- Clamped negative `maxRetries` to zero in `WithRetry` to prevent a nil-wrapped exhausted-retries error on zero-attempt loops
-- Honored `Retry-After` header in `client.go` retry backoff on 429/503 responses; falls back to fixed exponential otherwise
-- Clamped retry backoff to `maxBackoff` and added bounded jitter to prevent thundering-herd on concurrent rate-limit responses
-- Bounded error-body drain in `readErrorSnippet` with `io.CopyN` to prevent unbounded reads on the error path
-- Returned empty completion as a classified permanent error in `CompleteWithUsage` so callers fail loudly instead of propagating silent empty content
-- Clamped oversized token counts to `math.MaxInt` instead of zero in `clampNonNegative` to avoid misreporting large valid counts as free
-- Returned the shared `log.Discard()` singleton from per-call logger fallbacks, eliminating a handler allocation per agent invocation
-- Renamed test `sentinel` to `errSentinel` (ST1012) and fixed SA4000 discard-cache identity assertion to clear lint gate failures
-- Documented `PersistentPreRunE` bypass paths rely on the discard-logger fallback; scoped redaction claim to values and documented static-key invariant in `handler.go`
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [Technical Debt] - 2026-06-16
-
-### Fixed
-
-- Removed the redundant third argument from `require.Equal` assertions in the scorecard and leaderboard wiring tests, eliminating suppressed failure messages
-- Added `require.NoError` for the `f.WriteString` call in `seedMalformedStore` so test-setup failures surface immediately instead of masking downstream assertions
-- Fixed `seedMalformedStore` to locate the month file via glob rather than duplicating `monthFromRunID`'s stem logic, preventing silent desync if month derivation changes
-- Extracted a `logger()` nil-guard helper in `handlers.go` and replaced direct `e.log` field accesses throughout, preventing a nil-pointer panic when the engine carries no logger
-- Exported `MsgMalformedSkip` and `MsgWriteFailed` constants from `internal/scorecard`; updated producers and all regression tests to reference them so a single diagnostic reword keeps every assertion green
-- Softened write-failure test comments to describe the failure mechanism generically rather than citing the POSIX-specific `ENOTDIR` errno; documented that `engine.diagWriter`'s typed-nil guard is intentionally delegated to `scorecard.diagWriter`
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [3.6.0] - 2026-06-16
-
-### Added
-
-- Regression tests that lock the scorecard diagnostics writer-wiring at the real call sites: the `leaderboard`, `scorecard`, and `reconcile` CLI commands route store diagnostics to `cmd.ErrOrStderr()`, and the MCP `reconcile` handler routes them to the engine's injected sink — a future refactor that drops the wired writer now fails a test
-
-### Changed
-
-- The MCP engine sources scorecard diagnostics from an injectable writer (defaulting to `os.Stderr`), so the diagnostics wiring is assertable in tests without changing serve-mode behavior
-
-*Shipped via /execute-epic (epic 3.6)*
-
-## [Technical Debt] - 2026-06-16
-
-### Fixed
-
-- Routed the registry's severity normalizer through the canonical `stream.NormalizeSeverity`, removing the fourth duplicate upper-and-trim copy so every package shares one definition
-- Made each reconcile severity-rank lookup self-defending by normalizing at the lookup site (`sortMerged`, `AtOrAbove`, `spreadFromDisagreement`, `soloItem`, `severitySplitItem`, `verificationItem`, `grayZoneItem`, and the disagreement sort tiebreak), so a mixed-case or non-canonical severity can no longer score rank 0 and sort or gate incorrectly
-- Normalized the `writeSummaryGrid` bucket key in report rendering so a mixed-case severity lands in its canonical bucket instead of the OTHER row
-- Precomputed per-finding severity ranks before the report sort comparator, removing a per-comparison string allocation in the render path
-- Copied the shared `SeverityRank` map locally and normalized the all-unknown merge fallback so merged severity casing stays consistent
-- Added whitespace-only input coverage to the `NormalizeSeverity` test, plus package docs and formatting cleanups (final newlines, trailing commas, blank-line removals) across the severity-consumer files
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [3.5.0] - 2026-06-16
-
-### Changed
-
-- Consolidated the severity-rank rubric (`{CRITICAL, HIGH, MEDIUM, LOW}`) and the `NormalizeSeverity` helper into a single canonical owner (`internal/stream`); reconcile, fan-out post-processing, verify, and report now consume that one definition instead of independently redefined rank maps and normalizers
-
-### Fixed
-
-- Fixed a severity casing asymmetry where reconcile compared raw severity values while fan-out normalized them, so a non-canonical or mixed-case severity could desync fan-out truncation from reconcile merging; all consumers now normalize identically before ranking
-
-*Shipped via /execute-epic (epic 3.5)*
-
-## [Technical Debt] - 2026-06-16
-
-### Fixed
-
-- Guarded the scorecard diagnostics writer against a typed-nil `io.Writer` (a non-nil interface wrapping a nil pointer), so such a value falls back to `os.Stderr` instead of panicking on first write
-- Resolved the diagnostics writer once at the top of `FindByRunID` and reused it for the inner reads and the adjacent-month warning, instead of re-resolving it on each path
-- Added cross-referencing doc notes between `ReadOpts.Writer` and `EmitOpts.Diag` marking the divergent field names as intentional, and documented their concurrency contract and local/trusted-sink assumption
-- Corrected a stale `EmitForReconcile` doc comment to reflect the MCP handler passing `EmitOpts{Diag: os.Stderr}`
-- Added the transient `.planning/.active_sprint` session marker to `.gitignore` so it can no longer be committed as a process artifact
-
-*Shipped via /resolve-td + /finalize-td*
-
-## [3.4.0] - 2026-06-16
-
-### Changed
-
-- Scorecard read and emit operational diagnostics now write to a caller-injectable writer (`ReadOpts.Writer` / `EmitOpts.Diag`, defaulting to `os.Stderr`) instead of the process-global `os.Stderr`; the CLI reconcile and leaderboard paths route them through `cmd.ErrOrStderr()` and the MCP reconcile path supplies `os.Stderr`, so diagnostics are now redirectable and assertable in tests
-
-*Shipped via /execute-epic (epic 3.4)*
-
-## [3.3.0] - 2026-06-16
-
-### Added
-
-- Per-run scorecard warns on orphan verification verdicts to surface potentially missed reviews
-
-### Fixed
-
-- Surfaced ignored fallback review constraints and enforced primary-wins precedence in review fanout
-- Union all reviewers per finding key in verdict tallies, correctly crediting all reviewers of duplicate finding locations
-- Explicit field assignment for `ExportFilters` to harden against `FilterOpts` field reorder
-
-## [Technical Debt] - 2026-06-15
-
-### Fixed
-
-- Added bounds guard in `winningAttribution` loop to prevent out-of-range panic when `perSkeptic` is longer than `skeptics` or `perTripped` (`internal/verify/pipeline.go`)
-- Sanitized newlines in `logSkepticFailure` detail field to prevent log-injection of forged `atcr: verify:` lines (`internal/verify/invoke.go`)
-- Initialized `TrippedBudgets` to empty slice (not nil) at three locations in the verify pipeline so JSON serialization emits `[]` rather than `null`
-- Corrected `runVerify` docstring: replaced false SERIALLY / no-concurrency-knob / tracked-as-TD-009 claims with an accurate description of the bounded worker pool (`internal/verify/pipeline.go`)
-- Rejected registry scope entries containing control characters to prevent path-injection via crafted agent configs (`internal/registry/config.go`)
-- Logged the discarded `ReadAmbiguousClusters` error to stderr in `LoadDisagreements` instead of silently dropping it (`internal/reconcile/disagree.go`)
-- Removed redundant `base.Model = ""` assignments in `verifyFinding` (`internal/verify/pipeline.go`)
-- Exported `reconcile.SeverityRank` and updated `internal/report` to reference the canonical ranking function, eliminating the duplicate rank table
-- Fixed nil-`Verification` panic in `verificationItem` when a finding has no verification block (`internal/reconcile/disagree.go`)
-- Fixed `scoreFor` integer overflow for out-of-bounds severity indices (`internal/reconcile/disagree.go`)
-- Validated `SchemaVersion` major version in `ReadDisagreements` to reject incompatible schema versions with a clear error
-- Eliminated double `BuildDisagreements` call in `Emit` by extracting a `renderMarkdown` helper (`internal/reconcile/disagree.go`)
-
-## [Technical Debt] - 2026-06-14
-
-### Fixed
-
-- Fixed gray-zone member exclusion to key on file+line rather than problem text, eliminating rare double-surface when a merged cluster's problem string diverges after merge (`internal/reconcile/disagree.go:108`)
-- Gray-zone clusters with all-unknown/blank severities now score above zero and always surface in the disagreement radar (`internal/reconcile/disagree.go:316`)
-- `atcr report --disagreements --format json` now emits the disagreements file as JSON; unsupported `--format` combinations return a usage error instead of silently emitting markdown (`cmd/atcr/report.go:53`)
-- Prior `verification.json` is now loaded lazily, eliminating spurious "metadata not carried forward" warnings when no findings are skipped in the current run (`internal/verify/pipeline.go:225`)
-- `parseVerdict` now iterates candidate JSON objects to skip decoy braces, preventing prose-embedded `{}` from silently degrading a confirmed verdict to unverifiable (`internal/verify/verdict.go:81`)
-- `aggregateVerdicts` now restricts the `Skeptic` field to winner names in clear-majority runs, so a dissenter's name no longer appears without corresponding reasoning (`internal/verify/votes.go:67`)
-- `registryPath` now uses canonical resolved-path containment instead of substring matching, closing a balanced `a/..` traversal bypass (`internal/mcp/handlers.go:434`)
-- `dropped_by_min_severity` and `truncated_by_max_findings` counters persisted in per-agent `status.json`, making post-processing volume reductions observable after the run (`internal/fanout/postprocess.go`)
-- Extracted `reconcile.LoadDisagreements` shared helper, eliminating radar-build duplication between `cmd/atcr/report.go` and `internal/mcp/handlers.go`
-- Replaced hand-rolled `itoa` helper with `strconv.Itoa` in `verify_test.go`
-- Documented intentional `escTrunc` truncation policy in `writeRadarItems`
-
-## [3.2.0] - 2026-06-14
-
-### Added
-
-- Disagreement radar: surfaces the highest-tension spots in a change — severity splits, solo findings, gray-zone clusters, and verification disagreements — ranked by severity spread × reviewer independence
-- `atcr report --disagreements` focused view showing ranked tension spots with model positions side by side
-- "Disagreements" section in the standard `report.md`, above the consensus findings and omitted when there are none
-- `reconciled/disagreements.json` — a versioned cross-exam handoff artifact for downstream consumption
-
-### Changed
-
-- The markdown report (`atcr report`, `reconciled/report.md`, and the MCP report tool) now carries the disagreement radar above its findings; output is byte-identical for reviews with no disagreements
-
-*Shipped via /execute-epic (epic 3.2)*
-
-## [3.1.0] - 2026-06-14
-
-### Fixed
-
-- `verification.json` now records the winning skeptic's model in multi-vote runs instead of always the first skeptic's, and names every participant on a tie
-- Tripped budgets are captured in the structured `trippedBudgets` field instead of only being buried in free-text notes
-- Findings skipped on a re-run (already verified) retain their original `model`/`durationMs`/`trippedBudgets` rather than losing them, and no longer inherit metadata from a prior record whose verdict no longer matches
-- `model` is left empty on the no-eligible-skeptic and tool-harness-unavailable paths, attributing a model only to skeptics that actually ran
-
-*Shipped via /execute-epic (epic 3.1)*
-
-## [3.0.0] - 2026-06-14
-
-### Added
-
-- `atcr verify` command with MCP tool, skeptic invocation pipeline, verdict parsing, vote aggregation, and `--require-verified` review gate
-- Report v2 rendering with skeptic/refuted sections and `verification.md` output
-- Confidence v2 scoring with artifact emission and gate counter updates
-- `AgentsByRole` and `SelectEligibleSkeptics` for adversarial agent selection
-
-### Fixed
-
-- Mitigated prompt injection in finding fields via XML delimiters and randomized per-call sentinel tags
-- Prevented triple-backtick injection using adaptive fence length in findings output
-- Excluded skeptics with undefined provider at selection time
-- Recorded all participating skeptic models in `verifyFinding`
-- Surfaced `Truncated` flag on `ChatResponse` when `finish_reason=length`
-- Corrected `FindingsProcessed` count to exclude no-eligible-skeptic findings
-- Normalized verdict case/whitespace before enum switch in `parseVerdict`
-- Resolved review gate ignoring `fail_on` from project config
-- Fixed `IsFailing` threshold normalization and severity sorting in report grid
-- Added `OTHER` buckets for non-canonical severity and confidence values in summary grid
-- Preserved unknown fields during `manifest.json` round-trip in `UpdateManifestStage`
-- Preserved large integer precision in `UpdateSummaryVerdicts` using `json.Decoder.UseNumber`
-
-*Shipped via /execute-sprint (sprint 3.0_adversarial_verification)*
-
-## [2.2.0] - 2026-06-13
-
-### Added
-
-- Per-agent review guardrails on `AgentConfig` in `~/.config/atcr/registry.yaml`, all optional and backward-compatible: `scope` (a list of categories injected into the persona prompt as a soft "Review Focus" hint — it steers a reviewer without dropping out-of-category findings), `min_severity` (a hard floor — findings below it are dropped from the agent's `findings.txt` before reconciliation), and `max_findings` (a hard cap — the agent's findings are truncated to the N most severe, so a flood of `LOW` items can never bury a `HIGH` one).
-- `min_severity` and `max_findings` are enforced deterministically in the fan-out per-source path, right after the engine stamps the `REVIEWER` column from the registry agent key, with dropped/truncated counts logged to stderr. The reconciler stays source-agnostic. A fallback agent inherits its primary's constraints (the constraint follows the slot, like the persona prompt). Reviewer-identity stamping was already model-proof, so no change was needed there.
-
-*Shipped via /execute-epic (epic 2.2)*
-
-## [2.1.0] - 2026-06-13
-
-### Added
-
-- The `manifest.json` review stage now records the filesystem snapshot the tool-using reviewers ran against: `snapshot_mode` (`"live"` when head matched a clean HEAD on the fast path, `"worktree"` when a detached git worktree was created), `head_sha` (the resolved head the snapshot was taken at), and `snapshot_worktree_path` (the temporary worktree path, or `""` in live mode). These are backward-compatible additions present only when a review runs tool-enabled agents, so 1.x manifests and pure single-shot rosters are unchanged.
-
-*Shipped via /execute-epic (epic 2.1)*
-
-## [2.0.0] - 2026-06-13
-
-### Fixed
-
-- Normalized zero `Limits` fields to `DefaultLimits` in `NewDispatcher` to prevent silent unlimited-cap behavior
-- Joined first and retry worktree-add errors via `errors.Join` so both causes are surfaced in the error message
-- Used `filepath.EvalSymlinks` in `snapshotCleanupGuard` to handle symlinked TMPDIR on macOS/Windows
-- Logged warning on malformed turn field in replay instead of silently discarding the decode error
-- Used case-insensitive comparison for `.git` directory skip in grep and `list_files`
-- Replaced single-turn oscillation guard with a 3-turn ring buffer to catch ABAB signal oscillation; `loop_hygiene` now recorded in `TrippedBudgets` on hygiene halt
-- Fixed `OriginalBytes` to store byte count (not match count) in truncated grep results
-- Wrapped `JailError` in `ToolError` so the `Execute` contract is maintained
-
-*Shipped via /execute-sprint (sprint 2.0_tool_using_reviewers)*
-
-## [1.9.0] - 2026-06-13
-
-### Fixed
-
-- A `WritePool` I/O fault that aborted persistence after one or more reviewer agents had already run could leave a `summary.json` with `partial: false` even though only a subset of per-agent artifacts reached disk. A later `atcr reconcile` (CLI or MCP) over that review could then walk the surviving artifacts and emit a non-partial verdict that silently dropped the unflushed agent. `PoolSummary` now carries a `failure_marker` field set only by the best-effort failure summary, and the shared partial-flag reader forces `partial: true` whenever the marker is present and at least one agent succeeded — so reconcile over a write-aborted review is always treated as partial. The `reconcile` package is unchanged; the correction lands entirely in the caller-side reader.
-
-*Shipped via /execute-epic (epic 1.9)*
-
-## [1.8.0] - 2026-06-12
-
-### Added
-
-- `atcr review --output-dir <path>` writes the full review tree (`manifest.json`, `payload/`, `sources/`, `reconciled/`) to an explicit path instead of `.atcr/reviews/<id>/`, so external orchestrators (skills, CI pipelines, wrapper scripts) can direct output to a location they control with no post-run file moves. A relative path resolves against the current directory; the target must be new or empty (a non-empty directory is rejected with exit 2 so existing content is never clobbered); `--output-dir` and `--id` are mutually exclusive. `atcr reconcile` and `atcr report` operate on the same path via their existing `[id-or-path]` argument — no new flag needed.
-
-### Changed
-
-- `--output-dir` runs do not update the `.atcr/latest` pointer, which continues to track interactive runs under `.atcr/reviews/` only.
-
-*Shipped via /execute-epic (epic 1.8)*
-
-## [1.7.0] - 2026-06-12
-
-### Verified
-
-- Closed the three Story-05 manual verification gates with one authorized live-provider review run: the orchestration loop (range → review → poll → host review → reconcile → report) verified end-to-end (AC 05-03), the host review's adversarial praise-free tone confirmed by independent inspection (AC 05-04), and ambiguity adjudication's merge/distinct sensibility and idempotency exercised through real `atcr reconcile` (AC 05-04). No code behavior changed.
-
-### Notes
-
-- The live run surfaced that the default 512 KiB payload byte budget yields ~155k-token payloads that exceed common model context/plan limits, and `atcr doctor`'s trivial-nonce probe does not catch it — captured as technical debt for a sizing-guideline/warning follow-up.
-
-*Shipped via /execute-epic (epic 1.7)*
-
-## [1.6.0] - 2026-06-12
-
-### Changed
-
-- Blocks and files payload builds now issue a constant number of git processes per review range instead of 4–5 per changed file: change classification is batched into one `--name-status`/`--numstat` pass, and each diff variant (`--function-context`, `--unified=10`, `--unified=0`, plain `-M`) is run once over the whole range and split per file on `diff --git` boundaries. Payload output is byte-identical to before — verbatim bodies, changed-region sentinels, rename pairing, and binary/deleted markers are unchanged
-
-### Fixed
-
-- The diff splitter keys each file chunk against the known changed-file list using only the `diff --git` header, so file content that mimics a diff header (a line rendering as `+++ b/...`) or a path containing spaces can no longer mis-attribute a chunk or silently empty a file's body; a chunk that matches no changed file is now logged rather than dropped
-
-*Shipped via /execute-epic (epic 1.6)*
-
-## [1.5.0] - 2026-06-12
-
-### Added
-
-- `stale` review status: `atcr status` and the `atcr_status` MCP tool now report a distinct, inferred terminal state for a review whose fan-out died — `summary.json` never appeared and the manifest's `started_at + timeout_secs` (plus a 60s grace margin) has elapsed. The Skill poll loop treats `stale` as terminal, so a dead review no longer reads `in_progress` forever and the orchestration loop can tell a running review from an orphaned one
-
-### Changed
-
-- `ReadReviewStatus` infers `stale` from the effective timeout persisted in `manifest.json`; manifests written without `timeout_secs` (zero value) have no inferable deadline and keep reporting `in_progress`, so the change is backward compatible. The `ReviewStatus` JSON shape is unchanged apart from the new `status` value — the MCP `StatusResult` alias and `atcr status` output stay compatible
-- A review inferred `stale` is now rejected by the reconcile/report completeness guard, which would otherwise emit a verdict from a dead, partially-written agent set; the error guides the user to re-run rather than poll
-
-### Fixed
-
-- A post-fan-out persistence failure (a `WritePool` I/O error) now writes a best-effort failure marker so the review reports `failed` instead of being stuck `in_progress` forever; if even that marker cannot be written, stale inference promotes the review out of `in_progress` once its timeout elapses
-
-*Shipped via /execute-epic (epic 1.5)*
-
-## [1.4.0] - 2026-06-12
-
-### Added
-
-- `max_parallel` setting: bounds the fan-out engine's parallel lane with a buffered semaphore so a large roster cannot burst every provider call at once. Resolved through the usual `CLI --max-parallel > .atcr/config.yaml > registry.yaml > embedded default` precedence; `0` = unbounded escape hatch, negative is rejected as a usage error (exit 2). The serial lane is unaffected
-- `--max-parallel N` flag on `atcr review`, a `max_parallel` key in the `atcr init` config template, and documentation in `docs/registry.md`
-
-### Changed
-
-- The embedded default for `max_parallel` is `10`, matching the prior effective fan-out for typical (≤10-agent) rosters. A roster larger than 10 agents that previously fired every call at once is now throttled to 10 concurrent provider calls by default — raise the cap or set `max_parallel: 0` to restore the old unbounded behavior
-
-*Shipped via /execute-epic (epic 1.4)*
-
-## [1.3.0] - 2026-06-11
-
-### Added
-
-- Project registry overlay: a repo can ship `.atcr/registry.yaml` defining its own providers and agents, merged over the user-level `~/.config/atcr/registry.yaml` so a clone is self-contained — no contributor has to mirror agent definitions by hand. Project entries shadow same-named user entries whole (no field-level merge); new names are added. Strictly parsed like every other config file
-- `atcr trust` command to authorize project-defined providers: lists project providers and their status (`atcr trust`), pins one by the sha256 of its `(base_url, api_key_env)` pair (`atcr trust <name>` / `--all`) in `~/.config/atcr/trusted_providers.yaml`. Only the env var name is ever stored — never the key value
-- Trust gate: a project-defined provider cannot receive a key until trusted, so a cloned repo cannot silently redirect a key to an arbitrary endpoint; `atcr review` and `atcr doctor` fail fast (exit 2) naming the provider and the `atcr trust` remedy. A project agent that references an existing user-defined provider needs no trust prompt
-- Loud first-use banner naming each active project provider's `base_url` and key env on stderr
-- `SOURCE` (user/project) provenance column in the `atcr doctor` table and a `source` field in its `--json` output, so overlay shadowing is visible rather than silent
-
-### Changed
-
-- Registry validation (roster references, fallback dangling/cycle checks, range checks) now runs over the merged user+project view; cross-tier fallback chains are supported, and every load error names the file that defined the offending entry (`registry.yaml` vs `.atcr/registry.yaml`)
-- `docs/registry.md` documents the overlay, whole-entry merge semantics, the trust model, and a unified `CLI > project > user > embedded` precedence diagram now uniform across settings, personas, and definitions
-
-*Shipped via /execute-epic (epic 1.3)*
-
-## [1.2.0] - 2026-06-11
-
-### Added
-
-- `atcr doctor` command: self-tests every configured model endpoint with a trivial nonce prompt and a generous default token budget (2048, override with `--max-tokens`), so misconfigured providers, models, API keys, and base URLs are caught before a real review run burns time and tokens
-- Per-agent doctor report (human table or `--json`) classifying each endpoint as `ok`, `ok_warning` (HTTP 200 but the marker is absent/empty — raise `--max-tokens`), `auth_failed`, `not_found`, `rate_limited`, `provider_error`, `network_error`, `timeout`, `missing_key`, or `invalid_config`; the key and base_url pre-flight checks run with no network call
-- `atcr doctor` resolves the effective roster (agents + serial_agents, including fallback chains), deduplicates to distinct (provider, model, base_url) targets, and invokes each target at most once
-- `--agents` flag to self-test a subset of the roster and `--timeout` for a per-call deadline independent of the review timeout
-- Exit-code contract for `atcr doctor`: `0` when every agent has a working invocation path (primary or fallback), `1` when any agent has none, `2` for usage/configuration errors
-
-### Changed
-
-- `llmclient` now surfaces a structured `*HTTPStatusError` (HTTP status + bounded, secret-redacted body snippet) so callers can classify provider failures by status via `errors.As`, and exposes a per-call `max_tokens` request option (previously absent)
-
-*Shipped via /execute-epic (epic 1.2)*
-
-## [1.1.0] - 2026-06-11
-
-### Added
-
-- Reserved (parsed-and-validated, inert in 1.x) agent fields in the registry schema for the future agentic stages: `tools`, `max_turns`, `tool_budget_bytes`, `role`
-- Reserved optional `verification` block (`{verdict, skeptic, notes}`) in `reconciled/findings.json` for the future adversarial-verification stage; absent in 1.x and tolerated on read
-- `stages` array in `manifest.json`, recording `["review"]` in 1.x
-- Reserved per-agent `turns`, `tool_calls`, `tool_bytes` counters in `status.json` (absent in 1.x)
-
-### Changed
-
-- Registry v1 parser now accepts the reserved agent fields (previously documented as rejected as unknown keys); they load and type-validate but remain inert, so a config can target a future stage without forcing a format-version break
-- Documented every reserved field with its owning future epic in `docs/registry.md` and `docs/findings-format.md`
-
-*Shipped via /execute-epic (epic 1.1)*
-
-## [1.0.0] - 2026-06-11
-
-### Added
-
-- Go CLI binary with `review`, `reconcile`, `report`, `init`, `serve`, and `status` commands
-- Fanout engine that dispatches review prompts to heterogeneous LLM reviewer personas
-- Git range resolver supporting base/head refs, merge-commit SHA, and `.atcr/latest` pointer
-- Reconciliation pipeline with dedup, cluster-merge, ambiguous detection, and confidence scoring
-- MCP stdio server with tool schemas for review/reconcile/report/status integration
-- Payload builders with diff extraction, persona templates, byte-budget truncation, and manifest generation
-- Registry/config system with project overlay, persona resolution, precedence chain, and gate configuration
-- Six embedded reviewer personas (bruce, greta, kai, mira, dax, otto) with shared base template
-- Agent Skill definition for host-model review contribution and orchestration
-- CI workflow with gofmt verification, golangci-lint, and race-enabled test suite
+[Unreleased]: https://github.com/samestrin/atcr/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/samestrin/atcr/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/samestrin/atcr/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/samestrin/atcr/releases/tag/v0.1.0

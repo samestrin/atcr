@@ -36,8 +36,12 @@ therefore restarts at `v0.1.0` and stays in the import-compatible `v0.x` / `v1.x
 range. Reaching `v2.0.0` later would require adding a `/v2` module-path suffix
 repo-wide — a deliberate, separate decision, not an automatic bump.
 
-The `CHANGELOG.md` epic/sprint headings (`## [1.0.0]` … `## [33.2.0]`) remain as
-the historical **development** changelog; they are no longer 1:1 with git tags.
+The epic/sprint headings from before `v0.1.0` (`## [1.0.0]` … `## [33.2.0]`) are
+kept verbatim in [`docs/changelog-history.md`](changelog-history.md) as the
+historical **development** changelog; they were never git tags. Since 2026-10-11,
+`CHANGELOG.md` has one `## [X.Y.Z]` section per release tag, plus `## [Unreleased]`
+for changes not yet tagged. Cutting a release renames `[Unreleased]` to the new
+tag's version and date.
 
 ### Forward-only — no retroactive backfill
 
