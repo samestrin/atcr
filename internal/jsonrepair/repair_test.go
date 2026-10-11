@@ -92,6 +92,11 @@ func TestRepair_Declines(t *testing.T) {
 		`[{"a":1},{"b":`,              // cut-off after a colon
 		`[{"a":1},{"b"`,               // cut-off after a key
 		`{"a":1`,                      // top-level object at end of input could be a cut-off element
+		`{"a":true`,                   // top-level object never closed at end of input, even after a complete value
+		`{"a":"s"`,                    // same, after a complete string
+		`{"a":[1]`,                    // same, after a complete array
+		`{"a":{}`,                     // same, after a complete object
+		`{`,                           // same, empty
 		`{"findings":[{"a":1}`,        // wrapper cut off: inner array is not top-level
 		`[[1,2],[3`,                   // inner array cut off
 		`[1,2`,                        // a final number may itself be cut off
