@@ -419,8 +419,8 @@ func isJSONFence(line string) bool {
 }
 
 // IsJSONFence is isJSONFence for other packages: internal/verify's verdict
-// repair pass recognizes a ```json fence by this rule, so the two lanes cannot
-// disagree about what a fenced reply is.
+// repair pass opens a ```json fence by this rule, so the two lanes cannot
+// disagree about where a json fence starts.
 func IsJSONFence(line string) bool { return isJSONFence(line) }
 
 // IsFenceMarker is isFenceMarker for other packages: a line that opens or

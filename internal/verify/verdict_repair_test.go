@@ -153,8 +153,8 @@ func TestParseVerdictCore_FencedRepairBeatsLooseProseExample(t *testing.T) {
 }
 
 // TestParseVerdictCore_FenceRuleMatchesTheFindingsParser: the repair pass
-// recognizes a ```json fence by the same rule as the findings parser
-// (stream.IsJSONFence opens, stream.IsFenceMarker closes, both on whole lines),
+// opens a ```json fence by the findings parser's rule (stream.IsJSONFence) and
+// closes it on the next stream.IsFenceMarker line, both whole-line tests,
 // so a genuinely fenced damaged `refuted` is graded in every form that rule
 // accepts, and a ```json that does not open a fence there does not open one here.
 func TestParseVerdictCore_FenceRuleMatchesTheFindingsParser(t *testing.T) {
@@ -179,6 +179,7 @@ func TestParseVerdictCore_FenceRuleMatchesTheFindingsParser(t *testing.T) {
 		"opener with no line after it":        damaged + " is my draft.\n```json",
 		"opener never closed":                 "Checked it.\n```json\n" + damaged + " is a draft",
 		"inside a non-json fence":             "Format:\n```text\n" + damaged + "\n```\nI did not finish.",
+		"```json closing an unclosed fence":   "Format:\n```text\nnotes\n```json\n" + damaged + "\n```\n",
 	} {
 		v, cause, repaired := parseVerdictCore(in)
 		assert.Equal(t, parseCauseMalformed, cause, "%s: notes %s", name, v.Notes)
@@ -186,6 +187,22 @@ func TestParseVerdictCore_FenceRuleMatchesTheFindingsParser(t *testing.T) {
 		assert.False(t, repaired, name)
 		assert.False(t, carriesVerdict(in), name)
 	}
+}
+
+// TestParseVerdictCore_StrictObjectCountsTowardSingleVerdictKeyed: a strictly
+// valid verdict-keyed object counts toward "the single verdict-keyed object in
+// the reply", so a strict out-of-enum schema echo next to one loose `confirmed`
+// leaves that loose object neither fenced nor alone, and it is not repaired into
+// the answer. The reply reports the out-of-enum value, as it did before repair.
+func TestParseVerdictCore_StrictObjectCountsTowardSingleVerdictKeyed(t *testing.T) {
+	t.Parallel()
+	in := `The schema is {"verdict": "<confirmed|refuted|unverifiable>", "reasoning": "..."}` +
+		" and mine is {'verdict': 'confirmed', 'reasoning': 'example',} for now."
+	v, cause, repaired := parseVerdictCore(in)
+	assert.Equal(t, parseCauseInvalidEnum, cause, "notes: %s", v.Notes)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.False(t, repaired)
+	assert.False(t, carriesVerdict(in))
 }
 
 // TestJSONRepairedVerdictMetric_MatchesMetricsKey pins the spelled-out counter

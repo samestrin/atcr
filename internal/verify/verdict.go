@@ -291,14 +291,16 @@ func hasVerdictKey(obj string) bool {
 }
 
 // jsonFenceSpans returns the [start, end) byte ranges of the contents of every
-// closed ```json fence in s, by the findings parser's rule: a line that
-// stream.IsJSONFence accepts opens one (leading spaces, any case of "json", an
-// info string after it), and the next line stream.IsFenceMarker accepts closes
-// it. Both are whole-line tests, so a ```json mentioned mid-line in prose opens
-// nothing, and a backtick run inside the verdict's reasoning closes nothing.
-// Contents of a fence of any other kind are not a span. As in the findings
-// parser, any fence marker line closes the open fence. An unclosed fence is not
-// a span, so nothing in it counts as fenced.
+// closed ```json fence in s. The OPENER rule is the findings parser's: a line
+// that stream.IsJSONFence accepts (leading spaces, any case of "json", an info
+// string after it). The CLOSER rule is this lane's own and more lenient than the
+// findings parser's, which needs a marker of the same character at least as
+// long: here the next line stream.IsFenceMarker accepts, backticks or tildes of
+// any length, closes the open fence. Both are whole-line tests, so a ```json
+// mentioned mid-line in prose opens nothing, and a backtick run inside the
+// verdict's reasoning closes nothing. A fence of any other kind is tracked so its
+// contents are not a span, and a ```json line that closes it does not also open a
+// json fence. An unclosed fence is not a span, so nothing in it counts as fenced.
 func jsonFenceSpans(s string) [][2]int {
 	var spans [][2]int
 	inFence, inJSON := false, false
