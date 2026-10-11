@@ -1353,6 +1353,15 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
 			runID:   at + "-multi-agent",
 		},
+		{
+			// Valid JSON whose reconciled_at WOULD match, padded past the cap: only the
+			// cap can refuse it, so a read that ignored the cap would own the run.
+			name: "oversized summary.json owns nothing",
+			base: "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `","pad":"` +
+				strings.Repeat("x", maxSummaryBytes) + `"}`),
+			runID: at + "-multi-agent",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1364,6 +1373,59 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			assert.Equal(t, tc.want, reviewDirOwnsRun(reviewDir, tc.runID))
 		})
 	}
+}
+
+// TD internal/localdebt/backfill.go:376 — the ownership check re-read summary.json
+// for every policy-refused candidate. One backfill pass must read a review dir's
+// summary.json at most once, however many records' refusals land in that dir.
+//
+// Three records, each pointing at its own symlinked review.md (a policy refusal) in
+// ONE owning review dir, so each record's replay asks the same dir whether it owns
+// the run. Every refusal must still be attributed, from a single open.
+func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	opens := map[string]int{}
+	orig := openSummary
+	openSummary = func(name string) (*os.File, error) {
+		opens[name]++
+		return orig(name)
+	}
+	t.Cleanup(func() { openSummary = orig })
+
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+
+	agents := []string{"dax", "kira", "odo"}
+	lines := make([]string, 0, len(agents))
+	for i, agent := range agents {
+		rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", agent)
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+		id := fmt.Sprintf("aaaa000%d", i+1)
+		lines = append(lines, `{"schema_version":3,"id":"`+id+`","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-`+id+`","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["`+agent+`"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/`+agent+`/review.md","line":3}}`)
+	}
+	writeShard(t, store, "2026-08", lines...)
+
+	res, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+
+	assert.Equal(t, len(agents), res.PolicyUnrepairable,
+		"every refusal sits in the record's own review dir, so each is still attributed")
+	assert.Equal(t, map[string]int{filepath.Join(ownDir, "reconciled", "summary.json"): 1}, opens,
+		"the owning dir's summary.json is opened once for the whole pass, not once per refused candidate")
 }
 
 // rawSummary returns a setup that writes body verbatim as the review's
