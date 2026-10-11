@@ -36,19 +36,27 @@ const (
 // asks to continue can never leave the offset unmoved — the infinite loop a
 // callback-mutates-nothing shape would otherwise allow.
 func forEachJSONObject(s string, fn func(obj string) bool) {
-	rest := s
+	forEachJSONObjectAt(s, func(obj string, _ int) bool { return fn(obj) })
+}
+
+// forEachJSONObjectAt is forEachJSONObject that also hands fn the byte offset of
+// obj in s, for the verdict repair pass, which must know where a candidate sits.
+func forEachJSONObjectAt(s string, fn func(obj string, start int) bool) {
+	off := 0
 	for {
+		rest := s[off:]
 		obj := extractJSONObject(rest)
 		if obj == "" {
 			next := strings.IndexByte(rest, '{')
 			if next < 0 {
 				return
 			}
-			rest = rest[next+1:]
+			off += next + 1
 			continue
 		}
-		rest = rest[strings.Index(rest, obj)+len(obj):]
-		if fn(obj) {
+		start := off + strings.Index(rest, obj)
+		off = start + len(obj)
+		if fn(obj, start) {
 			return
 		}
 	}
@@ -127,7 +135,7 @@ const jsonRepairedVerdictMetric = `atcr_json_repaired_total{lane="verdict"}`
 // repaired reports that the usable verdict came from a candidate jsonrepair had
 // to fix. It is false for every other result. The caller that accepts the
 // verdict counts it (verdictFromAnswer); this function does not, because
-// carriesVerdict asks it about single objects while classifying a reply and
+// carriesVerdict asks it about sections of a reply while classifying it and
 // would count one reply several times.
 //
 // Two passes, and repair is a last try across the WHOLE reply: the first pass
@@ -135,7 +143,8 @@ const jsonRepairedVerdictMetric = `atcr_json_repaired_total{lane="verdict"}`
 // verdict does the second pass read the same candidates through
 // jsonrepair.Repair. Repairing each candidate in place would let a loosely
 // written quoted example ahead of the real verdict win, where strict parsing
-// skips it. Candidate extraction is unchanged, so a reply missing a closing
+// skips it. Even then the second pass reads only candidates that cannot be a
+// prose example (repairPass). Candidate extraction is unchanged, so a reply missing a closing
 // brace is still out of reach, and the truncation guard in invokeSkeptic refuses
 // a cut-off reply before it gets here.
 func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause, repaired bool) {
@@ -151,7 +160,7 @@ func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause
 	// cannot diverge on what "the envelope" is (TD internal/verify/invoke.go:782).
 	var result *reclib.Verification
 	var invalidEnum *string
-	read := func(obj string) bool {
+	read := func(obj string) *reclib.Verification {
 		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
 		// key (even empty) from an absent key — avoids a second unmarshal pass.
 		var candidate struct {
@@ -159,7 +168,7 @@ func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause
 			Reasoning string  `json:"reasoning"`
 		}
 		if json.Unmarshal([]byte(obj), &candidate) != nil || candidate.Verdict == nil {
-			return false
+			return nil
 		}
 		normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
 		switch normVerdict {
@@ -169,8 +178,7 @@ func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause
 			// documented notesRawCap must apply here too — it used to cover only the
 			// three diagnostic Notes, leaving the runaway case it was written for
 			// unbounded (TD internal/verify/verdict.go:61).
-			result = &reclib.Verification{Verdict: normVerdict, Notes: truncateForNotes(candidate.Reasoning)}
-			return true
+			return &reclib.Verification{Verdict: normVerdict, Notes: truncateForNotes(candidate.Reasoning)}
 		default:
 			// An out-of-enum value is NOT necessarily the committed verdict: it is
 			// just as often a quoted example ahead of the real one. Do not
@@ -180,17 +188,15 @@ func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause
 				v := truncateForNotes(*candidate.Verdict)
 				invalidEnum = &v
 			}
-			return false
+			return nil
 		}
 	}
-	forEachJSONObject(response, read)
+	forEachJSONObject(response, func(obj string) bool {
+		result = read(obj)
+		return result != nil
+	})
 	if result == nil {
-		// Second pass. Repair returns ok=false for a candidate that is already
-		// valid JSON, so the strict pass's candidates are not read twice.
-		forEachJSONObject(response, func(obj string) bool {
-			fixed, ok := jsonrepair.Repair(obj)
-			return ok && read(fixed)
-		})
+		result = repairPass(response, read)
 		repaired = result != nil
 	}
 	if result != nil {
@@ -207,6 +213,111 @@ func parseVerdictCore(response string) (v *reclib.Verification, cause parseCause
 	}
 
 	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, parseCauseMalformed, false
+}
+
+// repairPass is parseVerdictCore's second pass. It reads candidates through
+// jsonrepair.Repair, but only those that cannot be a loose example in the
+// skeptic's prose, and returns the verdict read (nil when none is taken). read is
+// parseVerdictCore's per-candidate reader.
+//
+// Repairing every candidate let a quoted example or schema echo such as
+// `{'verdict': 'refuted', 'reasoning': 'example',}` become the graded verdict
+// whenever no strict verdict followed it. Before repair that reply was
+// malformed_output, which is unverifiable and blocks. So a repaired candidate is
+// read only when it sits inside a ```json fence, or it is the single
+// verdict-keyed object in the whole reply. A repaired `refuted` is held to the
+// stricter of those: it must be fenced or be the whole reply, because `refuted`
+// is the one grade that clears the gate (reconcile.IsFailing), the same policy
+// verdictFromAnswer applies to sectionPrefixOnly. The accepted loss is a
+// mis-written lone `refuted` with prose around it and no fence, which stays
+// malformed_output as it did before repair.
+//
+// Repair returns ok=false for a candidate that is already valid JSON, so the
+// strict pass's candidates are not read twice; they still count towards
+// "single verdict-keyed object".
+func repairPass(response string, read func(obj string) *reclib.Verification) *reclib.Verification {
+	type candidate struct {
+		obj, fixed string
+		start      int
+	}
+	var loose []candidate
+	keyed := 0
+	forEachJSONObjectAt(response, func(obj string, start int) bool {
+		fixed, ok := jsonrepair.Repair(obj)
+		if ok {
+			if hasVerdictKey(fixed) {
+				keyed++
+				loose = append(loose, candidate{obj: obj, fixed: fixed, start: start})
+			}
+		} else if hasVerdictKey(obj) {
+			keyed++
+		}
+		return false
+	})
+
+	fences := jsonFenceSpans(response)
+	whole := strings.TrimSpace(response)
+	for _, c := range loose {
+		fenced := false
+		for _, f := range fences {
+			if c.start >= f[0] && c.start+len(c.obj) <= f[1] {
+				fenced = true
+				break
+			}
+		}
+		if !fenced && keyed != 1 {
+			continue
+		}
+		v := read(c.fixed)
+		if v == nil {
+			continue
+		}
+		if v.Verdict == verdictRefuted && !fenced && c.obj != whole {
+			continue
+		}
+		return v
+	}
+	return nil
+}
+
+// hasVerdictKey reports whether obj is a JSON object carrying a "verdict" key,
+// whatever its value.
+func hasVerdictKey(obj string) bool {
+	var candidate struct {
+		Verdict *string `json:"verdict"`
+	}
+	return json.Unmarshal([]byte(obj), &candidate) == nil && candidate.Verdict != nil
+}
+
+// jsonFenceSpans returns the [start, end) byte ranges of the contents of every
+// closed ```json fence in s. The opener is "```json" at the start of a line; the
+// contents run from the line after it to the next "```". An unclosed fence is not
+// a span, so nothing in it counts as fenced.
+func jsonFenceSpans(s string) [][2]int {
+	var spans [][2]int
+	off := 0
+	for {
+		i := strings.Index(s[off:], "```json")
+		if i < 0 {
+			return spans
+		}
+		open := off + i
+		off = open + len("```json")
+		if open > 0 && s[open-1] != '\n' {
+			continue
+		}
+		nl := strings.IndexByte(s[off:], '\n')
+		if nl < 0 {
+			return spans
+		}
+		start := off + nl + 1
+		end := strings.Index(s[start:], "```")
+		if end < 0 {
+			return spans
+		}
+		spans = append(spans, [2]int{start, start + end})
+		off = start + end + len("```")
+	}
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
