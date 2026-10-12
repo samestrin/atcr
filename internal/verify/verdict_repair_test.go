@@ -130,7 +130,7 @@ func TestParseVerdictCore_ProseExampleIsNotRepairedIntoTheVerdict(t *testing.T) 
 		assert.False(t, repaired, name)
 		assert.False(t, carriesVerdict(in), "%s: carriesVerdict must agree with parseVerdictCore", name)
 
-		got, ambiguous, _ := verdictFromAnswer(in)
+		got, ambiguous, _, _ := verdictFromAnswer(in)
 		require.NotNil(t, got, name)
 		assert.False(t, ambiguous, name)
 		assert.Equal(t, verdictUnverifiable, got.Verdict, name)
