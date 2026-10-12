@@ -224,3 +224,21 @@ func TestAggregateVerdicts_HoistsEveryFragmentGradeMarker(t *testing.T) {
 	assert.Equal(t, kaiMarker+" "+ottoMarker+" kai: "+long+" | otto: holds", got.Notes,
 		"markers lead verbatim in voter order and are removed from the entries they came from")
 }
+
+// A Notes that starts like the marker but never closes it (cut off before its
+// `]`) is not a marker: splitFragmentMarker must not detect it, and the aggregate
+// must leave that entry exactly as it was rather than hoist half a marker.
+func TestSplitFragmentMarker_UnclosedMarkerIsNotDetected(t *testing.T) {
+	t.Parallel()
+	const unclosed = "[verdict_after_unopened_closer: 3 prefix byte(s)"
+	marker, rest, ok := splitFragmentMarker(unclosed)
+	assert.False(t, ok, "a marker prefix with no closing bracket is not a marker")
+	assert.Empty(t, marker)
+	assert.Equal(t, unclosed, rest, "the text is returned unchanged")
+
+	got := combineReasonings([]*reclib.Verification{
+		v(verdictConfirmed, "kai", unclosed),
+		v(verdictConfirmed, "otto", "holds"),
+	})
+	assert.Equal(t, "kai: "+unclosed+" | otto: holds", got, "nothing is hoisted")
+}
