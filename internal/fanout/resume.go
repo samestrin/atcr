@@ -766,7 +766,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	}
 	p.manifest = &m
 
-	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
+	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum, ChunkRecordErr: p.chunks.writeErr()}
 	if sum.Total == 0 {
 		return res, ErrEmptyRoster
 	}

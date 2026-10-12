@@ -705,7 +705,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// Chunk coverage (Epic 35.16.13 T5), read back from the chunks.json records
 		// the fan-out just finished writing; reported on success, partial and
 		// all-failed alike, since it is emitted before the error guard below.
-		cov := readRunCoverage(ctx, result.Dir)
+		cov := readRunCoverage(ctx, result.Dir, result.ChunkRecordErr)
 		// --axi replaces the one-line outcome + the four human summary lines with a
 		// single token-dense TOON run-summary payload on stdout; the human lines are
 		// gated off entirely (AC 01-03). An axi render fault is left unwrapped so it

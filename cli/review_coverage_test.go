@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +33,7 @@ func coverageFixtureDir(t *testing.T) string {
 const fixtureCoverageLine = "Coverage: 68/128 persona-bins reviewed, 64/128 files covered by at least one persona (50.0%)\n"
 
 func TestReadRunCoverage_FixtureTotals(t *testing.T) {
-	cov := readRunCoverage(t.Context(), coverageFixtureDir(t))
+	cov := readRunCoverage(t.Context(), coverageFixtureDir(t), nil)
 	require.NoError(t, cov.err)
 	require.True(t, cov.measured)
 	assert.Equal(t, fanout.Coverage{BinsReviewed: 68, BinsPlanned: 128, FilesCovered: 64, FilesInScope: 128}, cov.Coverage)
@@ -60,7 +62,7 @@ func TestWriteCoverageLine_UnmeasuredPrintsNothing(t *testing.T) {
 }
 
 func TestCoverageGate(t *testing.T) {
-	fixture := readRunCoverage(t.Context(), coverageFixtureDir(t))
+	fixture := readRunCoverage(t.Context(), coverageFixtureDir(t), nil)
 
 	var stderr bytes.Buffer
 	err := coverageGate(&stderr, fixture, 90)
@@ -205,7 +207,7 @@ func TestReadRunCoverage_CorruptRecordIsUnavailable(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte("{torn"), 0o644))
 
-	cov := readRunCoverage(t.Context(), dir)
+	cov := readRunCoverage(t.Context(), dir, nil)
 	require.Error(t, cov.err)
 	assert.False(t, cov.measured)
 	var b bytes.Buffer
@@ -249,4 +251,30 @@ func TestResume_PendingAgentsReportsAndGatesCoverage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// NaN satisfies neither bound check and no percentage is ever below it, so it
+// would disable the gate; it and the infinities are usage errors (EST-936).
+func TestRequireCoverageThreshold_NonFiniteIsUsageError(t *testing.T) {
+	for _, v := range []string{"NaN", "nan", "Inf", "+Inf", "-Inf"} {
+		cmd := &cobra.Command{}
+		cmd.Flags().Float64(requireCoverageFlag, 0, "")
+		require.NoError(t, cmd.Flags().Set(requireCoverageFlag, v), "strconv accepts %s", v)
+		_, _, err := requireCoverageThreshold(cmd)
+		require.Error(t, err, "--require-coverage %s", v)
+		assert.Equal(t, exitUsage, exitCode(err), "--require-coverage %s", v)
+	}
+}
+
+// A chunks.json write that failed during the run leaves no record on disk, so
+// the review reads as unbinned; the write failure the review result carries
+// makes the gate fail closed instead of passing with a note (EST-936).
+func TestCoverageGate_RecordWriteFailureFailsClosed(t *testing.T) {
+	cov := readRunCoverage(t.Context(), t.TempDir(), errors.New("disk full"))
+	var stderr bytes.Buffer
+	err := coverageGate(&stderr, cov, 0)
+	require.Error(t, err, "an unrecorded run cannot be vouched for, even at 0%")
+	assert.Equal(t, exitFailure, exitCode(err))
+	assert.Contains(t, err.Error(), "disk full")
+	assert.NotContains(t, stderr.String(), "not applied")
 }
