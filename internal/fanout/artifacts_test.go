@@ -480,7 +480,7 @@ func TestRebuildPool_DualWritesPool(t *testing.T) {
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		okResult("zeta", "CRITICAL|z.go:1|z|fz|security|15|ez"),
 		okResult("alpha", "HIGH|a.go:1|a|fa|security|15|ea"),
-	}, nil))
+	}, nil, nil))
 	// writeResumedAgents writes only per-agent artifacts, so the merged pool
 	// files come from the rebuild alone.
 	require.NoFileExists(t, filepath.Join(poolDir, findingsToonFile))

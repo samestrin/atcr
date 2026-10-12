@@ -277,7 +277,7 @@ func TestRebuildPool_RejectsDuplicateBasename(t *testing.T) {
 	// Write artifacts under the shared basename "alpha".
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "foo/alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
-	}, nil))
+	}, nil, nil))
 	// Both "foo/alpha" and "bar/alpha" resolve to dirname "alpha".
 	// Without the guard, the same on-disk dir is counted twice.
 	roster := []string{"foo/alpha", "bar/alpha"}
@@ -304,7 +304,7 @@ func TestRebuildPool_RejectsOversizeFindings(t *testing.T) {
 	poolDir := filepath.Join(dir, "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
-	}, nil))
+	}, nil, nil))
 
 	_, _, err := RebuildPool(context.Background(), poolDir, []string{"alpha"})
 	require.Error(t, err, "an oversize findings.txt must fail the rebuild, not be read unbounded")
@@ -318,7 +318,7 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
 		{Agent: "bravo", Status: StatusOK, Content: ""},
 		{Agent: "charlie", Status: StatusFailed, Err: errors.New("boom")},
-	}, nil))
+	}, nil, nil))
 
 	sum, statuses, err := RebuildPool(context.Background(), poolDir, []string{"alpha", "bravo", "charlie"})
 	require.NoError(t, err)
@@ -350,7 +350,7 @@ func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
 	poolDir := filepath.Join(dir, "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
-	}, nil))
+	}, nil, nil))
 	// Corrupt alpha's findings.txt: strip the version header so ParseSource fails.
 	// Remove the .toon sibling so the v1 file is the one selected.
 	require.NoError(t, os.Remove(filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsToonFile)))
@@ -401,7 +401,7 @@ func TestRebuildPool_FindingsMergedInRosterOrder(t *testing.T) {
 		{Agent: "zeta", Status: StatusOK, Content: "CRITICAL|z.go:1|z finding|fix z|security|15|z()"},
 		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|a finding|fix a|security|15|a()"},
 		{Agent: "mira", Status: StatusOK, Content: "CRITICAL|m.go:1|m finding|fix m|security|15|m()"},
-	}, nil))
+	}, nil, nil))
 
 	_, _, err := RebuildPool(context.Background(), poolDir, roster)
 	require.NoError(t, err)
@@ -430,7 +430,7 @@ func TestWriteResumedAgents_PreservesFailedStatusOnNeverRun(t *testing.T) {
 	// Pre-populate agent "alpha" as failed (with a real error message).
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "alpha", Status: StatusFailed, Err: errors.New("provider 500: rate limited")},
-	}, nil))
+	}, nil, nil))
 
 	// Sanity: status.json shows failed with the real error.
 	sdata, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
@@ -444,7 +444,7 @@ func TestWriteResumedAgents_PreservesFailedStatusOnNeverRun(t *testing.T) {
 	// be lost.
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "alpha", Status: StatusTimeout, Content: "", Err: context.Canceled},
-	}, nil))
+	}, nil, nil))
 
 	// Re-read alpha's status.json: it must still contain the original error.
 	sdataAfter, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
@@ -470,7 +470,7 @@ func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
 		{Agent: "kai", Status: StatusOK, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	// Resume runs only the pending slots (mira, otto).
 	var slots []Slot
@@ -549,7 +549,7 @@ func TestExecuteResume_ReviewStageReflectsResumedRun(t *testing.T) {
 			Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
 		{Agent: "kai", Status: StatusOK, Tools: true, ToolsRequested: true, ToolsDegraded: false,
 			Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	// Stamp the manifest with a Review stage showing greta+kai as degraded
 	// (simulating the bug: the manifest says degraded, but the on-disk statuses
@@ -680,7 +680,7 @@ func TestExecuteResume_ClaimLedgerReflectsTheResumedRun(t *testing.T) {
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|cursor.go:3|x|y|security|15|ev"},
 		{Agent: "kai", Status: StatusOK, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	// The operator disables the ledger between the interrupted run and its resume.
 	srv := mockProvider(t)
@@ -736,7 +736,7 @@ func TestExecuteResume_PrefetchReflectsTheResumedRun(t *testing.T) {
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|cursor.go:3|x|y|security|15|ev"},
 		{Agent: "kai", Status: StatusOK, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	// The operator disables pre-fetching between the interrupted run and its
 	// resume — the same lever the ledger test uses, for the same reason: it is

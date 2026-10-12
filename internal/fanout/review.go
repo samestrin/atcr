@@ -258,6 +258,12 @@ type PreparedReview struct {
 	// nil on every path with no range to read (baseline, --diff-file), leaving the
 	// manifest's own value standing.
 	prefetch *payload.PrefetchStatus
+	// priorChunks is the chunks.json each re-dispatched persona's interrupted run
+	// left, read by ExecuteResume before the engine overwrites it, and chunks is
+	// the ledger runEngine planned (Epic 35.16.13 T3). Both nil outside a resume
+	// of a baseline multi-chunk run.
+	priorChunks map[string]*chunkRecord
+	chunks      *chunkLedger
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -1222,7 +1228,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// pending on disk BEFORE dispatch, then rewrite each persona's chunks.json as
 	// its bins resolve, so a run killed mid-fan-out still names every bin it
 	// planned and which never finished. nil (no file) for a bulk or diff run.
+	// On resume (Epic 35.16.13 T3) the record starts as the union with the prior
+	// run's reviewed bins this run does not re-dispatch, and p.chunks keeps the
+	// ledger so writeResumedAgents can rebuild the persona from that union.
 	if ledger := newChunkLedger(log.FromContext(ctx), poolDir, p.Slots); ledger != nil {
+		ledger.carryReviewed(p.priorChunks)
+		p.chunks = ledger
 		ledger.writePlan()
 		opts = append(opts, WithSlotDone(ledger.slotDone))
 	}

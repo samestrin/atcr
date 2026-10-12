@@ -534,10 +534,13 @@ func readScopeConstraintArtifact(reviewDir string) (string, error) {
 func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
+	// Read the interrupted run's chunks.json before the engine's ledger
+	// rewrites it, so the reviewed bins it records survive the resume.
+	p.priorChunks = readPriorChunkRecords(poolDir, p.Slots)
 	results, resumedStage := runEngine(ctx, completer, p, poolDir)
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
-	if err := writeResumedAgents(poolDir, results, p.Changed); err != nil {
+	if err := writeResumedAgents(poolDir, results, p.Changed, p.chunks); err != nil {
 		return nil, err
 	}
 
@@ -629,7 +632,13 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 // it never actually invoked because the parent ctx was cancelled first) is
 // skipped so a previously-failed agent's original error message is preserved
 // rather than overwritten with a generic "context canceled" timeout.
-func writeResumedAgents(poolDir string, results []Result, changed payload.ChangedLines) error {
+//
+// A chunked persona whose resume replays reviewed bins from its prior
+// chunks.json (chunks.carriedFiles non-nil) is rebuilt from the union of those
+// bins and the resumed ones instead (writeMergedAgent, Epic 35.16.13 T3). Every
+// other persona, including any whose resume re-ran its whole payload, is written
+// exactly as before.
+func writeResumedAgents(poolDir string, results []Result, changed payload.ChangedLines, chunks *chunkLedger) error {
 	for _, r := range results {
 		// Detect a synthesized timeout: the engine never invoked this agent
 		// (no content produced) and the error is a pure context cancellation
@@ -641,6 +650,12 @@ func writeResumedAgents(poolDir string, results []Result, changed payload.Change
 		dir, err := agentDirName(r.Agent)
 		if err != nil {
 			return err
+		}
+		if carried := chunks.carriedFiles(dir); carried != nil {
+			if err := writeMergedAgent(poolDir, dir, r, changed, chunks, carried); err != nil {
+				return err
+			}
+			continue
 		}
 		fr := findingsFor(r, changed)
 		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
