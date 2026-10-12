@@ -107,6 +107,7 @@ func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration) {
 //
 // cov carries the run's chunk coverage (Epic 35.16.13 T5) as scalars; an
 // unmeasured cov adds no columns, so a bulk or diff run's payload is unchanged.
+// The legacy pipe encoder never adds them: its column set is frozen.
 func writeReviewSummaryAXI(w io.Writer, legacyPipe bool, id, dir string, m summarySnapshot, cov runCoverage) error {
 	render := report.RenderReviewSummaryAXI
 	if legacyPipe {

@@ -171,7 +171,7 @@ Coverage: 68/128 persona-bins reviewed, 64/128 files covered by at least one per
 
 - `68/128 persona-bins reviewed` adds up every persona's bins: those that finished `ok` (and were not refused by the reviewer) against all the bins planned, deferred ones included.
 - `64/128 files covered by at least one persona` counts the in-scope files that at least one persona actually reviewed. The percentage is this file figure, and it is the number the gate below uses.
-- `--axi` reports the same four numbers as `bins_reviewed`, `bins_planned`, `files_covered` and `files_in_scope`. A bulk (single-bin) or diff review prints no coverage line.
+- `--axi` reports the same four numbers as `bins_reviewed`, `bins_planned`, `files_covered` and `files_in_scope`; the deprecated `--legacy-pipe` payload keeps its frozen column set and never carries them. A bulk (single-bin) or diff review prints no coverage line.
 
 **Finishing a partial run.** `atcr review --resume <id>` drains the missing bins: a persona with any `pending`, `failed`, `timeout` or `deferred` bin in `chunks.json` is resumed, and only those bins are sent again, while bins already reviewed keep their findings. A persona whose bins are all `ok` costs no new calls. Run `--resume` again until the coverage line reaches what you need; a run deferred past the ceiling needs one resume per 64 bins left.
 

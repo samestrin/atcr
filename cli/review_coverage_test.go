@@ -40,18 +40,17 @@ func TestReadRunCoverage_FixtureTotals(t *testing.T) {
 	writeCoverageLine(&text, cov)
 	assert.Equal(t, fixtureCoverageLine, text.String())
 
-	for _, legacy := range []bool{false, true} {
-		var axi bytes.Buffer
-		require.NoError(t, writeReviewSummaryAXI(&axi, legacy, "id", "dir", summarySnapshot{}, cov))
-		head, row, _ := strings.Cut(axi.String(), "\n")
-		assert.Contains(t, head, "bins_reviewed", "legacy=%v", legacy)
-		sep := ","
-		if legacy {
-			sep = "|"
-		}
-		assert.True(t, strings.HasSuffix(strings.TrimSpace(row), strings.Join([]string{"68", "128", "64", "128"}, sep)),
-			"legacy=%v row %q", legacy, row)
-	}
+	var axi bytes.Buffer
+	require.NoError(t, writeReviewSummaryAXI(&axi, false, "id", "dir", summarySnapshot{}, cov))
+	head, row, _ := strings.Cut(axi.String(), "\n")
+	assert.Contains(t, head, "bins_reviewed")
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(row), "68,128,64,128"), "row %q", row)
+
+	// The legacy pipe format is frozen: it carries no coverage columns.
+	var legacy bytes.Buffer
+	require.NoError(t, writeReviewSummaryAXI(&legacy, true, "id", "dir", summarySnapshot{}, cov))
+	assert.NotContains(t, legacy.String(), "bins_reviewed")
+	assert.NotContains(t, legacy.String(), "|68|128|64|128")
 }
 
 func TestWriteCoverageLine_UnmeasuredPrintsNothing(t *testing.T) {
