@@ -30,6 +30,9 @@ func TestVerificationDoc_ParsingIsDefensive(t *testing.T) {
 		"`invalid_verdict:` is reported only when nothing usable follows",
 		// Both markers, what each means, and that each leads the notes.
 		"`[verdict_after_unopened_closer: N prefix byte(s) discarded]`",
+		// N counts the closer itself (invoke.go's discardedPrefix is everything up
+		// to the graded text), so 15 bytes of draft plus `</think>` is 23.
+		"N is the length of the dropped prefix: the text before the closer plus the closer tag itself",
 		"`[verdict_before_unopened_closer: text after the closer ignored]`",
 		"leads its notes with",
 		// The inert form a model-typed token of either name is rewritten to.
