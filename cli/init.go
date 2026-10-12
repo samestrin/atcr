@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
 	builtins "github.com/samestrin/atcr/personas"
@@ -32,7 +33,26 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			refresh, err := cmd.Flags().GetBool("refresh-personas")
+			if err != nil {
+				return err
+			}
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return err
+			}
 			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			if refresh {
+				if force {
+					return usageError(errors.New("--refresh-personas cannot be combined with --force"))
+				}
+				// A refresh touches only the built-in persona copies: no
+				// config.yaml, no .gitignore, no community fetch.
+				return runRefreshPersonas(".", dryRun, out)
+			}
+			if dryRun {
+				return usageError(errors.New("--dry-run requires --refresh-personas"))
+			}
 			if err := runInit(".", force, out, errOut); err != nil {
 				return err
 			}
@@ -52,7 +72,144 @@ func newInitCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
 	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
+	cmd.Flags().Bool("refresh-personas", false, "overwrite built-in persona copies under .atcr/personas that differ from the embedded ones, hand edits included")
+	cmd.Flags().Bool("dry-run", false, "with --refresh-personas: list the files it would overwrite and write nothing")
 	return cmd
+}
+
+// refreshWriteFile writes one refreshed persona file. It is a variable so a test
+// can fail a write partway through a refresh.
+var refreshWriteFile = atomicfs.WriteFileAtomic
+
+// runRefreshPersonas brings every built-in persona copy under dir's
+// .atcr/personas (`_base.md` included) back to the embedded content (Epic
+// 35.16.16). It first lists each copy that differs from the embedded one,
+// marking those that also differ from the stamp as edited; with dryRun it stops
+// there and writes nothing. A copy that is missing is not recreated, and
+// config.yaml, .gitignore and community personas are never touched. Git is the
+// undo: the generated .atcr/.gitignore keeps personas/ tracked.
+//
+// Each file is written by an atomic temp-file write and rename, so a symlinked
+// copy is replaced by a regular file and its target is left untouched. The
+// stamp is written last, so a run that fails partway leaves the stamp as it was
+// and a re-run finishes the job. A missing .atcr/personas or one that cannot be
+// written to is a named error, raised before any file changes.
+func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
+	personasDir := filepath.Join(dir, ".atcr", "personas")
+	info, err := os.Stat(personasDir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("cannot refresh personas: %s does not exist — run atcr init first", personasDir)
+	case err != nil:
+		return fmt.Errorf("cannot refresh personas: %w", err)
+	case !info.IsDir():
+		return fmt.Errorf("cannot refresh personas: %s is not a directory", personasDir)
+	}
+
+	type refresh struct {
+		file, content string
+		edited        bool // differs from its stamp entry
+		stamped       bool
+	}
+	stamp, hadStamp := registry.ReadPersonaStamp(personasDir)
+	if !hadStamp {
+		stamp = registry.NewPersonaStamp()
+	}
+	stampChanged := false
+	var todo []refresh
+	base, err := builtins.Base()
+	if err != nil {
+		return err
+	}
+	files := []refresh{{file: "_base.md", content: base}}
+	for _, name := range builtins.Names() {
+		content, err := builtins.Get(name)
+		if err != nil {
+			return err
+		}
+		files = append(files, refresh{file: name + ".md", content: content})
+	}
+	for _, f := range files {
+		path := filepath.Join(personasDir, f.file)
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // no copy to refresh
+		} else if err != nil {
+			return fmt.Errorf("cannot check %s: %w", path, err)
+		}
+		embeddedHash := registry.HashPersonaContent([]byte(f.content))
+		stampHash, stamped := stamp.Files[f.file]
+		var fileHash string
+		if data, err := os.ReadFile(path); err == nil {
+			fileHash = registry.HashPersonaContent(data)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("cannot read %s: %w", path, err)
+		} // a dangling symlink has no content: it differs
+		if fileHash == embeddedHash && info.Mode().IsRegular() {
+			// Already current. Record it so a re-run after an interrupted
+			// refresh leaves an accurate entry for a file the first run wrote.
+			if stampHash != embeddedHash {
+				stamp.Record(f.file, []byte(f.content))
+				stampChanged = true
+			}
+			continue
+		}
+		f.stamped = stamped
+		f.edited = stamped && fileHash != stampHash
+		todo = append(todo, f)
+	}
+
+	if len(todo) == 0 {
+		_, _ = fmt.Fprintln(out, "Persona files are current; nothing to refresh")
+		if dryRun || !stampChanged {
+			return nil
+		}
+	} else {
+		verb := "Refreshing"
+		if dryRun {
+			verb = "Would refresh"
+		}
+		_, _ = fmt.Fprintf(out, "%s %d persona file(s) in %s:\n", verb, len(todo), personasDir)
+		for _, f := range todo {
+			note := ""
+			switch {
+			case f.edited:
+				note = " (edited by hand — your changes will be overwritten)"
+			case !f.stamped:
+				note = " (no stamp, edits unknown)"
+			}
+			_, _ = fmt.Fprintf(out, "  %s%s\n", f.file, note)
+		}
+		if dryRun {
+			return nil
+		}
+	}
+
+	// Prove the directory is writable before changing anything, so a
+	// read-only directory fails with every file and the stamp as they were.
+	probe, err := os.CreateTemp(personasDir, ".refresh-probe-*")
+	if err != nil {
+		return fmt.Errorf("cannot refresh personas: %s is not writable: %w", personasDir, err)
+	}
+	_ = probe.Close()
+	_ = os.Remove(probe.Name())
+
+	for _, f := range todo {
+		// The rename replaces the directory entry itself, so a symlink becomes
+		// a regular file and its target is never written through.
+		path := filepath.Join(personasDir, f.file)
+		if err := refreshWriteFile(path, []byte(f.content)); err != nil {
+			return fmt.Errorf("failed to write %s: %w", path, err)
+		}
+		stamp.Record(f.file, []byte(f.content))
+	}
+	if err := registry.WritePersonaStamp(personasDir, stamp); err != nil {
+		return fmt.Errorf("failed to write %s: %w", registry.PersonaStampPath(personasDir), err)
+	}
+	if len(todo) > 0 {
+		_, _ = fmt.Fprintf(out, "Refreshed %d persona file(s); review the changes with git diff\n", len(todo))
+	}
+	return nil
 }
 
 // atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
