@@ -1,0 +1,148 @@
+package fanout
+
+import (
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/samestrin/atcr/internal/atomicfs"
+)
+
+// chunksFile is the per-persona durable chunk record written beside status.json
+// at sources/pool/raw/agent/<persona>/chunks.json (Epic 35.16.13 T1).
+const chunksFile = "chunks.json"
+
+// chunksSchemaVersion stamps the chunks.json shape so a later reader (chunk-level
+// resume) can refuse a record it does not understand instead of misreading it.
+const chunksSchemaVersion = 1
+
+// Bin outcomes in chunks.json. pending and deferred are written before dispatch;
+// ok / failed / timeout are the engine's own Result.Status values, copied in as
+// each bin resolves. deferred marks a bin the ceiling cut and that is never
+// dispatched; nothing writes it yet (the deferral policy is T2's), but readers
+// must already treat it as unreviewed.
+const (
+	chunkOutcomePending  = "pending"
+	chunkOutcomeDeferred = "deferred"
+)
+
+// chunkRecord is the on-disk shape of one persona's chunks.json: the full
+// planned bin list, written before any bin is dispatched and rewritten as each
+// bin resolves, so a run killed mid-fan-out still names every bin it planned and
+// which of them never finished. It follows cli/benchmark_checkpoint.go's rule:
+// the unit's record is on disk before the run advances past it.
+type chunkRecord struct {
+	SchemaVersion int              `json:"schema_version"`
+	Agent         string           `json:"agent"`
+	Bins          []chunkRecordBin `json:"bins"`
+}
+
+// chunkRecordBin is one planned bin: its index in the persona's chunk order, the
+// repo-relative files it carries (the primary's planned set), and its outcome.
+type chunkRecordBin struct {
+	Index   int      `json:"index"`
+	Files   []string `json:"files"`
+	Outcome string   `json:"outcome"`
+}
+
+// chunkLedger owns the chunks.json records for one engine run. Every mutation
+// and write happens under mu, so concurrent per-bin completions from the
+// parallel lane are serialised and each file is always a whole, consistent
+// snapshot (atomicfs.WriteJSON never leaves a torn file).
+type chunkLedger struct {
+	log     *slog.Logger
+	rawBase string
+	mu      sync.Mutex
+	// records is keyed by the persona's on-disk directory name.
+	records map[string]*chunkRecord
+	// bySlot maps a slot index to its persona dir and bin index; a slot with no
+	// entry (bulk, chunked-diff) is not recorded.
+	bySlot map[int]chunkSlotRef
+	// order keeps the personas in first-seen slot order so writes are
+	// deterministic.
+	order []string
+}
+
+type chunkSlotRef struct {
+	dir string
+	bin int
+}
+
+// newChunkLedger plans a chunks.json record for every persona the baseline
+// (--all / --dir) multi-chunk fan-out split into more than one bin. A slot is a
+// baseline bin when its primary carries both a chunk total above one and the
+// file set its chunk ships (chunkFiles); the chunked-diff path has no file set
+// and a bulk slot has a chunk total of at most one, so neither is recorded and a
+// run with no baseline bins returns nil (no file is ever written).
+func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLedger {
+	l := &chunkLedger{
+		log:     logger,
+		rawBase: filepath.Join(poolDir, poolRawAgentDir),
+		records: map[string]*chunkRecord{},
+		bySlot:  map[int]chunkSlotRef{},
+	}
+	for i, s := range slots {
+		if s.Primary.ChunkTotal <= 1 || len(s.Primary.chunkFiles) == 0 {
+			continue
+		}
+		dir, err := agentDirName(s.Primary.Name)
+		if err != nil {
+			// writePool rejects the same name later; nothing to record here.
+			continue
+		}
+		rec, ok := l.records[dir]
+		if !ok {
+			rec = &chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: s.Primary.Name}
+			l.records[dir] = rec
+			l.order = append(l.order, dir)
+		}
+		bin := len(rec.Bins)
+		rec.Bins = append(rec.Bins, chunkRecordBin{
+			Index:   bin,
+			Files:   append([]string(nil), s.Primary.chunkFiles...),
+			Outcome: chunkOutcomePending,
+		})
+		l.bySlot[i] = chunkSlotRef{dir: dir, bin: bin}
+	}
+	if len(l.records) == 0 {
+		return nil
+	}
+	return l
+}
+
+// writePlan writes every persona's full planned bin list before dispatch.
+func (l *chunkLedger) writePlan() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, dir := range l.order {
+		l.writeLocked(dir)
+	}
+}
+
+// slotDone is the engine's per-slot completion hook: it stamps the resolved
+// bin's outcome and rewrites that persona's chunks.json before returning.
+func (l *chunkLedger) slotDone(i int, r Result) {
+	ref, ok := l.bySlot[i]
+	if !ok {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.records[ref.dir].Bins[ref.bin].Outcome = r.Status
+	l.writeLocked(ref.dir)
+}
+
+// writeLocked writes one persona's record. Best-effort, like the transcript: a
+// write failure is logged and the review continues, because losing the record
+// must never cost the review itself. Caller holds mu.
+func (l *chunkLedger) writeLocked(dir string) {
+	path := filepath.Join(l.rawBase, dir, chunksFile)
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err == nil {
+		err = atomicfs.WriteJSON(path, l.records[dir])
+	}
+	if err != nil {
+		l.log.Warn("chunks.json write failed", "agent", l.records[dir].Agent, "path", path, "err", err)
+	}
+}
