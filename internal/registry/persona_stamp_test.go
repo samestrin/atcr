@@ -72,6 +72,19 @@ func TestPersonaStamp_EmptyRoundTrips(t *testing.T) {
 	require.Empty(t, got.Files)
 }
 
+// TestPersonaStamp_RecordOnZeroValue pins that Record works on a zero-value
+// PersonaStamp (nil Files) instead of panicking on a nil-map write.
+func TestPersonaStamp_RecordOnZeroValue(t *testing.T) {
+	dir := t.TempDir()
+	var stamp PersonaStamp
+	stamp.Record("_base.md", []byte("base"))
+	require.NoError(t, WritePersonaStamp(dir, stamp))
+
+	got, ok := ReadPersonaStamp(dir)
+	require.True(t, ok)
+	require.Equal(t, map[string]string{"_base.md": HashPersonaContent([]byte("base"))}, got.Files)
+}
+
 // TestPersonaStamp_MissingOrUnparseableIsNoStamp pins the degrade-safely
 // contract: a workspace initialized before the stamp existed, or one whose
 // stamp is damaged, reads as "no stamp" — never an error.
