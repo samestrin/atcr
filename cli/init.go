@@ -139,12 +139,15 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		}
 		embeddedHash := registry.HashPersonaContent([]byte(f.content))
 		stampHash, stamped := stamp.Files[f.file]
+		// Only a regular file is read. A symlink, FIFO or device is always
+		// replaced, so its content is never needed — and reading through a
+		// link to /dev/zero or a FIFO would hang. Its empty hash differs.
 		var fileHash string
-		if data, err := os.ReadFile(path); err == nil {
-			fileHash = registry.HashPersonaContent(data)
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("cannot read %s: %w", path, err)
-		} // a dangling symlink has no content: it differs
+		if info.Mode().IsRegular() {
+			if fileHash, err = hashPersonaCopy(path); err != nil {
+				return fmt.Errorf("cannot read %s: %w", path, err)
+			}
+		}
 		if fileHash == embeddedHash && info.Mode().IsRegular() {
 			// Already current. Record it so a re-run after an interrupted
 			// refresh leaves an accurate entry for a file the first run wrote.
@@ -210,6 +213,30 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		_, _ = fmt.Fprintf(out, "Refreshed %d persona file(s); review the changes with git diff\n", len(todo))
 	}
 	return nil
+}
+
+// maxPersonaCopyBytes caps how much of an on-disk persona copy the refresh
+// reads to hash it. A persona file is a few KB; .atcr/personas/ is tracked, so
+// a cloned repo can carry a huge one, and reading it whole must not be possible.
+const maxPersonaCopyBytes = 1 << 20
+
+// hashPersonaCopy hashes the regular file at path, reading at most
+// maxPersonaCopyBytes+1 bytes. A file over the cap hashes to "", which differs
+// from every embedded persona, so the refresh replaces it.
+func hashPersonaCopy(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxPersonaCopyBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxPersonaCopyBytes {
+		return "", nil
+	}
+	return registry.HashPersonaContent(data), nil
 }
 
 // atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
