@@ -1151,8 +1151,9 @@ var markerTokenPattern = regexp.MustCompile(`(?i)verdict_(?:after|before)_unopen
 
 // neutraliseMarkerTokens rewrites every spelling of an engine marker token in
 // model-derived text to its hyphenated form, keeping the model's letter case.
-// The rewrite preserves length, so a Notes already capped by truncateForNotes
-// stays capped.
+// The rewrite preserves length, so it never grows the text it is given; it says
+// nothing of the final Notes, which can exceed notesRawCap once
+// leadWithFragmentMarker prepends the engine marker (renderers re-cap it).
 func neutraliseMarkerTokens(s string) string {
 	return markerTokenPattern.ReplaceAllStringFunc(s, func(tok string) string {
 		return strings.ReplaceAll(tok, "_", "-")
