@@ -142,6 +142,64 @@ func TestChunkResume_FourOfSixtyFourDispatchesSixtyBins(t *testing.T) {
 	assert.True(t, info.AllComplete())
 }
 
+// T4 over T6: bins the ceiling deferred make an otherwise all-ok persona
+// pending, the resume dispatches exactly those bins, and once they succeed the
+// persona's T6 gap (unreviewed_files, deferred_files) drains to zero instead of
+// counting the resumed bins twice. The write-back records only the resumed files.
+func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
+	// No global byte budget, so the write-back sheds nothing: each 40 KB file
+	// fits the test model's per-agent budget alone but not two together, so
+	// every persona packs one file per bin and defers the last two.
+	cfg := twoAgentConfig("http://unused")
+	files := map[string]string{}
+	var paths []string
+	for i := 0; i < maxChunksPerAgent+2; i++ {
+		p := fmt.Sprintf("f%03d.go", i)
+		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
+		paths = append(paths, p)
+	}
+	repo := baselineRepo(t, files)
+	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
+	require.NoError(t, err)
+	require.Len(t, prep.Slots, 2*maxChunksPerAgent, "each persona dispatches 64 bins and defers 2")
+	_, err = ExecuteReview(context.Background(), baselineChunkFindingCompleter{}, prep)
+	require.NoError(t, err)
+	poolDir := filepath.Join(prep.Dir, "sources", "pool")
+	for _, a := range []string{"greta", "kai"} {
+		st := readAgentStatus(t, poolDir, a)
+		require.Equal(t, StatusOK, st.Status, a)
+		require.Equal(t, 2, st.DeferredFiles, a)
+		require.Equal(t, 2, st.UnreviewedFiles, a)
+	}
+
+	rprep, info, err := PrepareResume(context.Background(), cfg, prep.Dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"greta", "kai"}, info.Pending, "a deferred bin makes an ok persona pending")
+	require.Len(t, rprep.Slots, 4, "only the deferred bins are dispatched")
+	deferred := paths[maxChunksPerAgent:]
+	assert.Equal(t, deferred, slotFiles(rprep.Slots, "greta"))
+	assert.Equal(t, deferred, slotFiles(rprep.Slots, "kai"))
+	assert.ElementsMatch(t, deferred, sortedKeys(rprep.baseline.reviewed), "narrowReviewed keeps only the resumed files")
+
+	_, err = ExecuteResume(context.Background(), baselineChunkFindingCompleter{}, rprep)
+	require.NoError(t, err)
+	for _, a := range []string{"greta", "kai"} {
+		st := readAgentStatus(t, poolDir, a)
+		assert.Equal(t, maxChunksPerAgent+2, st.ChunkCount, a)
+		assert.Zero(t, st.UnreviewedChunks, a)
+		assert.Zero(t, st.UnreviewedFiles, "%s: the resumed deferred files are reviewed, not double-counted", a)
+		assert.Zero(t, st.DeferredFiles, a)
+		assert.ElementsMatch(t, paths, agentFindingFiles(t, poolDir, a), a)
+	}
+	n := 2 * (maxChunksPerAgent + 2)
+	assertCoverage(t, prep.Dir, Coverage{BinsReviewed: n, BinsPlanned: n, FilesCovered: maxChunksPerAgent + 2, FilesInScope: maxChunksPerAgent + 2})
+
+	require.NoError(t, rprep.CommitBaselineIndex("resume-1"))
+	recorded, excluded := rprep.BaselineCoverage()
+	assert.Equal(t, 2, recorded, "the two resumed files are recorded")
+	assert.Zero(t, excluded)
+}
+
 // A single surviving bin is still dispatched as a recorded bin and merged with
 // the reviewed ones, rather than taken as a bulk run that overwrites them.
 func TestChunkResume_OneUnreviewedBinMerges(t *testing.T) {
