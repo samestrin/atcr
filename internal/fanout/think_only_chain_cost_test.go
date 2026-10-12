@@ -294,8 +294,9 @@ func (c *thinkOnlyThenFindingCompleter) reply() llmclient.Completion {
 	return llmclient.Completion{Content: thinkOnlyThenFindingRow}
 }
 
+// Complete returns the final reply without calling reply(), so only CompleteWithMeta advances the calls counter.
 func (c *thinkOnlyThenFindingCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
-	return c.reply().Content, nil
+	return thinkOnlyThenFindingRow, nil
 }
 
 func (c *thinkOnlyThenFindingCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
