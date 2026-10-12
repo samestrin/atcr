@@ -245,6 +245,29 @@ type Report struct {
 	// `atcr review` hard-failed on the same config. Separating the two lists is what
 	// makes an empty PredicateRuleGaps mean "read, and carries the rule".
 	PersonaResolutionErrors []string `json:"persona_resolution_errors,omitempty"`
+	// StalePersonas names each built-in persona copy under `.atcr/personas/` that
+	// has fallen behind the binary's embedded content (registry.StalePersonas,
+	// Epic 35.16.16). Populated by cli/doctor.go after Run, like PredicateRuleGaps,
+	// and advisory like it: the copy was read and reviews run on it, so the exit
+	// code is unchanged. Empty (omitted) when every copy is current.
+	StalePersonas []StalePersona `json:"stale_personas,omitempty"`
+}
+
+// StalePersona is the --json shape of one stale persona copy. It restates
+// registry.StalePersona with json tags so the doctor schema does not move when
+// the registry type does.
+type StalePersona struct {
+	// File is the copy's base name under `.atcr/personas/` ("bruce.md", "_base.md").
+	File string `json:"file"`
+	// Agents are the roster agents whose persona resolves to this file, sorted.
+	Agents []string `json:"agents"`
+	// Edited is true when the file also differs from what init wrote, so
+	// `atcr init --refresh-personas` would overwrite a hand edit.
+	Edited bool `json:"edited"`
+	// Stamped is false when the file has no stamp entry (a workspace initialized
+	// before the stamp existed); the verdict then comes from the predicate-rule
+	// check and Edited is unknown, reported false.
+	Stamped bool `json:"stamped"`
 }
 
 // probeResult is the outcome of one distinct target.
