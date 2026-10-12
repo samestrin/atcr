@@ -72,7 +72,7 @@ func TestWriteResumedAgents_DropsUngrounded(t *testing.T) {
 		},
 	}
 	pool := filepath.Join(dir, "pool")
-	require.NoError(t, writeResumedAgents(pool, []Result{okResult("greta", content)}, changed))
+	require.NoError(t, writeResumedAgents(pool, []Result{okResult("greta", content)}, changed, nil))
 
 	data, err := os.ReadFile(filepath.Join(pool, poolRawAgentDir, "greta", findingsFile))
 	require.NoError(t, err)
