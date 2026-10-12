@@ -56,6 +56,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 - Dual-write of `findings.toon` alongside the unchanged `findings.txt`; discovery, resume, history, audit, and benchmark all prefer `.toon` when present. (epic 35.26.0)
 - Host-review skill writes `findings.toon` directly as a JSON envelope, with no hand-rolled TOON formatting. (epic 35.26.0)
 - `docs/findings-format.md` v2 spec, plus an adversarial round-trip test suite covering chunked, truncated, and malformed model output. (epic 35.26.0)
+- The executor now logs every attribution skip at Debug level under the new pipeline class `executor_attribution_skip`, naming the finding's `file:line` and the executor. This skip fires when a finding's evidence already carries a `fix by <executor>` attribution — including the ordinary re-verify of a finding this executor already fixed — and it used to be silent. No `fix` warning is written, and which findings are skipped is unchanged. (technical debt, 2026-10-12)
 
 ### Changed
 

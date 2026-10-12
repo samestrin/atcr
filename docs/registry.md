@@ -490,6 +490,7 @@ A fix larger than 256 KiB is not scanned (an `executor_smell_skipped` warning re
 | `executor_salvaged_reasoning` | The client promoted chain-of-thought into the content; reasoning is not a patch, so it is refused rather than written to `fix`. |
 | `executor_smell_reject` | The adversarial diff-smell gate returned HARD: the fix rewrote tests rather than the code. One retry is offered; a second HARD verdict halts the finding. |
 | `executor_smell_skipped` | The fix was too large to scan (over 256 KiB), so it was written **unscanned** — never to be confused with "clean". |
+| `executor_attribution_skip` | The finding was skipped because its evidence already carries a `fix by <executor>` attribution — either a cluster-merged record whose `fix by` came from a member other than the one whose fix survived, or the ordinary re-verify of a finding this executor already fixed. This class is logged at Debug level only and no `fix` warning is written: the skip site cannot tell those two cases apart, so it fires on **every** attribution skip, and a per-finding warning would repeat for every already-fixed finding on every run. |
 
 The retry fires only for a fix that was actually rejected; a clean or SOFT fix never triggers one. Its cost depends on the path: on the snippet path it is exactly one extra model round-trip, but on the agent path it is a full second tool-loop run — up to `max_tool_calls` extra provider calls and a second `fix_timeout` of wall clock.
 
