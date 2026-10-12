@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/personas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -297,4 +299,117 @@ func setupDoctorEnvWithPersonaRef(t *testing.T, baseURL, personaRef string) {
 	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(""+
 		"agents:\n  - bruce\npayload_mode: blocks\ntimeout_secs: 600\nfail_on: HIGH\n"), 0o644))
+}
+
+// writePersonaStamp records what "init wrote" for the given files, so a test can
+// set up a stamped workspace without running init.
+func writePersonaStamp(t *testing.T, files map[string]string) {
+	t.Helper()
+	require.NoError(t, registry.WritePersonaStamp(filepath.Join(".atcr", "personas"),
+		registry.PersonaStamp{Files: files}))
+}
+
+// A workspace initialized before Epic 35.16.9: no stamp, and the installed copy
+// lacks the predicate rule. The warning must name the FILE (not only the agent),
+// say it has no stamp, point at the refresh command, and leave the exit code at 0.
+func TestDoctor_StaleWarningNamesAPreRuleFile(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err, "a stale persona copy is advisory: the exit code must stay 0")
+
+	assert.Contains(t, out, "stale persona files")
+	assert.Contains(t, out, "bruce.md (bruce; no stamp, edits unknown)",
+		"the warning names the file, the agent it serves, and that edits cannot be known without a stamp")
+	assert.Contains(t, out, "atcr init --refresh-personas", "the warning must say how to fix it")
+}
+
+// A stamped copy whose embedded content has since changed, and which the operator
+// also edited: stale AND marked edited, so the operator knows a refresh would
+// overwrite the edit.
+func TestDoctor_StaleWarningMarksAnEditedFile(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	embedded, err := personas.Get("bruce")
+	require.NoError(t, err)
+	writeProjectPersona(t, "bruce", embedded+"\nlocal rule\n")
+	writePersonaStamp(t, map[string]string{
+		"bruce.md": registry.HashPersonaContent([]byte("what an older atcr wrote")),
+	})
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err)
+	assert.Contains(t, out, "bruce.md (bruce; edited)")
+	assert.NotContains(t, out, "no stamp")
+}
+
+// A current workspace: init wrote the embedded content and the stamp says so.
+// The warning must stay silent — including when the operator has since edited
+// the copy, which is a hand edit, not staleness.
+func TestDoctor_StaleWarningSilentOnACurrentWorkspace(t *testing.T) {
+	embedded, err := personas.Get("bruce")
+	require.NoError(t, err)
+
+	for name, body := range map[string]string{
+		"unedited": embedded,
+		"edited":   embedded + "\nlocal rule\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := echoProvider(t, 0)
+			setupDoctorEnv(t, srv.URL)
+			t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+			writeProjectPersona(t, "bruce", body)
+			writePersonaStamp(t, map[string]string{"bruce.md": registry.HashPersonaContent([]byte(embedded))})
+
+			out, err := execute(t, "doctor")
+			require.NoError(t, err)
+			assert.NotContains(t, out, "stale persona files")
+		})
+	}
+}
+
+// --json skips the stderr warning entirely, so the field is the only place a
+// JSON consumer learns which files are stale. It must carry the same files.
+func TestDoctor_StalePersonasInJSON(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	stdout, _, err := executeSplit(t, "doctor", "--json")
+	require.NoError(t, err, "the exit code is unchanged under --json too")
+
+	var got struct {
+		StalePersonas []struct {
+			File    string   `json:"file"`
+			Agents  []string `json:"agents"`
+			Edited  bool     `json:"edited"`
+			Stamped bool     `json:"stamped"`
+		} `json:"stale_personas"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &got), "stdout must be valid JSON: %s", stdout)
+	require.Len(t, got.StalePersonas, 1)
+	assert.Equal(t, "bruce.md", got.StalePersonas[0].File)
+	assert.Equal(t, []string{"bruce"}, got.StalePersonas[0].Agents)
+	assert.False(t, got.StalePersonas[0].Edited)
+	assert.False(t, got.StalePersonas[0].Stamped)
+}
+
+// A clean workspace emits no stale_personas key at all.
+func TestDoctor_StalePersonasOmittedFromJSONWhenCurrent(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	stdout, _, err := executeSplit(t, "doctor", "--json")
+	require.NoError(t, err)
+	assert.NotContains(t, stdout, "stale_personas")
 }
