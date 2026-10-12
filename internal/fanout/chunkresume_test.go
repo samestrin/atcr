@@ -202,23 +202,28 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	assert.Zero(t, excluded)
 }
 
+// writeBackResumeRepo commits n 40 KB files f00.go.. and returns a greta + kai
+// config with no global byte budget, so the write-back sheds nothing and each
+// file fills one bin of the test model's per-agent budget.
+func writeBackResumeRepo(t *testing.T, n int) (*ReviewConfig, string, []string) {
+	t.Helper()
+	files := map[string]string{}
+	var paths []string
+	for i := 0; i < n; i++ {
+		p := fmt.Sprintf("f%02d.go", i)
+		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
+		paths = append(paths, p)
+	}
+	return twoAgentConfig("http://unused"), baselineRepo(t, files), paths
+}
+
 // The interrupted run never wrote the file-hash index, so a chunk-aware resume
 // that succeeds must record every file some persona reviewed: the resumed bins,
 // the pending persona's bins that finished ok before the interruption, and every
 // bin of the persona the resume skipped as done. Recording only the resumed bins
 // would make the next --all scan re-review almost the whole repository.
 func TestChunkResume_CommitRecordsPriorReviewedBins(t *testing.T) {
-	// No global byte budget, so the write-back sheds nothing: each 40 KB file
-	// fills one bin of the test model's per-agent budget.
-	cfg := twoAgentConfig("http://unused")
-	files := map[string]string{}
-	var paths []string
-	for i := 0; i < 6; i++ {
-		p := fmt.Sprintf("f%02d.go", i)
-		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
-		paths = append(paths, p)
-	}
-	repo := baselineRepo(t, files)
+	cfg, repo, paths := writeBackResumeRepo(t, 6)
 	dir := partialBaselineReview(t, cfg, repo, paths, 2)
 
 	rprep, info, err := PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
@@ -236,6 +241,45 @@ func TestChunkResume_CommitRecordsPriorReviewedBins(t *testing.T) {
 	assert.Zero(t, excluded)
 	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
 	assert.ElementsMatch(t, paths, idx.Paths(), "the committed index holds every reviewed file")
+}
+
+// A prior bin vouches for a file only at the content it reviewed: chunks.json
+// records the hash each bin shipped, and a file edited since the interrupted run
+// is left out of the write-back instead of being recorded at its new hash, which
+// the next --all scan would skip though no reviewer read that content.
+func TestChunkResume_CommitSkipsPriorFilesChangedSinceReview(t *testing.T) {
+	cfg, repo, paths := writeBackResumeRepo(t, 6)
+	dir := partialBaselineReview(t, cfg, repo, paths, 2)
+	edited := "// FILE:f00.go\n" + strings.Repeat("y", 40_000)
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "f00.go"), []byte(edited), 0o644))
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	require.Equal(t, paths[2:], slotFiles(rprep.Slots, "greta"), "f00.go sits in an ok bin, so it is not re-dispatched")
+	assert.ElementsMatch(t, paths[1:], sortedKeys(rprep.baseline.reviewed),
+		"the edited file is dropped; the unchanged ok-bin file is kept")
+
+	_, err = ExecuteResume(context.Background(), baselineChunkFindingCompleter{}, rprep)
+	require.NoError(t, err)
+	require.NoError(t, rprep.CommitBaselineIndex("resume-1"))
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	_, _, ok := idx.Get("f00.go")
+	assert.False(t, ok, "a file no reviewer read at its current content is not recorded")
+	assert.ElementsMatch(t, paths[1:], idx.Paths())
+}
+
+// A chunks.json written before bins recorded their hashes cannot show what
+// content a bin reviewed, so its files are left out of a resume's write-back.
+func TestReadResumeRecord_BinWithoutHashesVouchesForNothing(t *testing.T) {
+	cfg := chunkResumeConfig()
+	repo, paths := chunkResumeRepo(t, 4)
+	dir := partialBaselineReview(t, cfg, repo, paths, 4)
+	for _, name := range []string{"greta", "kai"} {
+		writeCoverageRecord(t, dir, name, []chunkRecordBin{{Index: 0, Files: []string{"old.go"}, Outcome: StatusOK}})
+	}
+	rr, err := readResumeRecord(dir, []string{"greta", "kai"}, true)
+	require.NoError(t, err)
+	assert.Empty(t, rr.reviewed)
 }
 
 // A single surviving bin is still dispatched as a recorded bin and merged with
@@ -494,14 +538,15 @@ func TestRecordedChunks_SplitsOversizeBinsAndKeepsFreshEntries(t *testing.T) {
 }
 
 // narrowReviewed keeps the files a dispatched slot carries and the files a
-// recorded bin reviewed, and drops only a file neither names.
+// recorded bin reviewed at their current hash, and drops every other file.
 func TestNarrowReviewed_DropsFilesNothingReviewed(t *testing.T) {
 	b := &baselineWriteback{reviewed: map[string]string{"a.go": "h-a", "b.go": "h-b", "done.go": "h-d", "new.go": "h-n"}}
 	narrowReviewed(b, []Slot{
 		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}},
 		{Primary: Agent{Name: "kai", chunkFiles: []string{"b.go", "gone.go"}}},
-	}, map[string]bool{"done.go": true, "gone-too.go": true})
-	assert.Equal(t, map[string]string{"a.go": "h-a", "b.go": "h-b", "done.go": "h-d"}, b.reviewed)
+	}, map[string]map[string]bool{"done.go": {"h-old": true, "h-d": true}, "new.go": {"h-old": true}, "gone-too.go": {"h-g": true}})
+	assert.Equal(t, map[string]string{"a.go": "h-a", "b.go": "h-b", "done.go": "h-d"}, b.reviewed,
+		"done.go was reviewed at its current hash; new.go only at another content")
 }
 
 // A recorded bin counts only the files it reviewed: none for a failed bin or one
@@ -512,13 +557,17 @@ func TestReadResumeRecord_ReviewedFollowsTheBinPredicate(t *testing.T) {
 	dir := partialBaselineReview(t, cfg, repo, paths, 4)
 	for _, name := range []string{"greta", "kai"} {
 		writeCoverageRecord(t, dir, name, []chunkRecordBin{
-			{Index: 0, Files: []string{"ok.go"}, Outcome: StatusOK},
-			{Index: 1, Files: []string{"failed.go"}, Outcome: StatusFailed},
-			{Index: 2, Files: []string{"refused.go"}, Outcome: StatusOK, ContributedNothing: true},
-			{Index: 3, Files: []string{"served.go", "shed.go"}, Outcome: StatusOK, RePacked: true, ServedFiles: []string{"served.go"}},
+			{Index: 0, Files: []string{"ok.go"}, Outcome: StatusOK, Hashes: map[string]string{"ok.go": "h-ok-" + name}},
+			{Index: 1, Files: []string{"failed.go"}, Outcome: StatusFailed, Hashes: map[string]string{"failed.go": "h-f"}},
+			{Index: 2, Files: []string{"refused.go"}, Outcome: StatusOK, ContributedNothing: true, Hashes: map[string]string{"refused.go": "h-r"}},
+			{Index: 3, Files: []string{"served.go", "shed.go"}, Outcome: StatusOK, RePacked: true, ServedFiles: []string{"served.go"},
+				Hashes: map[string]string{"served.go": "h-s", "shed.go": "h-x"}},
 		})
 	}
 	rr, err := readResumeRecord(dir, []string{"greta", "kai"}, true)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]bool{"ok.go": true, "served.go": true}, rr.reviewed)
+	assert.Equal(t, map[string]map[string]bool{
+		"ok.go":     {"h-ok-greta": true, "h-ok-kai": true},
+		"served.go": {"h-s": true},
+	}, rr.reviewed, "each reviewed file keeps every hash a bin reviewed it at")
 }

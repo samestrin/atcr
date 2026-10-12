@@ -149,12 +149,15 @@ type resumeRecord struct {
 	// unreviewed bins, in recorded order. An agent absent from it resumes at
 	// agent level: its whole payload is re-dispatched, as before chunks.json.
 	bins map[string][][]string
-	// reviewed is every file a trusted chunks.json shows reviewed
-	// (chunkRecordBin.coveredFiles), across the whole roster: the ok bins of a
-	// pending agent and every bin of an agent skipped as done. The interrupted
-	// run never wrote the file-hash index, so a chunk-aware resume records these
-	// alongside the files it dispatches (narrowReviewed).
-	reviewed map[string]bool
+	// reviewed maps every file a trusted chunks.json shows reviewed
+	// (chunkRecordBin.coveredFiles), across the whole roster — the ok bins of a
+	// pending agent and every bin of an agent skipped as done — to the set of
+	// content hashes a bin reviewed it at (chunkRecordBin.Hashes). The
+	// interrupted run never wrote the file-hash index, so a chunk-aware resume
+	// records these alongside the files it dispatches, but only at a hash some
+	// bin actually reviewed (narrowReviewed). A covered file with no recorded
+	// hash is absent.
+	reviewed map[string]map[string]bool
 }
 
 // readResumeRecord builds the resume's completion record. It starts from the
@@ -193,10 +196,17 @@ func readResumeRecord(reviewDir string, roster []string, baseline bool) (*resume
 		var open [][]string
 		for _, b := range rec.Bins {
 			for _, f := range b.coveredFiles() {
-				if rr.reviewed == nil {
-					rr.reviewed = map[string]bool{}
+				h, ok := b.Hashes[f]
+				if !ok {
+					continue
 				}
-				rr.reviewed[f] = true
+				if rr.reviewed == nil {
+					rr.reviewed = map[string]map[string]bool{}
+				}
+				if rr.reviewed[f] == nil {
+					rr.reviewed[f] = map[string]bool{}
+				}
+				rr.reviewed[f][h] = true
 			}
 			if b.open() {
 				open = append(open, b.Files)
@@ -641,9 +651,9 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 			payloads[string(payload.ModeFiles)])
 		// A chunk-aware resume dispatches only the unreviewed bins, so the full
 		// payload is no longer the set this run reviews: a file neither a
-		// dispatched bin carries nor a recorded bin reviewed (one added since the
-		// interrupted run, say) must not be recorded as reviewed when every
-		// dispatched bin succeeds.
+		// dispatched bin carries nor a recorded bin reviewed at its current content
+		// (one added or edited since the interrupted run, say) must not be
+		// recorded as reviewed when every dispatched bin succeeds.
 		if len(rr.bins) > 0 {
 			narrowReviewed(p.baseline, pending, rr.reviewed)
 		}
@@ -653,21 +663,24 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 
 // narrowReviewed drops from the write-back's reviewed set every file that no
 // dispatched slot carries and that prior (resumeRecord.reviewed) does not show
-// some persona already reviewed, so CommitBaselineIndex records only files a
-// reviewer read before the interruption or is sent now. Dropping is the
+// some persona already reviewed AT ITS CURRENT HASH, so CommitBaselineIndex
+// records only content a reviewer read before the interruption or is sent now.
+// A file edited since its bin was reviewed is not re-dispatched (only open bins
+// are), so recording it at the resume-time hash would let the next scan skip
+// content nobody read. Dropping is the
 // fail-open direction: a dropped file is simply re-reviewed by the next scan.
 // A prior file stays subject to uncoveredBaselineFiles: when a dispatched slot
 // fails, coverage is attributed from the dispatched slots alone, so it is
 // excluded then too.
-func narrowReviewed(b *baselineWriteback, slots []Slot, prior map[string]bool) {
+func narrowReviewed(b *baselineWriteback, slots []Slot, prior map[string]map[string]bool) {
 	carried := map[string]bool{}
 	for _, s := range slots {
 		for _, f := range s.Primary.chunkFiles {
 			carried[f] = true
 		}
 	}
-	for f := range b.reviewed {
-		if !carried[f] && !prior[f] {
+	for f, h := range b.reviewed {
+		if !carried[f] && !prior[f][h] {
 			delete(b.reviewed, f)
 		}
 	}

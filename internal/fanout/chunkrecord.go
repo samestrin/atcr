@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/cache"
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // chunksFile is the per-persona durable chunk record written beside status.json
@@ -59,6 +61,14 @@ type chunkRecordBin struct {
 	// reviewed all of Files.
 	RePacked    bool     `json:"re_packed,omitempty"`
 	ServedFiles []string `json:"served_files,omitempty"`
+	// Hashes maps each file the bin shipped to the sha256 of the content it
+	// shipped (cache.HashText, the file-hash index's own hash), stamped when the
+	// bin is planned. A resume records a prior bin's file in the index only when
+	// this hash still matches the file (narrowReviewed), so an edit made after
+	// the bin was reviewed is never recorded as reviewed. A deferred bin ships
+	// nothing and has none; a record written before this field has none either,
+	// and its files are then left out of a resume's write-back (fail-open).
+	Hashes map[string]string `json:"hashes,omitempty"`
 }
 
 // reviewed is the file-hash index's bin predicate: the bin finished ok and its
@@ -170,6 +180,7 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 			Index:   bin,
 			Files:   append([]string(nil), s.Primary.chunkFiles...),
 			Outcome: chunkOutcomePending,
+			Hashes:  entryHashes(s.entries),
 		})
 		l.bySlot[i] = chunkSlotRef{dir: dir, bin: bin}
 		// Bins the ceiling deferred follow the persona's dispatched bins. No slot
@@ -186,6 +197,19 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		return nil
 	}
 	return l
+}
+
+// entryHashes maps each shipped entry to the hash the file-hash index records
+// for it (captureBaselineWriteback hashes the same way). nil for no entries.
+func entryHashes(entries []payload.FileEntry) map[string]string {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		out[e.Path] = cache.HashText(e.Body)
+	}
+	return out
 }
 
 // recordedBin reports whether a slot is a baseline bin the ledger records: its
