@@ -50,13 +50,20 @@ const (
 	promptOverheadTokens = 4096
 
 	// avgBytesPerLine converts an effective input BYTE budget into a chunker
-	// maxLines figure (F3). Chosen conservatively so the smallest roster window
-	// (defaultContextWindowTokens = 32768) lands near the existing
-	// DefaultMaxContextLines = 1500 line-budget anchor as a sanity cross-check:
-	// 32768 - 8192 output - 4096 overhead = 20480 tokens ≈ 71680 bytes, and
-	// 71680 / 48 ≈ 1493 ≈ 1500. A larger bytes/line yields fewer lines (more,
-	// smaller chunks), which is safe under the Conservatism NFR.
-	avgBytesPerLine = 48
+	// maxLines figure (F3). It is calibrated against a measured diff, not a line
+	// anchor: the T3 baseline (.planning/epics/active/35.16.11.2.2.6-results/
+	// T3-baseline.md:93-95) averages 59.3 to 59.6 B/line across its three agents,
+	// and at the 48 that used to sit here every 128000-class chunk shipped ~23%
+	// over its byte budget (130691 prompt tokens in a 131072 window, length). 64
+	// is 7% headroom over the worst measured agent: a 128000 declaration derives
+	// 404992 / 64 = 6328 lines, the 32768 default window 71680 / 64 = 1120. The
+	// old figure was chosen so that smallest window landed near the 1500-line
+	// DefaultMaxContextLines anchor (71680 / 48 ≈ 1493); that cross-check is
+	// retired, since it sized lines no real diff is that short. A larger
+	// bytes/line yields fewer lines (more, smaller chunks), which is safe under
+	// the Conservatism NFR; a diff of longer lines than the fixture can still
+	// overshoot, because this stays a per-line estimate.
+	avgBytesPerLine = 64
 
 	// minChunkLines is a positive floor for ChunkMaxLines so a pathologically
 	// small resolved window never yields maxLines <= 0 — the value chunkDiff
@@ -175,7 +182,7 @@ func WindowFundsAUsableRead(model string, declared *int, outputTokens *int) bool
 // is distinct from payload_byte_budget precisely so this clamp and the global
 // file-shedding pass can be tuned independently; unset, it inherits the payload
 // budget, which is the coupling that used to be unavoidable. Before
-// that clamp existed, a legal 10,000,000-token declaration derived ~728,000
+// that clamp existed, a legal 10,000,000-token declaration derived ~546,000
 // lines (~34.9 MB) per chunk — the chunk BYTES were bounded only indirectly, by
 // the entries having passed through ApplyByteBudgetPreferEscalated in review.go.
 // With the clamp the practical effect of a large declaration stays "fewer,
@@ -192,7 +199,7 @@ func WindowFundsAUsableRead(model string, declared *int, outputTokens *int) bool
 // known rather than threaded into ChunkMaxLines.
 //
 // It exists because ContextWindowTokensCap admits a 10,000,000-token
-// declaration, which derives ~728,000 lines (~34.9 MB) per chunk — past any
+// declaration, which derives ~546,000 lines (~34.9 MB) per chunk — past any
 // real proxy request-body limit. chunk_byte_budget is the operator's own
 // statement of how many bytes may ride one call, so honoring it here keeps a
 // large declaration meaning "fewer, larger chunks" rather than "one chunk no

@@ -11,7 +11,7 @@ import (
 
 // Epic 35.16.5.1 TD: ContextWindowTokensCap permits a 10,000,000-token
 // declaration, but the chunked path derived its per-chunk LINE budget from the
-// window alone — ~728,000 lines, ~34.9 MB per chunk, far past any real proxy
+// window alone — ~546,000 lines, ~34.9 MB per chunk, far past any real proxy
 // request-body limit. The global payload_byte_budget is the operator's stated
 // ceiling on how many bytes may ride one call, so the derived line budget must
 // respect it too. An explicit max_context_lines still wins (least surprise).
@@ -47,13 +47,13 @@ func clampPayloads() map[string]modePayload {
 func TestChunkMaxLines_ClampedByGlobalByteBudget(t *testing.T) {
 	const declared = 128000
 	const globalBudget = int64(64 * 1024)
-	// 65536 bytes / 48 bytes-per-line = 1365 lines. Stated as a literal, not
+	// 65536 bytes / 64 bytes-per-line = 1024 lines. Stated as a literal, not
 	// recomputed from the code under test, so a change to either the ratio or the
 	// clamp has to be acknowledged here.
-	const wantLines = 1365
+	const wantLines = 1024
 
 	unclamped := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
-	require.Equal(t, 8437, unclamped, "precondition: the declaration alone derives 8437 lines")
+	require.Equal(t, 6328, unclamped, "precondition: the declaration alone derives 6328 lines")
 
 	slots, _, err := buildSlots(clampRoster(t, declared, globalBudget), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestChunkMaxLines_UnclampedWhenNoGlobalBudget(t *testing.T) {
 	slots, _, err := buildSlots(clampRoster(t, declared, 0), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1)
-	assert.Equal(t, 8437, slots[0].Primary.chunkMaxLines,
+	assert.Equal(t, 6328, slots[0].Primary.chunkMaxLines,
 		"an unset payload_byte_budget must leave the derived line budget alone")
 }
 
@@ -93,11 +93,11 @@ func TestChunkMaxLines_ExplicitOverrideBeatsTheClamp(t *testing.T) {
 func TestClampLinesToByteBudget_CapSizedDeclaration(t *testing.T) {
 	// The motivating case: a legal declaration at ContextWindowTokensCap.
 	unclamped := payload.ChunkMaxLines("unlisted-small-model", ptrInt(registry.ContextWindowTokensCap), defaultMaxTokens)
-	require.Greater(t, unclamped, 700000,
+	require.Greater(t, unclamped, 500000,
 		"precondition: the cap-sized declaration derives a line budget no proxy body limit can carry")
 
-	// 512 KiB / 48 bytes-per-line = 10922 lines.
-	assert.Equal(t, 10922, payload.ClampLinesToByteBudget(unclamped, 512*1024),
+	// 512 KiB / 64 bytes-per-line = 8192 lines.
+	assert.Equal(t, 8192, payload.ClampLinesToByteBudget(unclamped, 512*1024),
 		"a cap-sized declaration must be cut to the operator's byte ceiling")
 }
 
