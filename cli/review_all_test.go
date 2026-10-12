@@ -1145,6 +1145,13 @@ func TestBaselineWithheldCause_EachArmNamesItsOwnCause(t *testing.T) {
 			"a failed slot re-packed nothing; the re-pack wording sends the operator to the wrong cause")
 		assert.NotContains(t, got, "salvaged or think-suppressed")
 	})
+	// Epic 35.16.13 T6: a deferral-only run has every dispatched slot ok and every
+	// other counter at zero, so before this arm it read as a re-pack.
+	t.Run("deferred files", func(t *testing.T) {
+		got := baselineWithheldCause(fanout.Summary{Succeeded: 1, DeferredFiles: 2})
+		assert.Contains(t, got, "deferred")
+		assert.NotContains(t, got, "re-packed")
+	})
 	t.Run("re-packed is the last resort", func(t *testing.T) {
 		got := baselineWithheldCause(fanout.Summary{Succeeded: 2})
 		assert.Contains(t, got, "re-packed",

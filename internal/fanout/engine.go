@@ -535,6 +535,16 @@ type Result struct {
 	// coverage instead of trusting a green status that hid unreviewed files.
 	UnreviewedChunks int
 
+	// UnreviewedFiles and DeferredFiles are a baseline persona's file-level gap
+	// (Epic 35.16.13 T6). UnreviewedFiles counts every file the persona planned
+	// (its slots' tagged files plus its deferred bins) that no succeeded slot of
+	// its own reviewed; DeferredFiles is the subset the maxChunksPerAgent ceiling
+	// deferred. runEngine stamps both from the raw pre-merge results
+	// (unreviewedFileCounts), because the merge discards chunk identity. Zero for
+	// a diff review and for a fully-covered persona.
+	UnreviewedFiles int
+	DeferredFiles   int
+
 	// Per-agent payload-sizing / degradation record (Epic 19.10 F8). Stamped by
 	// invokeAgent from the serving Agent so status.json/summary.json record why this
 	// agent's payload was sized as it was: the effective input byte budget it was

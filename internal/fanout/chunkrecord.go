@@ -79,6 +79,10 @@ type chunkLedger struct {
 	// carried holds, per persona dir, the files of the prior run's reviewed bins
 	// a resume replays instead of re-dispatching (carryReviewed, chunkmerge.go).
 	carried map[string]map[string]bool
+	// carriedGaps holds, per persona dir, the files of those carried bins that
+	// were never reviewed (carriedGap), which the resumed slots' own gap cannot
+	// see because the resume dispatches none of them.
+	carriedGaps map[string]fileGap
 }
 
 type chunkSlotRef struct {

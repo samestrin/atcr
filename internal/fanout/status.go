@@ -467,6 +467,18 @@ type AgentStatus struct {
 	// otherwise-green (but incomplete) CI gate auditable.
 	UnreviewedChunks int `json:"unreviewed_chunks,omitempty"`
 
+	// UnreviewedFiles is the number of files this baseline persona planned but
+	// did not review — the files of its failed or contributed-nothing bins, the
+	// files a re-packing fallback shed, and its deferred files (Epic 35.16.13 T6).
+	// It is a count, not the path list (chunks.json names the files), so a CI gate
+	// can see how much was left without reading a 64-bin ledger. Unlike
+	// UnreviewedChunks it is set for a wholly failed persona too. DeferredFiles is
+	// the subset the maxChunksPerAgent ceiling deferred, which no bin was ever
+	// sent. Both omitempty, so a diff review and a fully-covered baseline persona
+	// keep the pre-field shape.
+	UnreviewedFiles int `json:"unreviewed_files,omitempty"`
+	DeferredFiles   int `json:"deferred_files,omitempty"`
+
 	// Diagnosability (Epic 19.10 F8): per-agent payload-sizing and degradation
 	// record, populated whenever the per-model sizing / chunk-plan / degradation
 	// path (Tasks 02-04) produced a value for this agent. Plain omitempty scalars,

@@ -41,6 +41,14 @@ type Summary struct {
 	// a run with any unreviewed chunk must NOT record its files as reviewed, or the
 	// unreviewed ones would be silently skipped on the next run (Sprint 35.0 5.5.A).
 	UnreviewedChunks int
+	// UnreviewedFiles and DeferredFiles are the run-level sums of the per-persona
+	// counts (Epic 35.16.13 T6). They are per-persona sums, not the size of the
+	// uncovered set: a file two personas both missed counts twice, and a file one
+	// persona deferred but another reviewed still counts once. DeferredFiles lets
+	// the baseline write-back name deferral as the cause of a withheld coverage
+	// set, which no other counter here can.
+	UnreviewedFiles int
+	DeferredFiles   int
 	// ContributedNothingCount is the run-level tally of SUCCEEDED results that
 	// provably contributed nothing — a salvaged reply (the client promoted the
 	// model's chain-of-thought) or a think-suppressed one (the strip ate the whole
@@ -93,6 +101,8 @@ func summarize(results []Result) Summary {
 		// Accumulate per-persona partial-coverage so the baseline write-back can tell a
 		// fully-reviewed run from one where some chunks failed under an OK persona.
 		s.UnreviewedChunks += r.UnreviewedChunks
+		s.UnreviewedFiles += r.UnreviewedFiles
+		s.DeferredFiles += r.DeferredFiles
 		// Tally succeeded slots that provably contributed nothing, so the baseline
 		// write-back can name the cause of a withheld coverage set. Guarded on
 		// StatusOK to mirror contributedNothing's call sites: a FAILED slot is already
