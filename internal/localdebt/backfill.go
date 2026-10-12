@@ -486,8 +486,12 @@ func reviewDirOwnsRun(reviewDir, runID string) bool {
 // runOwnedBy is reviewDirOwnsRun's comparison over a reconciled_at already read. An
 // empty reconciledAt owns nothing: without that guard it would match the run_id an
 // empty timestamp mints. The base is taken from the absolute path, so a review dir
-// given relatively — "." from reviewDirOf above all — is compared by its real name
-// as the mint saw it; a dir whose absolute path cannot be had owns nothing.
+// given relatively — "." from reviewDirOf above all — is compared by its name rather
+// than by ".". The mint takes the base of the path as the operator typed it, which
+// may be a symlink's name or its target's, so either base owns the run: the lexical
+// absolute path's, and that path's with symlinks resolved (resolved after Abs,
+// because EvalSymlinks(".") is "."). A dir whose absolute path cannot be had owns
+// nothing; one whose links cannot be resolved is compared by its lexical base alone.
 func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 	if reconciledAt == "" {
 		return false
@@ -496,7 +500,11 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 	if err != nil {
 		return false
 	}
-	return reconciledAt+"-"+filepath.Base(abs) == runID
+	if reconciledAt+"-"+filepath.Base(abs) == runID {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	return err == nil && reconciledAt+"-"+filepath.Base(resolved) == runID
 }
 
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
