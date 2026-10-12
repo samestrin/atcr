@@ -146,6 +146,15 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		Registry: filepath.Join(filepath.Dir(regPath), "personas"),
 	}
 	rep.PredicateRuleGaps, rep.PersonaResolutionErrors = registry.PredicateRuleGaps(agentToPersona, personaDirs)
+	// Staleness names the FILE behind the drift, which the rule-gap list cannot: it
+	// catches any embedded persona edit, not only the predicate rule, and tells a
+	// copy that fell behind from one an operator edited. Advisory like the rule
+	// gaps — the copy was read and reviews run on it — so the exit code is unchanged.
+	for _, sp := range registry.StalePersonas(agentToPersona, personaDirs) {
+		rep.StalePersonas = append(rep.StalePersonas, doctor.StalePersona{
+			File: sp.File, Agents: sp.Agents, Edited: sp.Edited, Stamped: sp.Stamped,
+		})
+	}
 
 	// A persona that cannot be RESOLVED is invocation health, not composition, so it
 	// fails the exit code. The command's contract is "exits 0 when every agent has a
@@ -203,6 +212,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 					"to personas that do not carry the panel-wide rule (built-ins are test-enforced; "+
 					"community and project personas are not): %s\n",
 				scope, strings.Join(rep.PredicateRuleGaps, ", "))
+		}
+		if len(rep.StalePersonas) > 0 {
+			_, _ = fmt.Fprint(cmd.ErrOrStderr(), stalePersonaWarning(rep.StalePersonas))
 		}
 		// Named by agent AND model, since the mismatch belongs to the model behind the
 		// declaration. The endpoint answered, so the ok/failed count and the exit code
@@ -333,6 +345,29 @@ func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.Proje
 		}
 	}
 	return out, nil
+}
+
+// stalePersonaWarning renders the stale-persona warning: each file under
+// `.atcr/personas/` by name, the agents it serves, whether it was hand edited
+// (a refresh would overwrite the edit) or carries no stamp (so whether it was
+// edited is unknown), and the command that brings it up to date.
+func stalePersonaWarning(stale []doctor.StalePersona) string {
+	files := make([]string, 0, len(stale))
+	for _, sp := range stale {
+		entry := sp.File + " (" + strings.Join(sp.Agents, ", ")
+		switch {
+		case sp.Edited:
+			entry += "; edited"
+		case !sp.Stamped:
+			entry += "; no stamp, edits unknown"
+		}
+		files = append(files, entry+")")
+	}
+	return fmt.Sprintf("doctor: WARNING — stale persona files: these copies under %s "+
+		"have fallen behind the personas built into this atcr, so reviews run the older prompt; "+
+		"run `atcr init --refresh-personas` to update them (it overwrites edited copies; "+
+		"add --dry-run to preview): %s\n",
+		filepath.Join(".atcr", "personas"), strings.Join(files, ", "))
 }
 
 // thinkingNotHonoredWarnings splits the "thinking not honored" warning by the
