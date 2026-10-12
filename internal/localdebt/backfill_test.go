@@ -1354,12 +1354,14 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			runID:   at + "-multi-agent",
 		},
 		{
-			// Valid JSON whose reconciled_at WOULD match, padded past the cap: only the
-			// cap can refuse it, so a read that ignored the cap would own the run.
+			// Valid JSON whose reconciled_at WOULD match, padded past the cap with
+			// trailing whitespace. Any prefix that ends inside the padding still parses,
+			// so the read's truncation alone cannot refuse it: only the length check
+			// can, and a read that dropped it would own the run.
 			name: "oversized summary.json owns nothing",
 			base: "multi-agent",
-			summary: rawSummary(`{"reconciled_at":"` + at + `","pad":"` +
-				strings.Repeat("x", maxSummaryBytes) + `"}`),
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}` +
+				strings.Repeat(" ", maxSummaryBytes)),
 			runID: at + "-multi-agent",
 		},
 	}
