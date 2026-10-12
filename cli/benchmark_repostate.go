@@ -220,6 +220,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 		retentionAttrs := func() []any {
 			attrs := []any{"path", tmp, "failed_cases", len(caseFailures),
 				"failed_slots", failedSlotCount(slotFailures), "unmeasured_slots", unmeasuredSlotCount(slotFailures),
+				"other_slot_failures", otherSlotFailureCount(slotFailures),
 				"failed_reviewers", failedReviewerCount(slotFailures),
 				"retained_dirs", retainedDirCount(tmp)}
 			return append(attrs, retainedSizeAttrs(tmp)...)
@@ -960,13 +961,31 @@ func failedReviewerCount(m map[reviewerKey][]benchmark.SlotFailure) int {
 	return n
 }
 
+// otherSlotFailureCount is the number of slot failures whose reason is neither
+// infrastructure-class nor SlotFailureUnmeasuredOK: an empty reason, or one this
+// build cannot name. retainForSlotFailures keeps the work dir for such a slot while
+// failedSlotCount and unmeasuredSlotCount both read 0 for it, so without this key
+// the retention line would name no cause. With it the three counts sum to the
+// number of recorded failures.
+func otherSlotFailureCount(m map[reviewerKey][]benchmark.SlotFailure) int {
+	n := 0
+	for _, v := range m {
+		for _, sf := range v {
+			if !benchmark.SlotFailureIsInfrastructure(sf.Reason) && sf.Reason != benchmark.SlotFailureUnmeasuredOK {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // retainForSlotFailures reports whether any recorded slot failure justifies keeping
 // the paid work dir. Every reason but unmeasured_salvaged_ok does: an infrastructure
-// loss's status.json is the only record of why the slot died, whereas an
-// unmeasured_salvaged_ok slot's cause is
-// already fully described in the run-result and recur on every run for a reviewer
-// that answers on its reasoning channel — retaining for it would accumulate a full
-// work dir per scheduled run with nothing to diagnose.
+// loss's status.json is the only record of why the slot died. An
+// unmeasured_salvaged_ok slot's cause is already fully described in the run-result,
+// and it recurs on every run for a reviewer that answers on its reasoning channel,
+// so retaining for it would accumulate a full work dir per scheduled run with
+// nothing to diagnose.
 //
 // The fail-direction is this function's own, NOT SlotFailureIsInfrastructure's.
 // That predicate fails closed because it feeds tallies, where an unreadable reason
