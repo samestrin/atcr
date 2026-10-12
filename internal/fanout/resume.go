@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -153,9 +154,11 @@ type resumeRecord struct {
 // readResumeRecord builds the resume's completion record. It starts from the
 // agent-level CompletedAgents set, then, on a baseline review, reads each roster
 // agent's chunks.json (trustedChunkRecord). An agent with a trusted record and any
-// bin not recorded ok — pending, failed, timeout, deferred, or an outcome this
-// reader does not know — is pending, keyed to those bins' file sets. An agent
-// whose record has every bin ok keeps its agent-level answer, so an ok status
+// open bin (chunkRecordBin.open: pending, failed, timeout, deferred, an outcome
+// this reader does not know, or an ok bin coverage still counts unreviewed
+// because its lane contributed nothing or a re-packed server dropped files) is
+// pending, keyed to those bins' file sets. An agent whose record has no open
+// bin keeps its agent-level answer, so an ok status
 // skips it and anything else re-runs it whole. An agent with no trusted record
 // keeps today's agent-level behaviour unchanged.
 //
@@ -183,7 +186,7 @@ func readResumeRecord(reviewDir string, roster []string, baseline bool) (*resume
 		}
 		var open [][]string
 		for _, b := range rec.Bins {
-			if b.Outcome != StatusOK {
+			if b.open() {
 				open = append(open, b.Files)
 			}
 		}
@@ -197,6 +200,44 @@ func readResumeRecord(reviewDir string, roster []string, baseline bool) (*resume
 		rr.bins[name] = open
 	}
 	return rr, nil
+}
+
+// dropOpenBins rewrites a persona's chunks.json without its open bins.
+// PrepareResume calls it for a chunk-aware persona none of whose open bins names
+// a file the fresh payload still carries: those files left the review's scope,
+// so no resume can ever review them, and kept in the record they would hold
+// coverage (ReadCoverage) below 100% and fail --require-coverage on every later
+// run. The reviewed bins stay, renumbered. Best-effort like the ledger's own
+// writes: a failure is logged and the record keeps the stale bins, which only
+// understates coverage.
+func dropOpenBins(ctx context.Context, reviewDir, name string) {
+	dir, err := agentDirName(name)
+	if err != nil {
+		return
+	}
+	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
+	rec, ok := trustedChunkRecord(rawDir, dir, name)
+	if !ok {
+		return
+	}
+	var kept []chunkRecordBin
+	for _, b := range rec.Bins {
+		if !b.open() {
+			b.Index = len(kept)
+			kept = append(kept, b)
+		}
+	}
+	if len(kept) == len(rec.Bins) {
+		return
+	}
+	dropped := len(rec.Bins) - len(kept)
+	rec.Bins = kept
+	path := filepath.Join(rawDir, dir, chunksFile)
+	if err := atomicfs.WriteJSON(path, rec); err != nil {
+		log.FromContext(ctx).Warn("chunks.json write failed", "agent", name, "path", path, "err", err)
+		return
+	}
+	log.FromContext(ctx).Info("chunk-aware resume dropped bins whose files left the payload", "agent", name, "dropped_bins", dropped)
 }
 
 // agentStatusName reads a per-agent status.json and returns the agent name when
@@ -468,7 +509,8 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		return nil, nil, err
 	}
 	// A chunk-aware agent whose unreviewed bins name no file the fresh payload
-	// still carries has nothing left to dispatch, so it is complete.
+	// still carries has nothing left to dispatch, so it is complete, and its
+	// record is resolved to say so (dropOpenBins).
 	if len(rr.bins) > 0 {
 		dispatched := map[string]int{}
 		for _, s := range slots {
@@ -477,6 +519,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		for name, open := range rr.bins {
 			if dispatched[name] == 0 {
 				done[name] = true
+				dropOpenBins(ctx, reviewDir, name)
 			}
 			log.FromContext(ctx).Info("chunk-aware resume", "agent", name, "unreviewed_bins", len(open), "dispatched_bins", dispatched[name])
 		}

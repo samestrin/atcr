@@ -198,15 +198,12 @@ func carriedGap(kept, deferred []chunkRecordBin) fileGap {
 		}
 	}
 	for _, b := range kept {
-		served := map[string]bool{}
-		switch {
-		case b.ContributedNothing:
-		case b.RePacked:
-			for _, f := range b.ServedFiles {
-				served[f] = true
-			}
-		default:
+		if !b.open() {
 			continue
+		}
+		served := map[string]bool{}
+		for _, f := range b.coveredFiles() {
+			served[f] = true
 		}
 		for _, f := range b.Files {
 			if !served[f] {

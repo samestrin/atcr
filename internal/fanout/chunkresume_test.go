@@ -222,6 +222,77 @@ func TestChunkResume_OneUnreviewedBinMerges(t *testing.T) {
 	assert.Zero(t, st.UnreviewedChunks)
 }
 
+// Resume and coverage share one "reviewed" predicate: an ok bin whose lane
+// contributed nothing, or one a fallback re-packed without serving all its
+// files, is unreviewed in the coverage line and --require-coverage, so a resume
+// must re-dispatch it. Otherwise a run that fails the gate could never be
+// repaired.
+func TestChunkResume_ReopensBinsCoverageCountsUnreviewed(t *testing.T) {
+	cfg := chunkResumeConfig()
+	repo, paths := chunkResumeRepo(t, 4)
+	dir := partialBaselineReview(t, cfg, repo, paths, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	rewriteChunkRecord(t, poolDir, func(rec *chunkRecord) {
+		rec.Bins[1].ContributedNothing = true
+		rec.Bins[2].RePacked = true
+		rec.Bins[2].ServedFiles = nil
+	})
+
+	rprep, info, err := PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"greta"}, info.Pending, "an all-ok record with unreviewed bins is pending")
+	assert.Equal(t, []string{"f01.go", "f02.go"}, slotFiles(rprep.Slots, "greta"),
+		"the bin that contributed nothing and the re-packed bin that served nothing are re-dispatched")
+
+	_, err = ExecuteResume(context.Background(), baselineChunkFindingCompleter{}, rprep)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, paths, agentFindingFiles(t, poolDir, "greta"))
+	for _, b := range readChunkRecord(t, poolDir, "greta").Bins {
+		assert.False(t, b.open(), "bin %d %v", b.Index, b.Files)
+	}
+	assertCoverage(t, dir, Coverage{BinsReviewed: 8, BinsPlanned: 8, FilesCovered: 4, FilesInScope: 4})
+
+	_, info, err = PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	assert.True(t, info.AllComplete())
+}
+
+// A persona whose open bins name only files the fresh payload no longer carries
+// is complete, and its record must say so: the stale bins leave chunks.json, so
+// coverage stops counting the vanished files and can reach 100%.
+func TestChunkResume_VanishedOpenBinsLeaveTheRecord(t *testing.T) {
+	cfg := chunkResumeConfig()
+	repo, paths := chunkResumeRepo(t, 4)
+	dir := partialBaselineReview(t, cfg, repo, paths, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	rewriteChunkRecord(t, poolDir, func(rec *chunkRecord) {
+		rec.Bins = append(rec.Bins,
+			chunkRecordBin{Index: 4, Files: []string{"gone0.go"}, Outcome: chunkOutcomePending},
+			chunkRecordBin{Index: 5, Files: []string{"gone1.go"}, Outcome: chunkOutcomeDeferred},
+			chunkRecordBin{Index: 6, Files: []string{"gone2.go"}, Outcome: StatusOK, ContributedNothing: true},
+			chunkRecordBin{Index: 7, Files: []string{"gone3.go", "gone4.go"}, Outcome: StatusFailed},
+		)
+	})
+
+	rprep, info, err := PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	assert.True(t, info.AllComplete())
+	assert.Empty(t, rprep.Slots)
+
+	rec := readChunkRecord(t, poolDir, "greta")
+	require.Len(t, rec.Bins, 4, "the four stale bins are resolved out of the record")
+	for i, b := range rec.Bins {
+		assert.Equal(t, i, b.Index)
+		assert.Equal(t, []string{paths[i]}, b.Files)
+		assert.Equal(t, StatusOK, b.Outcome)
+	}
+	assertCoverage(t, dir, Coverage{BinsReviewed: 8, BinsPlanned: 8, FilesCovered: 4, FilesInScope: 4})
+
+	_, info, err = PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	assert.True(t, info.AllComplete())
+}
+
 // T4 success criterion: a path in chunks.json outside the in-scope payload
 // (`..`, absolute) is never dispatched.
 func TestChunkResume_RecordedPathsOutsidePayloadAreNeverDispatched(t *testing.T) {
