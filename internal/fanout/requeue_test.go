@@ -151,10 +151,11 @@ func TestUnitRetry_RateLimitedFor90sThenRecovers_LosesNoUnit(t *testing.T) {
 		c := &rateLimitedFor{clock: clock, window: 90 * time.Second}
 		results, poolDir := ledgerEngine(t, c, slots, true, withUnitClock(clock))
 
-		// Every unit is rate-limited at least once (all first leases fall inside
-		// the window) and each one's 429s are exactly its requeues. How many a
-		// unit takes depends on when it was first leased: the window can pass
-		// while other units back off.
+		// Each unit's 429s are exactly its requeues. How many a unit takes
+		// depends on when it was first leased: the window can pass while other
+		// units back off, and once the provider is rate-limited the lease
+		// throttle (T4) holds it to one lease, so later units may first be leased
+		// after the window and take none.
 		requeues := map[string]int{}
 		attemptsMax := map[string]int{}
 		var total int32
@@ -162,20 +163,22 @@ func TestUnitRetry_RateLimitedFor90sThenRecovers_LosesNoUnit(t *testing.T) {
 			require.Equalf(t, StatusOK, r.Status, "unit %d", i)
 			assert.Equalf(t, slots[i].Primary.Name, r.Agent, "results[%d] stays aligned", i)
 			assert.False(t, r.FallbackUsed)
-			assert.GreaterOrEqualf(t, r.Requeues, 1, "unit %d", i)
-			assert.Equalf(t, r.Requeues+1, r.UnitAttempts, "unit %d", i)
+			if r.Requeues > 0 {
+				assert.Equalf(t, r.Requeues+1, r.UnitAttempts, "unit %d", i)
+			}
 			total += int32(r.Requeues)
 			requeues[r.Agent] += r.Requeues
 			attemptsMax[r.Agent] = max(attemptsMax[r.Agent], r.UnitAttempts)
 		}
 		assert.Equal(t, total, c.limits.Load(), "every 429 was requeued, none was final")
+		assert.Positive(t, total, "the first leases fall inside the window")
 		assert.GreaterOrEqual(t, clock.elapsed(), 90*time.Second)
 		for _, agent := range []string{"greta", "kai"} {
 			rec := readChunkRecord(t, poolDir, agent)
 			require.Len(t, rec.Bins, 8)
 			for i, b := range rec.Bins {
 				assert.Equal(t, StatusOK, b.Outcome, "%s bin %d", agent, b.Index)
-				assert.Equal(t, results[slotOf(t, slots, agent, i)].UnitAttempts, b.Attempts, "%s bin %d counts every lease", agent, b.Index)
+				assert.Equal(t, results[slotOf(t, slots, agent, i)].Requeues+1, b.Attempts, "%s bin %d counts every lease", agent, b.Index)
 			}
 		}
 
@@ -185,7 +188,6 @@ func TestUnitRetry_RateLimitedFor90sThenRecovers_LosesNoUnit(t *testing.T) {
 			st := statusFor(merged, findingsResult{})
 			assert.Equal(t, requeues[merged.Agent], st.Requeues, merged.Agent)
 			assert.Equal(t, attemptsMax[merged.Agent], st.AttemptsMax, merged.Agent)
-			assert.Positive(t, st.Requeues)
 		}
 	})
 }
@@ -591,8 +593,8 @@ func TestUnitQueue_WaitsForTheEarliestBackoffNotTheFirstEnqueued(t *testing.T) {
 		_, ok := q.lease(ctx)
 		require.True(t, ok)
 	}
-	q.requeue(0, unitBackoff(failureRateLimit, 3)) // 300s, enqueued first
-	q.requeue(1, unitBackoff(failureServer, 1))    // 20s
+	q.requeue(0, unitBackoff(failureRateLimit, 3), Result{}) // 300s, enqueued first
+	q.requeue(1, unitBackoff(failureServer, 1), Result{})    // 20s
 
 	got := make(chan int, 1)
 	go func() {
