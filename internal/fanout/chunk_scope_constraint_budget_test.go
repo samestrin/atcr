@@ -68,7 +68,7 @@ func TestBuildSlots_ChunkedScopeConstraintFitsChunkByteBudget(t *testing.T) {
 		// The chunker packs up to chunkMaxLines lines at the same avgBytesPerLine
 		// ratio the clamp derived that budget with, so this is the diff ceiling one
 		// chunk can carry.
-		chunkBytes := s.Primary.chunkMaxLines * 48
+		chunkBytes := s.Primary.chunkMaxLines * 64
 		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), chunkBudget,
 			"chunk slot %d: plan (%d B) + diff ceiling (%d B) must fit chunk_byte_budget (%d B) — the plan cap must come from the budget that sizes the call, not from the payload tier",
 			i, blockBytes, chunkBytes, chunkBudget)
@@ -118,7 +118,7 @@ func TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget(t *tes
 		blockBytes := len(embeddedScopeBlock(t, s.Primary.Prompt))
 		// Same avgBytesPerLine ratio the clamp derives the budget with, so this is
 		// the diff ceiling one chunk can carry.
-		chunkBytes := s.Primary.chunkMaxLines * 48
+		chunkBytes := s.Primary.chunkMaxLines * 64
 		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), agentBudget,
 			"chunk slot %d: plan block (%d B) + diff ceiling (%d B) must fit the agent budget (%d B) — the uncounted block must be reserved against min(agentBudget, chunk_byte_budget), not against the inherited ceiling alone",
 			i, blockBytes, chunkBytes, agentBudget)
@@ -204,8 +204,8 @@ func TestBuildSlots_ChunkClampFloorKeepsTheCeilingWhenTheBlockEatsTheBudget(t *t
 	cfg.Settings.MaxSprintPlanBytes = planBytes
 
 	unclamped := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
-	require.Equal(t, 8437, unclamped,
-		"precondition: the raw model window derives 8437 lines — the value the chunks revert to if the floor is removed")
+	require.Equal(t, 6328, unclamped,
+		"precondition: the raw model window derives 6328 lines — the value the chunks revert to if the floor is removed")
 
 	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)

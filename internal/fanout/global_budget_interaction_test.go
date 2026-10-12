@@ -16,7 +16,7 @@ import (
 //
 // That was not always true. The line budget used to be derived from the
 // unclamped window, which let a legal 10,000,000-token declaration derive
-// ~728,000 lines (~34.9 MB) per chunk — past any real proxy request-body limit
+// ~546,000 lines (~34.9 MB) per chunk — past any real proxy request-body limit
 // — and epic 35.16.5.1 recorded the gap as technical debt. The asymmetry is
 // closed; the tests below pin both halves.
 //
@@ -122,9 +122,9 @@ func TestBuildSlots_ChunkedLineBudgetIsClampedByGlobalBudget(t *testing.T) {
 	// Enough lines to split even at the declaration's large line budget, so both
 	// runs produce chunk slots carrying a recorded line regime.
 	derived := payload.ChunkMaxLines("unlisted-small-model", ptrInt(512000), defaultMaxTokens)
-	// 100000 bytes / 48 bytes-per-line = 2083 lines. A literal, not a second call
+	// 100000 bytes / 64 bytes-per-line = 1562 lines. A literal, not a second call
 	// to the clamp: an expectation computed by the code under test asserts nothing.
-	const wantCappedLines = 2083
+	const wantCappedLines = 1562
 	require.Greater(t, derived, wantCappedLines,
 		"precondition: the declaration must derive a line budget the global cap actually binds")
 

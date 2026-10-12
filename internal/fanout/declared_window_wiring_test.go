@@ -80,12 +80,12 @@ func TestBuildSlots_ChunkedLineBudgetRisesWithDeclaration(t *testing.T) {
 	// The :1658 resolver — the per-chunk line budget, the second half of AC1 and
 	// the assertion status.json cannot stand in for.
 	//
-	//	32768 default  -> ChunkMaxLines 1493 -> a 900-line file per chunk
-	//	128000 declared -> ChunkMaxLines 8437 -> the whole 3600-line diff in one
+	//	32768 default  -> ChunkMaxLines 1120 -> a 900-line file per chunk
+	//	128000 declared -> ChunkMaxLines 6328 -> the whole 3600-line diff in one
 	// NOTE: these values are derived from the formula in payload.ChunkMaxLines; if the
-	// formula changes (B/token ratio, rounding), these assertions must be updated.
-	require.Equal(t, 1493, payload.ChunkMaxLines("unlisted-small-model", nil, defaultMaxTokens))
-	require.Equal(t, 8437, payload.ChunkMaxLines("unlisted-small-model", ptrInt(128000), defaultMaxTokens))
+	// formula changes (B/token or B/line ratio, rounding), these assertions must be updated.
+	require.Equal(t, 1120, payload.ChunkMaxLines("unlisted-small-model", nil, defaultMaxTokens))
+	require.Equal(t, 6328, payload.ChunkMaxLines("unlisted-small-model", ptrInt(128000), defaultMaxTokens))
 
 	diff := diffOfNFiles(4, 900)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 4}}
@@ -106,13 +106,13 @@ func TestBuildSlots_ChunkedLineBudgetRisesWithDeclaration(t *testing.T) {
 
 	assert.Less(t, len(declaredSlots), len(undeclaredSlots),
 		"a declared window must produce FEWER, larger chunks from the identical diff")
-	assert.Len(t, declaredSlots, 1, "3600 lines fits inside the declared window's 8437-line budget")
+	assert.Len(t, declaredSlots, 1, "3600 lines fits inside the declared window's 6328-line budget")
 }
 
 func TestBuildSlots_ChunkedRecordsDeclaredLineBudget(t *testing.T) {
 	// A declared agent whose diff STILL splits records the declared-derived line
-	// regime (8437), not the default-derived 1493, on every chunk slot.
-	diff := diffOfNFiles(12, 900) // 10800 lines > 8437
+	// regime (6328), not the default-derived 1120, on every chunk slot.
+	diff := diffOfNFiles(12, 900) // 10800 lines > 6328
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 12}}
 
 	cfg := declaredWindowRoster(t, 128000)
@@ -121,10 +121,10 @@ func TestBuildSlots_ChunkedRecordsDeclaredLineBudget(t *testing.T) {
 
 	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
-	require.Greater(t, len(slots), 1, "precondition: 10800 lines must still split at an 8437-line budget")
+	require.Greater(t, len(slots), 1, "precondition: 10800 lines must still split at a 6328-line budget")
 
 	for i, s := range slots {
-		assert.Equal(t, 8437, s.Primary.chunkMaxLines, "chunk slot %d must carry the declared-derived line regime", i)
+		assert.Equal(t, 6328, s.Primary.chunkMaxLines, "chunk slot %d must carry the declared-derived line regime", i)
 		assert.Equal(t, 128000, s.Primary.ResolvedWindow, "chunk slot %d must record the declaration", i)
 		assert.Equal(t, payload.EffectiveByteBudget("unlisted-small-model", ptrInt(128000), defaultMaxTokens),
 			s.Primary.EffectiveBudget, "chunk slot %d must size against the declaration", i)
@@ -144,7 +144,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 	const declared = 128000
 	const explicit = 700
 	derived := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
-	require.Equal(t, 8437, derived, "precondition: the declaration derives a much larger budget than the explicit 700")
+	require.Equal(t, 6328, derived, "precondition: the declaration derives a much larger budget than the explicit 700")
 
 	// The plan block is prepended to every chunk, so its presence is what triggers
 	// the ml/8 reservation. Format it the way resolveScopeConstraint does.
@@ -184,7 +184,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 		// the proxy is gone. Pinned as the computed byte figure rather than as a
 		// literal so the two operands that produce it stay visible.
 		agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
-		want := int((agentBudget - int64(len(plan))) / 48)
+		want := int((agentBudget - int64(len(plan))) / 64)
 		require.Less(t, want, derived, "precondition: the reservation must actually shave the derived budget")
 
 		slots, _, err := buildSlots(roster(t, false), payloads, rng, "", plan, true)
