@@ -19,6 +19,7 @@ import (
 //
 //	pool/
 //	  raw/agent/<agent>/{review.md, findings.txt, findings.toon, status.json}  # per-agent
+//	  raw/agent/<agent>/chunks.json  # baseline multi-chunk runs only (chunkrecord.go)
 //	  findings.txt, findings.toon                                              # merged (REVIEWER per row)
 //	  summary.json                                                             # run stats
 const (

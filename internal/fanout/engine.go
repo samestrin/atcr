@@ -775,6 +775,15 @@ type Engine struct {
 	// WithTruncationFailover; the executor's engine leaves it false and handles
 	// fixer truncation itself (Epic 19.5).
 	truncationFailover bool
+	// slotDone, when set, is called once per slot the moment that slot's Result
+	// is final — before the run advances past it, on every assignment path
+	// (success, fallback, failure, recovered panic, cancellation). It is the
+	// per-bin completion hook the durable chunks.json record hangs off (Epic
+	// 35.16.13 T1): without it a chunk's outcome exists only in memory until Run
+	// returns, so a killed run leaves nothing. Called concurrently from the
+	// parallel lane; the callee must serialise its own state. nil (the default)
+	// makes Run behave exactly as before.
+	slotDone func(i int, r Result)
 }
 
 // EngineOption configures an Engine at construction.
@@ -830,6 +839,15 @@ func WithCache(c reviewCache, noRead bool) EngineOption {
 // the executor's engine does not (it classifies fixer truncation itself). Epic 19.5.
 func WithTruncationFailover() EngineOption {
 	return func(e *Engine) { e.truncationFailover = true }
+}
+
+// WithSlotDone wires a per-slot completion hook: f(i, results[i]) runs once for
+// every slot as soon as its Result is final, while other slots may still be in
+// flight. i is the slot's index in the slice passed to Run. f is called
+// concurrently and must be goroutine-safe. A panic in f is NOT recovered by the
+// engine, so f must not panic; log and continue instead.
+func WithSlotDone(f func(i int, r Result)) EngineOption {
+	return func(e *Engine) { e.slotDone = f }
 }
 
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
@@ -928,6 +946,16 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		sem = make(chan struct{}, e.maxParallel)
 	}
 
+	// done reports slot i's final Result to the completion hook. Each slot's
+	// goroutine defers it AFTER registering wg.Done and BEFORE registering the
+	// panic recover, so it runs once results[i] is final on every path
+	// (including a recovered panic) and before the WaitGroup can release Run.
+	done := func(i int) {
+		if e.slotDone != nil {
+			e.slotDone(i, results[i])
+		}
+	}
+
 	// Serial slots share one goroutine so they never overlap; parallel slots
 	// each get their own. Both lanes start together and the WaitGroup joins them.
 	var serialIdx []int
@@ -939,6 +967,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		wg.Add(1)
 		go func(i int, s Slot) {
 			defer wg.Done()
+			defer done(i)
 			defer func() {
 				if r := recover(); r != nil {
 					res := resultFromPanic(s, start, r)
@@ -973,6 +1002,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			defer wg.Done()
 			for _, i := range serialIdx {
 				func(i int) {
+					defer done(i)
 					defer func() {
 						if r := recover(); r != nil {
 							res := resultFromPanic(slots[i], start, r)
