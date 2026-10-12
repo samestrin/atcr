@@ -117,6 +117,26 @@ Every payload has a byte budget — `payload_byte_budget`, default **524288 byte
 - Every drop is **recorded in the agent's `status.json`** — what was dropped and why is never silent.
 - **Two engine-rendered sections are exempt, up to a point:** the [claim ledger](#claims-to-verify) and the pre-fetched **Context Definitions** block are funded **cumulatively, in priority order — the claim ledger first** — and a section is kept only while the running exempt total still fits the budget. A Context Definitions block that fits the budget on its own is therefore still shed once the claim ledger has already consumed it. If the budget cannot fund both a section and the diff, diff content is dropped and the section is kept. The exemption stops there: a section larger than the whole budget sheds like any other entry, because shedding every file to fund it would fund nothing and leave the reviewer holding claims and no code. Each section is bounded by its own ceiling rather than by `payload_byte_budget` — `max_claim_bytes` and `max_prefetch_bytes` respectively, both documented in [registry.md](registry.md).
 
+## Baseline work queue (`--all` / `--scope`)
+
+A multi-bin baseline review is a queue of **units**, one per persona per bin, and its record is each persona's `sources/pool/raw/agent/<persona>/chunks.json`. Every unit is written there as `pending` before the first call, and each unit's outcome and `attempts` are written as soon as that attempt ends. A diff or bulk review uses none of this.
+
+| Limit | Default | Set by |
+| --- | --- | --- |
+| Unit budget | `512` units per persona | `atcr review --max-units <n>` |
+| Attempt budget | `4` sends per unit | fixed |
+| Backoff budget | `10m` of waiting per unit | fixed |
+| Rate-limit backoff | `75s`, doubled after each attempt | fixed |
+| Outage backoff | `20s`, doubled after each attempt | fixed |
+| Diff chunk ceiling | `64` chunks per persona | fixed |
+
+- **Unit budget.** A persona whose plan needs more units than the budget is refused before anything is sent (exit 2), and the error names the `--max-units` value that would admit it. The budget limits what a run may plan; it never drops units from a plan it accepts. The diff path keeps its own 64-chunk ceiling instead.
+- **Workers.** `max_parallel` workers each take the next `pending` unit, so the number of units in flight never exceeds `max_parallel`, however many units the plan holds. A unit's `timeout_secs` counts from when a worker takes it.
+- **Attempt budget.** A unit whose call fails with a rate limit (HTTP 429), a server error (5xx), a connection error or a timeout goes back to `pending` and is sent again after its backoff, while other units keep running: 75s, 150s, 300s after a rate limit, and 20s, 40s, 80s after the other errors. A rate-limited unit is retried on its own model; the other errors try the fallback models first. After 4 sends, or once the next wait would take it past 10 minutes of waiting, the unit is recorded `failed`. Each send still has the per-call retries (`max_retries`), so one unit costs at most 4 × 6 = 24 calls at the default settings.
+- **Adaptive leasing.** `max_parallel` is a ceiling for each provider, not a fixed share. A 429 halves that provider's limit on units in flight (never below 1) for 75s; after that, each success raises it by one until it is back at `max_parallel`. A provider whose circuit breaker is open is held to one unit until the breaker closes. Units for healthy providers keep running at full width meanwhile.
+
+**What a resumed run costs.** `atcr review --resume <id>` drains the queue the interrupted run left. Every unit that is not done is sent again: `pending`, `failed`, `timeout`, `deferred` (written only by an older `atcr`), and an `ok` unit that still left files unreviewed (the reviewer refused its content, or a backup model dropped files to fit). Done units are never sent again; their findings are kept. So a resume costs at most the number of open units × 4 sends (× 24 calls), and the `resuming review …` line names how many units it will send (`N unit(s) to re-lease`). Each resumed unit gets the full attempt and backoff budget again, while its `attempts` in `chunks.json` keeps counting from the interrupted run, so the file shows every send the unit ever took. The resumed units are checked against the unit budget like a fresh plan, and `--max-units` applies to a resume too. A persona that has no readable `chunks.json`, or whose findings were never written (the process was killed before the run's end), is resumed whole, because there is no record of which of its units were reviewed.
+
 ## Claims to verify
 
 Every review over a git range carries the **claim ledger** ahead of the diff — one of up to two engine-rendered sections prepended to a payload, alongside the pre-fetched **Context Definitions** block described under [`max_prefetch_bytes`](registry.md). It lists what the branch's commit messages assert, and asks each reviewer to rule on every claim against what the diff actually does.
