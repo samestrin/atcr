@@ -181,9 +181,10 @@ func TestBaselineSlots_UnknownAgentFailFast(t *testing.T) {
 	assert.Contains(t, err.Error(), `agent "ghost" not found in registry`)
 }
 
-// AC 06-01 Error Scenario 2: a chunk count exceeding maxChunksPerAgent is capped
-// (not left to spawn an unbounded slot count) while every file is still delivered
-// — mirroring chunkDiff's coalesce-into-final-chunk ceiling behavior.
+// AC 06-01 Error Scenario 2, as amended by Epic 35.16.13 T2: a chunk count
+// exceeding maxChunksPerAgent is capped (not left to spawn an unbounded slot
+// count), and the files past the ceiling are deferred — dispatched to nobody —
+// rather than coalesced into one oversized final chunk.
 func TestBaselineSlots_ChunkCapBounded(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
@@ -199,11 +200,12 @@ func TestBaselineSlots_ChunkCapBounded(t *testing.T) {
 	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, maxChunksPerAgent, "slot count is capped at maxChunksPerAgent, not unbounded")
-	// No file dropped: the final coalesced chunk still carries the overflow files.
-	for i := 0; i < n; i++ {
-		p := fmt.Sprintf("f%03d.go", i)
-		assert.True(t, slotsContainMarker(slots, p), "capped fan-out dropped file %s", p)
+	for i := 0; i < maxChunksPerAgent; i++ {
+		assert.True(t, slotsContainMarker(slots, fmt.Sprintf("f%03d.go", i)), "file %d is dispatched", i)
 	}
+	last := fmt.Sprintf("f%03d.go", n-1)
+	assert.False(t, slotsContainMarker(slots, last), "the file past the ceiling is not dispatched")
+	assert.Equal(t, [][]string{{last}}, slots[len(slots)-1].deferredBins, "it rides the last slot as a deferred bin")
 }
 
 // Sprint 35.0 Phase 5 (task 5.14 gate MEDIUM): a file the GLOBAL byte budget dropped

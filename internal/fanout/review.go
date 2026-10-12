@@ -1694,26 +1694,25 @@ func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes 
 	return capScopeConstraintPlan(block, int(planCap))
 }
 
-// capChunks bounds a baseline chunk set to at most max chunks by coalescing the
-// tail (chunks[max-1:]) into a single final chunk — the same ceiling behavior
-// chunkDiff applies to diff chunking (the maxChunksPerAgent seal conjunct in
-// chunkDiff's bin-packing loop). It never drops a file: the coalesced final chunk
-// may exceed a single model window, but the alternative — an unbounded
-// slot/goroutine/provider-call count for a huge repository — is the exact
-// cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01 ES2). A set
-// already within the cap is returned unchanged.
-func capChunks(chunks [][]payload.FileEntry, max int) [][]payload.FileEntry {
+// capChunks bounds a baseline chunk set to at most max chunks by DEFERRING the
+// tail: chunks[:max] are returned for dispatch and chunks[max:] come back as
+// deferred, each bin exactly as PartitionByBudget packed it (Epic 35.16.13 T2).
+// The ceiling still bounds the slot/goroutine/provider-call count for a huge
+// repository — the cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01
+// ES2) — but the overflow is no longer coalesced into one oversized final bin
+// that no model window can hold, so every dispatched bin stays within budget and
+// the excess is left, recorded, for the next pass. Deferred bins are dispatched
+// to nobody; the caller records them as deferred in chunks.json. A set already
+// within the cap is returned unchanged with no deferral.
+//
+// chunkDiff (the review_strategy=chunked diff path) keeps its own
+// coalesce-into-the-final-chunk ceiling and warning; only the baseline path
+// defers.
+func capChunks(chunks [][]payload.FileEntry, max int) (kept, deferred [][]payload.FileEntry) {
 	if max <= 0 || len(chunks) <= max {
-		return chunks
+		return chunks, nil
 	}
-	capped := make([][]payload.FileEntry, 0, max)
-	capped = append(capped, chunks[:max-1]...)
-	var tail []payload.FileEntry
-	for _, c := range chunks[max-1:] {
-		tail = append(tail, c...)
-	}
-	capped = append(capped, tail)
-	return capped
+	return chunks[:max], chunks[max:]
 }
 
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
@@ -2014,11 +2013,22 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 				if err != nil {
 					return err
 				}
-				// Bound the slot count at maxChunksPerAgent the same way
-				// chunkDiff does: coalesce the tail into the final chunk so the fan-out never
-				// spawns an unbounded slot/goroutine/provider-call count while every file is
-				// still delivered whole (AC 06-01 ES2 — capped, never dropped).
-				chunks = capChunks(chunks, maxChunksPerAgent)
+				// Bound the slot count at maxChunksPerAgent (AC 06-01 ES2) by deferring
+				// the bins past the ceiling rather than coalescing them into one
+				// undeliverable final bin (Epic 35.16.13 T2). Deferred bins are
+				// dispatched to nobody: they ride on the persona's last slot so the
+				// chunks.json ledger records them as deferred, and the warning below
+				// names how many files were left. Deferral is never silent.
+				chunks, deferred := capChunks(chunks, maxChunksPerAgent)
+				var deferredBins [][]string
+				if len(deferred) > 0 {
+					deferredFiles := 0
+					for _, ck := range deferred {
+						deferredBins = append(deferredBins, entryPaths(ck))
+						deferredFiles += len(ck)
+					}
+					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: the %d-chunk ceiling was reached, so %d file(s) in %d chunk(s) were deferred (not dispatched); see chunks.json\n", name, maxChunksPerAgent, deferredFiles, len(deferred))
+				}
 				if len(chunks) > 1 {
 					// Per-agent sizing record (Epic 19.10 F6/F8): every chunk-Slot of this
 					// persona carries the same window/budget and the persona's full chunk count,
@@ -2098,7 +2108,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						// the shed is real and the stamp belongs; so does the bulk
 						// fall-through, which reviews the kept subset and records it directly.
 						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
-						// Tagged HERE — at capChunks output, after tail-coalescing — so the
+						// Tagged HERE — at capChunks output, after the ceiling's deferral — so the
 						// identity matches the slot actually dispatched. runEngine reads it
 						// pre-merge to attribute a failed chunk to its files, so a partially
 						// failed baseline run records the succeeded chunks' files instead of
@@ -2122,6 +2132,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						}
 						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck})
 					}
+					slots[len(slots)-1].deferredBins = deferredBins
 					return nil
 				}
 				// len(chunks) <= 1 → single-chunk baseline scan: fall through to the bulk

@@ -343,6 +343,13 @@ type Slot struct {
 	// entry-less slot and keep the honest warn-and-ship, rather than re-pack
 	// against an empty list.
 	entries []payload.FileEntry
+
+	// deferredBins is set only on a baseline persona's LAST chunk slot when the
+	// maxChunksPerAgent ceiling cut its partition (Epic 35.16.13 T2): the file
+	// sets of the bins past the ceiling, in partition order. They are never
+	// dispatched; the chunks.json ledger records them as deferred after the
+	// persona's dispatched bins.
+	deferredBins [][]string
 }
 
 // Result is the outcome of one slot after fallback resolution. Status is one of
