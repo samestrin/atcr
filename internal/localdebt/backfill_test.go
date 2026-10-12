@@ -1206,6 +1206,42 @@ func TestBackfillJustifications_SymlinkCandidateIsAPolicyRefusalNotAnAbsentTree(
 			"a file cannot fix it and the operator must not be sent looking for one")
 }
 
+// TD internal/localdebt/backfill.go:533 — replayCandidates writes through its
+// ownershipCache, and a nil map panics on write. BackfillJustifications always hands
+// it one, but a future caller (or a test) passing the zero value would reach the
+// write only on the rare policy-refused path, so the panic would hide until then.
+// A nil cache is defaulted rather than trusted: the refusal is still attributed.
+func TestReplayCandidates_NilOwnershipCacheDoesNotPanic(t *testing.T) {
+	root := t.TempDir()
+	reviewRoot := filepath.Join(root, "reviews")
+
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+	rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+
+	rec := Record{
+		RunID:        "2026-08-01T00:00:00Z-multi-agent",
+		File:         "internal/thing.go",
+		Line:         42,
+		SourceReport: &SourceReport{Path: "sources/pool/raw/agent/dax/review.md", Line: 3},
+	}
+
+	var res replayResult
+	var err error
+	require.NotPanics(t, func() { res, err = replayCandidates(reviewRoot, rec, nil) })
+	require.NoError(t, err)
+	assert.Empty(t, res.texts, "the symlink must never yield an excerpt")
+	assert.True(t, res.policyRefused,
+		"the refusal sits in the record's own review dir, so a defaulted cache still attributes it")
+}
+
 // TD internal/localdebt/backfill.go:382 — the namesake narrowing closed the ordinary
 // in-cap arm (TestBackfillJustifications_NamesakeInAnotherReviewIsNotAPolicyRefusal)
 // but left the symlink and over-cap arms speaking for a record they cannot be shown

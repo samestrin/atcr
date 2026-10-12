@@ -368,7 +368,15 @@ type replayResult struct {
 // reviewRoot yields for rec's anchor. Distinct rather than one-per-file: two copies
 // of the same review (a re-run, a backup) agree, and treating that as ambiguity would
 // decline a repair that has only one answer.
+//
+// ownership must be non-nil to be shared: it is written on the policy-refused path,
+// and BackfillJustifications passes one map for the whole pass so each review dir's
+// summary.json is read once. A nil one is defaulted to a fresh map for this call
+// rather than panicking on that write — correct, but cached for this record alone.
 func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (replayResult, error) {
+	if ownership == nil {
+		ownership = ownershipCache{}
+	}
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
@@ -481,6 +489,11 @@ var openSummary = os.Open
 // A missing, unreadable, oversized (maxSummaryBytes) or unparseable summary.json, or
 // one with no reconciled_at, owns NOTHING. That is the safe under-count: the record lands in the pruned-tree
 // half, which sends the operator to look for a file rather than telling them not to.
+//
+// It is the test-facing, uncached wrapper over readReconciledAt and runOwnedBy: its
+// only callers are the tests (backfill_test.go, backfill_unix_test.go). The backfill
+// pass itself asks ownershipCache.owns, which composes the same two functions but
+// reads each review dir's summary.json at most once per pass.
 func reviewDirOwnsRun(reviewDir, runID string) bool {
 	return runOwnedBy(reviewDir, readReconciledAt(reviewDir), runID)
 }
