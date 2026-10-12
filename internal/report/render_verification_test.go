@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
@@ -263,4 +264,27 @@ func TestRenderV1Findings(t *testing.T) {
 				"v1 findings (no verification) must render identically to the pre-Epic-3.0 golden")
 		})
 	}
+}
+
+// TD internal/verify/invoke.go:223 (HIGH): writeSkepticBlock cuts Notes at
+// maxTextLen, so the fragment-grade marker reaches report.md only because verify
+// now LEADS Notes with it. This pins the render half: a long reasoning behind the
+// marker is cut, the marker is not.
+func TestWriteSkepticBlock_FragmentGradeSurvivesLongReasoning(t *testing.T) {
+	const marker = "[verdict_after_unopened_closer: 16 prefix byte(s) discarded]"
+	notes := marker + " " + strings.Repeat("reasoning ", 60)
+	require.Greater(t, len([]rune(notes)), 600)
+
+	var b bytes.Buffer
+	writeSkepticBlock(&b, &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: notes})
+
+	var reasoning string
+	for _, line := range strings.Split(b.String(), "\n") {
+		if strings.Contains(line, "Reasoning:") {
+			reasoning = line
+		}
+	}
+	require.NotEmpty(t, reasoning, "a Reasoning line is rendered")
+	assert.Contains(t, reasoning, marker, "the marker survives the 500-rune cap")
+	assert.Less(t, len([]rune(reasoning)), len([]rune(notes)), "and the reasoning behind it was in fact cut")
 }

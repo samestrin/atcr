@@ -7,6 +7,7 @@ import (
 	"fmt"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -211,26 +212,6 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 	v, ambiguous, discardedPrefix := verdictFromAnswer(answer)
-	if discardedPrefix > 0 {
-		// The reply began mid-thought, so the verdict was taken from the text AFTER a
-		// bare closer and the draft ahead of it was dropped. Debug, not Warn: this is a
-		// SUCCESSFUL grade and the shape is legitimate (a chat template put the opener
-		// in the prompt), so warning on it would train the reader to ignore the class.
-		//
-		// Recorded on the Verification too, not only in the log: the Debug line is
-		// suppressed at the default level, and the emission deliberately did NOT touch
-		// the returned object, so an operator reading verification.json, findings.json
-		// or report.md could not tell a whole-answer grade from a fragment grade — the
-		// very gap this was written to close. A length is enough to see the split and
-		// how much it cost, and it holds no withdrawn verdict text, so the marker is
-		// safe to publish (TD internal/verify/invoke.go:683, :781).
-		logger.Debug("skeptic answer taken after a bare closer", "skeptic", skeptic.Name,
-			"class", "verdict_after_unopened_closer", "discarded_prefix_bytes", discardedPrefix)
-		if v != nil {
-			v.Notes = fmt.Sprintf("%s [verdict_after_unopened_closer: %d prefix byte(s) discarded]",
-				v.Notes, discardedPrefix)
-		}
-	}
 	if ambiguous {
 		// A bare </think> with an envelope on both sides, or a `refuted` one only
 		// before it. Neither is provably the committed one, and grading the wrong
@@ -249,6 +230,35 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		// "preserve the raw text" for diagnosis, so keep the raw reply recoverable:
 		// an operator can then tell a think-only reply from a genuinely empty one.
 		v.Notes = "think_only_reply: " + truncateForNotes(res.Content)
+	}
+	// Every Notes up to here is model-derived: the parsed reasoning, the
+	// invalid_verdict and malformed_output diagnostics that embed the raw reply,
+	// and the think_only_reply copy above. A skeptic that typed the marker token
+	// would otherwise be byte-identical to the engine's record below, so the token
+	// is rewritten inertly once, here, before the engine adds its own
+	// (TD internal/verify/invoke.go:223).
+	v.Notes = neutraliseMarkerTokens(v.Notes)
+	if discardedPrefix > 0 {
+		// The reply began mid-thought, so the verdict was taken from the text AFTER a
+		// bare closer and the draft ahead of it was dropped. Debug, not Warn: this is a
+		// SUCCESSFUL grade and the shape is legitimate (a chat template put the opener
+		// in the prompt), so warning on it would train the reader to ignore the class.
+		//
+		// Recorded on the Verification too, not only in the log: the Debug line is
+		// suppressed at the default level, and the emission deliberately did NOT touch
+		// the returned object, so an operator reading verification.json, findings.json
+		// or report.md could not tell a whole-answer grade from a fragment grade — the
+		// very gap this was written to close. A length is enough to see the split and
+		// how much it cost, and it holds no withdrawn verdict text, so the marker is
+		// safe to publish (TD internal/verify/invoke.go:683, :781).
+		//
+		// It LEADS Notes: every renderer cuts Notes at 500 runes, and a marker behind
+		// a long reasoning was cut in exactly the case it exists for
+		// (TD internal/verify/invoke.go:223).
+		logger.Debug("skeptic answer taken after a bare closer", "skeptic", skeptic.Name,
+			"class", fragmentAfterToken, "discarded_prefix_bytes", discardedPrefix)
+		v.Notes = leadWithFragmentMarker(
+			fmt.Sprintf("[%s: %d prefix byte(s) discarded]", fragmentAfterToken, discardedPrefix), v.Notes)
 	}
 	if v.Verdict == verdictUnverifiable {
 		class := "malformed_output"
@@ -1110,4 +1120,51 @@ func derefInt64(p *int64) int64 {
 		return 0
 	}
 	return *p
+}
+
+// fragmentAfterToken names a grade taken from the text after a bare closer.
+// fragmentBeforeToken is reserved for a grade taken from the text before one;
+// it is neutralised in model text now so emitting it needs no second rewrite.
+const (
+	fragmentAfterToken  = "verdict_after_unopened_closer"
+	fragmentBeforeToken = "verdict_before_unopened_closer"
+)
+
+// markerTokenPattern matches either engine token in any letter case.
+var markerTokenPattern = regexp.MustCompile(`(?i)verdict_(?:after|before)_unopened_closer`)
+
+// neutraliseMarkerTokens rewrites every spelling of an engine marker token in
+// model-derived text to its hyphenated form, keeping the model's letter case.
+// The rewrite preserves length, so a Notes already capped by truncateForNotes
+// stays capped.
+func neutraliseMarkerTokens(s string) string {
+	return markerTokenPattern.ReplaceAllStringFunc(s, func(tok string) string {
+		return strings.ReplaceAll(tok, "_", "-")
+	})
+}
+
+// leadWithFragmentMarker puts the engine's marker at the start of notes,
+// joining the reasoning after it only when there is some. A Notes that is
+// exactly the marker therefore means the skeptic gave no reasoning.
+func leadWithFragmentMarker(marker, notes string) string {
+	if notes == "" {
+		return marker
+	}
+	return marker + " " + notes
+}
+
+// splitFragmentMarker reports whether notes begins with an engine marker and,
+// if so, returns the marker and the reasoning after it. Detection is a prefix
+// test on the exact token, which model text can no longer carry once
+// neutraliseMarkerTokens has run.
+func splitFragmentMarker(notes string) (marker, rest string, ok bool) {
+	if !strings.HasPrefix(notes, "["+fragmentAfterToken+":") &&
+		!strings.HasPrefix(notes, "["+fragmentBeforeToken+":") {
+		return "", notes, false
+	}
+	end := strings.IndexByte(notes, ']')
+	if end < 0 {
+		return "", notes, false
+	}
+	return notes[:end+1], strings.TrimPrefix(notes[end+1:], " "), true
 }

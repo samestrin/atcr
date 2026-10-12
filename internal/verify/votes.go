@@ -102,17 +102,33 @@ func filterByVerdict(vs []*reclib.Verification, verdict string) []*reclib.Verifi
 
 // combineReasonings joins each verdict's "skeptic: notes" line so a human can read
 // every reasoning behind the aggregate. Entries with empty Notes still contribute
-// their verdict so silence is visible.
+// their verdict so silence is visible, and a Notes that is exactly the engine's
+// fragment-grade marker is silence too: the marker is not reasoning.
+//
+// Every skeptic's marker is hoisted to the front of the aggregate, verbatim and
+// in voter order, and removed from the entry it came from. Renderers cut Notes at
+// 500 runes, so a later skeptic's marker left behind an earlier one's reasoning
+// would be cut (TD internal/verify/invoke.go:223).
 func combineReasonings(vs []*reclib.Verification) string {
+	var markers []string
 	parts := make([]string, 0, len(vs))
 	for _, v := range vs {
 		label := v.Skeptic
 		if label == "" {
 			label = v.Verdict
 		}
-		parts = append(parts, label+": "+v.Notes)
+		notes := v.Notes
+		if marker, rest, ok := splitFragmentMarker(notes); ok {
+			markers = append(markers, marker)
+			notes = rest
+		}
+		parts = append(parts, label+": "+notes)
 	}
-	return strings.Join(parts, " | ")
+	joined := strings.Join(parts, " | ")
+	if len(markers) == 0 {
+		return joined
+	}
+	return strings.Join(markers, " ") + " " + joined
 }
 
 func joinSkeptics(vs []*reclib.Verification) string {
