@@ -15,7 +15,7 @@ import (
 // not parallel-safe, so these tests must not call t.Parallel().
 
 // The per-chunk LINE budget is derived from a BYTE budget at a fixed bytes/line
-// estimate (payload.avgBytesPerLine), calibrated on a ~59 B/line diff. A diff of
+// estimate (payload.AvgBytesPerLine), calibrated on a ~59 B/line diff. A diff of
 // longer lines — prose, YAML/JSON, generated or minified code — packs the same
 // line count into far more bytes, so a chunk can ship past the byte budget it was
 // sized against while every line-count check stays quiet. These tests pin the
