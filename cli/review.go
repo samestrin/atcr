@@ -265,12 +265,12 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 		// cause is the difference between the operator turning off inline reasoning and
 		// the operator raising a budget that was never the problem.
 		log.FromContext(ctx).Warn("baseline scan: no file was covered by a succeeded chunk, so the file-hash index was left untouched and the next run re-scans the whole scope",
-			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks, "deferred_files", result.Summary.DeferredFiles,
 			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
 			"cause", baselineWithheldCause(result.Summary))
 	case excluded > 0:
 		log.FromContext(ctx).Warn("baseline scan: partial coverage; only the files covered by succeeded chunks were recorded, so the next run re-scans the rest",
-			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks,
+			"recorded_files", recorded, "excluded_files", excluded, "unreviewed_chunks", result.Summary.UnreviewedChunks, "deferred_files", result.Summary.DeferredFiles,
 			"contributed_nothing_slots", result.Summary.ContributedNothingCount,
 			"cause", baselineWithheldCause(result.Summary))
 	default:
@@ -294,7 +294,9 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 // counts only a persona with a MIX of succeeded and failed chunks, so a persona that
 // failed WHOLLY reaches this selector with both counters at zero; Summary.Failed is
 // the counter that names it, and it must be read before the default, or a failed
-// slot is reported as a re-pack (TD cli/review.go:302). With none of the three set,
+// slot is reported as a re-pack (TD cli/review.go:302). DeferredFiles names the
+// maxChunksPerAgent ceiling (Epic 35.16.13 T6): every dispatched slot can report ok
+// while the deferred files went to no slot at all. With none of the four set,
 // every slot reported ok, which leaves the re-packed subset as the only reason a
 // file can go uncovered.
 func baselineWithheldCause(s fanout.Summary) string {
@@ -305,6 +307,8 @@ func baselineWithheldCause(s fanout.Summary) string {
 		return "failed chunks left files unreviewed while the persona still reported ok"
 	case s.Failed > 0:
 		return "a slot failed, so none of its tagged files were reviewed"
+	case s.DeferredFiles > 0:
+		return "the chunk ceiling deferred files that no slot was sent"
 	default:
 		return "a slot re-packed its payload and reviewed only a subset of its tagged files"
 	}
