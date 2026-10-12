@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -428,4 +429,114 @@ func TestExecuteBenchmarkRun_FailedReplicateRemovesItsDir(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "replicate 2")
 	assert.Equal(t, []string{"case-0-r2"}, removed, "the failed replicate's tree is removed; replicate 1's is not")
+}
+
+// failOnSecondCall wraps a case-run step so its second call fails: on a
+// --replicates run of a two-case suite that is replicate 2 of case 0, the first
+// replicate whose tree is removed.
+func failOnSecondCall(calls *int) error {
+	*calls++
+	if *calls == 2 {
+		return errors.New("injected fault")
+	}
+	return nil
+}
+
+// Every error return after a later replicate's dir is chosen removes that dir on
+// the way out, not only the execute step's: a fault in prepare, the pool summary,
+// the findings read or the checkpoint write on replicate 2 of case 0 still
+// removes case-0-r2.
+func TestExecuteBenchmarkRun_FailedReplicateStepRemovesItsDir(t *testing.T) {
+	origPrepare, origSummary, origFindings := prepareReviewFromDiff, readPoolSummary, readBenchmarkCaseFindings
+	t.Cleanup(func() {
+		prepareReviewFromDiff, readPoolSummary, readBenchmarkCaseFindings = origPrepare, origSummary, origFindings
+	})
+
+	tests := []struct {
+		name   string
+		inject func(calls *int, ckpt string)
+		errMsg string
+	}{
+		{
+			name: "prepare",
+			inject: func(calls *int, _ string) {
+				prepareReviewFromDiff = func(ctx context.Context, cfg *fanout.ReviewConfig, req fanout.ReviewRequest, diff string) (*fanout.PreparedReview, error) {
+					if err := failOnSecondCall(calls); err != nil {
+						return nil, err
+					}
+					return origPrepare(ctx, cfg, req, diff)
+				}
+			},
+			errMsg: "preparing case",
+		},
+		{
+			name: "pool summary",
+			inject: func(calls *int, _ string) {
+				readPoolSummary = func(dir string) (fanout.PoolSummary, error) {
+					if err := failOnSecondCall(calls); err != nil {
+						return fanout.PoolSummary{}, err
+					}
+					return origSummary(dir)
+				}
+			},
+			errMsg: "reading pool summary for case",
+		},
+		{
+			name: "findings",
+			inject: func(calls *int, _ string) {
+				readBenchmarkCaseFindings = func(dir string) (map[string][]string, error) {
+					if err := failOnSecondCall(calls); err != nil {
+						return nil, err
+					}
+					return origFindings(dir)
+				}
+			},
+			errMsg: "reading findings for case",
+		},
+		{
+			// The checkpoint write is pinned to one call site by a doc test, so it
+			// fails on disk instead: once replicate 2's findings are read, the
+			// checkpoint path becomes a non-empty directory the atomic rename cannot
+			// replace.
+			name: "checkpoint write",
+			inject: func(calls *int, ckpt string) {
+				readBenchmarkCaseFindings = func(dir string) (map[string][]string, error) {
+					if failOnSecondCall(calls) != nil {
+						if err := os.Remove(ckpt); err != nil {
+							return nil, err
+						}
+						if err := os.MkdirAll(filepath.Join(ckpt, "blocker"), 0o700); err != nil {
+							return nil, err
+						}
+					}
+					return origFindings(dir)
+				}
+			},
+			errMsg: "writing checkpoint for case",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prepareReviewFromDiff, readPoolSummary, readBenchmarkCaseFindings = origPrepare, origSummary, origFindings
+			ckpt := filepath.Join(t.TempDir(), "ckpt.json")
+			var calls int
+			tt.inject(&calls, ckpt)
+
+			var removed []string
+			origRemove := removeReplicateDir
+			t.Cleanup(func() { removeReplicateDir = origRemove })
+			removeReplicateDir = func(dir string) error {
+				removed = append(removed, filepath.Base(dir))
+				return origRemove(dir)
+			}
+
+			cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+			_, err := executeBenchmarkRunReplicates(context.Background(), cfg, stubCompleter{}, suiteValidPath, replicatesGen, ckpt, 3)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+			assert.Contains(t, err.Error(), `"case-01-nil-deref" replicate 2`)
+			assert.Equal(t, 2, calls, "the run stops at the injected fault")
+			assert.Equal(t, []string{"case-0-r2"}, removed, "the failed replicate's tree is removed; replicate 1's is not")
+		})
+	}
 }

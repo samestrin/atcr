@@ -464,7 +464,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 				StartedAt:  time.Unix(0, 0).UTC(),
 				NoCache:    rep > 1,
 			}
-			prep, err := fanout.PrepareReviewFromDiff(ctx, cfg, req, string(diff))
+			prep, err := prepareReviewFromDiff(ctx, cfg, req, string(diff))
 			if err != nil {
 				return fail(fmt.Errorf("preparing case %s: %w", caseLabel, err))
 			}
@@ -481,11 +481,11 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 				return fail(fmt.Errorf("executing case %s: %w", caseLabel, err))
 			}
 
-			summary, err := fanout.ReadPoolSummary(res.Dir)
+			summary, err := readPoolSummary(res.Dir)
 			if err != nil {
 				return fail(fmt.Errorf("reading pool summary for case %s: %w", caseLabel, err))
 			}
-			raisedByReviewer, err := readCaseFindings(res.Dir)
+			raisedByReviewer, err := readBenchmarkCaseFindings(res.Dir)
 			if err != nil {
 				return fail(fmt.Errorf("reading findings for case %s: %w", caseLabel, err))
 			}
@@ -591,6 +591,14 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 // removeReplicateDir removes a later replicate's review tree once its fit rows are
 // folded. A var so a test can keep the trees and compare the run-result.
 var removeReplicateDir = os.RemoveAll
+
+// The case-run steps that can fail after a replicate's dir is chosen. Vars so a
+// test can fail one on a later replicate and check its tree is still removed.
+var (
+	prepareReviewFromDiff     = fanout.PrepareReviewFromDiff
+	readPoolSummary           = fanout.ReadPoolSummary
+	readBenchmarkCaseFindings = readCaseFindings
+)
 
 // fitRow projects one reviewer's record of one case run onto its pre-scrub
 // benchmark.ReviewerFit row. It is the single projection shared by fresh execution
