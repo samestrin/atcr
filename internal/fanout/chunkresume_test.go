@@ -500,11 +500,23 @@ func TestChunkResume_GuardsStillFailClosed(t *testing.T) {
 	repo, paths := chunkResumeRepo(t, 4)
 	dir := partialBaselineReview(t, cfg, repo, paths, 1)
 
+	// Epic 35.16.14 T1: the work ledger is guarded by the same identity. A
+	// drifted roster fails closed before the ledger is read or rewritten.
 	t.Run("roster", func(t *testing.T) {
+		ledger := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "greta", chunksFile)
+		before, err := os.ReadFile(ledger)
+		require.NoError(t, err)
+		require.Positive(t, readChunkRecord(t, filepath.Join(dir, "sources", "pool"), "greta").Bins[0].Attempts,
+			"the ledger carries the attempts of the bins it resolved")
+
 		changed := chunkResumeConfig()
 		changed.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
-		_, _, err := PrepareResume(context.Background(), changed, dir, repoReq(repo, ""))
+		_, _, err = PrepareResume(context.Background(), changed, dir, repoReq(repo, ""))
 		assert.True(t, errors.Is(err, ErrRosterChanged), "got %v", err)
+
+		after, err := os.ReadFile(ledger)
+		require.NoError(t, err)
+		assert.Equal(t, before, after, "a refused resume leaves the ledger untouched")
 	})
 
 	t.Run("range", func(t *testing.T) {

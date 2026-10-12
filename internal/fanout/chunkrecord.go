@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,9 +26,15 @@ const chunksSchemaVersion = 1
 // each bin resolves. deferred marks a bin the maxChunksPerAgent ceiling cut
 // (capChunks); it is never dispatched, so it stays deferred and readers must
 // treat it as unreviewed.
+//
+// leased is the work ledger's in-flight state (Epic 35.16.14 T1): a worker holds
+// the bin. It lives only in memory and is never written, so a run killed
+// mid-drain leaves a leased bin on disk as its last persisted outcome (pending,
+// or the previous attempt's), which every reader already treats as open.
 const (
 	chunkOutcomePending  = "pending"
 	chunkOutcomeDeferred = "deferred"
+	chunkOutcomeLeased   = "leased"
 )
 
 // chunkRecord is the on-disk shape of one persona's chunks.json: the full
@@ -61,6 +68,12 @@ type chunkRecordBin struct {
 	// reviewed all of Files.
 	RePacked    bool     `json:"re_packed,omitempty"`
 	ServedFiles []string `json:"served_files,omitempty"`
+	// Attempts counts the times a worker leased the bin (Epic 35.16.14 T1). A
+	// lease is counted when its attempt resolves and persisted with that outcome,
+	// so an attempt in flight when the run is killed is not on disk.
+	// omitempty: a bin never leased (pending, deferred) is written exactly as
+	// before, and a record written before this field reads as zero attempts.
+	Attempts int `json:"attempts,omitempty"`
 	// Hashes maps each file the bin shipped to the sha256 of the content it
 	// shipped (cache.HashText, the file-hash index's own hash), stamped when the
 	// bin is planned. A resume records a prior bin's file in the index only when
@@ -113,16 +126,31 @@ func (b chunkRecordBin) open() bool {
 	return false
 }
 
-// chunkLedger owns the chunks.json records for one engine run. Every mutation
-// and write happens under mu, so concurrent per-bin completions from the
-// parallel lane are serialised and each file is always a whole, consistent
-// snapshot (atomicfs.WriteJSON never leaves a torn file).
+// chunkLedger owns the chunks.json records for one engine run: the work ledger
+// a run drains (Epic 35.16.14). Every mutation happens under mu, so concurrent
+// per-bin leases and completions are serialised, and each file is written from a
+// snapshot taken under mu, so it is always whole and consistent
+// (atomicfs.WriteFileAtomic never leaves a torn file).
+//
+// Writes are coalesced per persona (flush): a completion returns only once a
+// write holding its outcome is on disk, but completions that land while a write
+// is in flight share the next one instead of each rewriting the whole file.
 type chunkLedger struct {
 	log     *slog.Logger
 	rawBase string
 	mu      sync.Mutex
 	// records is keyed by the persona's on-disk directory name.
 	records map[string]*chunkRecord
+	// leased holds the slots a worker currently holds. In memory only.
+	leased map[int]bool
+	// gen counts each persona record's mutations; written is the gen its last
+	// write captured. Both under mu.
+	gen     map[string]uint64
+	written map[string]uint64
+	// writeMu serialises one persona's file writes, outside mu.
+	writeMu map[string]*sync.Mutex
+	// writes counts the file writes flush made, under mu.
+	writes int
 	// bySlot maps a slot index to its persona dir and bin index; a slot with no
 	// entry (bulk, chunked-diff) is not recorded.
 	bySlot map[int]chunkSlotRef
@@ -159,6 +187,10 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		rawBase: filepath.Join(poolDir, poolRawAgentDir),
 		records: map[string]*chunkRecord{},
 		bySlot:  map[int]chunkSlotRef{},
+		leased:  map[int]bool{},
+		gen:     map[string]uint64{},
+		written: map[string]uint64{},
+		writeMu: map[string]*sync.Mutex{},
 	}
 	for i, s := range slots {
 		if !recordedBin(s) {
@@ -173,6 +205,7 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		if !ok {
 			rec = &chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: s.Primary.Name}
 			l.records[dir] = rec
+			l.writeMu[dir] = &sync.Mutex{}
 			l.order = append(l.order, dir)
 		}
 		bin := len(rec.Bins)
@@ -222,49 +255,134 @@ func recordedBin(s Slot) bool {
 
 // writePlan writes every persona's full planned bin list before dispatch.
 func (l *chunkLedger) writePlan() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	for _, dir := range l.order {
-		l.writeLocked(dir)
+		l.flush(dir, l.touch(dir))
 	}
 }
 
+// touch records a mutation of dir's record and returns the generation a write
+// must capture to hold it.
+func (l *chunkLedger) touch(dir string) uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.gen[dir]++
+	return l.gen[dir]
+}
+
+// slotStart is the engine's per-slot lease hook: a worker has taken the bin.
+// It marks the bin leased, in memory only; nothing is written until the attempt
+// resolves (slotDone), which counts it. The count waits for the outcome because
+// another bin's completion rewrites the whole persona record meanwhile, and an
+// attempt in flight must not reach disk.
+func (l *chunkLedger) slotStart(i int) {
+	if _, ok := l.bySlot[i]; !ok {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.leased[i] = true
+}
+
 // slotDone is the engine's per-slot completion hook: it stamps the resolved
-// bin's outcome and rewrites that persona's chunks.json before returning.
+// bin's outcome, releases its lease, and returns only once that persona's
+// chunks.json holds the outcome and its attempts count. A bin can complete more
+// than once (a re-queued unit), so every field of the outcome is restamped and
+// none is left over from the earlier completion.
 func (l *chunkLedger) slotDone(i int, r Result) {
 	ref, ok := l.bySlot[i]
 	if !ok {
 		return
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	bin := &l.records[ref.dir].Bins[ref.bin]
+	if l.leased[i] {
+		bin.Attempts++
+		delete(l.leased, i)
+	}
 	bin.Outcome = r.Status
 	bin.ContributedNothing = r.Status == StatusOK && contributedNothing(r)
+	bin.RePacked = r.servedRePacked
+	bin.ServedFiles = nil
 	if r.servedRePacked {
-		bin.RePacked = true
 		bin.ServedFiles = append([]string(nil), r.servedChunkFiles...)
 	}
-	l.writeLocked(ref.dir)
+	l.gen[ref.dir]++
+	want := l.gen[ref.dir]
+	l.mu.Unlock()
+	l.flush(ref.dir, want)
 }
 
-// writeLocked writes one persona's record. Best-effort, like the transcript: a
-// write failure is logged and the review continues, because losing the record
-// must never cost the review itself. The first failure is kept for writeErr, so
-// the coverage gate fails closed rather than reading a missing record as an
-// unbinned run. Caller holds mu.
-func (l *chunkLedger) writeLocked(dir string) {
-	path := filepath.Join(l.rawBase, dir, chunksFile)
-	err := os.MkdirAll(filepath.Dir(path), 0o755)
-	if err == nil {
-		err = atomicfs.WriteJSON(path, l.records[dir])
+// states counts every planned bin by its current state, leased included, so the
+// counts always sum to the planned bin total. A leased bin counts as leased in
+// place of its recorded outcome.
+func (l *chunkLedger) states() map[string]int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]int{}
+	for _, dir := range l.order {
+		for _, bin := range l.records[dir].Bins {
+			out[bin.Outcome]++
+		}
 	}
+	for i := range l.leased {
+		ref := l.bySlot[i]
+		out[l.records[ref.dir].Bins[ref.bin].Outcome]--
+		out[chunkOutcomeLeased]++
+	}
+	for k, n := range out {
+		if n == 0 {
+			delete(out, k)
+		}
+	}
+	return out
+}
+
+// flush makes sure dir's chunks.json holds at least generation want. Writes for
+// one persona run one at a time under writeMu; a caller whose mutation an
+// earlier write already captured returns without writing, which is how
+// completions that land during a write coalesce into the next one.
+func (l *chunkLedger) flush(dir string, want uint64) {
+	wm := l.writeMu[dir]
+	wm.Lock()
+	defer wm.Unlock()
+	l.mu.Lock()
+	if l.written[dir] >= want {
+		l.mu.Unlock()
+		return
+	}
+	snap := l.gen[dir]
+	data, err := json.MarshalIndent(l.records[dir], "", "  ")
+	agent := l.records[dir].Agent
+	l.mu.Unlock()
+	if err == nil {
+		err = l.write(dir, append(data, '\n'))
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// A failed write still advances written: the failure is kept (failed) and
+	// the next mutation retries with a fresh snapshot.
+	l.written[dir] = snap
+	l.writes++
 	if err != nil {
-		l.log.Warn("chunks.json write failed", "agent", l.records[dir].Agent, "path", path, "err", err)
+		path := filepath.Join(l.rawBase, dir, chunksFile)
+		l.log.Warn("chunks.json write failed", "agent", agent, "path", path, "err", err)
 		if l.failed == nil {
 			l.failed = fmt.Errorf("%s: %w", path, err)
 		}
 	}
+}
+
+// write puts one persona's record on disk. Best-effort, like the transcript: a
+// write failure is logged and the review continues, because losing the record
+// must never cost the review itself. The first failure is kept for writeErr, so
+// the coverage gate fails closed rather than reading a missing record as an
+// unbinned run.
+func (l *chunkLedger) write(dir string, data []byte) error {
+	path := filepath.Join(l.rawBase, dir, chunksFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return atomicfs.WriteFileAtomic(path, data)
 }
 
 // writeErr returns the ledger's first write failure, or nil (also for a nil
