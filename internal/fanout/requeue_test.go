@@ -548,3 +548,79 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// manualUnitClock lets a test see every wait the queue asks for and decide when
+// it ends: After reports d on asked and fires only when the test calls fire.
+type manualUnitClock struct {
+	mu    sync.Mutex
+	now   time.Time
+	asked chan time.Duration
+	wake  chan time.Time
+}
+
+func (c *manualUnitClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *manualUnitClock) After(d time.Duration) <-chan time.Time {
+	c.asked <- d
+	return c.wake
+}
+
+// fire moves the clock forward by d and ends the pending wait.
+func (c *manualUnitClock) fire(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	now := c.now
+	c.mu.Unlock()
+	c.wake <- now
+}
+
+// Units requeued under different failure classes back off for different
+// times. A worker with nothing pending waits only until the EARLIEST backoff
+// ends, not the first one enqueued: a 300s rate-limit wait enqueued ahead of a
+// 20s outage wait must not hold the 20s unit for five minutes.
+func TestUnitQueue_WaitsForTheEarliestBackoffNotTheFirstEnqueued(t *testing.T) {
+	t.Parallel()
+	clock := &manualUnitClock{now: time.Unix(0, 0), asked: make(chan time.Duration, 4), wake: make(chan time.Time, 1)}
+	q := newUnitQueue([]int{0, 1}, clock)
+	ctx := context.Background()
+	for range 2 {
+		_, ok := q.lease(ctx)
+		require.True(t, ok)
+	}
+	q.requeue(0, unitBackoff(failureRateLimit, 3)) // 300s, enqueued first
+	q.requeue(1, unitBackoff(failureServer, 1))    // 20s
+
+	got := make(chan int, 1)
+	go func() {
+		i, ok := q.lease(ctx)
+		require.True(t, ok)
+		got <- i
+	}()
+	select {
+	case d := <-clock.asked:
+		assert.Equal(t, 20*time.Second, d, "the worker waits for the earliest backoff")
+	case <-time.After(10 * time.Second):
+		t.Fatal("lease never waited on a backoff")
+	}
+	clock.fire(20 * time.Second)
+	select {
+	case i := <-got:
+		assert.Equal(t, 1, i, "the shorter-backoff unit is leased first")
+	case <-time.After(10 * time.Second):
+		t.Fatal("lease did not return after the earliest backoff ended")
+	}
+
+	// The 300s unit is still delayed: the next lease waits out the rest of it.
+	go func() {
+		i, ok := q.lease(ctx)
+		require.True(t, ok)
+		got <- i
+	}()
+	assert.Equal(t, 280*time.Second, <-clock.asked)
+	clock.fire(280 * time.Second)
+	assert.Equal(t, 0, <-got)
+}
