@@ -120,10 +120,11 @@ func TestChunkResume_FourOfSixtyFourDispatchesSixtyBins(t *testing.T) {
 	assert.Equal(t, paths[4:], slotFiles(rprep.Slots, "greta"), "the dispatched bins are the unreviewed ones, not the reviewed four")
 	assert.Empty(t, slotFiles(rprep.Slots, "kai"))
 
-	// The write-back may only record files this resume sent to a reviewer.
+	// The write-back records the files this resume sends to a reviewer plus the
+	// files greta's four ok bins and kai's record already reviewed.
 	require.NotNil(t, rprep.baseline)
 	for f := range rprep.baseline.reviewed {
-		assert.Contains(t, paths[4:], f)
+		assert.Contains(t, paths, f)
 	}
 
 	// End to end: the resume drains greta's 60 bins and keeps the 4 she had.
@@ -145,7 +146,8 @@ func TestChunkResume_FourOfSixtyFourDispatchesSixtyBins(t *testing.T) {
 // T4 over T6: bins the ceiling deferred make an otherwise all-ok persona
 // pending, the resume dispatches exactly those bins, and once they succeed the
 // persona's T6 gap (unreviewed_files, deferred_files) drains to zero instead of
-// counting the resumed bins twice. The write-back records only the resumed files.
+// counting the resumed bins twice. The write-back records the resumed files and
+// the files the ok bins already reviewed.
 func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	// No global byte budget, so the write-back sheds nothing: each 40 KB file
 	// fits the test model's per-agent budget alone but not two together, so
@@ -179,7 +181,7 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	deferred := paths[maxChunksPerAgent:]
 	assert.Equal(t, deferred, slotFiles(rprep.Slots, "greta"))
 	assert.Equal(t, deferred, slotFiles(rprep.Slots, "kai"))
-	assert.ElementsMatch(t, deferred, sortedKeys(rprep.baseline.reviewed), "narrowReviewed keeps only the resumed files")
+	assert.ElementsMatch(t, paths, sortedKeys(rprep.baseline.reviewed), "narrowReviewed keeps the resumed files and the ok bins' files")
 
 	_, err = ExecuteResume(context.Background(), baselineChunkFindingCompleter{}, rprep)
 	require.NoError(t, err)
@@ -196,8 +198,44 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 
 	require.NoError(t, rprep.CommitBaselineIndex("resume-1"))
 	recorded, excluded := rprep.BaselineCoverage()
-	assert.Equal(t, 2, recorded, "the two resumed files are recorded")
+	assert.Equal(t, maxChunksPerAgent+2, recorded, "the two resumed files and the 64 the ok bins reviewed are recorded")
 	assert.Zero(t, excluded)
+}
+
+// The interrupted run never wrote the file-hash index, so a chunk-aware resume
+// that succeeds must record every file some persona reviewed: the resumed bins,
+// the pending persona's bins that finished ok before the interruption, and every
+// bin of the persona the resume skipped as done. Recording only the resumed bins
+// would make the next --all scan re-review almost the whole repository.
+func TestChunkResume_CommitRecordsPriorReviewedBins(t *testing.T) {
+	// No global byte budget, so the write-back sheds nothing: each 40 KB file
+	// fills one bin of the test model's per-agent budget.
+	cfg := twoAgentConfig("http://unused")
+	files := map[string]string{}
+	var paths []string
+	for i := 0; i < 6; i++ {
+		p := fmt.Sprintf("f%02d.go", i)
+		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
+		paths = append(paths, p)
+	}
+	repo := baselineRepo(t, files)
+	dir := partialBaselineReview(t, cfg, repo, paths, 2)
+
+	rprep, info, err := PrepareResume(context.Background(), cfg, dir, repoReq(repo, ""))
+	require.NoError(t, err)
+	require.Equal(t, []string{"greta"}, info.Pending)
+	require.Equal(t, paths[2:], slotFiles(rprep.Slots, "greta"), "only greta's unreviewed bins are dispatched")
+	assert.ElementsMatch(t, paths, sortedKeys(rprep.baseline.reviewed),
+		"the write-back keeps greta's ok bins and kai's bins, not just the resumed ones")
+
+	_, err = ExecuteResume(context.Background(), baselineChunkFindingCompleter{}, rprep)
+	require.NoError(t, err)
+	require.NoError(t, rprep.CommitBaselineIndex("resume-1"))
+	recorded, excluded := rprep.BaselineCoverage()
+	assert.Equal(t, len(paths), recorded)
+	assert.Zero(t, excluded)
+	idx := payload.Load(payload.FileHashIndexPath(repo), nil)
+	assert.ElementsMatch(t, paths, idx.Paths(), "the committed index holds every reviewed file")
 }
 
 // A single surviving bin is still dispatched as a recorded bin and merged with
@@ -455,12 +493,32 @@ func TestRecordedChunks_SplitsOversizeBinsAndKeepsFreshEntries(t *testing.T) {
 	assert.ElementsMatch(t, [][]string{{"c.go"}, {"a.go"}, {"b.go"}}, got)
 }
 
-// narrowReviewed keeps only the files a dispatched slot carries.
-func TestNarrowReviewed_DropsFilesNoSlotCarries(t *testing.T) {
-	b := &baselineWriteback{reviewed: map[string]string{"a.go": "h-a", "b.go": "h-b", "new.go": "h-n"}}
+// narrowReviewed keeps the files a dispatched slot carries and the files a
+// recorded bin reviewed, and drops only a file neither names.
+func TestNarrowReviewed_DropsFilesNothingReviewed(t *testing.T) {
+	b := &baselineWriteback{reviewed: map[string]string{"a.go": "h-a", "b.go": "h-b", "done.go": "h-d", "new.go": "h-n"}}
 	narrowReviewed(b, []Slot{
 		{Primary: Agent{Name: "greta", chunkFiles: []string{"a.go"}}},
 		{Primary: Agent{Name: "kai", chunkFiles: []string{"b.go", "gone.go"}}},
-	})
-	assert.Equal(t, map[string]string{"a.go": "h-a", "b.go": "h-b"}, b.reviewed)
+	}, map[string]bool{"done.go": true, "gone-too.go": true})
+	assert.Equal(t, map[string]string{"a.go": "h-a", "b.go": "h-b", "done.go": "h-d"}, b.reviewed)
+}
+
+// A recorded bin counts only the files it reviewed: none for a failed bin or one
+// whose lane contributed nothing, and only ServedFiles for a re-packed bin.
+func TestReadResumeRecord_ReviewedFollowsTheBinPredicate(t *testing.T) {
+	cfg := chunkResumeConfig()
+	repo, paths := chunkResumeRepo(t, 4)
+	dir := partialBaselineReview(t, cfg, repo, paths, 4)
+	for _, name := range []string{"greta", "kai"} {
+		writeCoverageRecord(t, dir, name, []chunkRecordBin{
+			{Index: 0, Files: []string{"ok.go"}, Outcome: StatusOK},
+			{Index: 1, Files: []string{"failed.go"}, Outcome: StatusFailed},
+			{Index: 2, Files: []string{"refused.go"}, Outcome: StatusOK, ContributedNothing: true},
+			{Index: 3, Files: []string{"served.go", "shed.go"}, Outcome: StatusOK, RePacked: true, ServedFiles: []string{"served.go"}},
+		})
+	}
+	rr, err := readResumeRecord(dir, []string{"greta", "kai"}, true)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"ok.go": true, "served.go": true}, rr.reviewed)
 }
