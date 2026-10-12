@@ -138,4 +138,16 @@ func TestInheritAttempts(t *testing.T) {
 	assert.Equal(t, 3, bins[0].Attempts)
 	assert.Equal(t, 3, bins[1].Attempts, "both halves of a split bin keep its count")
 	assert.Zero(t, bins[2].Attempts, "a done bin's count is not inherited")
+
+	// A persona with no trusted prior ledger resumes whole, so it is in order
+	// but absent from prior: it inherits nothing, and nothing panics.
+	l.order = append(l.order, "kai")
+	l.records["kai"] = &chunkRecord{Bins: []chunkRecordBin{{Files: []string{"a.go"}}}}
+	require.NotPanics(t, func() {
+		l.inheritAttempts(map[string]*chunkRecord{
+			"greta": {Bins: []chunkRecordBin{{Files: []string{"a.go"}, Outcome: StatusFailed, Attempts: 4}}},
+		})
+	})
+	assert.Zero(t, l.records["kai"].Bins[0].Attempts, "a persona without a prior record inherits nothing")
+	assert.Equal(t, 4, l.records["greta"].Bins[0].Attempts)
 }
