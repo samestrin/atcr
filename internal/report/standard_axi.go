@@ -72,9 +72,9 @@ func encodeAXI(w io.Writer, v any) error {
 //
 // axi.md design-tension resolutions (AC 01-02 Scenario 3):
 //   - Principle 2 ("3–4 default fields") is deliberately NOT applied — the full
-//     9-column field set is retained because tabular TOON rows are already
-//     token-lean, and dropping columns would make axi a lossy subset of the JSON
-//     contract rather than a faithful re-encoding.
+//     9-column contract field set (10 base columns with id) is retained because
+//     tabular TOON rows are already token-lean, and dropping columns would make
+//     axi a lossy subset of the JSON contract rather than a faithful re-encoding.
 //   - Principle 4 ("pre-computed aggregates") is honored via the array header's
 //     count, the paginated payload's `total` key, and the run metadata carried on
 //     the review path (AC 01-03) — not a separate aggregation pass here.
