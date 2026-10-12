@@ -78,11 +78,10 @@ type PoolSummary struct {
 	// when it was also truncated (Salvaged && ResponseTruncated), so an untruncated
 	// salvage is parsed like any other reply. On the chunked path it drops each
 	// salvaged bin (chunkSalvaged) regardless of truncation and still parses the
-	// persona's other bins. Like
-	// TruncatedZeroFindings and FallbackCount it is ALWAYS present, so a 0 is
-	// distinguishable from an older summary.json that predates the field. Derived
-	// from the per-agent statuses (tallySalvaged) rather than from the results, so
-	// writePool and the resume path's RebuildPool cannot drift.
+	// persona's other bins. Like TruncatedZeroFindings and FallbackCount it is ALWAYS
+	// present, so a 0 is distinguishable from an older summary.json that predates the
+	// field. Derived from the per-agent statuses (tallySalvaged) rather than from the
+	// results, so writePool and the resume path's RebuildPool cannot drift.
 	//
 	// ON THE RESUME PATH ONLY, a 0 can undercount. RebuildPool derives the tally
 	// from per-agent status.json files, and an agent completed by a binary that
@@ -329,34 +328,83 @@ func salvageCost(st AgentStatus) string {
 	if WholePersonaSalvaged(st) {
 		return " (contributed nothing)"
 	}
-	// "Refused" keys on the bin's salvage class, read from the status record: a bin
-	// in SalvagedOnStopChunks finished on a stop reason and parseFindings kept its
-	// findings, so calling it refused would send the operator after a loss that did
-	// not happen. A record without the on-stop key reads every bin as refused, as it
-	// always did.
-	onStop := make(map[int]bool, len(st.SalvagedOnStopChunks))
-	for _, i := range st.SalvagedOnStopChunks {
-		onStop[i] = true
-	}
-	var refused, kept []string
-	for _, i := range st.SalvagedChunks {
-		if onStop[i] {
-			kept = append(kept, strconv.Itoa(i))
-		} else {
-			refused = append(refused, strconv.Itoa(i))
-		}
-	}
+	// "Refused" keys on the bin's salvage class, read from the status record through
+	// partitionSalvaged, the split classifySalvaged reads too: a bin in
+	// SalvagedOnStopChunks finished on a stop reason and parseFindings parsed it, so
+	// calling it refused would send the operator after a loss that did not happen. A
+	// record without the on-stop key reads every bin as refused, as it always did.
+	p := partitionSalvaged(st)
 	var parts []string
-	if len(refused) > 0 {
-		parts = append(parts, "chunk "+strings.Join(refused, "/")+" refused")
+	if len(p.abandoned) > 0 {
+		parts = append(parts, "chunk "+joinBins(p.abandoned)+" refused")
 	}
-	if len(kept) > 0 {
-		parts = append(parts, "chunk "+strings.Join(kept, "/")+" kept (stop-reason salvage, parsed)")
+	if len(p.onStop) > 0 {
+		// No inner parentheses: the whole cost is already wrapped in one pair.
+		parts = append(parts, "chunk "+joinBins(p.onStop)+" kept as a parsed stop-reason salvage")
 	}
-	if len(refused) > 0 {
+	if len(p.abandoned) > 0 {
 		parts = append(parts, "its siblings kept")
 	}
 	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+// joinBins renders bin indices the way salvageCost names them: "0/2".
+func joinBins(bins []int) string {
+	s := make([]string, len(bins))
+	for i, b := range bins {
+		s[i] = strconv.Itoa(b)
+	}
+	return strings.Join(s, "/")
+}
+
+// salvagePartition is one salvaged status record split into its two classes. It is
+// the single reading salvageCost and classifySalvaged share, so the per-agent label
+// and the run-level wording and remedy cannot disagree about which class a record
+// holds.
+type salvagePartition struct {
+	// chunked: the record carries a bin index (SalvagedChunks), so abandoned and
+	// onStop list its salvaged bins. Without one the whole reply is a single salvage,
+	// on a stop reason when replyOnStop says so and abandoned otherwise.
+	chunked     bool
+	replyOnStop bool
+	// abandoned: the entries of SalvagedChunks that SalvagedOnStopChunks does not
+	// name, the bins parseFindings refused. Counted by entry, like
+	// abandonedSalvagedChunks, so a legacy record (no on-stop key) is all abandoned.
+	abandoned []int
+	// onStop: the entries of SalvagedChunks that SalvagedOnStopChunks names, the
+	// salvaged bins parseFindings parsed. An on-stop index that names no salvaged bin
+	// is ignored: it claims a salvage the record does not have.
+	onStop []int
+}
+
+// partitionSalvaged splits a salvaged status record into its classes (see
+// salvagePartition). It reads only the record, so the resume path's rebuilt
+// statuses partition exactly as the live ones do.
+func partitionSalvaged(st AgentStatus) salvagePartition {
+	if len(st.SalvagedChunks) == 0 {
+		return salvagePartition{replyOnStop: st.SalvagedOnStop}
+	}
+	named := make(map[int]bool, len(st.SalvagedOnStopChunks))
+	for _, i := range st.SalvagedOnStopChunks {
+		named[i] = true
+	}
+	p := salvagePartition{chunked: true}
+	for _, i := range st.SalvagedChunks {
+		if named[i] {
+			p.onStop = append(p.onStop, i)
+		} else {
+			p.abandoned = append(p.abandoned, i)
+		}
+	}
+	return p
+}
+
+// classes says which salvage classes the partition holds.
+func (p salvagePartition) classes() salvageClasses {
+	if !p.chunked {
+		return salvageClasses{abandoned: !p.replyOnStop, onStop: p.replyOnStop}
+	}
+	return salvageClasses{abandoned: len(p.abandoned) > 0, onStop: len(p.onStop) > 0}
 }
 
 // salvageClasses says which salvage classes a set of statuses holds, so the
@@ -367,12 +415,12 @@ type salvageClasses struct {
 	// no reason reached the client). parseFindings refused it.
 	abandoned bool
 	// onStop: a salvage the provider finished on a stop reason. parseFindings parsed
-	// it and kept its findings.
+	// it and kept whatever findings it could parse.
 	onStop bool
 }
 
-// classifySalvaged reads the salvage classes from the status records, with the
-// same per-bin split WholePersonaSalvaged uses: a bin is on-stop only when
+// classifySalvaged reads the salvage classes from the status records through
+// partitionSalvaged, the split salvageCost renders: a bin is on-stop only when
 // SalvagedOnStopChunks names it, and a record without the on-stop keys is abandoned
 // throughout, exactly as it read before they existed.
 func classifySalvaged(statuses []AgentStatus) salvageClasses {
@@ -381,31 +429,24 @@ func classifySalvaged(statuses []AgentStatus) salvageClasses {
 		if !st.Salvaged {
 			continue
 		}
-		if len(st.SalvagedChunks) == 0 {
-			if st.SalvagedOnStop {
-				c.onStop = true
-			} else {
-				c.abandoned = true
-			}
-			continue
-		}
-		if len(st.SalvagedOnStopChunks) > 0 {
-			c.onStop = true
-		}
-		if abandonedSalvagedChunks(st) > 0 {
-			c.abandoned = true
-		}
+		pc := partitionSalvaged(st).classes()
+		c.abandoned = c.abandoned || pc.abandoned
+		c.onStop = c.onStop || pc.onStop
 	}
 	return c
 }
 
 // warnSalvaged emits the run-level salvage warning, or nothing at 0.
 //
-// A salvaged reply is a reviewer that lost its ENTIRE contribution: the client found
-// no answer, promoted the reasoning channel into Content, and parseFindings refused
-// it. In status.json that was byte-identical to a reviewer which emitted garbled
-// prose, and on the console it was nothing at all — so a whole seat could go missing
-// from a review that reported success.
+// A salvaged reply is one where the client found no answer and promoted the
+// reasoning channel into Content. What happened next depends on its class. An
+// abandoned salvage (cut off, or no stop reason recorded) is refused: parseFindings
+// drops it, and the reviewer loses that contribution. A stop-reason salvage is
+// parsed: the provider finished the answer, so parseFindings keeps whatever findings
+// it can parse. Before this warning a refused salvage was byte-identical in
+// status.json to a reviewer which emitted garbled prose, and on the console it was
+// nothing at all — so a whole seat could go missing from a review that reported
+// success.
 //
 // Through the context logger, for the reason warnTruncatedZeroFindings states at
 // length: cli.Main binds it to the caller-supplied stderr, and a ctx carrying no
@@ -440,12 +481,12 @@ func warnSalvaged(ctx context.Context, count int, agents []string, classes salva
 	switch {
 	case classes.onStop && !classes.abandoned:
 		log.FromContext(ctx).Warn(
-			fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — which the provider finished on a stop reason, so it was parsed and its findings kept %s.%s Each agent below says what was salvaged.", count, scope, restatement),
+			fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content — which the provider finished on a stop reason, so it was parsed and its parseable findings were kept %s.%s Each agent below says what was salvaged.", count, scope, restatement),
 			"agents", strings.Join(agents, ", "),
 			"remedy", SalvagedOnStopRemedy)
 	case classes.onStop:
 		log.FromContext(ctx).Warn(
-			fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content %s.%s A salvage the provider did not finish on a stop reason was refused rather than parsed; one it finished on a stop reason was parsed and its findings kept. Each agent below says which, and what that cost it.", count, scope, restatement),
+			fmt.Sprintf("%d reviewer(s) returned a salvaged reply — no answer, reasoning promoted into the content %s.%s A salvage that was cut off or had no stop reason recorded was refused rather than parsed; one the provider finished on a stop reason was parsed and its parseable findings were kept. Each agent below says which, and what that cost it.", count, scope, restatement),
 			"agents", strings.Join(agents, ", "),
 			"remedy", SalvagedRemedy,
 			"stop_reason_remedy", SalvagedOnStopRemedy)
@@ -457,21 +498,23 @@ func warnSalvaged(ctx context.Context, count int, agents []string, classes salva
 	}
 }
 
-// SalvagedRemedy is the operator action for an ABANDONED salvaged reply: one the
-// provider did not finish on a stop reason, which parseFindings refuses. One
+// SalvagedRemedy is the operator action for an ABANDONED salvaged reply: one that was
+// cut off or had no stop reason recorded (an unknown or legacy reason included),
+// which parseFindings refuses. One
 // constant, so the fresh and resumed paths cannot state different fixes for the same
 // condition. It is EXPORTED so the benchmark-coverage diagnostic's `unmeasured_ok`
 // remedy can reuse it rather than restating the same advice in a second place that
 // could drift — that slot contributed nothing, so this text must stay the
 // abandoned-salvage text. A cut-off draft needs more output budget, so that comes
 // first; the stop-reason class has its own remedy, SalvagedOnStopRemedy.
-const SalvagedRemedy = "The model answered on its reasoning channel only and did not finish on a stop reason, so the salvaged reply is refused rather than parsed: every finding in it is a draft the model did not commit to. Give the agent more output budget (--max-tokens, or a per-agent max_tokens declaration), or declare thinking: off for it so the budget is not spent on reasoning, or repoint it to a model that separates its answer from its reasoning."
+const SalvagedRemedy = "The model answered on its reasoning channel only, and the reply was cut off or no stop reason was recorded for it, so the salvaged reply is refused rather than parsed: every finding in it is a draft the model did not commit to. Give the agent more output budget (--max-tokens, or a per-agent max_tokens declaration), or declare thinking: off for it so the budget is not spent on reasoning, or repoint it to a model that separates its answer from its reasoning."
 
 // SalvagedOnStopRemedy is the operator action for a STOP-REASON salvaged reply: the
-// provider finished the answer, but on the reasoning channel, and parseFindings kept
-// its findings. Nothing was lost, so more output budget is not the fix; the advice is
+// provider finished the answer, but on the reasoning channel, and parseFindings parsed
+// it and kept whatever findings it could parse (a reply of prose parses to none).
+// Nothing was refused, so more output budget is not the fix; the advice is
 // to move the answer onto the channel the review reads.
-const SalvagedOnStopRemedy = "The model finished its answer on its reasoning channel instead of its content, so the salvaged reply was parsed and its findings kept. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning, so its answer arrives where the review reads it."
+const SalvagedOnStopRemedy = "The model finished its answer on its reasoning channel instead of its content, so the salvaged reply was parsed and its parseable findings were kept. Declare thinking: off for the agent, or repoint it to a model that separates its answer from its reasoning, so its answer arrives where the review reads it."
 
 // warnTruncatedZeroFindings emits the run-level runaway warning, or nothing at 0.
 //
