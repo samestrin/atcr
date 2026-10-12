@@ -948,3 +948,248 @@ func TestInstallCommunityPersonas_SkipsInvalidIndexNames(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dest, "owasp.yaml"), "the valid persona still installs")
 	assert.Contains(t, errOut.String(), "invalid name", "the invalid entry is skipped with a warning")
 }
+
+// --- Epic 35.16.16 T5: atcr init --refresh-personas --------------------------
+
+// refreshFixture inits a workspace, then makes bruce.md stale (stamped with old
+// content, file unchanged since) and greta.md stale and hand-edited.
+func refreshFixture(t *testing.T) (dir, pdir string) {
+	t.Helper()
+	dir = t.TempDir()
+	initDir(t, dir)
+	pdir = filepath.Join(dir, ".atcr", "personas")
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	require.NoError(t, os.WriteFile(filepath.Join(pdir, "bruce.md"), []byte("OLD BRUCE"), 0o644))
+	stamp.Record("bruce.md", []byte("OLD BRUCE"))
+	require.NoError(t, os.WriteFile(filepath.Join(pdir, "greta.md"), []byte("EDITED GRETA"), 0o644))
+	stamp.Record("greta.md", []byte("OLD GRETA"))
+	require.NoError(t, registry.WritePersonaStamp(pdir, stamp))
+	return dir, pdir
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return string(data)
+}
+
+func embeddedPersona(t *testing.T, name string) string {
+	t.Helper()
+	content, err := personas.Get(name)
+	require.NoError(t, err)
+	return content
+}
+
+// TestRefreshPersonas_BringsStaleAndEditedCopiesCurrent: stale and edited copies
+// take the embedded content, the list names both and marks the edited one, and
+// the stamp records the embedded hashes.
+func TestRefreshPersonas_BringsStaleAndEditedCopiesCurrent(t *testing.T) {
+	dir, pdir := refreshFixture(t)
+	configBefore := readFile(t, filepath.Join(dir, ".atcr", "config.yaml"))
+	roster := map[string]string{"bruce": "bruce", "greta": "greta", "kai": "kai"}
+	dirs := registry.PersonaDirs{Project: pdir}
+	require.Len(t, registry.StalePersonas(roster, dirs), 2, "fixture must start with two stale copies")
+
+	var out bytes.Buffer
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+
+	assert.Contains(t, out.String(), "Refreshing 2 persona file(s)")
+	assert.Contains(t, out.String(), "  bruce.md\n")
+	assert.Contains(t, out.String(), "  greta.md (edited by hand")
+	assert.NotContains(t, out.String(), "kai.md")
+
+	for _, name := range []string{"bruce", "greta"} {
+		assert.Equal(t, embeddedPersona(t, name), readFile(t, filepath.Join(pdir, name+".md")))
+	}
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	for _, name := range []string{"bruce", "greta"} {
+		assert.Equal(t, registry.HashPersonaContent([]byte(embeddedPersona(t, name))), stamp.Files[name+".md"])
+	}
+	assert.Equal(t, configBefore, readFile(t, filepath.Join(dir, ".atcr", "config.yaml")))
+	assert.Empty(t, registry.StalePersonas(roster, dirs), "doctor's staleness check must report clean after a refresh")
+
+	// A second run has nothing to do.
+	out.Reset()
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	assert.Contains(t, out.String(), "nothing to refresh")
+}
+
+// TestRefreshPersonas_RefreshesBaseAndUnstampedCopies: _base.md is refreshed too,
+// and a copy with no stamp entry is marked as such.
+func TestRefreshPersonas_RefreshesBaseAndUnstampedCopies(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	require.NoError(t, os.Remove(registry.PersonaStampPath(pdir)))
+	require.NoError(t, os.WriteFile(filepath.Join(pdir, "_base.md"), []byte("OLD BASE"), 0o644))
+
+	var out bytes.Buffer
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	assert.Contains(t, out.String(), "  _base.md (no stamp, edits unknown)")
+
+	base, err := personas.Base()
+	require.NoError(t, err)
+	assert.Equal(t, base, readFile(t, filepath.Join(pdir, "_base.md")))
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	assert.Equal(t, registry.HashPersonaContent([]byte(base)), stamp.Files["_base.md"])
+}
+
+// TestRefreshPersonas_DryRunWritesNothing: --dry-run prints the list and leaves
+// every file and the stamp byte-for-byte unchanged.
+func TestRefreshPersonas_DryRunWritesNothing(t *testing.T) {
+	dir, pdir := refreshFixture(t)
+	snapshot := func() map[string]string {
+		entries, err := os.ReadDir(pdir)
+		require.NoError(t, err)
+		m := map[string]string{}
+		for _, e := range entries {
+			m[e.Name()] = readFile(t, filepath.Join(pdir, e.Name()))
+		}
+		return m
+	}
+	before := snapshot()
+
+	var out bytes.Buffer
+	require.NoError(t, runRefreshPersonas(dir, true, &out))
+	assert.Contains(t, out.String(), "Would refresh 2 persona file(s)")
+	assert.Contains(t, out.String(), "greta.md (edited by hand")
+	assert.Equal(t, before, snapshot())
+}
+
+// TestRefreshPersonas_ReplacesSymlinkLeavesTarget: a symlinked copy becomes a
+// regular file with the embedded content; its target is not written through.
+func TestRefreshPersonas_ReplacesSymlinkLeavesTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	external := filepath.Join(t.TempDir(), "external.md")
+	require.NoError(t, os.WriteFile(external, []byte("EXTERNAL"), 0o644))
+	brucePath := filepath.Join(pdir, "bruce.md")
+	require.NoError(t, os.Remove(brucePath))
+	require.NoError(t, os.Symlink(external, brucePath))
+
+	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}))
+
+	assert.Equal(t, "EXTERNAL", readFile(t, external), "symlink target must be untouched")
+	info, err := os.Lstat(brucePath)
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular(), "the symlink must be replaced by a regular file")
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
+}
+
+// TestRefreshPersonas_FailurePartwayKeepsStampAndRerunCompletes: a write that
+// fails after an earlier file was refreshed leaves the stamp unchanged; a re-run
+// finishes the refresh and records both files.
+func TestRefreshPersonas_FailurePartwayKeepsStampAndRerunCompletes(t *testing.T) {
+	dir, pdir := refreshFixture(t)
+	stampBefore := readFile(t, registry.PersonaStampPath(pdir))
+
+	orig := refreshWriteFile
+	t.Cleanup(func() { refreshWriteFile = orig })
+	refreshWriteFile = func(path string, data []byte) error {
+		if filepath.Base(path) == "greta.md" {
+			return os.ErrPermission
+		}
+		return orig(path, data)
+	}
+
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "greta.md")
+	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, filepath.Join(pdir, "bruce.md")), "bruce.md was written before the failure")
+	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")))
+	assert.Equal(t, stampBefore, readFile(t, registry.PersonaStampPath(pdir)), "stamp must be unchanged after a partial refresh")
+
+	refreshWriteFile = orig
+	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}))
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	for _, name := range []string{"bruce", "greta"} {
+		assert.Equal(t, embeddedPersona(t, name), readFile(t, filepath.Join(pdir, name+".md")))
+		assert.Equal(t, registry.HashPersonaContent([]byte(embeddedPersona(t, name))), stamp.Files[name+".md"])
+	}
+}
+
+// TestRefreshPersonas_MissingDirIsNamedError: no .atcr/personas is a named error
+// and creates nothing.
+func TestRefreshPersonas_MissingDirIsNamedError(t *testing.T) {
+	dir := t.TempDir()
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist — run atcr init first")
+	assert.NoDirExists(t, filepath.Join(dir, ".atcr"))
+}
+
+// TestRefreshPersonas_ReadOnlyDirIsNamedErrorChangesNothing: a read-only
+// .atcr/personas fails before any file or the stamp changes.
+func TestRefreshPersonas_ReadOnlyDirIsNamedErrorChangesNothing(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires POSIX permissions and non-root user")
+	}
+	dir, pdir := refreshFixture(t)
+	stampBefore := readFile(t, registry.PersonaStampPath(pdir))
+	require.NoError(t, os.Chmod(pdir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(pdir, 0o755) })
+
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not writable")
+	assert.Equal(t, "OLD BRUCE", readFile(t, filepath.Join(pdir, "bruce.md")))
+	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")))
+	assert.Equal(t, stampBefore, readFile(t, registry.PersonaStampPath(pdir)))
+	entries, err := os.ReadDir(pdir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), ".refresh-probe-") || strings.Contains(e.Name(), ".tmp-"), "no temp file left: %s", e.Name())
+	}
+}
+
+// TestInit_RefreshPersonasCommandWiring: the flag runs the refresh with no
+// community fetch and leaves config.yaml and .gitignore alone; --force with it,
+// and --dry-run without it, are usage errors (exit 2); plain --force still
+// preserves hand edits.
+func TestInit_RefreshPersonasCommandWiring(t *testing.T) {
+	dir, pdir := refreshFixture(t)
+	t.Chdir(dir)
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t: t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	configPath := filepath.Join(dir, ".atcr", "config.yaml")
+	gitignorePath := filepath.Join(dir, ".atcr", ".gitignore")
+	require.NoError(t, os.WriteFile(configPath, []byte("# custom\n"), 0o644))
+	require.NoError(t, os.WriteFile(gitignorePath, []byte("custom/\n"), 0o644))
+
+	_, err := execute(t, "init", "--refresh-personas", "--force")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	_, err = execute(t, "init", "--dry-run")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+
+	// Plain --force preserves the hand edit.
+	_, err = execute(t, "init", "--force", "--offline")
+	require.NoError(t, err)
+	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")))
+	require.NoError(t, os.WriteFile(configPath, []byte("# custom\n"), 0o644))
+	require.NoError(t, os.WriteFile(gitignorePath, []byte("custom/\n"), 0o644))
+
+	_, err = execute(t, "init", "--refresh-personas", "--dry-run")
+	require.NoError(t, err)
+	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")))
+
+	_, err = execute(t, "init", "--refresh-personas")
+	require.NoError(t, err)
+	assert.Equal(t, embeddedPersona(t, "greta"), readFile(t, filepath.Join(pdir, "greta.md")))
+	assert.Equal(t, "# custom\n", readFile(t, configPath))
+	assert.Equal(t, "custom/\n", readFile(t, gitignorePath))
+}
