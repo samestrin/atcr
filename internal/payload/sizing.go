@@ -49,7 +49,7 @@ const (
 	// max_sprint_plan_bytes) is NOT part of this wrapper and is not counted here.
 	promptOverheadTokens = 4096
 
-	// avgBytesPerLine converts an effective input BYTE budget into a chunker
+	// AvgBytesPerLine converts an effective input BYTE budget into a chunker
 	// maxLines figure (F3). It is calibrated against a measured diff, not a line
 	// anchor: the T3 baseline (.planning/epics/active/35.16.11.2.2.6-results/
 	// T3-baseline.md:93-95) averages 59.3 to 59.6 B/line across its three agents,
@@ -63,7 +63,7 @@ const (
 	// bytes/line yields fewer lines (more, smaller chunks), which is safe under
 	// the Conservatism NFR; a diff of longer lines than the fixture can still
 	// overshoot, because this stays a per-line estimate.
-	avgBytesPerLine = 64
+	AvgBytesPerLine = 64
 
 	// minChunkLines is a positive floor for ChunkMaxLines so a pathologically
 	// small resolved window never yields maxLines <= 0 — the value chunkDiff
@@ -189,7 +189,7 @@ func WindowFundsAUsableRead(model string, declared *int, outputTokens *int) bool
 // larger chunks", and the still-unbounded case is payload_byte_budget: 0 (no
 // global cap configured), where the operator has declined to set a ceiling.
 // ClampLinesToByteBudget narrows a per-chunk line budget to the lines that fit
-// within byteBudget, using the same avgBytesPerLine ratio ChunkMaxLines derived
+// within byteBudget, using the same AvgBytesPerLine ratio ChunkMaxLines derived
 // it with. A byteBudget of 0 means "no cap configured" (the settings-tier
 // convention everywhere else) and passes maxLines through untouched.
 //
@@ -212,7 +212,7 @@ func ClampLinesToByteBudget(maxLines int, byteBudget int64) int {
 	if byteBudget <= 0 || maxLines <= 0 {
 		return maxLines
 	}
-	allowed := int(byteBudget / avgBytesPerLine)
+	allowed := int(byteBudget / AvgBytesPerLine)
 	if allowed >= maxLines {
 		return maxLines
 	}
@@ -223,7 +223,7 @@ func ClampLinesToByteBudget(maxLines int, byteBudget int64) int {
 }
 
 func ChunkMaxLines(model string, declared *int, outputTokens int) int {
-	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / avgBytesPerLine)
+	maxLines := int(EffectiveByteBudget(model, declared, outputTokens) / AvgBytesPerLine)
 	if maxLines < minChunkLines {
 		return minChunkLines
 	}
@@ -232,7 +232,7 @@ func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 
 // ChunkExceedsByteBudget reports whether a rendered chunk of chunkBytes bytes is
 // larger than the byte budget its line count was derived from. The line count is
-// only an estimate at avgBytesPerLine, so a diff of longer lines (prose, YAML,
+// only an estimate at AvgBytesPerLine, so a diff of longer lines (prose, YAML,
 // JSON, generated or minified code) can fill its line budget and still ship past
 // its bytes; this is the check that notices.
 //

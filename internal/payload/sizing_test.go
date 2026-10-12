@@ -112,18 +112,27 @@ func TestChunkMaxLines_ClampedFloor(t *testing.T) {
 	assert.Equal(t, minChunkLines, got, "a degenerate window must clamp to the positive floor")
 }
 
-// TestChunkMaxLines_FixtureLineWidthFitsTheByteBudget pins avgBytesPerLine
+// TestChunkMaxLines_FixtureLineWidthFitsTheByteBudget pins AvgBytesPerLine
 // against the measured T3 baseline: its diff averages 59.3 to 59.6 bytes per
 // line, and at 48 B/line every 128000-class chunk shipped ~23% over its byte
 // budget (130691 prompt tokens in a 131072 window, finish_reason=length). A chunk
 // cut at ChunkMaxLines lines of that width must fit EffectiveByteBudget.
+//
+// The assertion reduces to (budget/AvgBytesPerLine)*fixtureBytesPerLine <=
+// budget, so it guards a regression of the ratio to BELOW the fixture width (a
+// ratio of 59 fails here at 60), not diffs wider than the ratio: a diff of
+// longer lines can still overshoot, which is what the per-chunk byte warning in
+// internal/fanout reports. 60 rounds the measured 59.6 up so the worst agent's
+// width is covered.
 func TestChunkMaxLines_FixtureLineWidthFitsTheByteBudget(t *testing.T) {
-	const fixtureBytesPerLine = 59 // 58 bytes of content + '\n'
+	const fixtureBytesPerLine = 60 // 59 bytes of content + '\n'
 	line := strings.Repeat("x", fixtureBytesPerLine-1) + "\n"
 
 	for _, window := range []int{131072, 128000} {
 		budget := EffectiveByteBudget("unlisted-small-model", declared(window), testOutputTokens)
 		lines := ChunkMaxLines("unlisted-small-model", declared(window), testOutputTokens)
+		assert.Equal(t, int(budget/AvgBytesPerLine), lines,
+			"window %d: ChunkMaxLines must derive its lines from the budget at AvgBytesPerLine", window)
 
 		chunk := strings.Repeat(line, lines)
 		assert.LessOrEqual(t, int64(len(chunk)), budget,

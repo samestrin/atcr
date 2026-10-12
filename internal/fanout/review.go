@@ -2300,7 +2300,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// proxy's floor errors can push the pair over the stated ceiling — WITHIN
 			// ClampLinesToByteBudget's own minChunkLines floor, which this reservation
 			// does not remove. That floor returns 64 lines (~3072 B at the module's
-			// avgBytesPerLine of 48) for any positive byte budget too small to fund
+			// AvgBytesPerLine of 48) for any positive byte budget too small to fund
 			// them, so a chunkClampBudget floored to 1 still ships a chunk provably
 			// over the stated ceiling, recorded as an ordinary degradationChunk.
 			//
