@@ -897,13 +897,16 @@ func TestMergeResultGroup_SalvagedChunkCountedByWhyItSalvaged(t *testing.T) {
 	clean := Result{Agent: "bruce", Status: StatusOK, Content: "MEDIUM|b.go:2|real finding|f|correctness|2|e"}
 
 	t.Run("stop-reason salvage is unparseable", func(t *testing.T) {
-		// StatusOK with content nothing could parse: invokeSlot's marker block sets
+		// A salvage on a stop reason (SalvagedOnStop) stays StatusOK; its content is
+		// prose nothing could parse, so invokeSlot's marker block sets
 		// UnparseableResponse, and mergeResultGroup counts it.
 		merged := mergeResultGroup([]Result{clean, {
 			Agent: "bruce", Status: StatusOK, Content: "chain of thought only",
-			Salvaged: true, UnparseableResponse: true,
+			Salvaged: true, SalvagedOnStop: true, UnparseableResponse: true,
 		}}, nil)
 
+		require.Equal(t, []bool{false, true}, merged.chunkSalvagedOnStop,
+			"the fixture must really be a stop-reason salvage, or the label lies")
 		assert.Equal(t, 1, merged.UnparseableChunks)
 		assert.Equal(t, 0, merged.UnreviewedChunks)
 		assert.Equal(t, 1, merged.ParsedFindingCount(), "the clean bin still contributes")
