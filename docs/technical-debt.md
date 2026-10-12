@@ -343,8 +343,10 @@ as `unresolved`. The `unresolved` count is split into two parts. `declined by po
 counts a record whose own review holds a `review.md` that the producer refuses (a
 symlink, or a file over the size cap), so restoring the file cannot help. The run
 treats a review dir as the record's own only when its `reconciled/summary.json`
-carries the `reconciled_at` the record's `run_id` was built from. A refused file in
-any other review does not count. `review tree pruned` counts everything else.
+carries the `reconciled_at` the record's `run_id` was built from, and the dir's name
+matches the one in the `run_id`. For a review dir reached through a symlink, either
+the link's name or its target's name matches. A refused file in any other review
+does not count. `review tree pruned` counts everything else.
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the

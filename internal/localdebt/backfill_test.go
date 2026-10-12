@@ -1295,7 +1295,8 @@ func TestReviewDirOwnsRun(t *testing.T) {
 		base    string                       // the review dir's base name
 		summary func(t *testing.T, d string) // stamps <reviewDir>/reconciled/summary.json; nil leaves it absent
 		runID   string
-		chdir   bool // run from inside the review dir and pass it as "."
+		chdir   bool   // run from inside the review dir and pass it as "."
+		link    string // with chdir, enter the review dir through a symlink of this name
 		want    bool
 	}{
 		{
@@ -1368,6 +1369,37 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			chdir:   true,
 			want:    true,
 		},
+		{
+			// `--review-root .` from inside a review dir reached through a symlink.
+			// The mint takes the base of the path as typed, so a run minted through
+			// the link carries the link's name; the absolute path of "." keeps it.
+			name:    "symlinked review dir given as \".\" owns a run minted from the link's name",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-latest",
+			chdir:   true,
+			link:    "latest",
+			want:    true,
+		},
+		{
+			// The same dir's run minted through its real path carries the target's
+			// name, which only resolving the link recovers.
+			name:    "symlinked review dir given as \".\" owns a run minted from the target's name",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-multi-agent",
+			chdir:   true,
+			link:    "latest",
+			want:    true,
+		},
+		{
+			name:    "symlinked review dir given as \".\" does not own a run minted from neither name",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-single-agent",
+			chdir:   true,
+			link:    "latest",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1378,7 +1410,12 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			}
 			arg := reviewDir
 			if tc.chdir {
-				t.Chdir(reviewDir)
+				dir := reviewDir
+				if tc.link != "" {
+					dir = filepath.Join(t.TempDir(), tc.link)
+					require.NoError(t, os.Symlink(reviewDir, dir))
+				}
+				t.Chdir(dir)
 				arg = "."
 			}
 			assert.Equal(t, tc.want, reviewDirOwnsRun(arg, tc.runID))
