@@ -1735,12 +1735,55 @@ func capChunks(chunks [][]payload.FileEntry, max int) (kept, deferred [][]payloa
 	return chunks[:max], chunks[max:]
 }
 
+// recordedChunks rebuilds a resumed persona's bins from the file sets its prior
+// chunks.json recorded for the bins that never finished (Epic 35.16.13 T4). Each
+// recorded bin keeps only the entries of the freshly built payload whose path it
+// names, so a recorded path is only ever a lookup key: a path the fresh payload
+// does not carry (deleted since, out of scope, `..`, absolute) matches nothing
+// and is never dispatched. A file named by two bins goes to the first. A bin
+// left empty is dropped, and a bin that no longer fits this persona's budget is
+// re-partitioned rather than shipped oversize.
+func recordedChunks(entries []payload.FileEntry, recorded [][]string, chunkBudget int64) ([][]payload.FileEntry, error) {
+	byPath := make(map[string]payload.FileEntry, len(entries))
+	for _, e := range entries {
+		byPath[e.Path] = e
+	}
+	taken := map[string]bool{}
+	var chunks [][]payload.FileEntry
+	for _, files := range recorded {
+		var bin []payload.FileEntry
+		for _, f := range files {
+			e, ok := byPath[f]
+			if !ok || taken[f] {
+				continue
+			}
+			taken[f] = true
+			bin = append(bin, e)
+		}
+		split, err := payload.PartitionByBudget(bin, chunkBudget)
+		if err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, split...)
+	}
+	return chunks, nil
+}
+
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
 	// baseline enables the (--all / --dir) multi-chunk fan-out branch inside add
 	// (Sprint 35.0 Phase 5, Decision 2). Variadic-optional so the diff/range callers
 	// and the existing test call sites stay unchanged — the same idiom
 	// mergeChunkResults uses for its optional serialAgents map.
 	baseline := len(baselineOpt) > 0 && baselineOpt[0]
+	return buildSlotsFor(cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, baseline, nil)
+}
+
+// buildSlotsFor is buildSlots with the chunk-aware resume input (Epic 35.16.13
+// T4): resumeBins maps a baseline persona to the recorded file sets of the bins
+// its interrupted run never finished. A persona in it is dispatched those bins
+// (recordedChunks) instead of a fresh partition of the whole payload; every other
+// persona is built exactly as buildSlots builds it.
+func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized, baseline bool, resumeBins map[string][][]string) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -2029,9 +2072,23 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 			// contract — fall through to the bulk path, which keeps the whole payload and
 			// records the honest overflow degradation rather than erroring.
 			if chunkBudget > 0 && len(mp.Entries) > 0 {
-				chunks, err := payload.PartitionByBudget(mp.Entries, chunkBudget)
+				// A chunk-aware resume (Epic 35.16.13 T4) dispatches only the bins
+				// the persona's chunks.json left unreviewed, keyed by their recorded
+				// file sets. Those bins are slots even when only one survives, and
+				// a persona left with none is dispatched nothing.
+				recorded, resumed := resumeBins[name]
+				var chunks [][]payload.FileEntry
+				var err error
+				if resumed {
+					chunks, err = recordedChunks(mp.Entries, recorded, chunkBudget)
+				} else {
+					chunks, err = payload.PartitionByBudget(mp.Entries, chunkBudget)
+				}
 				if err != nil {
 					return err
+				}
+				if resumed && len(chunks) == 0 {
+					return nil
 				}
 				// Bound the slot count at maxChunksPerAgent (AC 06-01 ES2) by deferring
 				// the bins past the ceiling rather than coalescing them into one
@@ -2049,7 +2106,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 					}
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: the %d-chunk ceiling was reached, so %d file(s) in %d chunk(s) were deferred (not dispatched); see chunks.json\n", name, maxChunksPerAgent, deferredFiles, len(deferred))
 				}
-				if len(chunks) > 1 {
+				if len(chunks) > 1 || resumed {
 					// Per-agent sizing record (Epic 19.10 F6/F8): every chunk-Slot of this
 					// persona carries the same window/budget and the persona's full chunk count,
 					// mirroring the chunked path. action "chunk" is the default no-loss
@@ -2150,7 +2207,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 						if cerr != nil {
 							return cerr
 						}
-						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck})
+						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed})
 					}
 					slots[len(slots)-1].deferredBins = deferredBins
 					return nil

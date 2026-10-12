@@ -104,6 +104,10 @@ func shortRef(ref string) string {
 //
 // A missing pool tree (a review scaffolded but never fanned out) yields an empty
 // set with no error: every roster agent is pending.
+//
+// PrepareResume does not use this set on its own: readResumeRecord refines it
+// with each baseline agent's chunks.json (Epic 35.16.13 T4), and this agent-level
+// answer stands only where no trusted chunk record exists.
 func CompletedAgents(reviewDir string) (map[string]bool, error) {
 	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
 	entries, err := os.ReadDir(rawDir)
@@ -131,6 +135,68 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 		}
 	}
 	return done, nil
+}
+
+// resumeRecord is the completion record a resume partitions the roster with. It
+// supersedes CompletedAgents for a baseline review (Epic 35.16.13 T4): an agent
+// whose status is ok is still pending when its chunks.json names a bin that
+// never finished, and it is then re-dispatched only those bins.
+type resumeRecord struct {
+	// done is the set of agents the resume skips entirely.
+	done map[string]bool
+	// bins maps a pending baseline agent to the recorded file sets of its
+	// unreviewed bins, in recorded order. An agent absent from it resumes at
+	// agent level: its whole payload is re-dispatched, as before chunks.json.
+	bins map[string][][]string
+}
+
+// readResumeRecord builds the resume's completion record. It starts from the
+// agent-level CompletedAgents set, then, on a baseline review, reads each roster
+// agent's chunks.json (trustedChunkRecord). An agent with a trusted record and any
+// bin not recorded ok — pending, failed, timeout, deferred, or an outcome this
+// reader does not know — is pending, keyed to those bins' file sets. An agent
+// whose record has every bin ok keeps its agent-level answer, so an ok status
+// skips it and anything else re-runs it whole. An agent with no trusted record
+// keeps today's agent-level behaviour unchanged.
+//
+// The file sets are carried as recorded and never opened or dispatched as they
+// stand: buildSlotsFor intersects them with the freshly built payload
+// (recordedChunks), which is the only source of what gets reviewed.
+func readResumeRecord(reviewDir string, roster []string, baseline bool) (*resumeRecord, error) {
+	done, err := CompletedAgents(reviewDir)
+	if err != nil {
+		return nil, err
+	}
+	rr := &resumeRecord{done: done}
+	if !baseline {
+		return rr, nil
+	}
+	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
+	for _, name := range roster {
+		dir, err := agentDirName(name)
+		if err != nil {
+			continue
+		}
+		rec, ok := trustedChunkRecord(rawDir, dir, name)
+		if !ok {
+			continue
+		}
+		var open [][]string
+		for _, b := range rec.Bins {
+			if b.Outcome != StatusOK {
+				open = append(open, b.Files)
+			}
+		}
+		if len(open) == 0 {
+			continue
+		}
+		delete(rr.done, name)
+		if rr.bins == nil {
+			rr.bins = map[string][][]string{}
+		}
+		rr.bins[name] = open
+	}
+	return rr, nil
 }
 
 // agentStatusName reads a per-agent status.json and returns the agent name when
@@ -385,17 +451,35 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	// forceMode is "files" for a baseline review (every agent reviews the whole-repo
-	// payload, mirroring the fresh --all path) and "" for a diff review (each agent
-	// keeps its configured mode). The empty case is the pre-existing behavior.
-	slots, _, err := buildSlots(cfg, payloads, req.Range, forceMode, scopeConstraint, false, m.Baseline)
+	// The completion record is read before the slots are built: a baseline agent
+	// that chunks.json shows only partly reviewed is built from its unreviewed
+	// bins alone (Epic 35.16.13 T4).
+	rr, err := readResumeRecord(reviewDir, configured, m.Baseline)
 	if err != nil {
 		return nil, nil, err
 	}
+	done := rr.done
 
-	done, err := CompletedAgents(reviewDir)
+	// forceMode is "files" for a baseline review (every agent reviews the whole-repo
+	// payload, mirroring the fresh --all path) and "" for a diff review (each agent
+	// keeps its configured mode). The empty case is the pre-existing behavior.
+	slots, _, err := buildSlotsFor(cfg, payloads, req.Range, forceMode, scopeConstraint, false, m.Baseline, rr.bins)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A chunk-aware agent whose unreviewed bins name no file the fresh payload
+	// still carries has nothing left to dispatch, so it is complete.
+	if len(rr.bins) > 0 {
+		dispatched := map[string]int{}
+		for _, s := range slots {
+			dispatched[s.Primary.Name]++
+		}
+		for name, open := range rr.bins {
+			if dispatched[name] == 0 {
+				done[name] = true
+			}
+			log.FromContext(ctx).Info("chunk-aware resume", "agent", name, "unreviewed_bins", len(open), "dispatched_bins", dispatched[name])
+		}
 	}
 
 	info := &ResumeInfo{}
@@ -500,8 +584,33 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		p.baseline = captureBaselineWriteback(ctx, req.Repo, m.Dir,
 			payload.Load(payload.FileHashIndexPath(req.Repo), log.FromContext(ctx)),
 			payloads[string(payload.ModeFiles)])
+		// A chunk-aware resume dispatches only the unreviewed bins, so the full
+		// payload is no longer the set this run reviews: a file no dispatched bin
+		// carries (one added since the interrupted run, say) must not be recorded
+		// as reviewed when every dispatched bin succeeds.
+		if len(rr.bins) > 0 {
+			narrowReviewed(p.baseline, pending)
+		}
 	}
 	return p, info, nil
+}
+
+// narrowReviewed drops from the write-back's reviewed set every file no
+// dispatched slot carries, so CommitBaselineIndex can only record files this run
+// sent to a reviewer. Dropping is the fail-open direction: a dropped file is
+// simply re-reviewed by the next scan.
+func narrowReviewed(b *baselineWriteback, slots []Slot) {
+	carried := map[string]bool{}
+	for _, s := range slots {
+		for _, f := range s.Primary.chunkFiles {
+			carried[f] = true
+		}
+	}
+	for f := range b.reviewed {
+		if !carried[f] {
+			delete(b.reviewed, f)
+		}
+	}
 }
 
 // readScopeConstraintArtifact recovers the SCOPE CONSTRAINT block a scoped review
