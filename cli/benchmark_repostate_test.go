@@ -1307,7 +1307,7 @@ func TestExecuteRepoStateBenchmarkRun_FailedRunReportsTheRetainedSize(t *testing
 		}
 	}
 	require.NotEmpty(t, line, "the failed arm logs its retention line")
-	for _, want := range []string{"failed_cases=2", "failed_slots=", "failed_reviewers=", "retained_dirs=", "retained_bytes"} {
+	for _, want := range []string{"failed_cases=2", "failed_slots=", "other_slot_failures=", "failed_reviewers=", "retained_dirs=", "retained_bytes"} {
 		assert.Contains(t, line, want, "the failed-run line reports %s like the partial-run line", want)
 	}
 }
@@ -2919,6 +2919,42 @@ func TestSlotFailureBreakdown_SeparatesFailuresFromUnmeasuredOK(t *testing.T) {
 	}
 	assert.Equal(t, 2, failedSlotCount(m), "failed_slots must count only the infrastructure losses")
 	assert.Equal(t, 1, unmeasuredSlotCount(m), "unmeasured_slots carries the OK-but-worthless shortfall")
+}
+
+// retainForSlotFailures keeps the work dir for an empty or unrecognized reason, but
+// failedSlotCount and unmeasuredSlotCount both read 0 for one, so the retention line
+// named no cause. other_slot_failures carries the remainder, and the three counts
+// together account for every recorded failure.
+func TestOtherSlotFailureCount_CountsWhatTheOtherTwoDoNot(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		want   int
+	}{
+		{"", 1},
+		{"call_exploded_in_a_future_build", 1},
+		{benchmark.SlotFailureCall, 0},
+		{benchmark.SlotFailureTimeout, 0},
+		{benchmark.SlotFailureUnknownStatus, 0},
+		{benchmark.SlotFailureUnmeasuredOK, 0},
+	} {
+		t.Run(fmt.Sprintf("reason=%q", tc.reason), func(t *testing.T) {
+			m := map[reviewerKey][]benchmark.SlotFailure{{}: {{CaseID: "c1", Reason: tc.reason}}}
+			assert.Equal(t, tc.want, otherSlotFailureCount(m))
+		})
+	}
+
+	m := map[reviewerKey][]benchmark.SlotFailure{
+		{}: {{CaseID: "c1", Reason: benchmark.SlotFailureCall}, {CaseID: "c2", Reason: ""}},
+		{persona: "dax"}: {
+			{CaseID: "c1", Reason: benchmark.SlotFailureUnmeasuredOK},
+			{CaseID: "c2", Reason: "call_exploded_in_a_future_build"},
+			{CaseID: "c3", Reason: benchmark.SlotFailureTimeout},
+		},
+	}
+	assert.Equal(t, 2, otherSlotFailureCount(m))
+	assert.Equal(t, 5, failedSlotCount(m)+unmeasuredSlotCount(m)+otherSlotFailureCount(m),
+		"the three keys partition the recorded failures: none is dropped and none counted twice")
+	assert.Equal(t, 0, otherSlotFailureCount(nil))
 }
 
 // The slot warning's wording is FALSE for an unmeasured_salvaged_ok slot: it says
