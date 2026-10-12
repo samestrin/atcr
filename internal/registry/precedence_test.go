@@ -366,3 +366,24 @@ func TestPrecedence_FileTierNegativePayloadByteBudgetRejectedAtResolve(t *testin
 	_, err = ResolveSettings(CLIOverrides{}, &ProjectConfig{PayloadByteBudget: &zero}, nil)
 	require.NoError(t, err)
 }
+
+// Epic 35.16.14 T5: the per-persona unit budget defaults to 512, --max-units
+// overrides it, and a budget below one bin is rejected rather than read as unset.
+func TestPrecedence_MaxUnits(t *testing.T) {
+	s, err := ResolveSettings(CLIOverrides{}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 512, DefaultMaxUnits)
+	assert.Equal(t, DefaultMaxUnits, s.MaxUnits, "embedded default used when nothing overrides")
+
+	v := 1000
+	s, err = ResolveSettings(CLIOverrides{MaxUnits: &v}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, s.MaxUnits)
+
+	for _, bad := range []int{0, -1} {
+		b := bad
+		_, err := ResolveSettings(CLIOverrides{MaxUnits: &b}, nil, nil)
+		require.Error(t, err, "max_units %d", bad)
+		assert.Contains(t, err.Error(), "max_units must be >= 1")
+	}
+}

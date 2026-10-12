@@ -181,31 +181,71 @@ func TestBaselineSlots_UnknownAgentFailFast(t *testing.T) {
 	assert.Contains(t, err.Error(), `agent "ghost" not found in registry`)
 }
 
-// AC 06-01 Error Scenario 2, as amended by Epic 35.16.13 T2: a chunk count
-// exceeding maxChunksPerAgent is capped (not left to spawn an unbounded slot
-// count), and the files past the ceiling are deferred — dispatched to nobody —
-// rather than coalesced into one oversized final chunk.
-func TestBaselineSlots_ChunkCapBounded(t *testing.T) {
+// Epic 35.16.14 T5: a baseline persona plans every bin its files need, up to the
+// per-persona unit budget, with nothing deferred. A 1875-file repository packed
+// four files to a bin needs 469 bins — past the old 64-bin ceiling, inside the
+// default budget of 512 — and every one of them is dispatched.
+func TestBaselineSlots_PlansEveryUnitWithinBudget(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 400
+	const n = 1875
+	var entries []payload.FileEntry
+	for i := 0; i < n; i++ {
+		entries = append(entries, baselineEntry(fmt.Sprintf("f%04d.go", i), 100))
+	}
+	want, err := payload.PartitionByBudget(entries, 400)
+	require.NoError(t, err)
+	require.Greater(t, len(want), 64, "the plan is past the old 64-bin ceiling")
+	require.LessOrEqual(t, len(want), registry.DefaultMaxUnits, "and inside the default unit budget")
+
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	require.NoError(t, err)
+	require.Len(t, slots, len(want), "one slot per planned unit")
+	dispatched := map[string]bool{}
+	for i, s := range slots {
+		assert.Empty(t, s.deferredBins, "slot %d carries no deferred remainder", i)
+		for _, p := range s.Primary.chunkFiles {
+			dispatched[p] = true
+		}
+	}
+	assert.Len(t, dispatched, n, "every file is dispatched")
+}
+
+// Epic 35.16.14 T5: a plan above the per-persona unit budget is refused while
+// the slots are built, before any directory or provider call exists, with an
+// error naming --max-units and the budget that would admit it. Raising the
+// budget admits the same plan whole.
+func TestBaselineSlots_RefusesPlanAboveUnitBudget(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
-	// One file per chunk × (cap + 1) files → PartitionByBudget would yield cap+1 chunks.
-	n := maxChunksPerAgent + 1
+	cfg.Settings.MaxUnits = 8
 	var entries []payload.FileEntry
-	for i := 0; i < n; i++ {
+	for i := 0; i < 9; i++ {
 		entries = append(entries, baselineEntry(fmt.Sprintf("f%03d.go", i), 100))
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	require.ErrorIs(t, err, ErrUnitBudgetExceeded)
+	assert.Nil(t, slots)
+	assert.Contains(t, err.Error(), `agent "greta" needs 9 units, above the budget of 8`)
+	assert.Contains(t, err.Error(), "--max-units 9")
+
+	cfg.Settings.MaxUnits = 9
+	slots, _, err = buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
-	require.Len(t, slots, maxChunksPerAgent, "slot count is capped at maxChunksPerAgent, not unbounded")
-	for i := 0; i < maxChunksPerAgent; i++ {
-		assert.True(t, slotsContainMarker(slots, fmt.Sprintf("f%03d.go", i)), "file %d is dispatched", i)
-	}
-	last := fmt.Sprintf("f%03d.go", n-1)
-	assert.False(t, slotsContainMarker(slots, last), "the file past the ceiling is not dispatched")
-	assert.Equal(t, [][]string{{last}}, slots[len(slots)-1].deferredBins, "it rides the last slot as a deferred bin")
+	require.Len(t, slots, 9, "a budget that holds the plan dispatches every unit")
+}
+
+// An unset budget (a hand-built Settings{}) reads as the default, so it neither
+// refuses every plan nor removes the bound.
+func TestCheckUnitBudget_UnsetReadsAsDefault(t *testing.T) {
+	require.NoError(t, checkUnitBudget("greta", registry.DefaultMaxUnits, 0))
+	err := checkUnitBudget("greta", registry.DefaultMaxUnits+1, 0)
+	require.ErrorIs(t, err, ErrUnitBudgetExceeded)
+	assert.Contains(t, err.Error(), fmt.Sprintf("above the budget of %d", registry.DefaultMaxUnits))
 }
 
 // Sprint 35.0 Phase 5 (task 5.14 gate MEDIUM): a file the GLOBAL byte budget dropped
@@ -527,4 +567,27 @@ func TestBaselineMerge_FallbackUnionAndTelemetryAccumulate(t *testing.T) {
 	assert.Equal(t, 60, m.TokensOut, "tokens out accumulate across all chunks")
 	assert.Equal(t, 6, m.ToolCalls, "tool calls accumulate across all chunks")
 	assert.Equal(t, int64(150), m.ToolBytes, "tool bytes accumulate across all chunks")
+}
+
+// Epic 35.16.14 T5: the refusal is up front, not mid-run. A baseline review
+// whose plan is above the budget returns ErrUnitBudgetExceeded from
+// PrepareReviewFromRepo and leaves no review directory behind.
+func TestPrepareReviewFromRepo_UnitBudgetRefusedBeforeScaffold(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.MaxUnits = 2
+	// Each 40 KB file fits the test model's per-agent budget alone but not two
+	// together, so three files plan three bins.
+	files := map[string]string{}
+	for i := 0; i < 3; i++ {
+		p := fmt.Sprintf("f%d.go", i)
+		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
+	}
+	repo := baselineRepo(t, files)
+	out := filepath.Join(t.TempDir(), "review")
+
+	_, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, out))
+	require.ErrorIs(t, err, ErrUnitBudgetExceeded)
+	assert.Contains(t, err.Error(), "--max-units 3")
+	assert.NoDirExists(t, out, "nothing is scaffolded for a refused plan")
 }
