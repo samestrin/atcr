@@ -197,6 +197,85 @@ func TestInit_ForcePreservesExistingSymlinkPersona(t *testing.T) {
 	assert.NotZero(t, info.Mode()&os.ModeSymlink, "existing persona (a symlink) is preserved, not overwritten")
 }
 
+// TestInit_WritesPersonaStamp: a fresh init leaves .atcr/personas/.stamp.json
+// with one entry per persona file it wrote (_base.md included), each the sha256
+// of the content on disk (Epic 35.16.16 T2).
+func TestInit_WritesPersonaStamp(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok, "fresh init must leave a readable stamp")
+
+	want := map[string]string{}
+	for _, name := range append([]string{"_base"}, personas.Names()...) {
+		data, err := os.ReadFile(filepath.Join(pdir, name+".md"))
+		require.NoError(t, err)
+		want[name+".md"] = registry.HashPersonaContent(data)
+	}
+	assert.Equal(t, want, stamp.Files, "stamp must hold exactly the files written, hashed by their content")
+
+	info, err := os.Stat(registry.PersonaStampPath(pdir))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+}
+
+// TestInit_ForceKeepsStampEntriesOfPreservedFiles: a --force re-run keeps the
+// earlier entry of every persona file it preserved (even one edited since) and
+// records only the file it actually wrote.
+func TestInit_ForceKeepsStampEntriesOfPreservedFiles(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+
+	earlier, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	// Earlier entries the re-run must not touch: a sentinel hash for bruce.md,
+	// whose file is then hand-edited, and an entry for a file init never writes.
+	earlier.Files["bruce.md"] = "earlier-bruce"
+	earlier.Files["legacy.md"] = "earlier-legacy"
+	// A deleted persona file is written again, so its entry is re-recorded.
+	earlier.Files["greta.md"] = "earlier-greta"
+	require.NoError(t, registry.WritePersonaStamp(pdir, earlier))
+	require.NoError(t, os.WriteFile(filepath.Join(pdir, "bruce.md"), []byte("EDITED"), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(pdir, "greta.md")))
+
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	after, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	greta, err := personas.Get("greta")
+	require.NoError(t, err)
+	want := map[string]string{}
+	for k, v := range earlier.Files {
+		want[k] = v
+	}
+	want["greta.md"] = registry.HashPersonaContent([]byte(greta))
+	assert.Equal(t, want, after.Files, "only the rewritten greta.md entry may change")
+}
+
+// TestInit_ForceNeverRetroStampsPreservedFiles: a workspace initialized before
+// the stamp existed gets no stamp from a --force re-run that preserves every
+// persona file, and only the rewritten file's entry when it writes one.
+func TestInit_ForceNeverRetroStampsPreservedFiles(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	require.NoError(t, os.Remove(registry.PersonaStampPath(pdir)))
+
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
+	assert.NoFileExists(t, registry.PersonaStampPath(pdir), "preserved files must not be retro-stamped")
+
+	require.NoError(t, os.Remove(filepath.Join(pdir, "kai.md")))
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	kai, err := personas.Get("kai")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"kai.md": registry.HashPersonaContent([]byte(kai))}, stamp.Files)
+}
+
 func TestInit_ReadOnlyDir(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("requires POSIX permissions and non-root user")
