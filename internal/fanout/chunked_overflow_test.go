@@ -115,7 +115,7 @@ func TestBuildSlots_ChunkedUsableWindowStillRecordsChunk(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.ReviewStrategy = "chunked"
 
-	diff := diffOfNFiles(12, 900) // 10800 lines > the 8437-line budget → splits
+	diff := diffOfNFiles(12, 900) // 10800 lines > the 6328-line budget → splits
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 12}}
 
 	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
