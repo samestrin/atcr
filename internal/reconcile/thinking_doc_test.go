@@ -347,6 +347,7 @@ func TestRegistryDoc_ReplayReasoningRow(t *testing.T) {
 		{"all four tool-loop lanes honor it: a review agent, its fallback, the skeptic, and the debate seats", "Epic 35.16.11.2.2.9.1 wired the skeptic (buildSkepticAgent) and the debate seats (buildDebateAgent); every lane is named so an operator does not have to guess"},
 		{"Each lane reads the value from its own agent's entry", "each builder reads its own AgentConfig, never a primary's"},
 		{"does nothing for an agent that never runs the tool loop", "the key only acts in the loop; it is not rejected for a non-tool agent"},
+		{"an Anthropic-backed tool loop that depends on echoed `thinking_blocks` can get a 400", "off drops thinking_blocks too (loop.go replayable), and Anthropic rejects a tool-use turn whose thinking blocks are missing (Epic 64 T5)"},
 	})
 }
 
