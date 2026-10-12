@@ -17,11 +17,12 @@ import (
 	"strings"
 )
 
-// Repair returns s with its JSON syntax slips fixed and true, or s unchanged
-// and false when s is already valid JSON or cannot be repaired without
-// guessing. ok=true always means json.Valid(out). Repair is idempotent (its
-// output is valid, so a second call returns it unchanged with false) and runs
-// in time linear in len(s).
+// Repair returns s with its JSON syntax slips fixed and true. It returns s
+// unchanged and false in two cases: s is already valid JSON (nothing to
+// repair), or s cannot be repaired without guessing. So ok=false alone does not
+// say s is invalid; ok=true always means json.Valid(out). Repair is idempotent
+// (its output is valid, so a second call returns it unchanged with false) and
+// runs in time linear in len(s).
 //
 // A closer that matches no open container is first dropped as an extra closer,
 // and one that matches a container further out first closes every container
@@ -65,10 +66,11 @@ type frame struct {
 // repairPass makes one linear scan over s. replaceUnmatched picks how a closer
 // that does not fit the innermost container is read: false drops it as extra
 // (or, if it matches a container further out, closes down to that one), true
-// reads it as the innermost container's closer. sawUnmatched reports whether
-// such a closer was met inside a container, so the caller knows a second pass
-// could differ.
-func repairPass(s string, replaceUnmatched bool) (out string, ok, sawUnmatched bool) {
+// reads it as the innermost container's closer. complete reports whether the
+// scan ended on one finished top-level value; the caller still checks the
+// output with json.Valid. sawUnmatched reports whether such a closer was met
+// inside a container, so the caller knows a second pass could differ.
+func repairPass(s string, replaceUnmatched bool) (out string, complete, sawUnmatched bool) {
 	b := make([]byte, 0, len(s)+8)
 	var stack []frame
 	var openCount [2]int // open '{' and '[' frames on the stack, so a closer finds its match in O(1)
