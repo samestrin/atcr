@@ -186,10 +186,14 @@ func singleRowAXI(name string, header []string, values []any) (toon.Object, erro
 // reviewSummaryAXIDoc builds the one-row review_summary document. Identity
 // fields are strings; counts are bare TOON integers.
 func reviewSummaryAXIDoc(s ReviewSummaryAXI) (toon.Object, error) {
-	return singleRowAXI("review_summary", reviewSummaryAXIHeader, []any{
+	values := []any{
 		s.ID, s.Dir, s.AgentsSucceeded, s.AgentsTotal, s.AgentsFailed, s.AgentsTimedOut,
 		s.APICalls, s.FindingsTotal, s.FindingsCritical, s.FindingsHigh, s.FindingsMedium, s.FindingsLow,
-	})
+	}
+	for _, v := range s.coverageValues() {
+		values = append(values, v)
+	}
+	return singleRowAXI("review_summary", s.header(), values)
 }
 
 // homeViewAXIDoc builds the one-row home document. All four fields are strings.

@@ -196,6 +196,37 @@ type ReviewSummaryAXI struct {
 	FindingsHigh     int64
 	FindingsMedium   int64
 	FindingsLow      int64
+	// Coverage (Epic 35.16.13 T5), read by the caller from the run's chunks.json
+	// records and passed in as scalars (report may not import fanout). When
+	// CoverageMeasured is false — a bulk or diff review, which bins nothing — the
+	// four columns are not declared and the payload is byte-identical to the
+	// pre-coverage shape.
+	CoverageMeasured bool
+	BinsReviewed     int64
+	BinsPlanned      int64
+	FilesCovered     int64
+	FilesInScope     int64
+}
+
+// reviewSummaryCoverageHeader is the additive column set appended to
+// reviewSummaryAXIHeader only when coverage was measured.
+var reviewSummaryCoverageHeader = []string{"bins_reviewed", "bins_planned", "files_covered", "files_in_scope"}
+
+// header returns the payload's column order for s: the fixed base columns, plus
+// the coverage columns when s carries them.
+func (s ReviewSummaryAXI) header() []string {
+	if !s.CoverageMeasured {
+		return reviewSummaryAXIHeader
+	}
+	return append(append([]string(nil), reviewSummaryAXIHeader...), reviewSummaryCoverageHeader...)
+}
+
+// coverageValues returns the coverage columns' values, or nil when unmeasured.
+func (s ReviewSummaryAXI) coverageValues() []int64 {
+	if !s.CoverageMeasured {
+		return nil
+	}
+	return []int64{s.BinsReviewed, s.BinsPlanned, s.FilesCovered, s.FilesInScope}
 }
 
 // reviewSummaryAXIHeader is the fixed column order of the review-summary payload.

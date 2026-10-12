@@ -68,10 +68,20 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// (out of scope). Silently ignoring them would let a CI pipeline resume a
 	// review and false-PASS despite surviving findings, so reject them fail-closed
 	// (exit 2) and point at the standalone gate commands.
+	//
+	// --require-coverage is deliberately NOT in this list (Epic 35.16.13 T5,
+	// decided on EST-816): it gates on chunk coverage read from the review's
+	// chunks.json, not on surviving findings, so it needs none of the finding
+	// gate this rejection protects — and draining a partial run is exactly what
+	// --resume is for. Do not move it back into the list.
 	for _, f := range []string{"fail-on", "verify", "require-verified"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; resume reconciles automatically — run `atcr reconcile --fail-on <severity>` or `atcr verify` afterward to gate", f))
 		}
+	}
+	coveragePct, requireCoverage, err := requireCoverageThreshold(cmd)
+	if err != nil {
+		return err
 	}
 
 	// --thorough and --min-severity only apply to the --verify stage; --verify is
@@ -246,6 +256,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		if err != nil {
 			return err
 		}
+		// No fan-out ran, but the review's chunks.json records still say how much
+		// of it was reviewed, so the coverage line and gate apply here too
+		// (Epic 35.16.13 T5).
+		cov := readRunCoverage(ctx, dir)
 		// No recordHistory here: the AllComplete re-reconcile performs no new review
 		// work, so there is nothing new to append — and req.StartedAt was just
 		// stamped with time.Now(), so a re-append would earn fresh (Timestamp, ID)
@@ -260,13 +274,18 @@ func runResume(cmd *cobra.Command, anchor string) error {
 				agentsTotal:        int64(len(info.Completed)),
 				findingsTotal:      int64(reconciledTotal),
 				findingsBySeverity: bySeverity,
-			}); werr != nil {
+			}, cov); werr != nil {
 				return fmt.Errorf("axi output rendering failed: %w", werr)
 			}
+		} else {
+			writeCoverageLine(cmd.OutOrStdout(), cov)
 		}
 		// AllComplete re-reconciles an already-completed review; no new review work
 		// was performed, so do not append another audit record (the finding-history
 		// append is likewise guarded, above).
+		if requireCoverage {
+			return coverageGate(cmd.ErrOrStderr(), cov, coveragePct)
+		}
 		return nil
 	}
 
@@ -297,6 +316,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// the history/audit ledgers below are recorded before the fault is surfaced —
 	// the same ledgers-first ordering runReview uses.
 	var axiWerr error
+	var cov runCoverage
 	if result != nil {
 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
 		// before the all-agents-failed error guard so a fully-failed resume still
@@ -305,18 +325,23 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// review --axi for equivalent data (AC 01-04); a write fault stays unwrapped
 		// (exitFailure, AC 02-02 Error Scenario 3).
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+		// The resumed personas' chunks.json records were just rewritten by the
+		// fan-out; the completed personas' stand as they were, so this is the
+		// whole review's coverage, not only this resume's share.
+		cov = readRunCoverage(ctx, result.Dir)
 		if axiMode {
 			// A write failure here (a broken stdout, e.g. a closed pipe) is captured
 			// and surfaced only after the history/audit ledgers are written below, so
 			// a closed pipe cannot cost the run its compliance record; the fault
 			// stays unwrapped → exitFailure (1) (AC 02-02 Error Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta, cov); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
+			writeCoverageLine(cmd.OutOrStdout(), cov)
 		}
 	}
 	if err != nil {
@@ -352,6 +377,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// recorded: exit 1 with the render fault (never usageError).
 	if axiWerr != nil {
 		return axiWerr
+	}
+	// --require-coverage runs last, after every artifact, ledger and the summary.
+	if requireCoverage {
+		return coverageGate(cmd.ErrOrStderr(), cov, coveragePct)
 	}
 	return nil
 }
