@@ -407,6 +407,15 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 		assert.Equal(t, StatusOK, st.Status)
 		assert.Equal(t, 6, st.UnreviewedChunks, "the 6 deferred bins are unreviewed")
 		assert.Equal(t, 70, st.ChunkCount)
+		// T6 over the union: the 6 carried deferred bins are this persona's
+		// unreviewed files though the resume dispatched none of them.
+		assert.Equal(t, 6, st.UnreviewedFiles, "carried deferred files stay unreviewed")
+		assert.Equal(t, 6, st.DeferredFiles)
+		sum, err := ReadPoolSummary(dir)
+		require.NoError(t, err)
+		require.Len(t, sum.Agents, 1)
+		assert.Equal(t, 6, sum.Agents[0].UnreviewedFiles, "summary.json carries the union's gap too")
+		assert.Equal(t, 6, sum.Agents[0].DeferredFiles)
 		assertCoverage(t, dir, Coverage{BinsReviewed: 64, BinsPlanned: 70, FilesCovered: 64, FilesInScope: 70})
 	})
 
@@ -433,6 +442,8 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 		st := readAgentStatus(t, poolDir, "greta")
 		assert.Equal(t, 2, st.UnreviewedChunks)
 		assert.Equal(t, 70, st.ChunkCount)
+		assert.Equal(t, 2, st.UnreviewedFiles, "deferred again by this run, counted once")
+		assert.Equal(t, 2, st.DeferredFiles)
 		assertCoverage(t, dir, Coverage{BinsReviewed: 68, BinsPlanned: 70, FilesCovered: 68, FilesInScope: 70})
 	})
 }
@@ -470,4 +481,10 @@ func TestCarryReviewed_KeepsCoverageMarkers(t *testing.T) {
 	assert.False(t, rec.Bins[2].ContributedNothing || rec.Bins[2].RePacked)
 
 	assertCoverage(t, dir, Coverage{BinsReviewed: 63, BinsPlanned: 64, FilesCovered: 62, FilesInScope: 64})
+
+	// T6 reads the same markers: the refused bin and the re-packed bin that served
+	// nothing leave 2 files unreviewed, none of them deferred.
+	st := readAgentStatus(t, poolDir, "greta")
+	assert.Equal(t, 2, st.UnreviewedFiles)
+	assert.Zero(t, st.DeferredFiles)
 }
