@@ -153,7 +153,7 @@ atcr review --resume ./path        # an explicit review directory
 ```
 
 - The panel is locked: resume re-resolves the current git range and compares it (plus the configured roster) against the interrupted run's `manifest.json`. A changed range or roster aborts with exit code **2** — resuming against changed code or a different panel would mix inconsistent results, so start a fresh `atcr review` instead.
-- An agent counts as complete only when its per-agent `status.json` records `ok` (a clean reviewer that found nothing is complete; a failed/timed-out one is re-run). Pass the same range flags (`--base`/`--head`/`--merge-commit`) the original review used so the range matches.
+- An agent counts as complete only when its per-agent `status.json` records `ok` (a clean reviewer that found nothing is complete; a failed/timed-out one is re-run). On a baseline review an `ok` agent is still resumed when its `chunks.json` names bins it never reviewed, and only those bins are re-sent (see [Baseline review](#baseline-review---all----dir)). Pass the same range flags (`--base`/`--head`/`--merge-commit`) the original review used so the range matches.
 - If every agent already completed, resume just re-runs reconciliation. `--resume` cannot be combined with `--id` or `--output-dir`.
 - Re-running an explicit `--id` (or a non-empty `--output-dir`) whose directory already exists is rejected; the error names the two ways forward — `--resume <id>` to continue it non-destructively, or `--force` to back the prior tree up to `<dir>.bak` and start fresh. `--resume` and `--force` are mutually exclusive (opposite collision resolutions).
 
@@ -161,7 +161,26 @@ atcr review --resume ./path        # an explicit review directory
 
 `atcr review` does not require a diff range: `--all` scans the whole repository and `--scope <path>` scans a subtree — useful for a first pass over a legacy codebase or a periodic full audit. Baseline runs are incremental: files whose content hash is unchanged since the last baseline are skipped, and `--no-file-cache` forces a full rescan. `--all` / `--scope` are mutually exclusive with `--base` / `--head` / `--merge-commit`.
 
-A large baseline run can be partial. Its summary ends with a coverage line: persona-bins reviewed out of those planned, and files reviewed by at least one persona out of those in scope. `--require-coverage <pct>` makes the run exit 1 when file coverage is below `pct` (it also works with `--resume`).
+**A baseline run can legitimately be partial.** Each persona's in-scope files are packed into bins sized to its model's context, and a persona dispatches at most **64 bins** (the 64-bin ceiling). Files past the ceiling are not crammed into one oversized bin; they are recorded as `deferred` in the persona's `sources/pool/raw/agent/<persona>/chunks.json`, nothing is sent for them, and a warning names how many files were deferred. A bin that fails, times out, or comes back with nothing usable is also left unreviewed. Such a run still exits **0** by default, so read the coverage line rather than the exit code to know how much was reviewed.
+
+**Reading the coverage line.** A multi-bin baseline run ends its summary with a line like:
+
+```text
+Coverage: 68/128 persona-bins reviewed, 64/128 files covered by at least one persona (50.0%)
+```
+
+- `68/128 persona-bins reviewed` adds up every persona's bins: those that finished `ok` (and were not refused by the reviewer) against all the bins planned, deferred ones included.
+- `64/128 files covered by at least one persona` counts the in-scope files that at least one persona actually reviewed. The percentage is this file figure, and it is the number the gate below uses.
+- `--axi` reports the same four numbers as `bins_reviewed`, `bins_planned`, `files_covered` and `files_in_scope`. A bulk (single-bin) or diff review prints no coverage line.
+
+**Finishing a partial run.** `atcr review --resume <id>` drains the missing bins: a persona with any `pending`, `failed`, `timeout` or `deferred` bin in `chunks.json` is resumed, and only those bins are sent again, while bins already reviewed keep their findings. A persona whose bins are all `ok` costs no new calls. Run `--resume` again until the coverage line reaches what you need; a run deferred past the ceiling needs one resume per 64 bins left.
+
+**Gating CI on coverage.** `--require-coverage <pct>` is the CI gate: the run exits **1** when file coverage is below `pct`, after every artifact and the summary are written. It also exits 1 when the coverage record cannot be read, and it works with `--resume`. Without the flag the exit code ignores coverage.
+
+```bash
+atcr review --all --require-coverage 100      # fail unless every in-scope file was reviewed
+atcr review --resume latest --require-coverage 100
+```
 
 ## Auto-fix (`--auto-fix`)
 
