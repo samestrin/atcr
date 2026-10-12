@@ -23,9 +23,11 @@ const chunksSchemaVersion = 1
 
 // Bin outcomes in chunks.json. pending and deferred are written before dispatch;
 // ok / failed / timeout are the engine's own Result.Status values, copied in as
-// each bin resolves. deferred marks a bin the maxChunksPerAgent ceiling cut
-// (capChunks); it is never dispatched, so it stays deferred and readers must
-// treat it as unreviewed.
+// each bin resolves. deferred marks a bin the old 64-bin baseline ceiling cut
+// (Epic 35.16.13 T2); it is never dispatched, so it stays deferred and readers
+// must treat it as unreviewed. A new run no longer writes it (Epic 35.16.14 T5
+// refuses an over-budget plan instead), but a ledger written before then still
+// carries it and must resume.
 //
 // leased is the work ledger's in-flight state (Epic 35.16.14 T1): a worker holds
 // the bin. It lives only in memory and is never written, so a run killed

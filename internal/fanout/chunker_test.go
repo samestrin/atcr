@@ -175,6 +175,10 @@ func TestChunkDiffBoundsChunkCount(t *testing.T) {
 	// ~5000 chunks and fails this bound.
 	got := chunkDiff(diff, 1)
 	assert.LessOrEqual(t, len(got), 64, "chunk count must be bounded regardless of diff size")
+	// Epic 35.16.14 T5 moved the baseline path to a per-persona unit budget; the
+	// diff path keeps its ceiling of 64.
+	assert.Equal(t, 64, maxChunksPerAgent, "the diff path's chunk ceiling is still 64")
+	assert.Len(t, got, 64, "the ceiling is reached, not undershot")
 	assert.Equal(t, diff, strings.Join(got, ""), "coalescing the overflow is still lossless")
 }
 

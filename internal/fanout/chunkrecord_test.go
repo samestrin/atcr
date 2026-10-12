@@ -156,7 +156,9 @@ func TestChunkRecord_ParallelLaneRecordsEveryBin(t *testing.T) {
 	}
 }
 
-// Epic 35.16.13 T2 success criterion: a baseline persona whose files need 70
+// Epic 35.16.13 T2 success criterion, kept for ledgers written before Epic
+// 35.16.14 T5 (which plans all 70 bins, as the first assertion checks; the run
+// is then rebuilt with withLegacyDeferral). A baseline persona whose files need 70
 // bins dispatches the first 64 and defers the other 6. No dispatched bin is an
 // oversized coalesced tail (each holds the one file its partition bin held, well
 // inside max_context_lines), chunks.json records every leftover file as
@@ -181,8 +183,10 @@ func TestChunkRecord_CeilingDefersLeftoverBins(t *testing.T) {
 		slots, _, err = buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 		require.NoError(t, err)
 	})
-	require.Len(t, slots, maxChunksPerAgent, "64 dispatched bins")
-	assert.Contains(t, out, `atcr: warning: agent "greta": the 64-chunk ceiling was reached, so 6 file(s) in 6 chunk(s) were deferred (not dispatched); see chunks.json`)
+	require.Len(t, slots, total, "T5: a plan within the unit budget dispatches every bin")
+	assert.NotContains(t, out, "deferred", "a new run defers nothing")
+	slots = withLegacyDeferral(slots)
+	require.Len(t, slots, legacyCeiling, "64 dispatched bins")
 	assert.NotContains(t, out, "coalesced", "the baseline path no longer coalesces")
 
 	mcl := cfg.Registry.Agents["greta"].EffectiveMaxContextLines()
@@ -202,7 +206,7 @@ func TestChunkRecord_CeilingDefersLeftoverBins(t *testing.T) {
 		assert.Equal(t, i, b.Index)
 		assert.Equal(t, []string{files[i]}, b.Files, "bin %d names its file set", i)
 		want := StatusOK
-		if i >= maxChunksPerAgent {
+		if i >= legacyCeiling {
 			want = chunkOutcomeDeferred
 		}
 		assert.Equal(t, want, b.Outcome, "bin %d", i)

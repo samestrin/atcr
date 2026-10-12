@@ -155,7 +155,7 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	files := map[string]string{}
 	var paths []string
-	for i := 0; i < maxChunksPerAgent+2; i++ {
+	for i := 0; i < legacyCeiling+2; i++ {
 		p := fmt.Sprintf("f%03d.go", i)
 		files[p] = "// FILE:" + p + "\n" + strings.Repeat("x", 40_000)
 		paths = append(paths, p)
@@ -163,7 +163,8 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	repo := baselineRepo(t, files)
 	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "review")))
 	require.NoError(t, err)
-	require.Len(t, prep.Slots, 2*maxChunksPerAgent, "each persona dispatches 64 bins and defers 2")
+	prep.Slots = withLegacyDeferral(prep.Slots)
+	require.Len(t, prep.Slots, 2*legacyCeiling, "each persona dispatches 64 bins and defers 2")
 	_, err = ExecuteReview(context.Background(), baselineChunkFindingCompleter{}, prep)
 	require.NoError(t, err)
 	poolDir := filepath.Join(prep.Dir, "sources", "pool")
@@ -178,7 +179,7 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"greta", "kai"}, info.Pending, "a deferred bin makes an ok persona pending")
 	require.Len(t, rprep.Slots, 4, "only the deferred bins are dispatched")
-	deferred := paths[maxChunksPerAgent:]
+	deferred := paths[legacyCeiling:]
 	assert.Equal(t, deferred, slotFiles(rprep.Slots, "greta"))
 	assert.Equal(t, deferred, slotFiles(rprep.Slots, "kai"))
 	assert.ElementsMatch(t, paths, sortedKeys(rprep.baseline.reviewed), "narrowReviewed keeps the resumed files and the ok bins' files")
@@ -187,18 +188,18 @@ func TestChunkResume_DeferredBinsResumeAndDrainT6Gap(t *testing.T) {
 	require.NoError(t, err)
 	for _, a := range []string{"greta", "kai"} {
 		st := readAgentStatus(t, poolDir, a)
-		assert.Equal(t, maxChunksPerAgent+2, st.ChunkCount, a)
+		assert.Equal(t, legacyCeiling+2, st.ChunkCount, a)
 		assert.Zero(t, st.UnreviewedChunks, a)
 		assert.Zero(t, st.UnreviewedFiles, "%s: the resumed deferred files are reviewed, not double-counted", a)
 		assert.Zero(t, st.DeferredFiles, a)
 		assert.ElementsMatch(t, paths, agentFindingFiles(t, poolDir, a), a)
 	}
-	n := 2 * (maxChunksPerAgent + 2)
-	assertCoverage(t, prep.Dir, Coverage{BinsReviewed: n, BinsPlanned: n, FilesCovered: maxChunksPerAgent + 2, FilesInScope: maxChunksPerAgent + 2})
+	n := 2 * (legacyCeiling + 2)
+	assertCoverage(t, prep.Dir, Coverage{BinsReviewed: n, BinsPlanned: n, FilesCovered: legacyCeiling + 2, FilesInScope: legacyCeiling + 2})
 
 	require.NoError(t, rprep.CommitBaselineIndex("resume-1"))
 	recorded, excluded := rprep.BaselineCoverage()
-	assert.Equal(t, maxChunksPerAgent+2, recorded, "the two resumed files and the 64 the ok bins reviewed are recorded")
+	assert.Equal(t, legacyCeiling+2, recorded, "the two resumed files and the 64 the ok bins reviewed are recorded")
 	assert.Zero(t, excluded)
 }
 
