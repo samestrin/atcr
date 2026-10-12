@@ -140,6 +140,12 @@ func checkFitRow(f benchmark.ReviewerFit, maxReplicate int) error {
 		}
 	}
 	row := fmt.Sprintf("reviewer_fit row for %q on %q", f.Persona, stripTerminalControlRunes(f.CaseID))
+	// ValidOutcome accepts the empty string (OutcomeUnknown) so a checkpoint that
+	// predates the outcome field still resumes, but a fit row is written only for a
+	// replicate that recorded its outcome: an empty one would read as a healthy call.
+	if f.Outcome == benchmark.OutcomeUnknown {
+		return fmt.Errorf("%s has an empty outcome; a reviewer_fit row must record one", row)
+	}
 	if !benchmark.ValidOutcome(f.Outcome) {
 		return fmt.Errorf("%s has outcome %q, which this atcr does not know", row, stripTerminalControlRunes(f.Outcome))
 	}

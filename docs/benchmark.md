@@ -324,7 +324,9 @@ The verdict is **health-only**: findings are reported, never gated.
 The report is advisory and read-only: the exit code does not depend on the verdicts,
 and nothing is repointed. A run-result with no `reviewer_fit` rows (written before
 replicates existed) is refused, and so is a row whose outcome this binary does not
-know, rather than read as a healthy call. The report also refuses a row no run could
+know, rather than read as a healthy call. A row with an empty or missing `outcome` is
+refused the same way; a checkpoint written before the outcome field existed still
+resumes, since only the fit report refuses it. The report also refuses a row no run could
 have written: a negative count, more `silent_chunks` than `chunk_count`, a replicate
 above the number of rows, or a persona or model holding a control or format character.
 
