@@ -79,3 +79,25 @@ func TestMaxContextLines_DocumentsTheDeliveredLineGate(t *testing.T) {
 			"If it was renamed, re-point this guard; if it was deleted, the row's claim is unpinned.", behaviouralOwner)
 	}
 }
+
+// Epic 64 T5: two more claims the row is the only place to make. The 1500
+// DefaultMaxContextLines constant still exists, but an unset field derives its
+// budget from the model window and never falls back to it, so a reader who
+// greps the constant must learn the two are separate. And T1's byte-budget
+// warning is a second oversize-chunk warning on stderr, which no other page
+// describes. Phrases, not bare tokens, for the reason given above; the number
+// is read from the constant so a default change turns this row red.
+func TestMaxContextLines_DocumentsDefaultConstantAndByteWarning(t *testing.T) {
+	row := docRow(t, readRepoFile(t, "../../docs/registry.md"), "`max_context_lines`")
+
+	for _, must := range []struct{ token, why string }{
+		{"`" + strconv.Itoa(registry.DefaultMaxContextLines) + "` `DefaultMaxContextLines` constant is separate from this derived value",
+			"registry.DefaultMaxContextLines no longer matches the derivation, and the fan-out uses it for no unset field; the row must say the two are separate"},
+		{"a chunk larger than its byte budget also warns on stderr", "internal/fanout warns when a rendered chunk exceeds its byte budget (Epic 64 T1); this row is the only documentation of the oversize-chunk warnings"},
+		{"naming the agent, the chunk index, its bytes and the budget", "what the byte warning reports, so an operator can tell it from the line-count warning"},
+	} {
+		if !strings.Contains(row, must.token) {
+			t.Errorf("docs/registry.md's max_context_lines row must state %q: %s\nrow was: %s", must.token, must.why, row)
+		}
+	}
+}
