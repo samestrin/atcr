@@ -158,9 +158,10 @@ type Agent struct {
 	// ChunkTotal is the number of chunk-Slots this persona's diff was split into by
 	// the chunked strategy (Epic 19.10 F3/F6). 0 or 1 means unchunked — a single
 	// call. invokeAgent reads it to scale this call's deadline (scaledTimeoutSecs)
-	// and stamps it onto Result.ChunkCount for diagnosability (F8). runEngine reads
-	// the max across a serial lane to scale the aggregate deadline. A bare/direct-
-	// constructed Agent (doctor, tests) leaves it 0 — zero regression.
+	// and stamps it onto Result.ChunkCount for diagnosability (F8). Run reads the
+	// slot primary's value to scale the unit deadline (unitDeadline) the same way.
+	// A bare/direct-constructed Agent (doctor, tests) leaves it 0 — zero
+	// regression.
 	ChunkTotal int
 
 	// Per-agent payload-sizing record (Epic 19.10 F8), computed by buildSlots/
@@ -765,9 +766,14 @@ func (r *Result) ParsedFindingCount() int {
 // serial lane (rate-limited providers), both running concurrently.
 type Engine struct {
 	completer Completer
-	// maxParallel bounds concurrent parallel-lane agent calls; 0 (the default)
-	// means unbounded, preserving the original goroutine-per-slot behavior.
+	// maxParallel is the parallel lane's worker count: at most this many units
+	// are in flight, and at most this many workers exist. 0 (the default) means
+	// unbounded: one worker per unit, every unit in flight at once.
 	maxParallel int
+	// unitTimeoutSecs, when positive, bounds each leased unit from the moment a
+	// worker takes it (unitDeadline). 0 (the default) leaves units bounded only
+	// by their per-call deadlines and the caller's context.
+	unitTimeoutSecs int
 	// dispatcher executes tool calls for tool-enabled agents. nil (the default)
 	// means no tool harness is wired, so a tool-enabled agent degrades to
 	// single-shot. It is shared across all agents in a review (one snapshot).
@@ -818,11 +824,19 @@ type Engine struct {
 // EngineOption configures an Engine at construction.
 type EngineOption func(*Engine)
 
-// WithMaxParallel bounds concurrent parallel-lane agent calls to n. n <= 0
-// leaves the lane unbounded (the documented escape hatch). The serial lane is
+// WithMaxParallel sizes the parallel lane's worker pool to n. n <= 0 leaves
+// the lane unbounded (the documented escape hatch). The serial lane is
 // unaffected — it is already sequential.
 func WithMaxParallel(n int) EngineOption {
 	return func(e *Engine) { e.maxParallel = n }
+}
+
+// WithUnitTimeout gives every unit a deadline of secs (scaled by its chunk
+// count) that starts when a worker leases it, so a unit leased late in a long
+// run gets the same budget as the first (Epic 35.16.14 T2). secs <= 0 sets no
+// unit deadline.
+func WithUnitTimeout(secs int) EngineOption {
+	return func(e *Engine) { e.unitTimeoutSecs = secs }
 }
 
 // WithDispatcher wires the tool harness into the engine so tool-enabled agents
@@ -962,31 +976,25 @@ func recordRecoveredPanic(res Result, start time.Time) {
 // recorded as reviewed. Every assignment path below must keep results[i] aligned
 // with slots[i]; TestEngineRun_ResultsMatchSlotInputOrder pins it.
 //
-// Parallel-lane slots run concurrently via a WaitGroup; serial-lane slots run
-// sequentially in a single goroutine (ctx checked before each invocation),
-// concurrent with the parallel lane. The WaitGroup always drains — even when
-// ctx is cancelled mid-flight — so no goroutine is leaked. A cancelled context
-// surfaces as StatusTimeout for the affected slots; other slots still complete.
+// Parallel-lane slots are units in a work queue drained by a pool of workers
+// (Epic 35.16.14 T2): poolWorkers(units, maxParallel) goroutines each lease the
+// next unit, run it to its result, and only then lease another, so the live
+// goroutine count and the payloads in flight follow max_parallel rather than
+// the number of units. Serial-lane slots run sequentially in a single goroutine
+// (ctx checked before each invocation), concurrent with the pool. Each unit runs
+// under its own deadline from lease time (WithUnitTimeout); ctx is the run-level
+// ceiling. The WaitGroup always drains — even when ctx is cancelled mid-flight —
+// so no goroutine is leaked. A cancelled context surfaces as StatusTimeout for
+// the affected slots without a provider call; other slots still complete.
 func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	start := time.Now()
 	results := make([]Result, len(slots))
 	var wg sync.WaitGroup
 
-	// A buffered semaphore bounds how many parallel-lane agent slots run
-	// concurrently. maxParallel <= 0 leaves sem nil (unbounded). Zero-size
-	// elements keep the buffer cheap regardless of cap. Each goroutine still
-	// spawns; the token is acquired before the slot starts and held for the full
-	// slot, including any multi-turn tool loop, so the cap bounds concurrent
-	// tool-agent loops rather than individual provider calls.
-	var sem chan struct{}
-	if e.maxParallel > 0 {
-		sem = make(chan struct{}, e.maxParallel)
-	}
-
-	// done reports slot i's final Result to the completion hook. Each slot's
-	// goroutine defers it AFTER registering wg.Done and BEFORE registering the
-	// panic recover, so it runs once results[i] is final on every path
-	// (including a recovered panic) and before the WaitGroup can release Run.
+	// done reports slot i's final Result to the completion hook. Each unit defers
+	// it BEFORE registering the panic recover, so it runs once results[i] is
+	// final on every path (including a recovered panic) and before the worker
+	// leases its next unit.
 	done := func(i int) {
 		if e.slotDone != nil {
 			e.slotDone(i, results[i])
@@ -999,62 +1007,63 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			e.slotStart(i)
 		}
 	}
+	// invoke runs slot i under its unit deadline, which starts now that a worker
+	// holds it.
+	invoke := func(i int) Result {
+		uctx, cancel := unitDeadline(ctx, e.unitTimeoutSecs, slots[i])
+		defer cancel()
+		return e.invokeSlot(uctx, slots[i])
+	}
+	// recoverUnit turns a panic in slot i into a failed result so the worker
+	// survives to lease the next unit.
+	recoverUnit := func(i int) {
+		if r := recover(); r != nil {
+			res := resultFromPanic(slots[i], start, r)
+			results[i] = res
+			recordRecoveredPanic(res, start)
+		}
+	}
 
-	// Serial slots share one goroutine so they never overlap; parallel slots
-	// each get their own. Both lanes start together and the WaitGroup joins them.
-	var serialIdx []int
+	var serialIdx, parallelIdx []int
 	for i, s := range slots {
 		if s.Serial {
 			serialIdx = append(serialIdx, i)
-			continue
+		} else {
+			parallelIdx = append(parallelIdx, i)
 		}
+	}
+
+	// The pool. A unit leased after the run's ctx is done still resolves —
+	// invokeSlot short-circuits to a timeout result without a provider call — so
+	// every slot gets a Result and the queue always drains.
+	q := newUnitQueue(parallelIdx)
+	for w := poolWorkers(len(parallelIdx), e.maxParallel); w > 0; w-- {
 		wg.Add(1)
-		go func(i int, s Slot) {
+		go func() {
 			defer wg.Done()
-			defer done(i)
-			defer func() {
-				if r := recover(); r != nil {
-					res := resultFromPanic(s, start, r)
-					results[i] = res
-					recordRecoveredPanic(res, start)
-				}
-			}()
-			// Acquire a slot before invoking. The acquire is ctx-aware so a
-			// cancelled run never blocks the WaitGroup drain waiting for a slot:
-			// on cancellation, invokeSlot short-circuits to a timeout result
-			// without a provider call. A won acquire is always released.
-			if sem != nil {
-				select {
-				case sem <- struct{}{}:
-					defer func() { <-sem }()
-				case <-ctx.Done():
-					// Context cancelled before a semaphore slot was available.
-					// No token was acquired, so none is released; cap enforcement
-					// is correct because invokeSlot will short-circuit to a
-					// timeout result without making a provider call.
-					results[i] = e.invokeSlot(ctx, s)
+			for {
+				i, ok := q.lease()
+				if !ok {
 					return
 				}
+				func() {
+					defer done(i)
+					defer recoverUnit(i)
+					lease(i)
+					results[i] = invoke(i)
+				}()
 			}
-			lease(i)
-			results[i] = e.invokeSlot(ctx, s)
-		}(i, slots[i])
+		}()
 	}
 
 	if len(serialIdx) > 0 {
 		wg.Add(1)
-		go func(slots []Slot, serialIdx []int) {
+		go func() {
 			defer wg.Done()
 			for _, i := range serialIdx {
-				func(i int) {
+				func() {
 					defer done(i)
-					defer func() {
-						if r := recover(); r != nil {
-							res := resultFromPanic(slots[i], start, r)
-							results[i] = res
-							recordRecoveredPanic(res, start)
-						}
-					}()
+					defer recoverUnit(i)
 					s := slots[i]
 					// Honor cancellation before starting each serial invocation so a
 					// cancelled run does not keep firing requests down the lane. The
@@ -1075,10 +1084,10 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 						return
 					}
 					lease(i)
-					results[i] = e.invokeSlot(ctx, s)
-				}(i)
+					results[i] = invoke(i)
+				}()
 			}
-		}(slots, serialIdx)
+		}()
 	}
 
 	wg.Wait()
