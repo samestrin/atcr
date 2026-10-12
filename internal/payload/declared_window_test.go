@@ -137,12 +137,12 @@ func TestChunkMaxLines_HonorsDeclaration(t *testing.T) {
 	// every budget still sizes against 32768 — that is the failure mode this
 	// epic exists to prevent, so the line budget is asserted on its own.
 	//
-	//	404992 / 48 = 8437 lines (vs 71680 / 48 = 1493 today)
+	//	404992 / 64 = 6328 lines (vs 71680 / 64 = 1120 undeclared)
 	base := ChunkMaxLines("glm-5.2", nil, testOutputTokens)
-	require.Equal(t, 1493, base, "the pre-epic derived value at the 32768 default window")
+	require.Equal(t, 1120, base, "the pre-epic derived value at the 32768 default window")
 
 	got := ChunkMaxLines("glm-5.2", declared(128000), testOutputTokens)
-	assert.Equal(t, 8437, got)
+	assert.Equal(t, 6328, got)
 
 	// Monotonic sweep: a larger declared window must yield a larger per-chunk
 	// line budget. With both endpoints pinned by Equal above, a simple Greater

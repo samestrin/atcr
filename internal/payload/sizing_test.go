@@ -112,6 +112,29 @@ func TestChunkMaxLines_ClampedFloor(t *testing.T) {
 	assert.Equal(t, minChunkLines, got, "a degenerate window must clamp to the positive floor")
 }
 
+// TestChunkMaxLines_FixtureLineWidthFitsTheByteBudget pins avgBytesPerLine
+// against the measured T3 baseline: its diff averages 59.3 to 59.6 bytes per
+// line, and at 48 B/line every 128000-class chunk shipped ~23% over its byte
+// budget (130691 prompt tokens in a 131072 window, finish_reason=length). A chunk
+// cut at ChunkMaxLines lines of that width must fit EffectiveByteBudget.
+func TestChunkMaxLines_FixtureLineWidthFitsTheByteBudget(t *testing.T) {
+	const fixtureBytesPerLine = 59 // 58 bytes of content + '\n'
+	line := strings.Repeat("x", fixtureBytesPerLine-1) + "\n"
+
+	for _, window := range []int{131072, 128000} {
+		budget := EffectiveByteBudget("unlisted-small-model", declared(window), testOutputTokens)
+		lines := ChunkMaxLines("unlisted-small-model", declared(window), testOutputTokens)
+
+		chunk := strings.Repeat(line, lines)
+		assert.LessOrEqual(t, int64(len(chunk)), budget,
+			"window %d: %d lines at %d B/line must fit the %d B effective budget",
+			window, lines, fixtureBytesPerLine, budget)
+
+		assert.Equal(t, lines, ClampLinesToByteBudget(lines+1, budget),
+			"window %d: ClampLinesToByteBudget must use the ratio ChunkMaxLines derived the budget with", window)
+	}
+}
+
 // internal/fanout's chunked-diff path guards its scope-constraint reservation
 // with `if chunkClampBudget > 0`, and that guard is UNOBSERVABLE today — swapping
 // it for `if true` changes no output. It is not dead defensiveness by accident:
