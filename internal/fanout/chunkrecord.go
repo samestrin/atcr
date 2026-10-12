@@ -104,7 +104,7 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		bySlot:  map[int]chunkSlotRef{},
 	}
 	for i, s := range slots {
-		if s.Primary.ChunkTotal <= 1 || len(s.Primary.chunkFiles) == 0 {
+		if !recordedBin(s) {
 			continue
 		}
 		dir, err := agentDirName(s.Primary.Name)
@@ -139,6 +139,14 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		return nil
 	}
 	return l
+}
+
+// recordedBin reports whether a slot is a baseline bin the ledger records: its
+// primary carries the file set its chunk ships and is one of several bins, or a
+// chunk-aware resume rebuilt it from a prior record (Slot.resumedBin), where it
+// may be the persona's only dispatched bin.
+func recordedBin(s Slot) bool {
+	return len(s.Primary.chunkFiles) > 0 && (s.Primary.ChunkTotal > 1 || s.resumedBin)
 }
 
 // writePlan writes every persona's full planned bin list before dispatch.
