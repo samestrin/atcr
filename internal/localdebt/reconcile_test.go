@@ -558,6 +558,8 @@ func gitRepoWithFiles(t *testing.T, files map[string]string) string {
 // only in category) yet hash to one id, so they share one row. The out-of-scope,
 // refuted and path-warned findings are still emitted with an id, and the store
 // writes no row for it: the id is an address, not a promise of a stored row.
+// The sibling's problem ends in the in-scope text and sorts (so is emitted) before
+// it, so find matches the whole problem: a suffix match would return the sibling.
 func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 	root := gitRepoWithFiles(t, map[string]string{
 		"internal/tok/renew.go": "package tok\n\nfunc RenewToken() error {\n\tx := 1\n\t_ = x\n\treturn nil\n}\n",
@@ -574,9 +576,11 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 		outOfScope = "vendored import sits outside the diff"
 		refuted    = "package tok exports no constructor"
 		pathWarned = "renw.go never closes the token file"
+		sibling    = "godoc: " + inScope
 	)
 	writeSource("greta/findings.txt",
-		"LOW|internal/tok/renew.go:1|"+inScope+"|add one|style|2|ev|greta\n"+
+		"LOW|internal/tok/renew.go:1|"+sibling+"|add one|style|2|ev|greta\n"+
+			"LOW|internal/tok/renew.go:1|"+inScope+"|add one|style|2|ev|greta\n"+
 			"LOW|internal/tok/renew.go:1|"+inScope+"|add one|maintainability|2|ev|greta\n"+
 			"HIGH|internal/tok/renew.go:4|"+anchored+"|check it|correctness|20|ev|greta\n"+
 			"LOW|internal/tok/renew.go:1|"+outOfScope+"|ignore|out-of-scope|2|ev|greta\n"+
@@ -590,22 +594,24 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 	require.NoError(t, err)
 
 	emitted := res.JSONFindings()
-	require.Len(t, emitted, 6, "every fixture finding must survive merge as its own record")
-	find := func(problemSuffix, category string) int {
+	require.Len(t, emitted, 7, "every fixture finding must survive merge as its own record")
+	find := func(problem, category string) int {
 		t.Helper()
 		for i, f := range emitted {
-			if strings.HasSuffix(f.Problem, problemSuffix) && (category == "" || f.Category == category) {
+			if f.Problem == problem && (category == "" || f.Category == category) {
 				return i
 			}
 		}
-		require.Failf(t, "fixture finding not emitted", "%q (%s)", problemSuffix, category)
+		require.Failf(t, "fixture finding not emitted", "%q (%s)", problem, category)
 		return -1
 	}
+	require.Equal(t, inScope, emitted[find(inScope, "style")].Problem,
+		"find must not return the sibling whose problem merely ends in the wanted text")
 	// Refutation is stamped by the verify stage on the very records
 	// res.JSONFindings() returns, so the fixture sets it there too.
 	emitted[find(refuted, "")].Verification = &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "sam"}
 
-	iAnchored := find(anchored, "")
+	iAnchored := find("(RenewToken) "+anchored, "")
 	require.Equal(t, "(RenewToken) "+anchored, emitted[iAnchored].Problem,
 		"the fixture must anchor this finding, or it proves nothing about the inputs diverging")
 	require.NotEmpty(t, emitted[find(pathWarned, "")].PathWarning,
@@ -635,6 +641,7 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 	persisted := map[string]bool{
 		emitted[find(inScope, "style")].ID: true,
 		emitted[iAnchored].ID:              true,
+		emitted[find(sibling, "")].ID:      true,
 	}
 	for _, f := range emitted {
 		r, ok := stored[f.ID]
@@ -647,5 +654,5 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 		assert.Equal(t, f.Line, r.Line)
 		assert.Equal(t, f.Problem, r.Problem, "the stored row is the emitted finding, anchor included")
 	}
-	assert.Len(t, recs, len(persisted), "the store holds exactly the in-scope, anchored and deduplicated rows")
+	assert.Len(t, recs, len(persisted), "the store holds exactly the in-scope, sibling, anchored and deduplicated rows")
 }
