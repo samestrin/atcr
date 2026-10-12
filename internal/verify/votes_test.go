@@ -198,3 +198,47 @@ func TestAggregateVerdicts_DecisiveVoteIgnoresALosersTruncation(t *testing.T) {
 	assert.False(t, got.Truncated,
 		"the shortened read belongs to the refuter, whose verdict lost and is not what this record reports")
 }
+
+// TD internal/verify/invoke.go:223 (HIGH): with two or more skeptics the rendered
+// Notes is the aggregate, and every renderer cuts it at 500 runes. Leading each
+// skeptic's own Notes with its marker protects only the first one, so the
+// aggregate must hoist every marker to its front, in voter order, out of the
+// entries they came from.
+func TestAggregateVerdicts_HoistsEveryFragmentGradeMarker(t *testing.T) {
+	t.Parallel()
+	const kaiMarker = "[verdict_after_unopened_closer: 12 prefix byte(s) discarded]"
+	const ottoMarker = "[verdict_after_unopened_closer: 34 prefix byte(s) discarded]"
+	long := strings.Repeat("é", 600)
+	got := aggregateVerdicts([]*reclib.Verification{
+		v(verdictConfirmed, "kai", kaiMarker+" "+long),
+		v(verdictConfirmed, "otto", ottoMarker+" holds"),
+	})
+	require.NotNil(t, got)
+	require.Equal(t, verdictConfirmed, got.Verdict)
+
+	runes := []rune(got.Notes)
+	require.Greater(t, len(runes), 500, "the fixture must actually exceed the renderers' cap")
+	capped := string(runes[:500])
+	assert.Contains(t, capped, kaiMarker, "the first skeptic's marker survives the cap")
+	assert.Contains(t, capped, ottoMarker, "and so does the later skeptic's, which used to sit behind 600 runes")
+	assert.Equal(t, kaiMarker+" "+ottoMarker+" kai: "+long+" | otto: holds", got.Notes,
+		"markers lead verbatim in voter order and are removed from the entries they came from")
+}
+
+// A Notes that starts like the marker but never closes it (cut off before its
+// `]`) is not a marker: splitFragmentMarker must not detect it, and the aggregate
+// must leave that entry exactly as it was rather than hoist half a marker.
+func TestSplitFragmentMarker_UnclosedMarkerIsNotDetected(t *testing.T) {
+	t.Parallel()
+	const unclosed = "[verdict_after_unopened_closer: 3 prefix byte(s)"
+	marker, rest, ok := splitFragmentMarker(unclosed)
+	assert.False(t, ok, "a marker prefix with no closing bracket is not a marker")
+	assert.Empty(t, marker)
+	assert.Equal(t, unclosed, rest, "the text is returned unchanged")
+
+	got := combineReasonings([]*reclib.Verification{
+		v(verdictConfirmed, "kai", unclosed),
+		v(verdictConfirmed, "otto", "holds"),
+	})
+	assert.Equal(t, "kai: "+unclosed+" | otto: holds", got, "nothing is hoisted")
+}
