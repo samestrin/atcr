@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -464,7 +465,8 @@ func reviewDirOf(p, rel string) string {
 const maxSummaryBytes = 1 << 20
 
 // openSummary opens a review dir's reconciled/summary.json. A var so a test can
-// count the opens one backfill pass makes.
+// count the opens one backfill pass makes. It is package state, so a test that
+// swaps it must not call t.Parallel, nor run beside one that reads a summary.
 var openSummary = os.Open
 
 // reviewDirOwnsRun reports whether reviewDir is the review that minted runID.
@@ -508,16 +510,29 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 }
 
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
-// or "" when the file is missing, unreadable, over maxSummaryBytes, unparseable or
-// carries none — every case reviewDirOwnsRun reads as owning nothing.
+// or "" when the file is missing, not a regular file, unreadable, over
+// maxSummaryBytes, unparseable or carries none — every case reviewDirOwnsRun reads
+// as owning nothing. The Lstat comes before the open because opening a FIFO blocks
+// until a writer appears, and the backfill pass holds the store lock meanwhile; a
+// symlink is refused with it, as the producer refuses a non-regular review.md. An
+// oversized file is logged at debug, so the skip is visible when asked for.
 func readReconciledAt(reviewDir string) string {
-	f, err := openSummary(filepath.Join(reviewDir, "reconciled", "summary.json"))
+	path := filepath.Join(reviewDir, "reconciled", "summary.json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	if info.Size() > maxSummaryBytes {
+		slog.Debug("skipping oversized summary.json", "path", path, "size", info.Size())
+		return ""
+	}
+	f, err := openSummary(path)
 	if err != nil {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
-	// One byte PAST the cap, so a file exactly at it still reads whole and only an
-	// oversized one is detectable by length.
+	// One byte PAST the cap, so a file exactly at it still reads whole and one that
+	// grew past it since the Lstat is still detectable by length.
 	data, err := io.ReadAll(io.LimitReader(f, maxSummaryBytes+1))
 	if err != nil || len(data) > maxSummaryBytes {
 		return ""
