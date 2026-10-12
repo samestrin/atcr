@@ -29,7 +29,7 @@ func TestRebuildPool_RecoversTruncatedZeroFindings(t *testing.T) {
 		{Agent: "kai", Status: StatusOK, ResponseTruncated: true, Content: ""},
 		// bruce landed a finding and is not a runaway.
 		{Agent: "bruce", Status: StatusOK, Content: "HIGH|x.go:1|p|f|correctness|5|e"},
-	}, nil))
+	}, nil, nil))
 
 	var err error
 	out := captureWarnLog(t, func(ctx context.Context) {
@@ -66,7 +66,7 @@ func TestRebuildPool_WarningIsMarkedAsARestatementNotAFreshEvent(t *testing.T) {
 	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	out := captureWarnLog(t, func(ctx context.Context) {
 		_, _, err := RebuildPool(ctx, poolDir, []string{"greta"})
@@ -118,7 +118,7 @@ func TestTruncatedZeroWarning_BothVariantsCarryTheFullRemedy(t *testing.T) {
 			poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 			require.NoError(t, writeResumedAgents(poolDir, []Result{
 				{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
-			}, nil))
+			}, nil, nil))
 			_, _, err := RebuildPool(ctx, poolDir, []string{"greta"})
 			require.NoError(t, err)
 		}},
@@ -142,7 +142,7 @@ func TestRebuildPool_SilentWhenNoAgentTruncatedToZero(t *testing.T) {
 	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "bruce", Status: StatusOK, Content: "HIGH|x.go:1|p|f|correctness|5|e"},
-	}, nil))
+	}, nil, nil))
 
 	out := captureWarnLog(t, func(ctx context.Context) {
 		_, _, err := RebuildPool(ctx, poolDir, []string{"bruce"})

@@ -615,11 +615,24 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if r.Content == "" {
 		return findingsResult{}
 	}
+	grounded, ungrounded := groundedFindings(r, changed)
+	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
+	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated, Ungrounded: ungrounded}
+}
+
+// groundedFindings is findingsFor before the per-source constraints: the
+// result's findings stamped with the reviewer and passed through the grounding
+// gate. The resume merge (writeMergedAgent) applies the constraints itself, over
+// the union of replayed and fresh findings.
+func groundedFindings(r Result, changed payload.ChangedLines) ([]stream.Finding, int) {
+	if r.Content == "" {
+		return nil, 0
+	}
 	// Reuse the cached count computed when the result was built. A cached zero
 	// count lets us skip a redundant parse for truncated-empty responses that
 	// invokeSlot already demoted (TD-019).
 	if r.parsedFindingCountSet && r.parsedFindingCount == 0 {
-		return findingsResult{}
+		return nil, 0
 	}
 	findings := r.parseFindings()
 	for i := range findings {
@@ -643,8 +656,7 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 	if ungrounded > 0 {
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
 	}
-	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
-	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated, Ungrounded: ungrounded}
+	return grounded, ungrounded
 }
 
 // agentDirName reduces an agent name to a safe single path segment and rejects
@@ -662,10 +674,12 @@ func agentDirName(agent string) (string, error) {
 // writeAgentArtifacts creates the agent's raw dir and writes review.md,
 // findings.txt, and status.json. dir is the pre-sanitized single-segment name.
 func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error {
-	agentDir := filepath.Join(poolDir, poolRawAgentDir, dir)
-	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		return fmt.Errorf("creating agent dir for '%s': %w", r.Agent, err)
-	}
+	st := statusFor(r, fr)
+	return writeAgentFiles(poolDir, dir, r.Agent, agentReviewContent(r), fr.Findings, &st)
+}
+
+// agentReviewContent is the review.md body for a result.
+func agentReviewContent(r Result) string {
 	// An UNCHUNKED agent's review.md is the raw reply, so the join never ran and
 	// nothing neutralised a model-issued chunkBoundaryLine in it. Neutralise here,
 	// but ONLY on that path: a chunked agent's Content already came through
@@ -677,14 +691,23 @@ func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error
 	if r.chunkContents == nil {
 		content = neutraliseChunkBoundary(content)
 	}
+	return content
+}
+
+// writeAgentFiles creates the agent's raw dir and writes the given review.md
+// body, findings and status record.
+func writeAgentFiles(poolDir, dir, agent, content string, findings []stream.Finding, st *AgentStatus) error {
+	agentDir := filepath.Join(poolDir, poolRawAgentDir, dir)
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		return fmt.Errorf("creating agent dir for '%s': %w", agent, err)
+	}
 	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(content)); err != nil {
-		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
+		return fmt.Errorf("writing review.md for '%s': %w", agent, err)
 	}
-	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
-		return fmt.Errorf("writing findings for '%s': %w", r.Agent, err)
+	if err := writeFindings(filepath.Join(agentDir, findingsFile), findings); err != nil {
+		return fmt.Errorf("writing findings for '%s': %w", agent, err)
 	}
-	st := statusFor(r, fr)
-	return WriteStatus(filepath.Join(agentDir, statusFile), &st)
+	return WriteStatus(filepath.Join(agentDir, statusFile), st)
 }
 
 // statusFor builds the per-agent status.json record from a result.

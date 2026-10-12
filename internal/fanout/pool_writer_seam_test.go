@@ -54,7 +54,7 @@ func TestRebuildPool_TruncatedZeroWarningHonoursTheInjectedWriter(t *testing.T) 
 	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, ResponseTruncated: true, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	ctx, buf := capturingCtx()
 	stray := captureStderr(t, func() {

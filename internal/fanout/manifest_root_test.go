@@ -285,7 +285,7 @@ func TestExecuteResume_FinalizationPreservesRoot(t *testing.T) {
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
 		{Agent: "kai", Status: StatusOK, Content: ""},
-	}, nil))
+	}, nil, nil))
 
 	var slots []Slot
 	for _, n := range []string{"mira", "otto"} {

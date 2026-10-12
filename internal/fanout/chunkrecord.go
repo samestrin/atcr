@@ -76,6 +76,9 @@ type chunkLedger struct {
 	// order keeps the personas in first-seen slot order so writes are
 	// deterministic.
 	order []string
+	// carried holds, per persona dir, the files of the prior run's reviewed bins
+	// a resume replays instead of re-dispatching (carryReviewed, chunkmerge.go).
+	carried map[string]map[string]bool
 }
 
 type chunkSlotRef struct {

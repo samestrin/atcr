@@ -30,7 +30,7 @@ func TestRebuildPool_RecoversFallbackCount(t *testing.T) {
 		{Agent: "greta", Status: StatusOK, Content: "HIGH|x.go:1|p|f|correctness|5|e", FallbackUsed: true, FallbackFrom: "greta-primary"},
 		{Agent: "kai", Status: StatusOK, Content: "HIGH|y.go:2|p|f|correctness|5|e", FallbackUsed: true, FallbackFrom: "kai-primary"},
 		{Agent: "bruce", Status: StatusOK, Content: "HIGH|z.go:3|p|f|correctness|5|e"},
-	}, nil))
+	}, nil, nil))
 
 	_, statuses, err := RebuildPool(context.Background(), poolDir, []string{"greta", "kai", "bruce"})
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestRebuildPool_FallbackCountIsZeroWhenNothingFellBack(t *testing.T) {
 	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
 	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "bruce", Status: StatusOK, Content: "HIGH|z.go:3|p|f|correctness|5|e"},
-	}, nil))
+	}, nil, nil))
 
 	_, _, err := RebuildPool(context.Background(), poolDir, []string{"bruce"})
 	require.NoError(t, err)
