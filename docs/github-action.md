@@ -86,7 +86,8 @@ builds and invokes the binary; it does not provision a registry for you.
 
   The `Fix:` clause appears when the `FIX` column is populated (Epic 7.0); the
   `Suggested by:` clause appears when the finding's `EVIDENCE` carries the
-  executor's `fix by <name>` attribution token. Findings on unchanged lines
+  executor's `fix by <name>` attribution token, where `<name>` is a single word
+  (prose such as `fix by hand is risky` is not an attribution). Findings on unchanged lines
   cannot be anchored in the diff and are surfaced in the check summary instead.
 
 ## Manual smoke test

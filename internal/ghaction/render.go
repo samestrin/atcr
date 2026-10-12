@@ -5,6 +5,7 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -42,13 +43,15 @@ const (
 // reconcile.ClusterEvidenceSep when findings were cluster-merged, so it splits
 // through reconcile.SplitEvidence — the same splitter internal/verify's
 // attribution guards use. The token prefix is reclib.FixAttributionPrefix.
+// The name must be a single token: a remainder containing whitespace is
+// reviewer prose ("fix by hand is risky"), not an executor label.
 // Returns "" when no attribution token is present.
 func FixAttribution(evidence string) string {
 	segs := reconcile.SplitEvidence(evidence)
 	for i := len(segs) - 1; i >= 0; i-- {
 		seg := strings.TrimSpace(segs[i])
 		if rest, ok := strings.CutPrefix(seg, reclib.FixAttributionPrefix); ok {
-			if name := strings.TrimSpace(rest); name != "" {
+			if name := strings.TrimSpace(rest); name != "" && !strings.ContainsFunc(name, unicode.IsSpace) {
 				return name
 			}
 		}
