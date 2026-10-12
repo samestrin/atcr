@@ -277,11 +277,11 @@ func TestCorpus_NeutralContent(t *testing.T) {
 // it with -v to read it. A miss here means the plain repair is not enough and
 // the fallback (adopting kaptinlin/jsonrepair) is due.
 //
-// recoveredBeforeRepair lists fixtures the findings parser's element recovery
+// declinedBeforeRepair lists fixtures the findings parser's element recovery
 // already reads in full, so Repair is never asked: Repair must decline them,
 // since closing a top-level object open at end of input could admit a cut-off
 // element. internal/stream's corpus test checks the parser's decode for them.
-var recoveredBeforeRepair = map[string]bool{
+var declinedBeforeRepair = map[string]bool{
 	"missing_closer_wrapper": true,
 }
 
@@ -305,7 +305,7 @@ func TestCorpus_RepairBar(t *testing.T) {
 			if ok || out != text {
 				miss = "valid control was altered"
 			}
-		case f.CutOff || recoveredBeforeRepair[f.Name]:
+		case f.CutOff || declinedBeforeRepair[f.Name]:
 			if ok {
 				miss = "repaired a value open at end of input; a cut-off element must stay dropped"
 			}
