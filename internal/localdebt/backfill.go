@@ -406,9 +406,10 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 			// former may set policyRefused — see ReviewPolicyDeclinesFile, whose verdict
 			// the replay already computed and hands back as PolicyDeclined, so the
 			// policy is evaluated once per candidate — and only from a candidate whose
-			// review dir owns the record. An error is not evidence either way, and
-			// PolicyDeclined is never set alongside one, so it leaves the flag alone.
-			if rerr == nil && r.PolicyDeclined && owns(p) {
+			// review dir owns the record. An error is not evidence either way;
+			// PolicyDeclined is never set alongside one, so testing it alone already
+			// leaves the flag alone on an error.
+			if r.PolicyDeclined && owns(p) {
 				policyRefused = true
 			}
 			return nil
@@ -420,6 +421,13 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 		return nil
 	})
 	if err != nil {
+		// Unreachable by design, so no test drives it: filepath.WalkDir returns only
+		// what its closure returns, and the closure returns nil on every path —
+		// including a non-nil walkErr, which it skips so one unreadable subtree cannot
+		// abort a repair pass over the whole store, and including an unreadable root,
+		// which WalkDir reports through that same walkErr. It stays as a guard for a
+		// future closure that does propagate an error; a test for it would have to
+		// change the closure first.
 		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
 	// `policyRefused` is "the producer's policy would refuse this candidate at all",
@@ -440,7 +448,9 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 
 // reviewDirOf trims the review-dir-relative rel off candidate p, leaving the review
 // dir the candidate sits in. p is known to end with rel on a segment boundary
-// (pathHasSuffix), so the trim cannot cut a segment in half.
+// (pathHasSuffix), so the trim cannot cut a segment in half. When p IS rel (the walk
+// rooted at the review dir, `--review-root .`) the result is ".", which names no
+// directory by its Base — runOwnedBy resolves it to an absolute path for that.
 func reviewDirOf(p, rel string) string {
 	return filepath.Clean(strings.TrimSuffix(p, rel))
 }
@@ -475,9 +485,18 @@ func reviewDirOwnsRun(reviewDir, runID string) bool {
 
 // runOwnedBy is reviewDirOwnsRun's comparison over a reconciled_at already read. An
 // empty reconciledAt owns nothing: without that guard it would match the run_id an
-// empty timestamp mints.
+// empty timestamp mints. The base is taken from the absolute path, so a review dir
+// given relatively — "." from reviewDirOf above all — is compared by its real name
+// as the mint saw it; a dir whose absolute path cannot be had owns nothing.
 func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
-	return reconciledAt != "" && reconciledAt+"-"+filepath.Base(reviewDir) == runID
+	if reconciledAt == "" {
+		return false
+	}
+	abs, err := filepath.Abs(reviewDir)
+	if err != nil {
+		return false
+	}
+	return reconciledAt+"-"+filepath.Base(abs) == runID
 }
 
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,

@@ -1032,14 +1032,6 @@ func TestBackfillJustifications_IdGateProtectsRationaleTrailLineOnRegression(t *
 		"the effective open line keeps its stored text too — the whole id is out of the pass's scope")
 }
 
-// No test drives replayCandidates' "searching %s for review narratives" return, and
-// none can: it is unreachable by design. filepath.WalkDir returns only what its
-// closure returns, and the closure returns nil on every path — including a non-nil
-// walkErr, which it skips so one unreadable subtree cannot abort a repair pass over
-// the whole store, and including an unreadable root, which WalkDir reports through
-// that same walkErr. The return stays as a guard for a future closure that does
-// propagate an error; a test for it would have to change the closure first.
-
 // TD cli/debt_resolve.go:81 — a policy refusal must be distinguishable from a pruned
 // review tree.
 //
@@ -1303,6 +1295,7 @@ func TestReviewDirOwnsRun(t *testing.T) {
 		base    string                       // the review dir's base name
 		summary func(t *testing.T, d string) // stamps <reviewDir>/reconciled/summary.json; nil leaves it absent
 		runID   string
+		chdir   bool // run from inside the review dir and pass it as "."
 		want    bool
 	}{
 		{
@@ -1364,6 +1357,17 @@ func TestReviewDirOwnsRun(t *testing.T) {
 				strings.Repeat(" ", maxSummaryBytes)),
 			runID: at + "-multi-agent",
 		},
+		{
+			// `--review-root .` from inside the review dir: reviewDirOf hands back
+			// ".", whose filepath.Base is ".", not the dir's name. The base must come
+			// from the absolute path or a same-dir record is never attributed.
+			name:    "review dir given as \".\" owns the run by its real name",
+			base:    "multi-agent",
+			summary: rawSummary(`{"reconciled_at":"` + at + `"}`),
+			runID:   at + "-multi-agent",
+			chdir:   true,
+			want:    true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1372,7 +1376,12 @@ func TestReviewDirOwnsRun(t *testing.T) {
 			if tc.summary != nil {
 				tc.summary(t, reviewDir)
 			}
-			assert.Equal(t, tc.want, reviewDirOwnsRun(reviewDir, tc.runID))
+			arg := reviewDir
+			if tc.chdir {
+				t.Chdir(reviewDir)
+				arg = "."
+			}
+			assert.Equal(t, tc.want, reviewDirOwnsRun(arg, tc.runID))
 		})
 	}
 }
@@ -1428,6 +1437,16 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 		"every refusal sits in the record's own review dir, so each is still attributed")
 	assert.Equal(t, map[string]int{filepath.Join(ownDir, "reconciled", "summary.json"): 1}, opens,
 		"the owning dir's summary.json is opened once for the whole pass, not once per refused candidate")
+}
+
+// TD internal/localdebt/backfill.go:440 — a candidate whose path IS rel (the walk
+// rooted at the review dir itself, `--review-root .`) sits in the review dir ".".
+// Pinned because "." is still a usable path for reading summary.json; its Base is
+// not the dir's name, which reviewDirOwnsRun answers by taking the base from the
+// absolute path (the "review dir given as \".\"" case in TestReviewDirOwnsRun).
+func TestReviewDirOf_RelEqualsPath(t *testing.T) {
+	rel := filepath.FromSlash("a/b.md")
+	assert.Equal(t, ".", reviewDirOf(rel, rel))
 }
 
 // rawSummary returns a setup that writes body verbatim as the review's
