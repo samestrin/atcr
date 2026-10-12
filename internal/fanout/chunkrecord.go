@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -125,6 +126,10 @@ type chunkLedger struct {
 	// were never reviewed (carriedGap), which the resumed slots' own gap cannot
 	// see because the resume dispatches none of them.
 	carriedGaps map[string]fileGap
+	// failed is the first write failure (writeErr). A failed write may leave no
+	// record at all, which a coverage reader would take for "binned nothing", so
+	// it is kept for the review result instead of only being logged.
+	failed error
 }
 
 type chunkSlotRef struct {
@@ -221,7 +226,9 @@ func (l *chunkLedger) slotDone(i int, r Result) {
 
 // writeLocked writes one persona's record. Best-effort, like the transcript: a
 // write failure is logged and the review continues, because losing the record
-// must never cost the review itself. Caller holds mu.
+// must never cost the review itself. The first failure is kept for writeErr, so
+// the coverage gate fails closed rather than reading a missing record as an
+// unbinned run. Caller holds mu.
 func (l *chunkLedger) writeLocked(dir string) {
 	path := filepath.Join(l.rawBase, dir, chunksFile)
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
@@ -230,5 +237,19 @@ func (l *chunkLedger) writeLocked(dir string) {
 	}
 	if err != nil {
 		l.log.Warn("chunks.json write failed", "agent", l.records[dir].Agent, "path", path, "err", err)
+		if l.failed == nil {
+			l.failed = fmt.Errorf("%s: %w", path, err)
+		}
 	}
+}
+
+// writeErr returns the ledger's first write failure, or nil (also for a nil
+// ledger: a bulk or diff run records nothing, so nothing failed).
+func (l *chunkLedger) writeErr() error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.failed
 }

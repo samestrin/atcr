@@ -259,7 +259,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// No fan-out ran, but the review's chunks.json records still say how much
 		// of it was reviewed, so the coverage line and gate apply here too
 		// (Epic 35.16.13 T5).
-		cov := readRunCoverage(ctx, dir)
+		cov := readRunCoverage(ctx, dir, nil)
 		// No recordHistory here: the AllComplete re-reconcile performs no new review
 		// work, so there is nothing new to append — and req.StartedAt was just
 		// stamped with time.Now(), so a re-append would earn fresh (Timestamp, ID)
@@ -328,7 +328,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// The resumed personas' chunks.json records were just rewritten by the
 		// fan-out; the completed personas' stand as they were, so this is the
 		// whole review's coverage, not only this resume's share.
-		cov = readRunCoverage(ctx, result.Dir)
+		cov = readRunCoverage(ctx, result.Dir, result.ChunkRecordErr)
 		if axiMode {
 			// A write failure here (a broken stdout, e.g. a closed pipe) is captured
 			// and surfaced only after the history/audit ledgers are written below, so

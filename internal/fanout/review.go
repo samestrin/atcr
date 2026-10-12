@@ -151,6 +151,11 @@ type ReviewResult struct {
 	ID      string
 	Dir     string
 	Summary Summary
+	// ChunkRecordErr is the first chunks.json write failure of the run (Epic
+	// 35.16.13), nil when every record was written or none was planned. A failed
+	// write can leave no record, so a coverage reader must treat the run as
+	// unmeasured rather than unbinned.
+	ChunkRecordErr error
 }
 
 // LoadReviewConfig loads the registry and project config under root, validates
@@ -1372,7 +1377,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	}
 	p.manifest = &m
 
-	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
+	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum, ChunkRecordErr: p.chunks.writeErr()}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
 	// returned regardless so the caller knows where to look.
 	if _, outErr := Outcome(results); outErr != nil {
