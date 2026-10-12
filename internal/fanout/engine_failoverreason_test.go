@@ -37,6 +37,21 @@ func TestInvokeSlot_FailoverReasonLine(t *testing.T) {
 			buf.String())
 	})
 
+	t.Run("primary timed out on its own call deadline, slot context live: one line naming primary and timeout", func(t *testing.T) {
+		f := newFake()
+		f.failFor["primary"] = context.DeadlineExceeded
+		ctx, buf := failoverLogCapture()
+		r := NewEngine(f, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+		require.NoError(t, ctx.Err(), "precondition: the slot context stayed live")
+		require.Equal(t, StatusOK, r.Status, "the fallback rescued the slot")
+		assert.True(t, r.FallbackUsed)
+		assert.Equal(t, 1, f.callCount("fallback"))
+		assert.Equal(t,
+			`level=WARN `+failoverMsg+` agent=bruce model=primary err="context deadline exceeded"`+"\n",
+			buf.String())
+	})
+
 	t.Run("truncated zero findings: still exactly one line", func(t *testing.T) {
 		c := &countingMetaCompleter{byModel: map[string]llmclient.Completion{
 			"primary":  {Content: "I was thinking hard but never emitted a finding", Truncated: true},
