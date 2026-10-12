@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,4 +100,37 @@ func TestRejectMachineLocalFields_ReplayReasoningBanned(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `community persona "sample" must not declare replay_reasoning:`)
 	require.NoError(t, ValidateCommunityPersonaYAML("sample", []byte(base)))
+}
+
+// TD row config.go:1480: preserve_thinking: on asks the model to keep its
+// earlier reasoning, which only the tool loop's replay sends back, so with
+// replay_reasoning: off the pair is a no-op. It still loads, with exactly one
+// warning naming the agent; either key alone, or preserve_thinking: off, loads
+// with none.
+func TestValidateAgent_PreserveThinkingWithoutReplayWarns(t *testing.T) {
+	const preserve = "    preserve_thinking: "
+	const replayOff = "    replay_reasoning: off\n"
+	base := thinkingAgent(ThinkingOn, "", ThinkingStyleQwen)
+	cases := []struct {
+		name, extra string
+		warns       bool
+	}{
+		{"pair", preserve + ThinkingOn + "\n" + replayOff, true},
+		{"preserve on alone", preserve + ThinkingOn + "\n", false},
+		{"replay off alone", replayOff, false},
+		{"preserve off with replay off", preserve + ThinkingOff + "\n" + replayOff, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureThinkingWarnings(t)
+			_, err := LoadRegistry(writeRegistry(t, thinkingRegistry(base+tc.extra)))
+			require.NoError(t, err, "the pair warns, it never fails the load")
+			if !tc.warns {
+				assert.Empty(t, buf.String())
+				return
+			}
+			assert.Equal(t, 1, strings.Count(buf.String(), "\n"), "exactly one warning: %q", buf.String())
+			assert.Contains(t, buf.String(), "warning: agent 'myagent': preserve_thinking: on has no effect with replay_reasoning: off")
+		})
+	}
 }

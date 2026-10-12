@@ -1591,6 +1591,15 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 		if w := warnThinkingBudget(name, a); w != "" {
 			r.validationWarnings = append(r.validationWarnings, w)
 		}
+		// preserve_thinking keeps earlier reasoning only for the tool loop's
+		// replay to send back, so replay_reasoning: off leaves it nothing to
+		// preserve. The pair stays legal; it warns (TD row
+		// internal/registry/config.go:1480).
+		if a.PreserveThinking == ThinkingOn && a.ReplayReasoning == ReplayReasoningOff {
+			r.validationWarnings = append(r.validationWarnings, fmt.Sprintf(
+				"warning: agent '%s': preserve_thinking: on has no effect with replay_reasoning: off, which drops the reasoning it would preserve; remove one of the two keys\n",
+				name))
+		}
 	}
 	return errs
 }
