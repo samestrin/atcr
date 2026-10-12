@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -72,8 +73,8 @@ type BackfillResult struct {
 	// source_report path trimmed off, and that dir owns the record when
 	// `<reviewDir>/reconciled/summary.json` carries a reconciled_at for which
 	// `reconciled_at + "-" + base(reviewDir)` equals the record's RunID — the exact
-	// form the run_id was minted in. A dir with a missing or unparseable summary.json
-	// owns nothing. The cost is an UNDER-count: a policy refusal in an own tree whose
+	// form the run_id was minted in. A dir with a missing, oversized or unparseable
+	// summary.json owns nothing. The cost is an UNDER-count: a policy refusal in an own tree whose
 	// summary.json is gone, and every record-level unrepairable — chiefly an anchor
 	// line the producer refused as a draft — land in the absent-tree half instead.
 	// That direction is the safe one: it sends the operator to look for a file, which
@@ -219,6 +220,8 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				rationaleIDs[rec.ID] = true
 			}
 		}
+		// One ownership cache for the whole pass: see ownershipCache.
+		ownership := ownershipCache{}
 		for _, r := range FoldRecords(recs) {
 			if rationaleIDs[r.ID] {
 				// RATIONALE-BEARING, not merely closed — the distinction record.go
@@ -266,7 +269,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				continue
 			}
 			res.Scanned++
-			cands, err := replayCandidates(reviewRoot, r)
+			cands, err := replayCandidates(reviewRoot, r, ownership)
 			if err != nil {
 				return err
 			}
@@ -364,16 +367,17 @@ type replayResult struct {
 // reviewRoot yields for rec's anchor. Distinct rather than one-per-file: two copies
 // of the same review (a re-run, a backup) agree, and treating that as ambiguity would
 // decline a repair that has only one answer.
-func replayCandidates(reviewRoot string, rec Record) (replayResult, error) {
+func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (replayResult, error) {
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	var out []string
 	seen := map[string]bool{}
 	policyRefused := false
 	// owns reports whether candidate p sits in the record's own review dir. Asked
 	// only once a candidate is already refused, so the summary.json read is paid on
-	// the rare path, not for every namesake.
+	// the rare path, not for every namesake — and through the pass-wide cache, so at
+	// most once per review dir.
 	owns := func(p string) bool {
-		return reviewDirOwnsRun(reviewDirOf(p, rel), rec.RunID)
+		return ownership.owns(reviewDirOf(p, rel), rec.RunID)
 	}
 	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
@@ -441,6 +445,18 @@ func reviewDirOf(p, rel string) string {
 	return filepath.Clean(strings.TrimSuffix(p, rel))
 }
 
+// maxSummaryBytes caps the summary.json read in reviewDirOwnsRun. The file is small
+// but not bounded — sources_scanned, per_source_counts and skipped_sources grow with
+// the review (reconcile/reconcile.go) — and it sits in an operator-supplied tree.
+// The ceiling mirrors the producer's 1 MiB maxReviewBytes for review.md. A file
+// over it owns nothing: the safe under-count reviewDirOwnsRun already takes for
+// every other unreadable summary.
+const maxSummaryBytes = 1 << 20
+
+// openSummary opens a review dir's reconciled/summary.json. A var so a test can
+// count the opens one backfill pass makes.
+var openSummary = os.Open
+
 // reviewDirOwnsRun reports whether reviewDir is the review that minted runID.
 //
 // A record's RunID is `<reconciled_at>-<base(reviewDir)>` (internal/localdebt/
@@ -450,21 +466,58 @@ func reviewDirOf(p, rel string) string {
 // review — but the base together with the reconciliation timestamp can: two reviews
 // collide only if they share a dir base AND were reconciled in the same second.
 //
-// A missing, unreadable or unparseable summary.json, or one with no reconciled_at,
-// owns NOTHING. That is the safe under-count: the record lands in the pruned-tree
+// A missing, unreadable, oversized (maxSummaryBytes) or unparseable summary.json, or
+// one with no reconciled_at, owns NOTHING. That is the safe under-count: the record lands in the pruned-tree
 // half, which sends the operator to look for a file rather than telling them not to.
 func reviewDirOwnsRun(reviewDir, runID string) bool {
-	data, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", "summary.json"))
+	return runOwnedBy(reviewDir, readReconciledAt(reviewDir), runID)
+}
+
+// runOwnedBy is reviewDirOwnsRun's comparison over a reconciled_at already read. An
+// empty reconciledAt owns nothing: without that guard it would match the run_id an
+// empty timestamp mints.
+func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
+	return reconciledAt != "" && reconciledAt+"-"+filepath.Base(reviewDir) == runID
+}
+
+// readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
+// or "" when the file is missing, unreadable, over maxSummaryBytes, unparseable or
+// carries none — every case reviewDirOwnsRun reads as owning nothing.
+func readReconciledAt(reviewDir string) string {
+	f, err := openSummary(filepath.Join(reviewDir, "reconciled", "summary.json"))
 	if err != nil {
-		return false
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	// One byte PAST the cap, so a file exactly at it still reads whole and only an
+	// oversized one is detectable by length.
+	data, err := io.ReadAll(io.LimitReader(f, maxSummaryBytes+1))
+	if err != nil || len(data) > maxSummaryBytes {
+		return ""
 	}
 	var s struct {
 		ReconciledAt string `json:"reconciled_at"`
 	}
-	if json.Unmarshal(data, &s) != nil || s.ReconciledAt == "" {
-		return false
+	if json.Unmarshal(data, &s) != nil {
+		return ""
 	}
-	return s.ReconciledAt+"-"+filepath.Base(reviewDir) == runID
+	return s.ReconciledAt
+}
+
+// ownershipCache holds each review dir's reconciled_at ("" for one that owns
+// nothing) for the life of one BackfillJustifications call. replayCandidates runs
+// once per record, and records from one review all ask that review's dir, so
+// without it every policy-refused candidate re-reads the same summary.json.
+type ownershipCache map[string]string
+
+// owns is reviewDirOwnsRun, reading reviewDir's summary.json at most once.
+func (c ownershipCache) owns(reviewDir, runID string) bool {
+	at, ok := c[reviewDir]
+	if !ok {
+		at = readReconciledAt(reviewDir)
+		c[reviewDir] = at
+	}
+	return runOwnedBy(reviewDir, at, runID)
 }
 
 // replacement pairs the stale justification a record carries with the excerpt
