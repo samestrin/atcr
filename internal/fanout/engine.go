@@ -839,6 +839,9 @@ type Engine struct {
 	// retry is the outer budget; clock times its backoffs. Tests replace both.
 	retry unitRetryPolicy
 	clock unitClock
+	// breakerState reads a provider's circuit for the lease throttle; nil reads
+	// circuitbreaker.DefaultRegistry. Tests replace it.
+	breakerState func(provider string) circuitbreaker.State
 }
 
 // EngineOption configures an Engine at construction.
@@ -846,7 +849,9 @@ type EngineOption func(*Engine)
 
 // WithMaxParallel sizes the parallel lane's worker pool to n. n <= 0 leaves
 // the lane unbounded (the documented escape hatch). The serial lane is
-// unaffected — it is already sequential.
+// unaffected — it is already sequential. With WithUnitRetry the width is a
+// ceiling per provider: a provider that rate-limits or has an open breaker is
+// leased less (Epic 35.16.14 T4, throttle.go).
 func WithMaxParallel(n int) EngineOption {
 	return func(e *Engine) { e.maxParallel = n }
 }
@@ -1109,7 +1114,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		requeued := false
 		defer func() {
 			if requeued {
-				q.requeue(i, backoff)
+				q.requeue(i, backoff, results[i])
 				return
 			}
 			if st := retry[i]; st.requeues > 0 {
@@ -1117,7 +1122,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 				results[i].UnitAttempts = st.attempts
 			}
 			done(i)
-			q.release()
+			q.release(i, results[i])
 		}()
 		defer recoverUnit(i)
 		if retry[i].attempts > 0 && ctx.Err() != nil {
@@ -1177,8 +1182,17 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	// The pool. A unit leased after the run's ctx is done still resolves —
 	// invokeSlot short-circuits to a timeout result without a provider call — so
 	// every slot gets a Result and the queue always drains.
+	// With the outer retry on, the pool's width is a ceiling per provider: a
+	// provider that rate-limits or has an open breaker gets fewer leases and
+	// waits behind the healthy ones (Epic 35.16.14 T4). Without it the pool
+	// leases in order, as before.
+	workers := poolWorkers(len(parallelIdx), e.maxParallel)
 	pool := newUnitQueue(parallelIdx, e.clock)
-	for w := poolWorkers(len(parallelIdx), e.maxParallel); w > 0; w-- {
+	if e.requeueable != nil {
+		pool.throttle = newProviderThrottle(workers, pool.clock, e.logger(),
+			func(i int) string { return slots[i].Primary.Provider }, e.breakerState)
+	}
+	for w := workers; w > 0; w-- {
 		wg.Add(1)
 		go work(pool, false)
 	}
