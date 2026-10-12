@@ -134,6 +134,12 @@ func (l *chunkLedger) carryReviewed(prior map[string]*chunkRecord) {
 			l.carried = map[string]map[string]bool{}
 		}
 		l.carried[dir] = files
+		if g := carriedGap(kept, deferred); g.unreviewed > 0 {
+			if l.carriedGaps == nil {
+				l.carriedGaps = map[string]fileGap{}
+			}
+			l.carriedGaps[dir] = g
+		}
 		rec.Bins = append(append(kept, rec.Bins...), deferred...)
 		for i := range rec.Bins {
 			rec.Bins[i].Index = i
@@ -156,6 +162,42 @@ func anyIn(files []string, set map[string]bool) bool {
 	return false
 }
 
+// carriedGap is T6's per-persona file gap over the bins a resume carries
+// instead of dispatching, read by T5's per-bin rule (ReadCoverage): a carried
+// deferred bin's files are unreviewed and deferred; an ok bin whose lane
+// refused its content leaves all its files unreviewed, and a re-packed one
+// those it did not serve. Carried bins share no file with the resumed bins, so
+// the result adds to the resumed slots' gap without double counting.
+func carriedGap(kept, deferred []chunkRecordBin) fileGap {
+	unreviewed := map[string]bool{}
+	var g fileGap
+	for _, b := range deferred {
+		for _, f := range b.Files {
+			unreviewed[f] = true
+			g.deferred++
+		}
+	}
+	for _, b := range kept {
+		served := map[string]bool{}
+		switch {
+		case b.ContributedNothing:
+		case b.RePacked:
+			for _, f := range b.ServedFiles {
+				served[f] = true
+			}
+		default:
+			continue
+		}
+		for _, f := range b.Files {
+			if !served[f] {
+				unreviewed[f] = true
+			}
+		}
+	}
+	g.unreviewed = len(unreviewed)
+	return g
+}
+
 // carriedFiles returns the files of the replayed bins for one persona, or nil
 // when nothing was replayed for it (nil-safe on the ledger).
 func (l *chunkLedger) carriedFiles(dir string) map[string]bool {
@@ -165,6 +207,13 @@ func (l *chunkLedger) carriedFiles(dir string) map[string]bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.carried[dir]
+}
+
+// carriedGapFor returns the never-reviewed gap of one persona's carried bins.
+func (l *chunkLedger) carriedGapFor(dir string) fileGap {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.carriedGaps[dir]
 }
 
 // binCounts returns how many of a persona's union bins there are and how many
@@ -226,6 +275,11 @@ func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLine
 		st.Error = ""
 		st.UnreviewedChunks = total - ok
 	}
+	// T6's unreviewed_files is likewise the union's: the resumed slots' gap
+	// (already on r) plus the carried bins that were never reviewed.
+	g := l.carriedGapFor(dir)
+	st.UnreviewedFiles += g.unreviewed
+	st.DeferredFiles += g.deferred
 	return writeAgentFiles(poolDir, dir, r.Agent, content, fr.Findings, &st)
 }
 

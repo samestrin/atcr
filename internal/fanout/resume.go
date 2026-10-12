@@ -828,6 +828,8 @@ func summarizeStatuses(sts []AgentStatus) Summary {
 		// write-back gate (record only when every chunk succeeded) reads this on
 		// the resume path too (TD-011).
 		s.UnreviewedChunks += st.UnreviewedChunks
+		s.UnreviewedFiles += st.UnreviewedFiles
+		s.DeferredFiles += st.DeferredFiles
 		// Same rule for the substitution tally, and for the same reason. FallbackCount
 		// is published NOT omitempty precisely so a 0 reads as a measurement, so leaving
 		// it unset here made a resumed run report "fallback_count": 0 beside its own

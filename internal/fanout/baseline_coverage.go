@@ -78,7 +78,20 @@ func uncoveredBaselineFiles(ctx context.Context, slots []Slot, results []Result,
 	// per-slot instead would mean trusting the short-circuit's whole-payload
 	// inference for some slots while denying it for others, which is not a
 	// coherent middle.
+	//
+	// The third condition is Epic 35.16.13 T6: a bin the maxChunksPerAgent ceiling
+	// deferred rides on a slot but is dispatched to nobody, so its files sit in no
+	// slot's tag and "every dispatched slot succeeded" no longer means "every
+	// reviewed file was read". Any deferral therefore forces the attribution below,
+	// where a deferred file is covered only if some OTHER persona dispatched and
+	// reviewed it.
 	allOK := len(results) == len(slots)
+	for _, s := range slots {
+		if len(s.deferredBins) > 0 {
+			allOK = false
+			break
+		}
+	}
 	for _, r := range results {
 		if r.Status != StatusOK || r.servedRePacked || contributedNothing(r) {
 			allOK = false
@@ -159,6 +172,74 @@ func servedCoverage(ctx context.Context, s Slot, r Result) []string {
 		return s.Primary.chunkFiles
 	}
 	return r.servedChunkFiles
+}
+
+// fileGap is one persona's share of the work it planned but did not review
+// (Epic 35.16.13 T6): unreviewed counts every planned file the persona did not
+// read, for any reason; deferred counts the subset the maxChunksPerAgent ceiling
+// cut, which no slot was ever sent.
+type fileGap struct {
+	unreviewed int
+	deferred   int
+}
+
+// unreviewedFileCounts attributes each persona's unreviewed files from the RAW,
+// pre-merge results — the same precondition and the same per-slot reading as
+// uncoveredBaselineFiles, but PER PERSONA rather than as a union: a file another
+// persona reviewed still counts against the persona that did not.
+//
+// A persona's planned set is its slots' tagged files plus its deferred bins; its
+// reviewed set is what each slot's SERVER vouched for (servedCoverage) on a
+// succeeded slot that contributed something. Only personas with a non-zero gap
+// get an entry. An untagged slot (the chunked diff path) plans nothing, so a
+// diff review produces no entries and its status.json is unchanged.
+func unreviewedFileCounts(ctx context.Context, slots []Slot, results []Result) map[string]fileGap {
+	planned := make(map[string]map[string]struct{})
+	reviewed := make(map[string]map[string]struct{})
+	deferred := make(map[string]int)
+	add := func(m map[string]map[string]struct{}, persona, path string) {
+		if m[persona] == nil {
+			m[persona] = make(map[string]struct{})
+		}
+		m[persona][path] = struct{}{}
+	}
+	for i, s := range slots {
+		name := s.Primary.Name
+		for _, p := range s.Primary.chunkFiles {
+			add(planned, name, p)
+		}
+		for _, bin := range s.deferredBins {
+			for _, p := range bin {
+				add(planned, name, p)
+				deferred[name]++
+			}
+		}
+		// Same defensive bound as uncoveredBaselineFiles: a slot with no result
+		// stays unreviewed.
+		if i >= len(results) || results[i].Status != StatusOK || contributedNothing(results[i]) {
+			continue
+		}
+		for _, p := range servedCoverage(ctx, s, results[i]) {
+			add(reviewed, name, p)
+		}
+	}
+	var out map[string]fileGap
+	for name, files := range planned {
+		n := 0
+		for p := range files {
+			if _, ok := reviewed[name][p]; !ok {
+				n++
+			}
+		}
+		if n == 0 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]fileGap)
+		}
+		out[name] = fileGap{unreviewed: n, deferred: deferred[name]}
+	}
+	return out
 }
 
 // allUncovered returns every reviewed path as uncovered — the fail-open answer when

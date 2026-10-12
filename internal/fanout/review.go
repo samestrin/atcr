@@ -277,7 +277,8 @@ type baselineWriteback struct {
 	reviewed  map[string]string      // path -> review-time sha256 of files ACTUALLY in the payload
 	tracked   []string               // full in-scope tracked set, for self-trim on a whole-repo run
 	scope     string                 // "" / "." = whole repo (self-trims); non-empty = --dir subtree (no trim)
-	// uncovered is the subset of reviewed whose chunk FAILED, so those files went
+	// uncovered is the subset of reviewed whose chunk FAILED, or that the chunk
+	// ceiling deferred to no slot (Epic 35.16.13 T6), so those files went
 	// unreviewed and must NOT be recorded (Epic 35.2 / TD-013). Stamped by runEngine
 	// from the raw pre-merge results, after which chunk identity is unrecoverable.
 	// nil (the default) means full coverage — every reviewed file is recorded, which
@@ -1253,6 +1254,9 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	if p.baseline != nil {
 		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
+	// Per-persona file gap (Epic 35.16.13 T6), read from the same raw results for
+	// the same reason; stamped onto the merged records below.
+	gaps := unreviewedFileCounts(ctx, p.Slots, results)
 
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
 	// back as N results under the same Agent name; collapse them into one result
@@ -1271,6 +1275,11 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		}
 	}
 	results = mergeChunkResults(results, serialAgents)
+	for i := range results {
+		if g, ok := gaps[results[i].Agent]; ok {
+			results[i].UnreviewedFiles, results[i].DeferredFiles = g.unreviewed, g.deferred
+		}
+	}
 
 	// Classify the run into the manifest's review-stage entry and stamp the
 	// snapshot provenance (nil when no agent ran with tools).

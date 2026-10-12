@@ -738,6 +738,8 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		SilentChunks:           r.SilentChunks,
 		CacheHit:               r.CacheHit,
 		UnreviewedChunks:       r.UnreviewedChunks,
+		UnreviewedFiles:        r.UnreviewedFiles,
+		DeferredFiles:          r.DeferredFiles,
 		// Diagnosability (Epic 19.10 F8): pure pass-through of the per-agent sizing /
 		// degradation values invokeAgent stamped onto the Result from the serving
 		// Agent — no recomputation of sizing/chunk/overflow math here. All zero/empty
