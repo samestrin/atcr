@@ -317,6 +317,83 @@ func TestBenchmarkRunCmd_RejectsReplicatesForARepoStateSuite(t *testing.T) {
 	assert.Zero(t, calls.Load(), "refused before a completer is built")
 }
 
+// execBenchmarkCmdStderr is execBenchmarkCmd that also returns the command's
+// stderr, where the logger writes.
+func execBenchmarkCmdStderr(args ...string) (stderr string, err error) {
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs(args)
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	err = root.ExecuteContext(context.Background())
+	return errBuf.String(), err
+}
+
+// The command-level `--replicates < 1` guard is the only one a repo-state-v1 suite
+// meets (its runner takes no replicates), so it must fire before config load. The
+// executor's own guard cannot stand in for it: a fatal config stub proves the
+// command never got that far.
+func TestBenchmarkRunCmd_ZeroReplicatesRefusedBeforeConfigLoad(t *testing.T) {
+	restoreCfg := benchmarkLoadConfig
+	t.Cleanup(func() { benchmarkLoadConfig = restoreCfg })
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) {
+		t.Fatal("benchmarkLoadConfig called: --replicates 0 must be refused before config load")
+		return nil, nil
+	}
+
+	err := execBenchmarkCmd("benchmark", "run", "--suite-path", suiteValidPath, "--replicates", "0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--replicates must be at least 1, got 0")
+}
+
+// Above the ceiling of 20 the run warns — a typo such as `--replicates 500` is a
+// very large bill — but still runs: the warning is advice, not a refusal. At the
+// ceiling it stays silent.
+func TestBenchmarkRunCmd_ReplicatesAboveCeilingWarnsAndRuns(t *testing.T) {
+	const warning = "--replicates is above 20"
+	for _, tc := range []struct {
+		replicates int
+		warns      bool
+	}{{20, false}, {21, true}} {
+		t.Run(fmt.Sprint(tc.replicates), func(t *testing.T) {
+			cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+			c := &countingCompleter{}
+			restoreCfg, restoreCompleter := benchmarkLoadConfig, benchmarkNewCompleter
+			t.Cleanup(func() { benchmarkLoadConfig, benchmarkNewCompleter = restoreCfg, restoreCompleter })
+			benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+			benchmarkNewCompleter = func(context.Context) fanout.Completer { return c }
+
+			code, stdout, stderr := execCmdSplit(t, "benchmark", "run", "--suite-path", suiteValidPath,
+				"--replicates", fmt.Sprint(tc.replicates))
+			require.Equal(t, 0, code, stderr)
+			assert.Equal(t, int32(2*tc.replicates), c.calls.Load(), "every replicate still runs")
+			var rr benchmark.RunResult
+			require.NoError(t, json.Unmarshal([]byte(stdout), &rr))
+			assert.Len(t, rr.Fit, 2*tc.replicates)
+			if tc.warns {
+				assert.Contains(t, stderr, warning)
+				assert.Contains(t, stderr, "replicates=21")
+			} else {
+				assert.NotContains(t, stderr, warning)
+			}
+		})
+	}
+}
+
+// The ceiling warning comes after the repo-state refusal, so a refused run never
+// also warns about a cost it will not incur.
+func TestBenchmarkRunCmd_RefusedRepoStateReplicatesDoNotWarn(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	restoreCfg := benchmarkLoadConfig
+	t.Cleanup(func() { benchmarkLoadConfig = restoreCfg })
+	benchmarkLoadConfig = func(string) (*fanout.ReviewConfig, error) { return cfg, nil }
+
+	stderr, err := execBenchmarkCmdStderr("benchmark", "run", "--suite-path", repoStateMiniPath, "--replicates", "21")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--replicates is not supported")
+	assert.NotContains(t, stderr, "--replicates is above 20")
+}
+
 // dirWatchCompleter snapshots the benchmark work dir's case dirs on every call,
 // so a test can see which review trees a run still holds while a later case
 // run executes.

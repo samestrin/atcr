@@ -166,7 +166,7 @@ func newBenchmarkRunCmd() *cobra.Command {
 	cmd.Flags().Bool("fail-on-case-failure", false, "opt-in (repo-state-v1 only): exit non-zero when ANY case was lost to an infrastructure failure. Off by default, because a partial run is a real measurement of the cases that did run and the run-result records which ones did not — but a CI step gating on the exit code cannot see that, so this restores the all-or-nothing contract for callers that need it. Use --max-case-failures for a threshold instead of a floor of one. Inert on standard-v1, whose runner never populates case_failures.")
 	cmd.Flags().Int("max-case-failures", -1, "opt-in (repo-state-v1 only): exit non-zero once MORE than this many cases were lost to infrastructure failures. -1 (default) means no ceiling. 0 is equivalent to --fail-on-case-failure. Set it to tolerate the occasional flaky provider while still failing a systemically broken run. Inert on standard-v1, whose runner never populates case_failures.")
 	cmd.Flags().Int("max-consecutive-case-failures", 0, "opt-in (repo-state-v1 only): ABORT the run once this many cases have failed back to back, instead of paying for the rest of the suite. 0 (default) disables it. A scored case resets the count, so this stops a systemically broken provider — one bad key, a payload-size rejection — rather than the occasional flaky case. The brake counts whole-case failures only: a reviewer slot lost to a provider outage is recorded in slot_failures and does not advance it, so a run that lost one of N reviewers to a dead provider is stopped by --max-case-failures, not by this flag. Unlike --fail-on-case-failure and --max-case-failures, which judge a run that has already been paid for in full, this one stops the bill mid-run.")
-	cmd.Flags().Int("replicates", 1, "review every case this many times (standard-v1 only; at least 1). Replicate 1 is scored exactly as a run without the flag, so `benchmark export` output is unchanged; replicates 2..N make fresh calls (diff-cache reads bypassed) and are recorded only in the run-result's reviewer_fit rows, which judge whether a persona + model pair produces a healthy call. Each replicate costs a full extra pass over the suite.")
+	cmd.Flags().Int("replicates", 1, "review every case this many times (standard-v1 only; at least 1). Replicate 1 is scored exactly as a run without the flag, so `benchmark export` output is unchanged; replicates 2..N make fresh calls (diff-cache reads bypassed) and are recorded only in the run-result's reviewer_fit rows, which judge whether a persona + model pair produces a healthy call. Each replicate costs a full extra pass over the suite; above 20 the run warns and continues.")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
@@ -185,6 +185,10 @@ var (
 	}
 	benchmarkNewCompleter = newCompleter
 )
+
+// maxAdvisedReplicates is the --replicates value above which `benchmark run` warns.
+// The flag help names it literally.
+const maxAdvisedReplicates = 20
 
 func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// Cobra GetString errors are unreachable: all flags are registered above
@@ -230,6 +234,13 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 	// any reviewer runs, so the operator is not billed for a run that ignores them.
 	if strings.EqualFold(suiteFormat, benchmark.FormatRepoStateV1) && replicates > 1 {
 		return fmt.Errorf("--replicates is not supported for a %s suite: replicates are implemented for the standard-v1 diff path only; re-run without --replicates", benchmark.FormatRepoStateV1)
+	}
+	// Above the ceiling the run warns and continues: a typo such as --replicates 500
+	// is a very large bill, but a deliberate large run is not refused. Emitted after
+	// the repo-state refusal so it fires only on a run that proceeds.
+	if replicates > maxAdvisedReplicates {
+		log.FromContext(cmd.Context()).Warn(fmt.Sprintf("--replicates is above %d; each replicate is a full extra pass over the suite", maxAdvisedReplicates),
+			"replicates", replicates, "ceiling", maxAdvisedReplicates)
 	}
 
 	// Audit identity (Epic 35.0): a benchmark drives many models over many
