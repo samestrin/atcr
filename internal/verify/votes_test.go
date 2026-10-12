@@ -203,7 +203,8 @@ func TestAggregateVerdicts_DecisiveVoteIgnoresALosersTruncation(t *testing.T) {
 // Notes is the aggregate, and every renderer cuts it at 500 runes. Leading each
 // skeptic's own Notes with its marker protects only the first one, so the
 // aggregate must hoist every marker to its front, in voter order, out of the
-// entries they came from.
+// entries they came from. The fixture pads kai's Notes with 600 two-byte runes
+// ("é", 1,200 bytes) so the aggregate runs past the 500-rune render cap.
 func TestAggregateVerdicts_HoistsEveryFragmentGradeMarker(t *testing.T) {
 	t.Parallel()
 	const kaiMarker = "[verdict_after_unopened_closer: 12 prefix byte(s) discarded]"
