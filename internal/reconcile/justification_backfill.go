@@ -45,7 +45,8 @@ func ReExtractJustification(path, file string, line, anchorLine int) (Replay, er
 	// operator is deliberately replaying their own reviews, so there is no
 	// untrusted-input step here to guard.
 	// The producer's FILE-LEVEL refusal exclusions, applied at the replay too, through
-	// the one definition ReviewPolicyDeclinesFile owns rather than a second copy here.
+	// the one definition reviewPolicy owns — called directly below, as
+	// ReviewPolicyDeclinesFile also calls it — rather than a second copy here.
 	// The replay set may not exceed the stamp set — a file collectReviewNarratives
 	// would refuse is one the stamp cannot have come from, so it must not yield an
 	// authoritative excerpt here either
@@ -116,6 +117,16 @@ type Replay struct {
 // (promoted chain-of-thought, which no lane reads findings from), or its bin list
 // names segments the document does not contain.
 //
+// It is kept deliberately as the documented, exported FILE-LEVEL policy predicate,
+// and it has no production caller. The one caller that needs the verdict,
+// localdebt's replayCandidates, reads Replay.PolicyDeclined from the
+// ReExtractJustification call it already makes instead, so the policy is evaluated
+// once per candidate. Both read the same reviewPolicy verdict, and
+// TestReExtractJustification_PolicyDeclinedMatchesThePredicate holds the two to the
+// same answer (with TestReviewPolicyDeclinesFile_RefusesASymlinkToAnInCapReview for
+// the non-regular arm), so a reader may take this predicate's arms as the ones
+// PolicyDeclined reports.
+//
 // It answers a different question from ReExtractJustification's OK=false, and the
 // difference is the one an operator acts on. OK=false also covers "this candidate is
 // simply not the one" — a namesake whose anchor does not match, a file that changed
@@ -133,10 +144,12 @@ type Replay struct {
 // Path-independence is a property of the VERDICT, not of its attribution, and a caller
 // must not read more into it than that. An over-cap namesake in an unrelated review is
 // genuinely policy-refused, yet says nothing about the record whose relative path it
-// shares — so a caller aggregating this per record still over-attributes on that
-// shape. It is a far narrower residue than "any candidate was present", which is what
-// it replaced, and closing it needs the record's own review dir, which the record does
-// not carry.
+// shares — so a caller aggregating this per record must also establish that the
+// candidate's review dir owns the record before attributing the verdict to it. The
+// record does not carry its review dir, but it can be checked from disk:
+// replayCandidates counts a refusal only from a candidate whose review dir owns the
+// record's RunID (localdebt's reviewDirOwnsRun, which reads the dir's
+// reconciled/summary.json).
 //
 // A caller that also needs the excerpt should read Replay.PolicyDeclined from
 // ReExtractJustification instead of calling this as well: both read the same
