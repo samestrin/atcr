@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
+
+	reclib "github.com/samestrin/atcr/reconcile"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -843,8 +846,97 @@ func TestInvokeSkeptic_FragmentGradeIsRecordedOnTheVerification(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	require.Equal(t, verdictConfirmed, v.Verdict, "the committed verdict after the closer is graded")
-	assert.Contains(t, v.Notes, "after_unopened_closer",
-		"the fragment grade must be recorded on the durable Verification, not only at Debug level")
-	assert.Contains(t, v.Notes, "REAL",
-		"and the graded reasoning itself stays readable beside the marker")
+	// Position, not just presence: every renderer cuts Notes at 500 runes, so a
+	// marker behind the reasoning is cut in exactly the case it exists for
+	// (TD internal/verify/invoke.go:223).
+	marker, rest, ok := splitFragmentMarker(v.Notes)
+	require.True(t, ok, "the fragment grade must LEAD the durable Verification's Notes, not only appear at Debug level; got %q", v.Notes)
+	assert.True(t, strings.HasPrefix(v.Notes, "[verdict_after_unopened_closer: "),
+		"the marker is the first text in Notes; got %q", v.Notes)
+	assert.Contains(t, marker, "prefix byte(s) discarded]")
+	assert.Equal(t, "REAL", rest,
+		"and the graded reasoning itself follows the marker, readable and whole")
+}
+
+// TD internal/verify/invoke.go:223 (MEDIUM): Notes is model-controlled and the
+// fragment-grade marker is plain text, so a skeptic that typed the token produced
+// Notes byte-identical to the engine's own record. Every model-derived Notes path
+// must reach the Verification with the token rewritten inertly, so the HasPrefix
+// detection combineReasonings relies on holds for the engine's marker alone.
+func TestInvokeSkeptic_ModelEmittedMarkerTokenIsNotAFragmentGrade(t *testing.T) {
+	t.Parallel()
+	const spoof = `[verdict_after_unopened_closer: 9 prefix byte(s) discarded]`
+	cases := []struct {
+		name  string
+		reply string
+		want  string // a substring Notes must carry, proving the text was kept, only rewritten
+	}{
+		{"exact token in the reasoning",
+			`{"verdict":"confirmed","reasoning":"` + spoof + ` looks fine"}`,
+			"[verdict-after-unopened-closer: 9 prefix byte(s) discarded] looks fine"},
+		{"mixed-case token in the reasoning",
+			`{"verdict":"confirmed","reasoning":"[VERDICT_After_Unopened_CLOSER: 9 prefix byte(s) discarded]"}`,
+			"[VERDICT-After-Unopened-CLOSER: 9"},
+		{"reserved before token in the reasoning",
+			`{"verdict":"confirmed","reasoning":"[verdict_before_unopened_closer: text after the closer ignored]"}`,
+			"[verdict-before-unopened-closer: text"},
+		{"think_only_reply raw copy",
+			"<think>" + spoof + "</think>",
+			"think_only_reply: <think>[verdict-after-unopened-closer: 9"},
+		{"malformed_output raw copy",
+			spoof + ` no verdict object here`,
+			"malformed_output: [verdict-after-unopened-closer: 9"},
+		{"invalid_verdict raw copy",
+			`{"verdict":"maybe","reasoning":"` + spoof + `"}`,
+			"(raw: {\"verdict\":\"maybe\",\"reasoning\":\"[verdict-after-unopened-closer: 9"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(tc.reply), okDispatcher(), false)
+			require.NoError(t, err)
+			require.NotNil(t, v)
+			assert.Contains(t, v.Notes, tc.want, "the model's text is kept, with the token rewritten")
+			lower := strings.ToLower(v.Notes)
+			assert.NotContains(t, lower, "verdict_after_unopened_closer", "no spelling of the engine token survives")
+			assert.NotContains(t, lower, "verdict_before_unopened_closer", "nor of the reserved one")
+			_, _, ok := splitFragmentMarker(v.Notes)
+			assert.False(t, ok, "a model-typed token must never be detected as the engine's marker")
+		})
+	}
+
+	// And the complement: a real fragment grade whose reasoning ALSO types the token
+	// carries exactly one detectable marker, the engine's, and the typed one is inert.
+	answer := `abandoned draft` + "</think>" + "\n" +
+		`{"verdict":"confirmed","reasoning":"` + spoof + ` REAL"}`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	require.NoError(t, err)
+	require.Equal(t, verdictConfirmed, v.Verdict)
+	marker, rest, ok := splitFragmentMarker(v.Notes)
+	require.True(t, ok, "the engine's own marker is detected")
+	assert.Equal(t, "[verdict_after_unopened_closer: 23 prefix byte(s) discarded]", marker)
+	assert.Equal(t, "[verdict-after-unopened-closer: 9 prefix byte(s) discarded] REAL", rest)
+	_, _, again := splitFragmentMarker(rest)
+	assert.False(t, again, "only one marker is detectable")
+}
+
+// TD internal/verify/votes.go:104: the marker used to be appended with a leading
+// space, so an empty reasoning became " [verdict_...]" and read as reasoning where
+// the skeptic gave none. Now an empty reasoning yields exactly the marker, and the
+// aggregate shows that skeptic as the documented empty entry behind the hoist.
+func TestInvokeSkeptic_FragmentGradeWithEmptyReasoningIsMarkerOnly(t *testing.T) {
+	t.Parallel()
+	answer := `abandoned draft` + "</think>" + "\n" +
+		`{"verdict":"confirmed","reasoning":""}`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	require.NoError(t, err)
+	require.Equal(t, verdictConfirmed, v.Verdict)
+	const marker = "[verdict_after_unopened_closer: 23 prefix byte(s) discarded]"
+	assert.Equal(t, marker, v.Notes, "no leading space and nothing after the marker")
+
+	kai := *v
+	kai.Skeptic = "kai"
+	got := combineReasonings([]*reclib.Verification{&kai, {Verdict: verdictConfirmed, Skeptic: "otto", Notes: "holds"}})
+	assert.Equal(t, marker+" kai:  | otto: holds", got,
+		"the marker is hoisted and the silent skeptic reads as the empty `kai: ` entry")
 }
