@@ -553,3 +553,36 @@ func TestChunkLedger_CoalescesConcurrentWrites(t *testing.T) {
 		assert.Equal(t, 1, b.Attempts)
 	}
 }
+
+// A slot the ledger does not record (a single-chunk persona beside a multi-bin
+// one on the same --all run, or a bulk / diff slot) is a no-op for both hooks:
+// it is never leased, writes nothing, and the state counts still sum to the
+// planned bins.
+func TestChunkLedger_UnrecordedSlotIsANoOp(t *testing.T) {
+	poolDir := t.TempDir()
+	slots := []Slot{
+		{Primary: Agent{Name: "brad", ChunkTotal: 2, chunkFiles: []string{"a", "b"}}},
+		{Primary: Agent{Name: "kai", ChunkTotal: 1, chunkFiles: []string{"c"}}},
+		{Primary: Agent{Name: "greta"}},
+	}
+	l := newChunkLedger(log.Discard(), poolDir, slots)
+	require.NotNil(t, l)
+	l.writePlan()
+
+	for _, i := range []int{1, 2} {
+		l.slotStart(i)
+		assert.Equal(t, map[string]int{chunkOutcomePending: 1}, l.states(), "slot %d is not leased", i)
+		l.slotDone(i, Result{Status: StatusOK})
+	}
+	assert.Equal(t, map[string]int{chunkOutcomePending: 1}, l.states())
+	for _, agent := range []string{"kai", "greta"} {
+		_, err := os.Stat(filepath.Join(poolDir, poolRawAgentDir, agent, chunksFile))
+		assert.ErrorIs(t, err, fs.ErrNotExist, "%s has no chunks.json", agent)
+	}
+
+	l.slotStart(0)
+	assert.Equal(t, map[string]int{chunkOutcomeLeased: 1}, l.states())
+	l.slotDone(0, Result{Status: StatusOK})
+	assert.Equal(t, map[string]int{StatusOK: 1}, l.states())
+	assert.Equal(t, 1, readChunkRecord(t, poolDir, "brad").Bins[0].Attempts)
+}
