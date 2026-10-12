@@ -1,10 +1,12 @@
 package fanout
 
-// README drift guard for the baseline bin ceiling (Epic 35.16.13 T7). The
-// README's "Baseline review" section tells operators how many bins a persona
-// dispatches before the rest is deferred; this test reads maxChunksPerAgent and
-// README.md directly, following the cli/docs_audit_test.go precedent, so a
-// change to the constant that forgets the docs fails CI.
+// README drift guard for the baseline bin limit (Epic 35.16.13 T7). The README's
+// "Baseline review" section tells operators how many bins one persona's plan may
+// hold before the run is refused — since Epic 35.16.14 T5 the per-persona unit
+// budget, registry.DefaultMaxUnits, which replaced the 64-bin ceiling there. This
+// test reads the constant and README.md directly, following the
+// cli/docs_audit_test.go precedent, so a change to it that forgets the docs fails
+// CI.
 
 import (
 	"os"
@@ -13,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/samestrin/atcr/internal/registry"
 )
 
 // readmeRepoRoot ascends from the package directory until it finds go.mod.
@@ -50,11 +54,11 @@ func baselineReviewSection(t *testing.T, readme string) string {
 	return section
 }
 
-// ceilingPhrase matches every place the section states the ceiling as a
-// number: "64 bins", "64-bin ceiling", "per 64 bins".
+// ceilingPhrase matches every place the section states the limit as a number:
+// "512 bins", "512-bin budget", "per 512 bins".
 var ceilingPhrase = regexp.MustCompile(`\b(\d+)[- ]bins?\b`)
 
-func TestREADMEBaselineCeilingMatchesMaxChunksPerAgent(t *testing.T) {
+func TestREADMEBaselineUnitBudgetMatchesDefaultMaxUnits(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(readmeRepoRoot(t), "README.md"))
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
@@ -62,15 +66,15 @@ func TestREADMEBaselineCeilingMatchesMaxChunksPerAgent(t *testing.T) {
 	section := baselineReviewSection(t, string(b))
 	matches := ceilingPhrase.FindAllStringSubmatch(section, -1)
 	if len(matches) == 0 {
-		t.Fatalf("README.md Baseline review section states no bin ceiling; it must document maxChunksPerAgent (%d)", maxChunksPerAgent)
+		t.Fatalf("README.md Baseline review section states no bin limit; it must document the unit budget (%d)", registry.DefaultMaxUnits)
 	}
 	for _, m := range matches {
 		n, err := strconv.Atoi(m[1])
 		if err != nil {
 			t.Fatalf("parse %q: %v", m[0], err)
 		}
-		if n != maxChunksPerAgent {
-			t.Errorf("README.md Baseline review section says %q, but maxChunksPerAgent is %d", m[0], maxChunksPerAgent)
+		if n != registry.DefaultMaxUnits {
+			t.Errorf("README.md Baseline review section says %q, but registry.DefaultMaxUnits is %d", m[0], registry.DefaultMaxUnits)
 		}
 	}
 }

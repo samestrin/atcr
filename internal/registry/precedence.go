@@ -33,6 +33,14 @@ const MaxToolBudgetBytes = DefaultPayloadByteBudget * MaxAgentTurns
 // misconfigured roster. 0 is the documented unbounded escape hatch.
 const DefaultMaxParallel = 10
 
+// DefaultMaxUnits is the per-persona unit budget for a baseline (--all/--scope)
+// run (Epic 35.16.14 T5): the most bins one persona's plan may hold before the
+// run is refused up front. It replaced the old 64-bin deferral ceiling once the
+// work queue's worker count and attempt budget, not the bin count, bounded what
+// a run can spend. 512 clears a 1875-file repository with room. `--max-units`
+// overrides it; the diff path keeps its own 64-chunk ceiling.
+const DefaultMaxUnits = 512
+
 // Retry/backoff tunables (Epic 4.6). The llmclient already implements the
 // retry engine (exponential backoff + jitter + Retry-After); these expose its
 // budget through the shared-settings precedence chain. DefaultMaxRetries is 5
@@ -112,6 +120,11 @@ type Settings struct {
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
+	// MaxUnits is the per-persona unit budget for a baseline run (--max-units,
+	// Epic 35.16.14 T5): a persona whose plan needs more bins is refused before
+	// anything is dispatched. 0 means UNSET and reads as DefaultMaxUnits, so a
+	// hand-built Settings{} keeps the default rather than refusing every plan.
+	MaxUnits int
 	// CacheMaxBytes is the resolved total-size cap for the diff cache (Epic 5.2)
 	// passed to cache.NewStore; 0 is the documented unbounded escape hatch.
 	CacheMaxBytes int64
@@ -160,6 +173,8 @@ type CLIOverrides struct {
 	MaxParallel       *int
 	// MaxTokens is the --max-tokens override; nil = flag not set.
 	MaxTokens *int
+	// MaxUnits is the --max-units override; nil = flag not set.
+	MaxUnits *int
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -173,6 +188,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		TimeoutSecs:        DefaultTimeoutSecs,
 		PayloadByteBudget:  DefaultPayloadByteBudget,
 		MaxParallel:        DefaultMaxParallel,
+		MaxUnits:           DefaultMaxUnits,
 		CacheMaxBytes:      DefaultCacheMaxBytes,
 		MaxSprintPlanBytes: DefaultMaxSprintPlanBytes,
 		MaxClaimBytes:      byteCeilingPtr(DefaultMaxClaimBytes),
@@ -292,6 +308,14 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			return Settings{}, fmt.Errorf("max_tokens must be within 1..%d, got %d", MaxTokensCap, *cli.MaxTokens)
 		}
 		s.MaxTokens = *cli.MaxTokens
+	}
+	if cli.MaxUnits != nil {
+		// Rejected rather than treated as unset, like --max-tokens: a budget of zero
+		// bins refuses every plan, which is never what the operator meant.
+		if *cli.MaxUnits <= 0 {
+			return Settings{}, fmt.Errorf("max_units must be >= 1, got %d", *cli.MaxUnits)
+		}
+		s.MaxUnits = *cli.MaxUnits
 	}
 	if cli.MaxParallel != nil {
 		// The CLI tier bypasses the file-load checks; validate here. 0 is the

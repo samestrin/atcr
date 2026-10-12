@@ -93,7 +93,7 @@ func TestBaselineDeferral_AllDispatchedOKLeavesDeferredFilesOutOfIndex(t *testin
 	// No global byte budget, so nothing is shed. Each 40 KB file fits the unknown
 	// test model's per-agent budget (~71680 bytes) alone but not two together, so
 	// PartitionByBudget packs one file per bin and two files land past the ceiling.
-	n := maxChunksPerAgent + 2
+	n := legacyCeiling + 2
 	files := make(map[string]string, n)
 	for i := 0; i < n; i++ {
 		p := fmt.Sprintf("f%03d.go", i)
@@ -103,7 +103,8 @@ func TestBaselineDeferral_AllDispatchedOKLeavesDeferredFilesOutOfIndex(t *testin
 
 	prep, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r1")))
 	require.NoError(t, err)
-	require.Len(t, prep.Slots, maxChunksPerAgent, "the ceiling bounds the dispatched bins")
+	prep.Slots = withLegacyDeferral(prep.Slots)
+	require.Len(t, prep.Slots, legacyCeiling, "the ceiling bounds the dispatched bins")
 	var deferred []string
 	for _, s := range prep.Slots {
 		for _, bin := range s.deferredBins {
@@ -140,7 +141,7 @@ func TestBaselineDeferral_AllDispatchedOKLeavesDeferredFilesOutOfIndex(t *testin
 
 	require.NoError(t, prep.CommitBaselineIndex("run-1"))
 	recorded, excluded := prep.BaselineCoverage()
-	assert.Equal(t, maxChunksPerAgent, recorded, "every dispatched file was recorded")
+	assert.Equal(t, legacyCeiling, recorded, "every dispatched file was recorded")
 	assert.Equal(t, 2, excluded, "the deferred files were withheld from the index")
 
 	next, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, filepath.Join(t.TempDir(), "r2")))

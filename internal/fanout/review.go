@@ -1723,25 +1723,23 @@ func capScopeConstraintForBudget(block string, budget int64, maxSprintPlanBytes 
 	return capScopeConstraintPlan(block, int(planCap))
 }
 
-// capChunks bounds a baseline chunk set to at most max chunks by DEFERRING the
-// tail: chunks[:max] are returned for dispatch and chunks[max:] come back as
-// deferred, each bin exactly as PartitionByBudget packed it (Epic 35.16.13 T2).
-// The ceiling still bounds the slot/goroutine/provider-call count for a huge
-// repository — the cost/DoS vector maxChunksPerAgent exists to prevent (AC 06-01
-// ES2) — but the overflow is no longer coalesced into one oversized final bin
-// that no model window can hold, so every dispatched bin stays within budget and
-// the excess is left, recorded, for the next pass. Deferred bins are dispatched
-// to nobody; the caller records them as deferred in chunks.json. A set already
-// within the cap is returned unchanged with no deferral.
-//
-// chunkDiff (the review_strategy=chunked diff path) keeps its own
-// coalesce-into-the-final-chunk ceiling and warning; only the baseline path
-// defers.
-func capChunks(chunks [][]payload.FileEntry, max int) (kept, deferred [][]payload.FileEntry) {
-	if max <= 0 || len(chunks) <= max {
-		return chunks, nil
+// ErrUnitBudgetExceeded marks a baseline plan refused because one persona needs
+// more bins than the per-persona unit budget allows (Epic 35.16.14 T5). The
+// refusal happens while slots are built, before any review directory or
+// provider call exists, so the CLI maps it to a usage error.
+var ErrUnitBudgetExceeded = errors.New("baseline plan exceeds the per-persona unit budget")
+
+// checkUnitBudget refuses a persona whose baseline plan holds more than budget
+// bins. A non-positive budget reads as registry.DefaultMaxUnits, so a hand-built
+// Settings{} keeps the default rather than refusing every plan.
+func checkUnitBudget(name string, units, budget int) error {
+	if budget <= 0 {
+		budget = registry.DefaultMaxUnits
 	}
-	return chunks[:max], chunks[max:]
+	if units <= budget {
+		return nil
+	}
+	return fmt.Errorf("%w: agent %q needs %d units, above the budget of %d; rerun with --max-units %d (or narrow --scope)", ErrUnitBudgetExceeded, name, units, budget, units)
 }
 
 // recordedChunks rebuilds a resumed persona's bins from the file sets its prior
@@ -2045,12 +2043,13 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 		//     cfg.Registry.Agents aborts the whole review before any chunk dispatch
 		//     with `agent "<name>" not found in registry`, matching diff-mode.
 		//
-		//   maxChunksPerAgent cap (AC 06-01 ES2): the maxChunksPerAgent cap (64) carries
-		//     over unmodified — PartitionByBudget's chunk count is deterministically
-		//     bounded (task 1.1 note), and the (persona × chunk) slot count per
-		//     persona is capped consistently rather than spawning unbounded slots.
-		//     The resulting total slot count is logged pre-dispatch for cost
-		//     visibility (AC 06-01 Performance / Throughput).
+		//   Unit budget (AC 06-01 ES2, Epic 35.16.14 T5): PartitionByBudget's chunk
+		//     count is deterministically bounded (task 1.1 note), and a persona whose
+		//     plan exceeds the per-persona unit budget (--max-units, default
+		//     registry.DefaultMaxUnits) is refused before any dispatch rather than
+		//     spawning unbounded slots. The diff path keeps maxChunksPerAgent. The
+		//     resulting total slot count is logged pre-dispatch for cost visibility
+		//     (AC 06-01 Performance / Throughput).
 		//
 		//   Collapse reuse — ZERO modification (AC 06-02 HP1/HP2, EC1-EC4, ES1):
 		//     baseline (persona × chunk) Result values flow through the SAME
@@ -2099,21 +2098,13 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 				if resumed && len(chunks) == 0 {
 					return nil
 				}
-				// Bound the slot count at maxChunksPerAgent (AC 06-01 ES2) by deferring
-				// the bins past the ceiling rather than coalescing them into one
-				// undeliverable final bin (Epic 35.16.13 T2). Deferred bins are
-				// dispatched to nobody: they ride on the persona's last slot so the
-				// chunks.json ledger records them as deferred, and the warning below
-				// names how many files were left. Deferral is never silent.
-				chunks, deferred := capChunks(chunks, maxChunksPerAgent)
-				var deferredBins [][]string
-				if len(deferred) > 0 {
-					deferredFiles := 0
-					for _, ck := range deferred {
-						deferredBins = append(deferredBins, entryPaths(ck))
-						deferredFiles += len(ck)
-					}
-					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: the %d-chunk ceiling was reached, so %d file(s) in %d chunk(s) were deferred (not dispatched); see chunks.json\n", name, maxChunksPerAgent, deferredFiles, len(deferred))
+				// Refuse a plan above the per-persona unit budget before anything is
+				// dispatched (Epic 35.16.14 T5). The work queue's worker count and
+				// attempt budget bound what a run can spend, so the budget no longer
+				// defers bins past a ceiling; it only stops a plan bigger than the
+				// operator agreed to, naming the flag that raises it.
+				if err := checkUnitBudget(name, len(chunks), cfg.Settings.MaxUnits); err != nil {
+					return err
 				}
 				if len(chunks) > 1 || resumed {
 					// Per-agent sizing record (Epic 19.10 F6/F8): every chunk-Slot of this
@@ -2194,8 +2185,8 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						// the shed is real and the stamp belongs; so does the bulk
 						// fall-through, which reviews the kept subset and records it directly.
 						// Tag this slot with the files its chunk carries (Epic 35.2 / TD-013).
-						// Tagged HERE — at capChunks output, after the ceiling's deferral — so the
-						// identity matches the slot actually dispatched. runEngine reads it
+						// Tagged HERE — at the bin actually dispatched — so the identity
+						// matches the slot. runEngine reads it
 						// pre-merge to attribute a failed chunk to its files, so a partially
 						// failed baseline run records the succeeded chunks' files instead of
 						// discarding the whole write-back.
@@ -2218,7 +2209,6 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						}
 						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed})
 					}
-					slots[len(slots)-1].deferredBins = deferredBins
 					return nil
 				}
 				// len(chunks) <= 1 → single-chunk baseline scan: fall through to the bulk

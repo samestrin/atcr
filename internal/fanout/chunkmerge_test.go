@@ -358,7 +358,7 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 		}
 		dir := t.TempDir()
 		poolDir := filepath.Join(dir, "sources", "pool")
-		results, _ := runEngine(context.Background(), failingFilesCompleter{fail}, &PreparedReview{Slots: slotsFor(t, entries)}, poolDir)
+		results, _ := runEngine(context.Background(), failingFilesCompleter{fail}, &PreparedReview{Slots: withLegacyDeferral(slotsFor(t, entries))}, poolDir)
 		_, err := writePool(context.Background(), poolDir, results, nil, "")
 		require.NoError(t, err)
 		rec := readChunkRecord(t, poolDir, "greta")
@@ -422,8 +422,8 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 	t.Run("resume dispatches some deferred bins and defers the rest again", func(t *testing.T) {
 		dir := originalRun(t)
 		poolDir := filepath.Join(dir, "sources", "pool")
-		slots := slotsFor(t, entries[4:])
-		require.Len(t, slots, maxChunksPerAgent, "66 bins: 64 dispatched, 2 deferred")
+		slots := withLegacyDeferral(slotsFor(t, entries[4:]))
+		require.Len(t, slots, legacyCeiling, "66 bins: 64 dispatched, 2 deferred")
 		resumeGreta(t, dir, slots, baselineChunkFindingCompleter{})
 
 		files := agentFindingFiles(t, poolDir, "greta")
