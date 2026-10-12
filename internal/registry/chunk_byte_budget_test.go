@@ -14,7 +14,8 @@ import (
 // ClampLinesToByteBudget. The two jobs want opposite values — lower it to protect a
 // small-window model and it silently sheds files from the payload; raise it to
 // preserve the payload and every agent's chunks grow. On the 2026-08-15 run 65536
-// flattened all 13 agents to 1365 lines/chunk AND shed 40 files.
+// flattened all 13 agents to one line cap AND shed 40 files: 1024 lines/chunk at
+// today's 64 B/line (1365 at the 48 B/line of that run).
 //
 // chunk_byte_budget splits them. INHERITANCE is what keeps this from being a
 // behavior change: unset at every tier, it resolves to whatever payload_byte_budget
