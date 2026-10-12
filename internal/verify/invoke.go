@@ -211,7 +211,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "think_markup_after_answer", "detail", "think markup outside a JSON string is not leading, so the first verdict-keyed object may be a discarded draft")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "think_markup_after_answer", Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
-	v, ambiguous, discardedPrefix := verdictFromAnswer(answer)
+	v, ambiguous, discardedPrefix, section := verdictFromAnswer(answer)
 	if ambiguous {
 		// A bare </think> with an envelope on both sides, or a `refuted` one only
 		// before it. Neither is provably the committed one, and grading the wrong
@@ -259,6 +259,17 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 			"class", fragmentAfterToken, "discarded_prefix_bytes", discardedPrefix)
 		v.Notes = leadWithFragmentMarker(
 			fmt.Sprintf("[%s: %d prefix byte(s) discarded]", fragmentAfterToken, discardedPrefix), v.Notes)
+	} else if section == sectionPrefixOnly {
+		// The mirror case: the verdict was taken from the text BEFORE a bare closer
+		// and the text after it was ignored. Nothing ahead of the verdict was
+		// dropped, so the after token's "N prefix byte(s) discarded" tail would be
+		// false; the before token says what actually happened. Same leading position
+		// and empty-reasoning rule as above, for the same 500-rune reason
+		// (TD internal/verify/invoke.go:798).
+		logger.Debug("skeptic answer taken before a bare closer", "skeptic", skeptic.Name,
+			"class", fragmentBeforeToken)
+		v.Notes = leadWithFragmentMarker(
+			fmt.Sprintf("[%s: text after the closer ignored]", fragmentBeforeToken), v.Notes)
 	}
 	if v.Verdict == verdictUnverifiable {
 		class := "malformed_output"
@@ -803,10 +814,10 @@ func carriesVerdict(s string) bool {
 // unverified while the arm it describes was genuinely uncovered, which is the cost
 // of stating a coverage claim without pointing at its proof
 // (TD internal/verify/invoke.go:706).
-func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, discardedPrefix int) {
+func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, discardedPrefix int, section closerSection) {
 	section, text := classifyUnopenedCloser(answer, carriesVerdict)
 	if section == sectionAmbiguous {
-		return nil, true, 0
+		return nil, true, 0, section
 	}
 	parsed, _, repaired := parseVerdictCore(text)
 	if section == sectionPrefixOnly && parsed.Verdict == verdictRefuted {
@@ -816,7 +827,7 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 		// withdrawn draft could pass CI on; refuse it like the both-sides case.
 		// `confirmed` and `unverifiable` block either way and are graded
 		// (TD internal/verify/invoke.go:766).
-		return nil, true, 0
+		return nil, true, 0, section
 	}
 	// Counted here and nowhere else: this is where the verdict is accepted, after
 	// the refusal above. carriesVerdict asks the same parser about sections of the
@@ -834,7 +845,12 @@ func verdictFromAnswer(answer string) (v *reclib.Verification, ambiguous bool, d
 	// draft the model discarded, and retaining it in a Verification would put a
 	// withdrawn verdict back into the artifacts. A length is enough to see the split
 	// happened and how much it cost (TD internal/verify/invoke.go:683).
-	return parsed, false, len(answer) - len(text)
+	//
+	// section is returned so the caller can record a sectionPrefixOnly read too.
+	// discardedPrefix is 0 there (classifyUnopenedCloser returns the whole answer),
+	// so without it a grade that ignored the text after the closer looked like a
+	// whole-answer grade (TD internal/verify/invoke.go:798).
+	return parsed, false, len(answer) - len(text), section
 }
 
 // maskJSONStrings blanks the contents of every JSON double-quoted string literal
@@ -1123,8 +1139,8 @@ func derefInt64(p *int64) int64 {
 }
 
 // fragmentAfterToken names a grade taken from the text after a bare closer.
-// fragmentBeforeToken is reserved for a grade taken from the text before one;
-// it is neutralised in model text now so emitting it needs no second rewrite.
+// fragmentBeforeToken names a grade taken from the text before one, with the
+// text after it ignored. Both are neutralised in model text.
 const (
 	fragmentAfterToken  = "verdict_after_unopened_closer"
 	fragmentBeforeToken = "verdict_before_unopened_closer"

@@ -242,3 +242,23 @@ func TestSplitFragmentMarker_UnclosedMarkerIsNotDetected(t *testing.T) {
 	})
 	assert.Equal(t, "kai: "+unclosed+" | otto: holds", got, "nothing is hoisted")
 }
+
+// The prefix-only marker is hoisted exactly like the after-closer one: an
+// aggregate holding both kinds keeps both inside the renderers' 500-rune cap.
+func TestAggregateVerdicts_HoistsPrefixOnlyMarker(t *testing.T) {
+	t.Parallel()
+	const kaiMarker = "[verdict_after_unopened_closer: 12 prefix byte(s) discarded]"
+	const ottoMarker = "[verdict_before_unopened_closer: text after the closer ignored]"
+	long := strings.Repeat("é", 600)
+	got := aggregateVerdicts([]*reclib.Verification{
+		v(verdictConfirmed, "kai", kaiMarker+" "+long),
+		v(verdictConfirmed, "otto", ottoMarker+" holds"),
+	})
+	require.NotNil(t, got)
+	runes := []rune(got.Notes)
+	require.Greater(t, len(runes), 500, "the fixture must actually exceed the renderers' cap")
+	capped := string(runes[:500])
+	assert.Contains(t, capped, kaiMarker)
+	assert.Contains(t, capped, ottoMarker, "the before marker survives the cap too")
+	assert.Equal(t, kaiMarker+" "+ottoMarker+" kai: "+long+" | otto: holds", got.Notes)
+}

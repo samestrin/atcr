@@ -320,7 +320,7 @@ func TestVerdictFromAnswer_GradesPastAnOutOfEnumDecoyAfterTheCloser(t *testing.T
 		` An example is {"verdict":"maybe"}.` + "\n" +
 		`{"verdict":"refuted","reasoning":"REAL"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 	require.False(t, ambiguous, "both sides carry a verdict, so the section is not ambiguous")
 	require.NotNil(t, v)
 	assert.Equal(t, verdictRefuted, v.Verdict,
@@ -403,7 +403,7 @@ func TestVerdictFromAnswer_ReasoningBeginningWithADiagnosticPrefixIsStillGraded(
 	t.Parallel()
 	answer := `{"verdict":"refuted","reasoning":"invalid_verdict: the example above is not mine"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous, "the reply carries one usable verdict")
 	require.NotNil(t, v)
