@@ -230,6 +230,20 @@ func ChunkMaxLines(model string, declared *int, outputTokens int) int {
 	return maxLines
 }
 
+// ChunkExceedsByteBudget reports whether a rendered chunk of chunkBytes bytes is
+// larger than the byte budget its line count was derived from. The line count is
+// only an estimate at avgBytesPerLine, so a diff of longer lines (prose, YAML,
+// JSON, generated or minified code) can fill its line budget and still ship past
+// its bytes; this is the check that notices.
+//
+// A budget of 0 or 1 is never exceeded: 0 is the "no budget applies" sentinel
+// ClampLinesToByteBudget passes through, and 1 is the floor fanout clamps to when
+// the SCOPE CONSTRAINT block eats the whole chunk ceiling — every chunk is over
+// that by construction, and the overshoot says nothing about the diff's lines.
+func ChunkExceedsByteBudget(chunkBytes int, budget int64) bool {
+	return budget > 1 && int64(chunkBytes) > budget
+}
+
 // TokensToBytes converts a token count to bytes at the same conservative
 // ~3.5 B/token ratio EffectiveByteBudget uses, rounding down. A caller that
 // budgets bytes against a token reservation (the tool loop's replayed-reasoning
