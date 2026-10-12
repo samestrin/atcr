@@ -199,6 +199,12 @@ func fileExists(path string) bool {
 // runInit writes .atcr/config.yaml and the editable persona files under dir.
 // Without force, ANY existing target file is a hard error and nothing is
 // touched. Warnings go to errOut; the created-files report goes to out.
+//
+// It also records the persona stamp (.atcr/personas/.stamp.json, Epic 35.16.16):
+// each persona file it writes is entered with the sha256 of the content written,
+// and the entries of files it preserved are kept as they were. The stamp is
+// written last, after the files it describes. A workspace with no stamp is never
+// retro-stamped: a run that writes no persona file leaves a missing stamp missing.
 func runInit(dir string, force bool, out, errOut io.Writer) error {
 	targets := initTargets(dir)
 	var existing []string
@@ -235,13 +241,20 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		}
 	}
 
+	stamp, hadStamp := registry.ReadPersonaStamp(personasDir)
+	if !hadStamp {
+		stamp = registry.NewPersonaStamp()
+	}
+	stamped := false
+
 	var created []string
 	// write creates path with content. preserve marks a persona file, which is
 	// NEVER overwritten if it already exists — even under --force (AC 01-05 /
 	// Phase 3 Clarification Q1): hand edits survive. --force only overwrites the
 	// non-persona scaffold (config.yaml, .gitignore). An existing persona file
 	// (regular or symlink) is skipped, so a pre-planted symlink is never written
-	// through either.
+	// through either. A persona file it does write is recorded in the stamp; a
+	// preserved one keeps whatever entry the stamp already held for it.
 	write := func(path, content string, preserve bool) error {
 		if preserve {
 			if _, err := os.Lstat(path); err == nil {
@@ -271,6 +284,10 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 			return fmt.Errorf("cannot set permissions on %s: %w", path, err)
 		}
 		created = append(created, path)
+		if preserve {
+			stamp.Record(filepath.Base(path), []byte(content))
+			stamped = true
+		}
 		return nil
 	}
 
@@ -297,6 +314,11 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		}
 		if err := write(filepath.Join(personasDir, name+".md"), content, true); err != nil {
 			return err
+		}
+	}
+	if stamped {
+		if err := registry.WritePersonaStamp(personasDir, stamp); err != nil {
+			return fmt.Errorf("failed to write %s: %w", registry.PersonaStampPath(personasDir), err)
 		}
 	}
 
