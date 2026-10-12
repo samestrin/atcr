@@ -74,7 +74,11 @@ func readPriorChunkRecords(poolDir string, slots []Slot) map[string]*chunkRecord
 
 // carryReviewed prepends to each planned persona record the prior bins that
 // finished ok and share no file with any bin this run dispatches for that
-// persona, then renumbers the bins so the union is one contiguous list. It must
+// persona, then renumbers the bins so the union is one contiguous list. Prior
+// bins the ceiling deferred (T2) that this run neither dispatches nor defers
+// again are appended still deferred: they were never reviewed, so they stay in
+// the union and count toward unreviewed_chunks instead of dropping out of the
+// record. Failed and pending prior bins are not carried. It must
 // run before writePlan so the first record on disk is already the union: a
 // resume killed mid-fan-out must not leave a chunks.json that has forgotten the
 // bins reviewed before it.
@@ -100,12 +104,17 @@ func (l *chunkLedger) carryReviewed(prior map[string]*chunkRecord) {
 				fresh[f] = true
 			}
 		}
-		var kept []chunkRecordBin
+		var kept, deferred []chunkRecordBin
 		for _, b := range p.Bins {
-			if b.Outcome != StatusOK || len(b.Files) == 0 || anyIn(b.Files, fresh) {
+			if len(b.Files) == 0 || anyIn(b.Files, fresh) {
 				continue
 			}
-			kept = append(kept, chunkRecordBin{Files: append([]string(nil), b.Files...), Outcome: StatusOK})
+			switch b.Outcome {
+			case StatusOK:
+				kept = append(kept, chunkRecordBin{Files: append([]string(nil), b.Files...), Outcome: StatusOK})
+			case chunkOutcomeDeferred:
+				deferred = append(deferred, chunkRecordBin{Files: append([]string(nil), b.Files...), Outcome: chunkOutcomeDeferred})
+			}
 		}
 		if len(kept) == 0 {
 			continue
@@ -120,7 +129,7 @@ func (l *chunkLedger) carryReviewed(prior map[string]*chunkRecord) {
 			l.carried = map[string]map[string]bool{}
 		}
 		l.carried[dir] = files
-		rec.Bins = append(kept, rec.Bins...)
+		rec.Bins = append(append(kept, rec.Bins...), deferred...)
 		for i := range rec.Bins {
 			rec.Bins[i].Index = i
 		}

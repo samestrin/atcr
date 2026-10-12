@@ -328,3 +328,106 @@ func TestCarryReviewed_SkipsEmptyBins(t *testing.T) {
 		assert.Equal(t, i+2, l.bySlot[i].bin, "slot %d points at its shifted bin", i)
 	}
 }
+
+// A resume over a record that holds T2's deferred bins. The original run of 70
+// one-file bins dispatched 64 (the first 4 ok, the other 60 failed) and deferred
+// 6. A deferred bin is never replayed as reviewed: it has no findings, and it
+// counts toward the recomputed unreviewed_chunks.
+func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
+	var entries []payload.FileEntry
+	for i := 0; i < 70; i++ {
+		entries = append(entries, baselineEntry(fmt.Sprintf("f%02d.go", i), 100))
+	}
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 100
+	slotsFor := func(t *testing.T, es []payload.FileEntry) []Slot {
+		t.Helper()
+		slots, _, err := buildSlots(cfg, baselinePayloads(es), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+		require.NoError(t, err)
+		return slots
+	}
+	originalRun := func(t *testing.T) string {
+		t.Helper()
+		fail := map[string]bool{}
+		for _, e := range entries[4:] {
+			fail[e.Path] = true
+		}
+		dir := t.TempDir()
+		poolDir := filepath.Join(dir, "sources", "pool")
+		results, _ := runEngine(context.Background(), failingFilesCompleter{fail}, &PreparedReview{Slots: slotsFor(t, entries)}, poolDir)
+		_, err := writePool(context.Background(), poolDir, results, nil, "")
+		require.NoError(t, err)
+		rec := readChunkRecord(t, poolDir, "greta")
+		require.Len(t, rec.Bins, 70)
+		for _, b := range rec.Bins[64:] {
+			require.Equal(t, chunkOutcomeDeferred, b.Outcome)
+		}
+		return dir
+	}
+	outcomes := func(rec chunkRecord) map[string]string {
+		out := map[string]string{}
+		for i, b := range rec.Bins {
+			assert.Equal(t, i, b.Index)
+			require.Len(t, b.Files, 1)
+			_, dup := out[b.Files[0]]
+			assert.False(t, dup, "%s recorded twice", b.Files[0])
+			out[b.Files[0]] = b.Outcome
+		}
+		return out
+	}
+
+	t.Run("resume leaves the deferred bins undispatched", func(t *testing.T) {
+		dir := originalRun(t)
+		poolDir := filepath.Join(dir, "sources", "pool")
+		slots := slotsFor(t, entries[4:64])
+		require.Len(t, slots, 60)
+		resumeGreta(t, dir, slots, baselineChunkFindingCompleter{})
+
+		files := agentFindingFiles(t, poolDir, "greta")
+		assert.Len(t, files, 64, "4 replayed + 60 fresh; deferred bins replay nothing")
+		for _, e := range entries[64:] {
+			assert.NotContains(t, files, e.Path)
+		}
+
+		got := outcomes(readChunkRecord(t, poolDir, "greta"))
+		require.Len(t, got, 70, "the prior deferred bins stay in the union")
+		for i, e := range entries {
+			want := StatusOK
+			if i >= 64 {
+				want = chunkOutcomeDeferred
+			}
+			assert.Equal(t, want, got[e.Path], e.Path)
+		}
+
+		st := readAgentStatus(t, poolDir, "greta")
+		assert.Equal(t, StatusOK, st.Status)
+		assert.Equal(t, 6, st.UnreviewedChunks, "the 6 deferred bins are unreviewed")
+		assert.Equal(t, 70, st.ChunkCount)
+	})
+
+	t.Run("resume dispatches some deferred bins and defers the rest again", func(t *testing.T) {
+		dir := originalRun(t)
+		poolDir := filepath.Join(dir, "sources", "pool")
+		slots := slotsFor(t, entries[4:])
+		require.Len(t, slots, maxChunksPerAgent, "66 bins: 64 dispatched, 2 deferred")
+		resumeGreta(t, dir, slots, baselineChunkFindingCompleter{})
+
+		files := agentFindingFiles(t, poolDir, "greta")
+		assert.Len(t, files, 68, "4 replayed + 64 fresh")
+
+		got := outcomes(readChunkRecord(t, poolDir, "greta"))
+		require.Len(t, got, 70, "4 replayed + 64 fresh + 2 deferred again, none duplicated")
+		for i, e := range entries {
+			want := StatusOK
+			if i >= 68 {
+				want = chunkOutcomeDeferred
+			}
+			assert.Equal(t, want, got[e.Path], e.Path)
+		}
+
+		st := readAgentStatus(t, poolDir, "greta")
+		assert.Equal(t, 2, st.UnreviewedChunks)
+		assert.Equal(t, 70, st.ChunkCount)
+	})
+}
