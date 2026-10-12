@@ -34,6 +34,13 @@ import (
 // ledger rewrites that file at plan time. A record that is missing, oversize,
 // unparseable, of an unknown schema, or names a different agent is skipped, so
 // that persona resumes exactly as it did before chunks.json existed.
+//
+// So is a record whose persona has no findings file on disk. chunks.json is
+// rewritten as each bin resolves, but the persona's findings are written only
+// when the run finishes, so a run killed in between leaves bins recorded ok
+// whose findings exist nowhere. Replaying those bins would claim them reviewed
+// with nothing to show for it; skipping the record keeps the wholesale path,
+// which re-runs the persona instead.
 func readPriorChunkRecords(poolDir string, slots []Slot) map[string]*chunkRecord {
 	var prior map[string]*chunkRecord
 	seen := map[string]bool{}
@@ -52,6 +59,9 @@ func readPriorChunkRecords(poolDir string, slots []Slot) map[string]*chunkRecord
 		}
 		var rec chunkRecord
 		if json.Unmarshal(data, &rec) != nil || rec.SchemaVersion != chunksSchemaVersion || rec.Agent != s.Primary.Name {
+			continue
+		}
+		if _, err := stream.SelectFindingsFile(filepath.Join(poolDir, poolRawAgentDir, dir)); err != nil {
 			continue
 		}
 		if prior == nil {
@@ -206,22 +216,18 @@ func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLine
 }
 
 // readPriorFindings reads a persona's findings as the interrupted run left them
-// (findings.toon when present, else findings.txt — the RebuildPool rule). No
-// findings file means no findings; an oversize or unparseable one is an error,
-// because silently replaying nothing would erase the reviewed bins' findings.
+// (findings.toon when present, else findings.txt — the RebuildPool rule). It
+// fails closed: a missing, oversize or unparseable file is an error, because
+// silently replaying nothing would erase the reviewed bins' findings.
+// readPriorChunkRecords already refuses a record whose persona has no findings
+// file, so a missing file here means it vanished during the resume.
 func readPriorFindings(agentDir string) ([]stream.Finding, error) {
 	fpath, err := stream.SelectFindingsFile(agentDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
 	data, err := readFileLimited(fpath, maxAgentFileBytes)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	pr, err := stream.ParseFindingsFile(fpath, data)

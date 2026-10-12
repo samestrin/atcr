@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
@@ -246,5 +247,84 @@ func TestResumeMerge_InertPathsAreByteIdentical(t *testing.T) {
 			}
 			assert.Len(t, readChunkRecord(t, poolDir, "greta").Bins, len(tc.resumeFiles), "the record holds only this run's bins")
 		})
+	}
+}
+
+// rewriteChunkRecord edits greta's on-disk chunks.json in place.
+func rewriteChunkRecord(t *testing.T, poolDir string, edit func(*chunkRecord)) {
+	t.Helper()
+	rec := readChunkRecord(t, poolDir, "greta")
+	edit(&rec)
+	require.NoError(t, writeJSON(filepath.Join(poolDir, poolRawAgentDir, "greta", chunksFile), rec))
+}
+
+// readPriorChunkRecords refuses a record it cannot trust, and the resume then
+// takes the wholesale path: only the 60 re-run files' findings remain.
+func TestReadPriorChunkRecords_RefusesUntrustedRecords(t *testing.T) {
+	entries := sixtyFourFiles()
+	cases := map[string]func(t *testing.T, poolDir string){
+		"unknown schema version": func(t *testing.T, poolDir string) {
+			rewriteChunkRecord(t, poolDir, func(r *chunkRecord) { r.SchemaVersion = chunksSchemaVersion + 1 })
+		},
+		"record names another agent": func(t *testing.T, poolDir string) {
+			rewriteChunkRecord(t, poolDir, func(r *chunkRecord) { r.Agent = "kai" })
+		},
+		// A run killed after chunks.json recorded bins ok but before the persona's
+		// findings were written: replaying would claim bins whose findings exist
+		// nowhere.
+		"no findings file": func(t *testing.T, poolDir string) {
+			agentDir := filepath.Join(poolDir, poolRawAgentDir, "greta")
+			require.NoError(t, os.Remove(filepath.Join(agentDir, findingsFile)))
+			require.NoError(t, os.Remove(filepath.Join(agentDir, findingsToonFile)))
+		},
+	}
+	for name, corrupt := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := originalRun(t, entries, 4)
+			poolDir := filepath.Join(dir, "sources", "pool")
+			slots := gretaBaselineSlots(t, entries[4:])
+			require.Contains(t, readPriorChunkRecords(poolDir, slots), "greta", "the untouched record is trusted")
+
+			corrupt(t, poolDir)
+			assert.NotContains(t, readPriorChunkRecords(poolDir, slots), "greta")
+
+			resumeGreta(t, dir, slots, baselineChunkFindingCompleter{})
+			files := agentFindingFiles(t, poolDir, "greta")
+			assert.Len(t, files, 60, "nothing replayed: the wholesale path wrote only the re-run bins")
+			assert.NotContains(t, files, entries[0].Path)
+			assert.Len(t, readChunkRecord(t, poolDir, "greta").Bins, 60)
+		})
+	}
+}
+
+// An ok prior bin with no files is never carried: it would replay nothing and
+// shift every fresh bin's index.
+func TestCarryReviewed_SkipsEmptyBins(t *testing.T) {
+	entries := sixtyFourFiles()
+	slots := gretaBaselineSlots(t, entries[4:])
+	l := newChunkLedger(log.Discard(), t.TempDir(), slots)
+	require.NotNil(t, l)
+	l.carryReviewed(map[string]*chunkRecord{"greta": {
+		SchemaVersion: chunksSchemaVersion,
+		Agent:         "greta",
+		Bins: []chunkRecordBin{
+			{Index: 0, Files: []string{entries[0].Path}, Outcome: StatusOK},
+			{Index: 1, Files: []string{}, Outcome: StatusOK},
+			{Index: 2, Files: nil, Outcome: StatusOK},
+			{Index: 3, Files: []string{entries[1].Path}, Outcome: StatusOK},
+		},
+	}})
+
+	bins := l.records["greta"].Bins
+	require.Len(t, bins, 62, "two real replayed bins plus the 60 fresh ones")
+	for i, b := range bins {
+		assert.Equal(t, i, b.Index, "indices stay contiguous")
+		assert.NotEmpty(t, b.Files, "bin %d", i)
+	}
+	assert.Equal(t, []string{entries[0].Path}, bins[0].Files)
+	assert.Equal(t, []string{entries[1].Path}, bins[1].Files)
+	assert.Equal(t, []string{entries[4].Path}, bins[2].Files, "the first fresh bin follows the replayed ones")
+	for i := range slots {
+		assert.Equal(t, i+2, l.bySlot[i].bin, "slot %d points at its shifted bin", i)
 	}
 }
