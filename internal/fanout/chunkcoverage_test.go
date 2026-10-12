@@ -122,3 +122,28 @@ func TestReadCoverage_OversizedRecordIsAnError(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 	assert.False(t, ok)
 }
+
+// A deferred bin as T2's ledger really writes it (riding the persona's last
+// slot, never dispatched) is planned but not reviewed: it adds to bins planned
+// and files in scope, and covers none of its files even after every dispatched
+// bin resolves ok.
+func TestReadCoverage_LedgerDeferredBinIsPlannedNotReviewed(t *testing.T) {
+	reviewDir := t.TempDir()
+	poolDir := filepath.Join(reviewDir, "sources", "pool")
+	slots := []Slot{
+		{Primary: Agent{Name: "brad", ChunkTotal: 2, chunkFiles: []string{"a"}}},
+		{Primary: Agent{Name: "brad", ChunkTotal: 2, chunkFiles: []string{"b"}}, deferredBins: [][]string{{"c", "d"}}},
+	}
+	l := newChunkLedger(log.Discard(), poolDir, slots)
+	require.NotNil(t, l)
+	l.writePlan()
+	l.slotDone(0, Result{Status: StatusOK})
+	l.slotDone(1, Result{Status: StatusOK})
+	require.Equal(t, chunkOutcomeDeferred, readChunkRecord(t, poolDir, "brad").Bins[2].Outcome)
+
+	cov, ok, err := ReadCoverage(reviewDir)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, Coverage{BinsReviewed: 2, BinsPlanned: 3, FilesCovered: 2, FilesInScope: 4}, cov)
+	assert.InDelta(t, 50.0, cov.FilePercent(), 1e-9)
+}
