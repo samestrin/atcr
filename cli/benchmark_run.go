@@ -572,7 +572,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 					GroundingEnabled: summary.GroundingEnabled,
 					Replicate:        rep,
 				})
-				if werr := saveRunCheckpoint(checkpointPath, cp); werr != nil {
+				if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 					return fail(fmt.Errorf("writing checkpoint for case %s: %w", caseLabel, werr))
 				}
 			}
@@ -598,7 +598,6 @@ var (
 	prepareReviewFromDiff     = fanout.PrepareReviewFromDiff
 	readPoolSummary           = fanout.ReadPoolSummary
 	readBenchmarkCaseFindings = readCaseFindings
-	saveRunCheckpoint         = saveCheckpoint
 )
 
 // fitRow projects one reviewer's record of one case run onto its pre-scrub
