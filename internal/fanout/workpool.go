@@ -50,6 +50,10 @@ type unitQueue struct {
 	// changed is closed and replaced whenever a held unit is released or
 	// requeued, waking workers waiting for one.
 	changed chan struct{}
+	// throttle, when set, caps each provider's leases (Epic 35.16.14 T4): a
+	// pending unit whose provider is at its cap is skipped, and a throttled
+	// provider's units wait behind every healthy provider's.
+	throttle *providerThrottle
 }
 
 type delayedUnit struct {
@@ -72,14 +76,15 @@ func (q *unitQueue) lease(ctx context.Context) (i int, ok bool) {
 	for {
 		q.mu.Lock()
 		q.promote(ctx.Err() != nil)
-		if len(q.pending) > 0 {
-			i = q.pending[0]
-			q.pending = q.pending[1:]
+		if i, ok := q.take(ctx.Err() != nil); ok {
 			q.held++
 			q.mu.Unlock()
 			return i, true
 		}
-		if len(q.delayed) == 0 && q.held == 0 {
+		// Nothing leasable. A pending unit the throttle skipped has a unit of its
+		// provider held (the throttle always admits a provider with none in
+		// flight), so its release is a change to wait for.
+		if len(q.pending) == 0 && len(q.delayed) == 0 && q.held == 0 {
 			q.mu.Unlock()
 			return 0, false
 		}
@@ -101,6 +106,27 @@ func (q *unitQueue) lease(ctx context.Context) (i int, ok bool) {
 		case <-cancelled:
 		}
 	}
+}
+
+// take removes and returns the next unit to lease: the first pending one, or
+// with a throttle the one it picks. A done run (all) leases in order, past every
+// cap, since its units resolve without a call. Caller holds mu.
+func (q *unitQueue) take(all bool) (int, bool) {
+	if len(q.pending) == 0 {
+		return 0, false
+	}
+	at := 0
+	if q.throttle != nil && !all {
+		if at = q.throttle.pick(q.pending); at < 0 {
+			return 0, false
+		}
+	}
+	i := q.pending[at]
+	q.pending = append(q.pending[:at], q.pending[at+1:]...)
+	if q.throttle != nil {
+		q.throttle.acquire(i)
+	}
+	return i, true
 }
 
 // promote moves every delayed unit whose backoff has passed (all of them when
@@ -134,21 +160,31 @@ func (q *unitQueue) nextReady() time.Time {
 	return at
 }
 
-// release returns a held unit as resolved: it will not be leased again.
-func (q *unitQueue) release() {
+// release returns held unit i as resolved with r: it will not be leased again.
+func (q *unitQueue) release(i int, r Result) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.held--
+	q.settle(i, r)
 	q.signal()
 }
 
-// requeue returns held unit i to the queue, leasable again after backoff.
-func (q *unitQueue) requeue(i int, backoff time.Duration) {
+// requeue returns held unit i, whose attempt ended in r, to the queue, leasable
+// again after backoff.
+func (q *unitQueue) requeue(i int, backoff time.Duration, r Result) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.held--
+	q.settle(i, r)
 	q.delayed = append(q.delayed, delayedUnit{i: i, at: q.clock.Now().Add(backoff)})
 	q.signal()
+}
+
+// settle hands unit i's attempt to the throttle. Caller holds mu.
+func (q *unitQueue) settle(i int, r Result) {
+	if q.throttle != nil {
+		q.throttle.done(i, r)
+	}
 }
 
 // signal wakes every waiting worker. Caller holds mu.
