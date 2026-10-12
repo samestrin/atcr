@@ -382,6 +382,14 @@ type Result struct {
 	PayloadMode   string
 	Truncation    payload.Truncation
 
+	// Requeues counts the times the unit failed retryably and went back to the
+	// work queue (Epic 35.16.14 T3); UnitAttempts is how many times it was
+	// leased in all. Both stay zero for a unit that never requeued, so status.json
+	// is unchanged for it. A merged persona sums Requeues and keeps the highest
+	// UnitAttempts.
+	Requeues     int
+	UnitAttempts int
+
 	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
 	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
 	// the per-slot Truncation above.
@@ -819,6 +827,18 @@ type Engine struct {
 	// hook (Epic 35.16.14 T1). A slot the run's cancellation reaches first never
 	// starts. Called concurrently; nil makes Run behave as before.
 	slotStart func(i int)
+	// requeueable, when set, names the slots the outer per-unit retry covers
+	// (Epic 35.16.14 T3): a covered unit that fails retryably goes back to the
+	// queue under its failure class's backoff instead of resolving. nil (the
+	// default) requeues nothing, so the run behaves as before.
+	requeueable func(i int) bool
+	// slotRequeue, when set, is called once per requeue, before the unit goes
+	// back to the queue: the ledger records the attempt and returns the bin to
+	// pending. Called concurrently.
+	slotRequeue func(i int, r Result)
+	// retry is the outer budget; clock times its backoffs. Tests replace both.
+	retry unitRetryPolicy
+	clock unitClock
 }
 
 // EngineOption configures an Engine at construction.
@@ -901,6 +921,20 @@ func WithSlotStart(f func(i int)) EngineOption {
 	return func(e *Engine) { e.slotStart = f }
 }
 
+// WithUnitRetry turns on the outer per-unit retry for the slots eligible names
+// (Epic 35.16.14 T3). A covered unit whose attempt fails with a 429, a 5xx, a
+// transport error or a timeout is returned to the queue and leased again after
+// a backoff, until it succeeds or exhausts unitMaxAttempts / unitBackoffBudget.
+// A 429 requeues on the primary without walking the fallback chain; the other
+// classes walk the chain first. requeued, when non-nil, runs before each
+// requeue; it is called concurrently and must not panic.
+func WithUnitRetry(eligible func(i int) bool, requeued func(i int, r Result)) EngineOption {
+	return func(e *Engine) {
+		e.requeueable = eligible
+		e.slotRequeue = requeued
+	}
+}
+
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
 // correlated logger from the request context (log.FromContext) so every agent
 // log line is greppable by review. Without it, the engine logs to a no-op
@@ -929,7 +963,7 @@ func NewEngine(c Completer, opts ...EngineOption) *Engine {
 	if c == nil {
 		panic("fanout: NewEngine called with nil Completer")
 	}
-	e := &Engine{completer: c}
+	e := &Engine{completer: c, retry: defaultUnitRetryPolicy(), clock: wallClock{}}
 	for _, opt := range opts {
 		opt(e)
 	}
@@ -986,6 +1020,12 @@ func recordRecoveredPanic(res Result, start time.Time) {
 // ceiling. The WaitGroup always drains — even when ctx is cancelled mid-flight —
 // so no goroutine is leaked. A cancelled context surfaces as StatusTimeout for
 // the affected slots without a provider call; other slots still complete.
+//
+// With WithUnitRetry, a covered unit whose attempt fails retryably goes back to
+// its lane's queue with a backoff instead of resolving (Epic 35.16.14 T3); its
+// completion hook fires once, when it finally resolves. A requeued unit waits
+// behind the units already pending, so it never holds a worker while it backs
+// off.
 func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	start := time.Now()
 	results := make([]Result, len(slots))
@@ -1008,11 +1048,17 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		}
 	}
 	// invoke runs slot i under its unit deadline, which starts now that a worker
-	// holds it.
+	// holds it. A unit that may still requeue on a rate limit holds its 429 on
+	// the primary instead of walking the fallback chain.
+	retry := make([]unitRetryState, len(slots))
 	invoke := func(i int) Result {
 		uctx, cancel := unitDeadline(ctx, e.unitTimeoutSecs, slots[i])
 		defer cancel()
-		return e.invokeSlot(uctx, slots[i])
+		holdRateLimit := false
+		if e.requeueable != nil && e.requeueable(i) {
+			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].attempts+1, retry[i].spent)
+		}
+		return e.invokeSlotWithRetry(uctx, slots[i], holdRateLimit)
 	}
 	// recoverUnit turns a panic in slot i into a failed result so the worker
 	// survives to lease the next unit.
@@ -1021,6 +1067,89 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			res := resultFromPanic(slots[i], start, r)
 			results[i] = res
 			recordRecoveredPanic(res, start)
+		}
+	}
+	// settle decides what slot i's attempt res means: requeue (with the backoff
+	// to wait out) or a final result. Only a covered unit that failed with a
+	// retryable class while the run is still live requeues; one that has no
+	// budget left is marked failed with a warn line.
+	settle := func(i int, res Result) (time.Duration, bool, Result) {
+		st := &retry[i]
+		st.attempts++
+		if e.requeueable == nil || !e.requeueable(i) || res.Status == StatusOK || ctx.Err() != nil {
+			return 0, false, res
+		}
+		class := classifyUnitFailure(res.Err)
+		if class == failureFinal {
+			return 0, false, res
+		}
+		backoff, ok := e.retry.next(class, st.attempts, st.spent)
+		if !ok {
+			res.Status = StatusFailed
+			e.logger().Warn("unit exhausted its retry budget; marking it failed",
+				"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
+				"attempts", st.attempts, "requeues", st.requeues, "backoff", st.spent.String(),
+				"max_attempts", e.retry.maxAttempts, "backoff_budget", e.retry.budget.String(),
+				"err", res.Err)
+			return 0, false, res
+		}
+		st.requeues++
+		st.spent += backoff
+		e.logger().Info("unit failed retryably; requeued",
+			"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
+			"attempt", st.attempts, "backoff", backoff.String(), "err", res.Err)
+		return backoff, true, res
+	}
+	// runUnit runs one lease of slot i. A requeued unit goes back to q and its
+	// completion hook does not fire; every other path resolves it. A unit
+	// re-leased after the run was cancelled keeps its last attempt's result
+	// rather than a synthesized timeout, so its real failure is what is reported.
+	runUnit := func(q *unitQueue, i int, serial bool) {
+		var backoff time.Duration
+		requeued := false
+		defer func() {
+			if requeued {
+				q.requeue(i, backoff)
+				return
+			}
+			if st := retry[i]; st.requeues > 0 {
+				results[i].Requeues = st.requeues
+				results[i].UnitAttempts = st.attempts
+			}
+			done(i)
+			q.release()
+		}()
+		defer recoverUnit(i)
+		if retry[i].attempts > 0 && ctx.Err() != nil {
+			return
+		}
+		s := slots[i]
+		// Honor cancellation before starting each serial invocation so a
+		// cancelled run does not keep firing requests down the lane. The
+		// short-circuited slot records the wall-clock elapsed since Run started,
+		// not 0 — real time passed before the cancellation.
+		if err := ctx.Err(); serial && err != nil {
+			results[i] = Result{
+				Agent:          s.Primary.Name,
+				Status:         classifyStatus(err),
+				Err:            err,
+				DurationMS:     time.Since(start).Milliseconds(),
+				PayloadMode:    s.Primary.PayloadMode,
+				Truncation:     s.Primary.Truncation,
+				DiffTruncation: s.Primary.DiffTruncation,
+				MinSeverity:    s.Primary.MinSeverity,
+				MaxFindings:    s.Primary.MaxFindings,
+			}
+			return
+		}
+		lease(i)
+		d, again, res := settle(i, invoke(i))
+		results[i] = res
+		if again {
+			if e.slotRequeue != nil {
+				e.slotRequeue(i, res)
+			}
+			backoff, requeued = d, true
 		}
 	}
 
@@ -1033,61 +1162,32 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		}
 	}
 
+	// work drains q, one unit at a time.
+	work := func(q *unitQueue, serial bool) {
+		defer wg.Done()
+		for {
+			i, ok := q.lease(ctx)
+			if !ok {
+				return
+			}
+			runUnit(q, i, serial)
+		}
+	}
+
 	// The pool. A unit leased after the run's ctx is done still resolves —
 	// invokeSlot short-circuits to a timeout result without a provider call — so
 	// every slot gets a Result and the queue always drains.
-	q := newUnitQueue(parallelIdx)
+	pool := newUnitQueue(parallelIdx, e.clock)
 	for w := poolWorkers(len(parallelIdx), e.maxParallel); w > 0; w-- {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				i, ok := q.lease()
-				if !ok {
-					return
-				}
-				func() {
-					defer done(i)
-					defer recoverUnit(i)
-					lease(i)
-					results[i] = invoke(i)
-				}()
-			}
-		}()
+		go work(pool, false)
 	}
 
+	// The serial lane: one worker, so its units never overlap. A requeued serial
+	// unit waits out its backoff behind the lane's other pending units.
 	if len(serialIdx) > 0 {
 		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for _, i := range serialIdx {
-				func() {
-					defer done(i)
-					defer recoverUnit(i)
-					s := slots[i]
-					// Honor cancellation before starting each serial invocation so a
-					// cancelled run does not keep firing requests down the lane. The
-					// short-circuited slot records the wall-clock elapsed since Run
-					// started, not 0 — real time passed before the cancellation.
-					if err := ctx.Err(); err != nil {
-						results[i] = Result{
-							Agent:          s.Primary.Name,
-							Status:         classifyStatus(err),
-							Err:            err,
-							DurationMS:     time.Since(start).Milliseconds(),
-							PayloadMode:    s.Primary.PayloadMode,
-							Truncation:     s.Primary.Truncation,
-							DiffTruncation: s.Primary.DiffTruncation,
-							MinSeverity:    s.Primary.MinSeverity,
-							MaxFindings:    s.Primary.MaxFindings,
-						}
-						return
-					}
-					lease(i)
-					results[i] = invoke(i)
-				}()
-			}
-		}()
+		go work(newUnitQueue(serialIdx, e.clock), true)
 	}
 
 	wg.Wait()
@@ -1109,6 +1209,15 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // reviews a strict SUBSET of the files its primary was tagged with. Attribution
 // by name still follows the slot — only the coverage tag follows the server.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
+	return e.invokeSlotWithRetry(ctx, s, false)
+}
+
+// invokeSlotWithRetry is invokeSlot for a unit the outer retry may still
+// requeue. With holdRateLimit set, a primary that answers HTTP 429 ends the walk
+// there: the unit will be requeued on its primary once the rate-limit window
+// has had time to pass, so the fallback chain is not spent absorbing a rate
+// limit (Epic 35.16.14 T3). Every other failure walks the chain as before.
+func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit bool) Result {
 	start := time.Now()
 	thinkOnlyAttempts := 0
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
@@ -1382,6 +1491,12 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 		// The two demotions above already log their own line; skipping them keeps
 		// each failover at exactly one line. r.Err is bounded (4 KiB error snippet)
 		// and the context logger's handler redacts keys and tokens.
+		if i == 0 && holdRateLimit && len(chain) > 1 && classifyUnitFailure(r.Err) == failureRateLimit {
+			log.FromContext(ctx).Info("reviewer rate-limited; requeueing on the primary instead of failing over",
+				"agent", a.Name, "model", a.Invocation.Model)
+			last = r
+			break
+		}
 		if i+1 < len(chain) && ctx.Err() == nil &&
 			!errors.Is(r.Err, errTruncatedZeroFindings) && !errors.Is(r.Err, errEmptyResponse) {
 			log.FromContext(ctx).Warn("reviewer attempt failed; failing over",

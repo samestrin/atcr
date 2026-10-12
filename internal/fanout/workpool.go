@@ -21,27 +21,140 @@ import (
 // from lease time (unitDeadline), and this ceiling only stops a hung run.
 const defaultRunCeiling = time.Duration(registry.MaxTimeoutSecs) * time.Second
 
-// unitQueue hands out slot indices in order, one per lease. It is safe for
-// concurrent use by every worker of one Run.
+// unitClock is the queue's time source. The engine uses the wall clock; tests
+// substitute a fake so a minutes-long backoff runs in no real time.
+type unitClock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time                         { return time.Now() }
+func (wallClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// unitQueue hands out slot indices, one per lease. It is safe for concurrent
+// use by every worker of one lane.
+//
+// A unit is pending (ready to lease), held (a worker has it), or delayed (it
+// failed retryably and was requeued, Epic 35.16.14 T3, and waits out its
+// backoff). A delayed unit becomes pending once its backoff has passed, behind
+// every unit already pending. The queue is drained only when nothing is pending,
+// delayed or held, since a held unit may still come back.
 type unitQueue struct {
+	clock   unitClock
 	mu      sync.Mutex
 	pending []int
+	delayed []delayedUnit
+	held    int
+	// changed is closed and replaced whenever a held unit is released or
+	// requeued, waking workers waiting for one.
+	changed chan struct{}
 }
 
-func newUnitQueue(idx []int) *unitQueue {
-	return &unitQueue{pending: idx}
+type delayedUnit struct {
+	i  int
+	at time.Time
 }
 
-// lease takes the next pending unit. ok is false once the queue is drained.
-func (q *unitQueue) lease() (i int, ok bool) {
+func newUnitQueue(idx []int, clock unitClock) *unitQueue {
+	if clock == nil {
+		clock = wallClock{}
+	}
+	return &unitQueue{clock: clock, pending: idx, changed: make(chan struct{})}
+}
+
+// lease takes the next pending unit, waiting while every remaining unit is
+// delayed or held by another worker. ok is false once the queue is drained.
+// Once ctx is done every delayed unit is pending at once: its backoff no longer
+// buys anything, and the worker resolves it without a call.
+func (q *unitQueue) lease(ctx context.Context) (i int, ok bool) {
+	for {
+		q.mu.Lock()
+		q.promote(ctx.Err() != nil)
+		if len(q.pending) > 0 {
+			i = q.pending[0]
+			q.pending = q.pending[1:]
+			q.held++
+			q.mu.Unlock()
+			return i, true
+		}
+		if len(q.delayed) == 0 && q.held == 0 {
+			q.mu.Unlock()
+			return 0, false
+		}
+		changed := q.changed
+		var wake <-chan time.Time
+		if len(q.delayed) > 0 {
+			wake = q.clock.After(q.nextReady().Sub(q.clock.Now()))
+		}
+		q.mu.Unlock()
+		// A done ctx is not waited on: it is already closed, and promote has moved
+		// every delayed unit, so only a held unit's return can change anything.
+		cancelled := ctx.Done()
+		if ctx.Err() != nil {
+			cancelled = nil
+		}
+		select {
+		case <-changed:
+		case <-wake:
+		case <-cancelled:
+		}
+	}
+}
+
+// promote moves every delayed unit whose backoff has passed (all of them when
+// all is set) to the back of the pending list, in the order they were delayed.
+// Caller holds mu.
+func (q *unitQueue) promote(all bool) {
+	if len(q.delayed) == 0 {
+		return
+	}
+	now := q.clock.Now()
+	kept := q.delayed[:0]
+	for _, d := range q.delayed {
+		if all || !d.at.After(now) {
+			q.pending = append(q.pending, d.i)
+		} else {
+			kept = append(kept, d)
+		}
+	}
+	q.delayed = kept
+}
+
+// nextReady is when the first delayed unit's backoff ends. Caller holds mu and
+// has checked delayed is non-empty.
+func (q *unitQueue) nextReady() time.Time {
+	at := q.delayed[0].at
+	for _, d := range q.delayed[1:] {
+		if d.at.Before(at) {
+			at = d.at
+		}
+	}
+	return at
+}
+
+// release returns a held unit as resolved: it will not be leased again.
+func (q *unitQueue) release() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.pending) == 0 {
-		return 0, false
-	}
-	i = q.pending[0]
-	q.pending = q.pending[1:]
-	return i, true
+	q.held--
+	q.signal()
+}
+
+// requeue returns held unit i to the queue, leasable again after backoff.
+func (q *unitQueue) requeue(i int, backoff time.Duration) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.held--
+	q.delayed = append(q.delayed, delayedUnit{i: i, at: q.clock.Now().Add(backoff)})
+	q.signal()
+}
+
+// signal wakes every waiting worker. Caller holds mu.
+func (q *unitQueue) signal() {
+	close(q.changed)
+	q.changed = make(chan struct{})
 }
 
 // poolWorkers is how many workers drain n units: maxParallel when it bounds the

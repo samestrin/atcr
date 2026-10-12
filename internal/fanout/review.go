@@ -1241,6 +1241,11 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		p.chunks = ledger
 		ledger.writePlan()
 		opts = append(opts, WithSlotStart(ledger.slotStart), WithSlotDone(ledger.slotDone))
+		// Outer per-unit retry (Epic 35.16.14 T3): a recorded bin that fails with a
+		// 429, a 5xx, a transport error or a timeout goes back to pending in the
+		// ledger and is leased again after a backoff. Only on the ledger's units, so
+		// a bulk or diff run is unchanged.
+		opts = append(opts, WithUnitRetry(ledger.recorded, ledger.slotRequeue))
 	}
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
