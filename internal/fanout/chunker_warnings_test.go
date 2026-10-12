@@ -70,6 +70,10 @@ func TestBuildSlots_ChunkedWarnsOnCeilingOversizedChunk(t *testing.T) {
 	})
 	require.Len(t, slots, 64, "the slot count is capped at the maxChunksPerAgent ceiling")
 	require.Contains(t, out, "ceiling", "the ceiling-induced multi-file oversized chunk must be flagged pre-dispatch")
+	// The chunked-diff path keeps its coalesce-and-warn ceiling byte for byte;
+	// only the baseline path defers (Epic 35.16.13 T2).
+	require.Contains(t, out, `atcr: warning: agent "greta": a 7-file chunk (`)
+	require.Contains(t, out, `exceeds max_context_lines (1); the 64-chunk ceiling was reached, so remaining files were coalesced into one oversized chunk (may overflow the model)`+"\n")
 }
 
 func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {

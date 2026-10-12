@@ -155,6 +155,59 @@ func TestChunkRecord_ParallelLaneRecordsEveryBin(t *testing.T) {
 	}
 }
 
+// Epic 35.16.13 T2 success criterion: a baseline persona whose files need 70
+// bins dispatches the first 64 and defers the other 6. No dispatched bin is an
+// oversized coalesced tail (each holds the one file its partition bin held, well
+// inside max_context_lines), chunks.json records every leftover file as
+// deferred, the run warns naming the deferred file count, and no completion
+// ever moves a deferred bin off deferred.
+func TestChunkRecord_CeilingDefersLeftoverBins(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 100
+	const total = 70
+	var entries []payload.FileEntry
+	var files []string
+	for i := 0; i < total; i++ {
+		f := fmt.Sprintf("f%03d.go", i)
+		files = append(files, f)
+		entries = append(entries, baselineEntry(f, 100))
+	}
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+		require.NoError(t, err)
+	})
+	require.Len(t, slots, maxChunksPerAgent, "64 dispatched bins")
+	assert.Contains(t, out, `atcr: warning: agent "greta": the 64-chunk ceiling was reached, so 6 file(s) in 6 chunk(s) were deferred (not dispatched); see chunks.json`)
+	assert.NotContains(t, out, "coalesced", "the baseline path no longer coalesces")
+
+	mcl := cfg.Registry.Agents["greta"].EffectiveMaxContextLines()
+	for i, s := range slots {
+		require.Len(t, s.entries, 1, "dispatched bin %d is its own partition bin, not a coalesced tail", i)
+		lines := strings.Count(s.entries[0].Body, "\n") + 1
+		assert.LessOrEqual(t, lines, mcl, "dispatched bin %d exceeds max_context_lines", i)
+		assert.Equal(t, []string{files[i]}, s.Primary.chunkFiles)
+	}
+
+	poolDir := t.TempDir()
+	runEngine(context.Background(), baselineChunkFindingCompleter{}, &PreparedReview{Slots: slots}, poolDir)
+
+	rec := readChunkRecord(t, poolDir, "greta")
+	require.Len(t, rec.Bins, total, "64 dispatched + 6 deferred bins are all recorded")
+	for i, b := range rec.Bins {
+		assert.Equal(t, i, b.Index)
+		assert.Equal(t, []string{files[i]}, b.Files, "bin %d names its file set", i)
+		want := StatusOK
+		if i >= maxChunksPerAgent {
+			want = chunkOutcomeDeferred
+		}
+		assert.Equal(t, want, b.Outcome, "bin %d", i)
+	}
+}
+
 // AC7: a run that is not a baseline multi-chunk fan-out writes no chunks.json —
 // neither a single-chunk baseline (which falls through to one bulk slot per
 // persona), a multi-chunk diff review, nor a full bulk diff review.

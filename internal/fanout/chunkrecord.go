@@ -19,9 +19,9 @@ const chunksSchemaVersion = 1
 
 // Bin outcomes in chunks.json. pending and deferred are written before dispatch;
 // ok / failed / timeout are the engine's own Result.Status values, copied in as
-// each bin resolves. deferred marks a bin the ceiling cut and that is never
-// dispatched; nothing writes it yet (the deferral policy is T2's), but readers
-// must already treat it as unreviewed.
+// each bin resolves. deferred marks a bin the maxChunksPerAgent ceiling cut
+// (capChunks); it is never dispatched, so it stays deferred and readers must
+// treat it as unreviewed.
 const (
 	chunkOutcomePending  = "pending"
 	chunkOutcomeDeferred = "deferred"
@@ -104,6 +104,15 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 			Outcome: chunkOutcomePending,
 		})
 		l.bySlot[i] = chunkSlotRef{dir: dir, bin: bin}
+		// Bins the ceiling deferred follow the persona's dispatched bins. No slot
+		// maps to them, so no completion ever moves them off deferred.
+		for _, files := range s.deferredBins {
+			rec.Bins = append(rec.Bins, chunkRecordBin{
+				Index:   len(rec.Bins),
+				Files:   append([]string(nil), files...),
+				Outcome: chunkOutcomeDeferred,
+			})
+		}
 	}
 	if len(l.records) == 0 {
 		return nil
