@@ -288,3 +288,58 @@ func TestWriteSkepticBlock_FragmentGradeSurvivesLongReasoning(t *testing.T) {
 	assert.Contains(t, reasoning, marker, "the marker survives the 500-rune cap")
 	assert.Less(t, len([]rune(reasoning)), len([]rune(notes)), "and the reasoning behind it was in fact cut")
 }
+
+// TD internal/report/render_verification_test.go:283 (LOW): a Notes that is
+// ONLY an engine marker (the skeptic's reasoning after the marker was empty)
+// had no test in any of the four renderers that read Verification.Notes. This
+// pins today's output, and today's output is the INTENDED output (epic 63,
+// refine question 4): writeSkepticBlock and writeRefutedSection print the
+// marker as `Reasoning: [marker]`, and the legacy pipe and standard AXI
+// renderers print the Notes cell unlabelled, the marker verbatim. The
+// `Reasoning:` label is accepted for a marker-only Notes; changing what any of
+// the four renders for it is a separate tech-debt row, not an edit to this test.
+func TestRenderers_MarkerOnlyNotesIsIntendedOutput(t *testing.T) {
+	for _, marker := range []string{
+		"[verdict_after_unopened_closer: 16 prefix byte(s) discarded]",
+		"[verdict_before_unopened_closer: text after the closer ignored]",
+	} {
+		confirmed := reconcile.JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "VERIFIED",
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: marker}}
+		refuted := reconcile.JSONFinding{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "greta", Notes: marker}}
+		findings := []reconcile.JSONFinding{confirmed, refuted}
+
+		t.Run(marker, func(t *testing.T) {
+			t.Run("writeSkepticBlock", func(t *testing.T) {
+				var b bytes.Buffer
+				writeSkepticBlock(&b, confirmed.Verification)
+				assert.Equal(t, "  - Skeptic: otto — confirmed\n"+
+					"    - Reasoning: "+marker+"\n", b.String())
+			})
+			t.Run("writeRefutedSection", func(t *testing.T) {
+				var b bytes.Buffer
+				writeRefutedSection(&b, []reconcile.JSONFinding{refuted})
+				assert.Equal(t, "\n## Refuted Findings\n\n"+
+					"<details>\n<summary>Refuted Findings (1)</summary>\n\n"+
+					"- `b.go:2` — confidence LOW, skeptic: greta\n"+
+					"  - Problem: p2\n"+
+					"  - Reasoning: "+marker+"\n"+
+					"\n</details>\n", b.String())
+			})
+			t.Run("renderPipeAXI", func(t *testing.T) {
+				var b bytes.Buffer
+				require.NoError(t, renderPipeAXI(&b, findings))
+				assert.Equal(t, `findings[2|]{severity|"file:line"|problem|fix|category|est_minutes|evidence|reviewers|confidence|verification.verdict|verification.skeptic|verification.notes|verification.challenge_survived}:`+"\n"+
+					`  HIGH|"a.go:1"|p1|""|""|0|""|""|VERIFIED|confirmed|otto|"`+marker+`"|false`+"\n"+
+					`  LOW|"b.go:2"|p2|""|""|0|""|""|LOW|refuted|greta|"`+marker+`"|false`+"\n", b.String())
+			})
+			t.Run("renderAXI", func(t *testing.T) {
+				var b bytes.Buffer
+				require.NoError(t, renderAXI(&b, findings))
+				assert.Equal(t, `findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id,verification.verdict,verification.skeptic,verification.notes,verification.challenge_survived}:`+"\n"+
+					`  HIGH,"a.go:1",p1,"","",0,"","",VERIFIED,"",confirmed,otto,"`+marker+`",false`+"\n"+
+					`  LOW,"b.go:2",p2,"","",0,"","",LOW,"",refuted,greta,"`+marker+`",false`+"\n", b.String())
+			})
+		})
+	}
+}
