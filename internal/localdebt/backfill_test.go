@@ -1,10 +1,12 @@
 package localdebt
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1350,12 +1352,26 @@ func TestReviewDirOwnsRun(t *testing.T) {
 		{
 			// Valid JSON whose reconciled_at WOULD match, padded past the cap with
 			// trailing whitespace. Any prefix that ends inside the padding still parses,
-			// so the read's truncation alone cannot refuse it: only the length check
+			// so the read's truncation alone cannot refuse it: only a size check
 			// can, and a read that dropped it would own the run.
 			name: "oversized summary.json owns nothing",
 			base: "multi-agent",
 			summary: rawSummary(`{"reconciled_at":"` + at + `"}` +
 				strings.Repeat(" ", maxSummaryBytes)),
+			runID: at + "-multi-agent",
+		},
+		{
+			// A symlink in the file's place, to a summary whose reconciled_at WOULD
+			// match: only the regular-file check refuses it, and a read that followed
+			// the link would own the run.
+			name: "symlinked summary.json owns nothing",
+			base: "multi-agent",
+			summary: func(t *testing.T, d string) {
+				target := filepath.Join(t.TempDir(), "summary.json")
+				require.NoError(t, os.WriteFile(target, []byte(`{"reconciled_at":"`+at+`"}`), 0o600))
+				require.NoError(t, os.MkdirAll(filepath.Join(d, "reconciled"), 0o750))
+				require.NoError(t, os.Symlink(target, filepath.Join(d, "reconciled", "summary.json")))
+			},
 			runID: at + "-multi-agent",
 		},
 		{
@@ -1474,6 +1490,27 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 		"every refusal sits in the record's own review dir, so each is still attributed")
 	assert.Equal(t, map[string]int{filepath.Join(ownDir, "reconciled", "summary.json"): 1}, opens,
 		"the owning dir's summary.json is opened once for the whole pass, not once per refused candidate")
+}
+
+// TD internal/localdebt/backfill.go:464 — an oversized summary.json owned nothing
+// silently. The skip is logged at debug with the path and the size, as the
+// producer's oversized review.md is (internal/reconcile/justification.go).
+// Swaps the process-wide default logger, so it must not run in parallel.
+func TestReadReconciledAt_OversizedLogsAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	reviewDir := t.TempDir()
+	body := `{"reconciled_at":"2026-08-04T10:00:00Z"}` + strings.Repeat(" ", maxSummaryBytes)
+	rawSummary(body)(t, reviewDir)
+
+	assert.Empty(t, readReconciledAt(reviewDir))
+	out := buf.String()
+	assert.Contains(t, out, "level=DEBUG")
+	assert.Contains(t, out, filepath.Join(reviewDir, "reconciled", "summary.json"))
+	assert.Contains(t, out, "size="+strconv.Itoa(len(body)))
 }
 
 // TD internal/localdebt/backfill.go:440 — a candidate whose path IS rel (the walk
