@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -252,19 +253,19 @@ func TestSalvageCost_KeysRefusedOnTheSalvageClass(t *testing.T) {
 	// A stop-reason bin renders "kept", never "refused".
 	onStop := salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
 		SalvagedChunks: []int{1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 4, FindingsCount: 3})
-	assert.Equal(t, " (chunk 1 kept (stop-reason salvage, parsed))", onStop)
+	assert.Equal(t, " (chunk 1 kept as a parsed stop-reason salvage)", onStop)
 	assert.NotContains(t, onStop, "refused")
 
 	// Mixed: each bin is named in its own class.
 	mixed := salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
 		SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3})
-	assert.Equal(t, " (chunk 0 refused, chunk 2 kept (stop-reason salvage, parsed), its siblings kept)", mixed)
+	assert.Equal(t, " (chunk 0 refused, chunk 2 kept as a parsed stop-reason salvage, its siblings kept)", mixed)
 
 	// Every bin salvaged on a stop reason is not a whole loss.
 	allOnStop := AgentStatus{Agent: "kai", Salvaged: true,
 		SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2, FindingsCount: 0}
 	require.False(t, WholePersonaSalvaged(allOnStop), "precondition")
-	assert.Equal(t, " (chunk 0/1 kept (stop-reason salvage, parsed))", salvageCost(allOnStop))
+	assert.Equal(t, " (chunk 0/1 kept as a parsed stop-reason salvage)", salvageCost(allOnStop))
 
 	// Abandoned-only and legacy records (no on-stop keys) render exactly as before.
 	assert.Equal(t, " (chunk 1 refused, its siblings kept)", salvageCost(AgentStatus{Agent: "otto", Salvaged: true,
@@ -300,6 +301,67 @@ func TestClassifySalvaged_ReadsTheClassFromTheStatusRecord(t *testing.T) {
 	}
 }
 
+// No chunked salvage cost text nests parentheses: the caller already wraps the
+// whole cost in one pair, so an inner pair read as " (chunk 0/1 kept (...))".
+func TestSalvageCost_ChunkedTextHasNoNestedParentheses(t *testing.T) {
+	for _, st := range []AgentStatus{
+		{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2},
+		{Agent: "otto", Salvaged: true, SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3},
+		{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5},
+	} {
+		cost := salvageCost(st)
+		inner := strings.TrimSuffix(strings.TrimPrefix(cost, " ("), ")")
+		assert.NotContains(t, inner, "(", "nested parentheses in %q", cost)
+		assert.NotContains(t, inner, ")", "nested parentheses in %q", cost)
+	}
+}
+
+// salvageCost and classifySalvaged read the same record through one partition, so
+// what the per-agent label says was refused or kept is exactly the class the
+// run-level warning picks its wording and remedy from. Before they shared it, an
+// on-stop index naming a bin SalvagedChunks did not name was read as an on-stop
+// salvage by classifySalvaged and ignored by salvageCost; the producers derive both
+// from the same bins, so the stray index is ignored (it names no salvaged bin).
+func TestSalvagePartition_SalvageCostAndClassifySalvagedAgree(t *testing.T) {
+	cases := []struct {
+		name string
+		st   AgentStatus
+		want salvageClasses
+	}{
+		{"legacy unchunked, nothing landed", AgentStatus{Salvaged: true}, salvageClasses{abandoned: true}},
+		{"legacy unchunked, findings landed", AgentStatus{Salvaged: true, FindingsCount: 4}, salvageClasses{abandoned: true}},
+		{"unchunked on stop", AgentStatus{Salvaged: true, SalvagedOnStop: true}, salvageClasses{onStop: true}},
+		{"chunked abandoned", AgentStatus{Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5}, salvageClasses{abandoned: true}},
+		{"chunked every bin abandoned", AgentStatus{Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2}, salvageClasses{abandoned: true}},
+		{"chunked on stop", AgentStatus{Salvaged: true, SalvagedChunks: []int{1}, SalvagedOnStopChunks: []int{1}, ChunkCount: 4, FindingsCount: 3}, salvageClasses{onStop: true}},
+		{"chunked every bin on stop", AgentStatus{Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2}, salvageClasses{onStop: true}},
+		{"chunked mixed", AgentStatus{Salvaged: true, SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3}, salvageClasses{abandoned: true, onStop: true}},
+		{"stray on-stop index", AgentStatus{Salvaged: true, SalvagedChunks: []int{0}, SalvagedOnStopChunks: []int{1}, ChunkCount: 4, FindingsCount: 2}, salvageClasses{abandoned: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			classes := classifySalvaged([]AgentStatus{tc.st})
+			assert.Equal(t, tc.want, classes)
+
+			cost := salvageCost(tc.st)
+			switch {
+			case strings.Contains(cost, "chunk "):
+				assert.Equal(t, classes.abandoned, strings.Contains(cost, "refused"),
+					"the label names a refused bin exactly when the warning reads an abandoned salvage: %q", cost)
+				assert.Equal(t, classes.onStop, strings.Contains(cost, "stop-reason salvage"),
+					"the label names a kept bin exactly when the warning reads a stop-reason salvage: %q", cost)
+			case strings.Contains(cost, "stop-reason salvage"):
+				assert.Equal(t, salvageClasses{onStop: true}, classes, "%q", cost)
+			default:
+				// "contributed nothing", or no label for an unchunked salvage that
+				// still landed findings: both are the abandoned class.
+				assert.True(t, classes.abandoned, "%q", cost)
+				assert.False(t, classes.onStop, "%q", cost)
+			}
+		})
+	}
+}
+
 // The run-level warning states the consequence and the remedy that fit the class:
 // an abandoned salvage was refused and needs more output budget; a stop-reason
 // salvage was parsed, and the thinking: off advice fits it. Both still count, so the
@@ -310,6 +372,7 @@ func TestWarnSalvaged_KeysRefusedAndTheRemedyOnTheClass(t *testing.T) {
 	})
 	assert.Contains(t, abandoned, "refused rather than parsed")
 	assert.Contains(t, abandoned, "max_tokens", "a cut-off draft needs more output budget")
+	assert.Contains(t, abandoned, "cut off or no stop reason was recorded")
 	assert.NotContains(t, abandoned, "stop_reason_remedy")
 
 	onStop := captureWarn(t, func(ctx context.Context) {
@@ -317,7 +380,8 @@ func TestWarnSalvaged_KeysRefusedAndTheRemedyOnTheClass(t *testing.T) {
 	})
 	require.NotEmpty(t, onStop, "a stop-reason salvage must stay visible on the console")
 	assert.NotContains(t, onStop, "refused", "a stop-reason salvage was parsed, not refused")
-	assert.Contains(t, onStop, "parsed and its findings kept")
+	assert.Contains(t, onStop, "parsed and its parseable findings were kept",
+		"a stop-reason reply of prose parses to zero findings, so the text must not promise findings")
 	assert.Contains(t, onStop, "thinking: off")
 	assert.NotContains(t, onStop, "max_tokens", "nothing was cut off, so more budget is not the fix")
 
@@ -326,7 +390,9 @@ func TestWarnSalvaged_KeysRefusedAndTheRemedyOnTheClass(t *testing.T) {
 			salvageClasses{abandoned: true, onStop: true}, true)
 	})
 	assert.Contains(t, mixed, "refused rather than parsed")
-	assert.Contains(t, mixed, "parsed and its findings kept")
+	assert.Contains(t, mixed, "parsed and its parseable findings were kept")
+	assert.Contains(t, mixed, "cut off or no stop reason was recorded",
+		"the abandoned class covers unknown and legacy reasons too, not only a cut-off")
 	assert.Contains(t, mixed, "stop_reason_remedy")
 	assert.Contains(t, mixed, "cumulative")
 }
