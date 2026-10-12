@@ -472,7 +472,8 @@ var findingsWrapperRe = regexp.MustCompile(`^\{\s*"findings"\s*:\s*\[`)
 // value is accepted only after jsonrepair.Repair fixed its syntax. It carries
 // no reply text.
 // It is metrics.Key("atcr_json_repaired_total", "lane", "findings") spelled
-// out, because v2.go declares no package-level var but compiled regexps.
+// out, because a Go const cannot call metrics.Key;
+// TestJSONRepairedFindingsKey_MatchesMetricsKey pins that the two agree.
 const jsonRepairedFindingsKey = `atcr_json_repaired_total{lane="findings"}`
 
 // decodeJSONValue reads the JSON value at the start of text (after whitespace)
@@ -488,14 +489,14 @@ func decodeJSONValue(text string) ([]Finding, int) {
 }
 
 // decodeJSONValueRepair is decodeJSONValue with an optional last try. When
-// repair is set and the strict decode fails, text is run through
+// allowRepair is set and the strict decode fails, text is run through
 // jsonrepair.Repair after element recovery; the repaired value is decoded
 // strictly and replaces the recovered elements when it yields more findings,
 // so damage inside one element no longer drops it and every element
 // after it. Repair never closes an open string or a cut-off element, so a
 // cut-off value still ends at its last complete element. Each accepted repair
 // bumps atcr_json_repaired_total{lane="findings"} once.
-func decodeJSONValueRepair(text string, repair bool) ([]Finding, int) {
+func decodeJSONValueRepair(text string, allowRepair bool) ([]Finding, int) {
 	body := strings.TrimLeft(text, " \t\r\n")
 	if !strings.HasPrefix(body, "[") && !strings.HasPrefix(body, "{") {
 		return nil, 0
@@ -505,7 +506,7 @@ func decodeJSONValueRepair(text string, repair bool) ([]Finding, int) {
 		return findingsFromElems(elems), len(text) - len(body) + n
 	}
 	out := findingsFromElems(elems)
-	if repair {
+	if allowRepair {
 		if fixed, changed := jsonrepair.Repair(body); changed {
 			if relems, _, rok := decodeFindingElems(fixed); rok {
 				if found := findingsFromElems(relems); len(found) > len(out) {
