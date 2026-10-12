@@ -365,6 +365,11 @@ func ClearInterrupted(reviewDir string) error {
 type ResumeInfo struct {
 	Completed []string
 	Pending   []string
+	// Units is how many bins a chunk-aware resume re-leases: every open bin of
+	// the pending personas' ledgers that still names a file in scope (Epic
+	// 35.16.14 T6). Zero when no persona resumes from a ledger, i.e. on a diff
+	// review or a persona re-run whole.
+	Units int
 }
 
 // AllComplete reports whether every roster agent already finished, so the caller
@@ -448,6 +453,14 @@ func reviewDirRoot(reviewDir string) string {
 // exactly what the completed agents reviewed. The returned ResumeInfo reports the
 // completed/pending split; when AllComplete is true the Slots are empty and the
 // caller reconciles without a fan-out.
+//
+// On a baseline review a resume is a drain of the run's work ledger (Epic
+// 35.16.14 T6): every bin a pending persona's chunks.json leaves open — pending,
+// failed, timeout, a legacy deferred bin, or an ok bin that left a file
+// unreviewed — is re-leased, every reviewed bin is replayed rather than paid for
+// again, and ResumeInfo.Units counts what is re-leased. Each re-leased unit gets
+// the outer retry budget afresh and starts its ledger count from the prior one
+// (inheritAttempts).
 func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
 	m, err := ReadManifest(reviewDir)
 	if err != nil {
@@ -533,6 +546,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// A chunk-aware agent whose unreviewed bins name no file the fresh payload
 	// still carries has nothing left to dispatch, so it is complete, and its
 	// record is resolved to say so (dropOpenBins).
+	info := &ResumeInfo{}
 	if len(rr.bins) > 0 {
 		dispatched := map[string]int{}
 		for _, s := range slots {
@@ -543,11 +557,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 				done[name] = true
 				dropOpenBins(ctx, reviewDir, name)
 			}
+			info.Units += dispatched[name]
 			log.FromContext(ctx).Info("chunk-aware resume", "agent", name, "unreviewed_bins", len(open), "dispatched_bins", dispatched[name])
 		}
 	}
 
-	info := &ResumeInfo{}
 	for _, name := range configured {
 		if done[name] {
 			info.Completed = append(info.Completed, name)
@@ -659,6 +673,48 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		}
 	}
 	return p, info, nil
+}
+
+// inheritAttempts seeds each bin a resume re-leases with the attempts its prior
+// chunks.json counted (Epic 35.16.14 T6). A resume is a drain of the prior
+// ledger: every open bin (chunkRecordBin.open) goes back to the queue and every
+// reviewed one is replayed (carryReviewed), so the re-leased bin is the same
+// unit and its count carries on from where the interrupted run left it. A
+// re-leased bin's files all come from one prior open bin (recordedChunks gives
+// a file to the first bin naming it, and only splits bins), so the largest count
+// among the open bins naming one of its files is that bin's count. It must run
+// before carryReviewed, while the records hold only this run's bins.
+//
+// The count is history, not budget: the engine's outer retry budget
+// (unitMaxAttempts, unitBackoffBudget) is per run, so each resume grants every
+// re-leased unit a fresh one.
+func (l *chunkLedger) inheritAttempts(prior map[string]*chunkRecord) {
+	if len(prior) == 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, dir := range l.order {
+		p, ok := prior[dir]
+		if !ok {
+			continue
+		}
+		byFile := map[string]int{}
+		for _, b := range p.Bins {
+			if !b.open() || b.Attempts == 0 {
+				continue
+			}
+			for _, f := range b.Files {
+				byFile[f] = max(byFile[f], b.Attempts)
+			}
+		}
+		rec := l.records[dir]
+		for i := range rec.Bins {
+			for _, f := range rec.Bins[i].Files {
+				rec.Bins[i].Attempts = max(rec.Bins[i].Attempts, byFile[f])
+			}
+		}
+	}
 }
 
 // narrowReviewed drops from the write-back's reviewed set every file that no
