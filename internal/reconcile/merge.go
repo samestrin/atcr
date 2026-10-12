@@ -150,7 +150,7 @@ func unionReviewers(group []JSONFinding) []string {
 }
 
 // joinEvidence concatenates each member's distinct, non-empty EVIDENCE in member
-// order, joined by " / ". Duplicates (the same evidence string from co-located
+// order, joined by ClusterEvidenceSep. Duplicates (the same evidence string from co-located
 // members) collapse to one so the merged evidence does not double-count.
 func joinEvidence(group []JSONFinding) string {
 	seen := map[string]bool{}
@@ -162,7 +162,7 @@ func joinEvidence(group []JSONFinding) string {
 		seen[f.Evidence] = true
 		parts = append(parts, f.Evidence)
 	}
-	return strings.Join(parts, " / ")
+	return strings.Join(parts, ClusterEvidenceSep)
 }
 
 // VerdictRank orders verify verdicts for the cluster-merge precedence in

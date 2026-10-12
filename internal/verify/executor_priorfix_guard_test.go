@@ -155,3 +155,28 @@ func TestGenerateFixes_WithheldFixStillClearsAStaleFixReview(t *testing.T) {
 	assert.Empty(t, f.FixReview,
 		"a stale acceptance annotation must not render beside a withheld patch")
 }
+
+// TD internal/verify/executor.go:757: hasAnyFixAttribution learned reconcile's
+// " / " cluster join but its name-scoped sibling hasFixAttribution did not, so on
+// cluster-merged Evidence the two disagreed. The dispatch guard read "Found by
+// kai / fix by opus" as NOT attributed to opus, re-dispatched the executor for a
+// fix it already made, and appendFixAttribution then wrote a second "fix by opus".
+// All Evidence readers split on the same separators now.
+func TestGenerateFixes_ClusterMergedAttributionIsNotRedispatched(t *testing.T) {
+	const evidence = "Found by kai / fix by opus" // opus = execConfig's executor
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+		Fix:      "opus's earlier fix",
+		Evidence: evidence,
+	}}
+	rec := &recordingExecutor{out: `{"fix":"a second fix"}`}
+
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"),
+		rec, nil, okDispatcher(), 0)
+
+	assert.Equal(t, 0, rec.calls, "a finding this executor already attributed must not be re-dispatched")
+	assert.Equal(t, evidence, findings[0].Evidence, "the Evidence must not gain a second attribution")
+	assert.Equal(t, "opus's earlier fix", findings[0].Fix)
+	assert.Equal(t, evidence, appendFixAttribution(evidence, "opus"),
+		"appendFixAttribution must be idempotent on cluster-merged Evidence")
+}
