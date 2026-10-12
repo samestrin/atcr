@@ -184,7 +184,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 		// the proxy is gone. Pinned as the computed byte figure rather than as a
 		// literal so the two operands that produce it stay visible.
 		agentBudget := payload.EffectiveByteBudget("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
-		want := int((agentBudget - int64(len(plan))) / 64)
+		want := int((agentBudget - int64(len(plan))) / payload.AvgBytesPerLine)
 		require.Less(t, want, derived, "precondition: the reservation must actually shave the derived budget")
 
 		slots, _, err := buildSlots(roster(t, false), payloads, rng, "", plan, true)

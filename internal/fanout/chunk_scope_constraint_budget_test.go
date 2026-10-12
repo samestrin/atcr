@@ -65,10 +65,10 @@ func TestBuildSlots_ChunkedScopeConstraintFitsChunkByteBudget(t *testing.T) {
 			"chunk slot %d: the plan cap must be derived from chunk_byte_budget, not from the payload-tier agent budget", i)
 
 		blockBytes := len(embeddedScopeBlock(t, s.Primary.Prompt))
-		// The chunker packs up to chunkMaxLines lines at the same avgBytesPerLine
-		// ratio the clamp derived that budget with, so this is the diff ceiling one
-		// chunk can carry.
-		chunkBytes := s.Primary.chunkMaxLines * 64
+		// The chunker packs up to chunkMaxLines lines at the same
+		// payload.AvgBytesPerLine ratio the clamp derived that budget with, so this
+		// is the diff ceiling one chunk can carry.
+		chunkBytes := s.Primary.chunkMaxLines * payload.AvgBytesPerLine
 		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), chunkBudget,
 			"chunk slot %d: plan (%d B) + diff ceiling (%d B) must fit chunk_byte_budget (%d B) — the plan cap must come from the budget that sizes the call, not from the payload tier",
 			i, blockBytes, chunkBytes, chunkBudget)
@@ -116,9 +116,9 @@ func TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget(t *tes
 
 	for i, s := range slots {
 		blockBytes := len(embeddedScopeBlock(t, s.Primary.Prompt))
-		// Same avgBytesPerLine ratio the clamp derives the budget with, so this is
-		// the diff ceiling one chunk can carry.
-		chunkBytes := s.Primary.chunkMaxLines * 64
+		// Same payload.AvgBytesPerLine ratio the clamp derives the budget with, so
+		// this is the diff ceiling one chunk can carry.
+		chunkBytes := s.Primary.chunkMaxLines * payload.AvgBytesPerLine
 		assert.LessOrEqual(t, int64(blockBytes+chunkBytes), agentBudget,
 			"chunk slot %d: plan block (%d B) + diff ceiling (%d B) must fit the agent budget (%d B) — the uncounted block must be reserved against min(agentBudget, chunk_byte_budget), not against the inherited ceiling alone",
 			i, blockBytes, chunkBytes, agentBudget)
