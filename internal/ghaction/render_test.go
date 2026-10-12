@@ -41,6 +41,7 @@ func TestFixAttribution(t *testing.T) {
 		{"prose_mention", "reviewer suggested a fix by hand", ""},
 		{"last_segment_wins", "fix by hand; Found by bruce; fix by opus", "opus"},
 		{"empty_evidence", "", ""},
+		{"cluster_merged", "Found by kai / fix by opus", "opus"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

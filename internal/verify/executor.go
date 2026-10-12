@@ -250,9 +250,10 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		}
 		// Idempotency + cost control: a finding this executor already attributed (a
 		// prior verify run generated its fix) is not re-generated. The guard matches
-		// a delimited "; "-token, not a raw substring, so a name that is a strict
-		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
-		// "fix by <name>" mid-sentence does not silently suppress generation.
+		// a whole token split on either Evidence separator, not a raw substring, so
+		// a name that is a strict prefix of another ("op" vs "opus") or unrelated
+		// evidence prose containing "fix by <name>" mid-sentence does not silently
+		// suppress generation.
 		if hasFixAttribution(f.Evidence, ex.Name) {
 			continue
 		}
@@ -306,8 +307,17 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// generateFixes owns FixReview end-to-end, mirroring FixWarning: every
 			// early return below (second HARD reject, truncation, empty completion,
 			// self-decline, transport failure) leaves the finding without a new fix,
-			// so a FixReview from a PRIOR run must be cleared — otherwise a
-			// withheld patch could render beside a stale acceptance annotation.
+			// so a stale FixReview must be cleared — otherwise a withheld patch could
+			// render beside an acceptance annotation it never earned.
+			//
+			// Nothing in-process can produce that stale value: FixReview is set in
+			// one place, right after appendFixAttribution writes "fix by <name>", so
+			// in-process a FixReview always comes with an attribution and the guard
+			// below keeps it. This arm exists for a fix_review carried in from a
+			// prior run's findings.json (the field serialised at
+			// internal/reconcile/emit.go:167), which a hand-edited or foreign file can
+			// pair with Evidence that has no attribution;
+			// TestGenerateFixes_WithheldFixStillClearsAStaleFixReview pins that.
 			//
 			// Guarded by hasAnyFixAttribution, exactly as the FixWarning stamps in
 			// those arms are: when Evidence carries an earlier tier's "fix by <name>",
@@ -757,13 +767,17 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 }
 
 // hasFixAttribution reports whether evidence already carries this executor's
-// "fix by <name>" attribution as a delimited "; "-separated token. Matching a
-// whole token rather than a raw substring prevents a name that is a strict prefix
-// of another ("op" vs "opus") — or unrelated evidence prose containing
-// "fix by <name>" mid-sentence — from being falsely treated as already-attributed.
+// "fix by <name>" attribution as a delimited token, split by
+// reconcile.SplitEvidence on both reclib.EvidenceSep and the cluster join
+// reconcile.ClusterEvidenceSep. Matching a whole token rather than a raw
+// substring prevents a name that is a strict prefix of another ("op" vs "opus")
+// — or unrelated evidence prose containing "fix by <name>" mid-sentence — from
+// being falsely treated as already-attributed. Splitting on the cluster join too
+// is what keeps a cluster-merged "Found by kai / fix by opus" from being
+// re-dispatched to opus and attributed twice (TD internal/verify/executor.go:757).
 func hasFixAttribution(evidence, name string) bool {
 	attr := fixAttributionPrefix + name
-	for _, seg := range strings.Split(evidence, "; ") {
+	for _, seg := range reconcile.SplitEvidence(evidence) {
 		if strings.TrimSpace(seg) == attr {
 			return true
 		}
@@ -772,33 +786,28 @@ func hasFixAttribution(evidence, name string) bool {
 }
 
 // hasAnyFixAttribution reports whether evidence carries ANY executor's
-// "fix by <name>" attribution as a delimited "; "-separated token. Where
-// hasFixAttribution is the name-scoped idempotency guard, this is the
-// discriminator between an earlier tier's GENERATED fix and the reviewer's own
-// suggestion: a token starting with the attribution prefix means some executor
-// produced the Fix, so a later tier must not stamp a warning over it. Like
-// hasFixAttribution it matches whole tokens, so prose merely containing the
-// prefix mid-sentence ("reviewer suggested a fix by hand") does not qualify.
+// "fix by <name>" attribution as a delimited token. Where hasFixAttribution is
+// the name-scoped idempotency guard, this is the discriminator between an earlier
+// tier's GENERATED fix and the reviewer's own suggestion: a token starting with
+// the attribution prefix means some executor produced the Fix, so a later tier
+// must not stamp a warning over it. Like hasFixAttribution it matches whole
+// tokens, so prose merely containing the prefix mid-sentence ("reviewer suggested
+// a fix by hand") does not qualify.
 func hasAnyFixAttribution(evidence string) bool {
 	// Split on EVERY delimiter this field is actually assembled with, not just
-	// "; ": appendFixAttribution joins with "; " but returns a BARE attribution for
-	// empty Evidence, and internal/reconcile/merge.go's joinEvidence clusters with
-	// " / ". Splitting on only one of them left "Found by kai / fix by sonnet" as a
-	// single segment that failed the prefix test, so the guard saw no prior fix and
-	// the refusal/salvage/truncation/empty arms stamped a FixWarning beside a real
+	// "; ": appendFixAttribution joins with reclib.EvidenceSep but returns a BARE
+	// attribution for empty Evidence, and internal/reconcile/merge.go's
+	// joinEvidence clusters with reconcile.ClusterEvidenceSep. Splitting on only
+	// one of them left "Found by kai / fix by sonnet" as a single segment that
+	// failed the prefix test, so the guard saw no prior fix and the
+	// refusal/salvage/truncation/empty arms stamped a FixWarning beside a real
 	// generated fix — the emit.go:158 violation it exists to prevent
-	// (TD internal/verify/executor.go:748).
-	// The separators are the MULTI-character joins Evidence is actually assembled
-	// with: "; " (appendFixAttribution) and " / " (reconcile's joinEvidence). A
-	// bare "/" is deliberately NOT a separator — splitting on it would make
+	// (TD internal/verify/executor.go:748). reconcile.SplitEvidence is the one
+	// splitter this guard, hasFixAttribution and ghaction.FixAttribution share; it
+	// deliberately does NOT split on a bare "/", because that would make
 	// "path/to/fix by hand" a match, and a false positive here withholds a warning
 	// that should have been stamped, trading a wrong warning for a silent one.
-	segs := strings.Split(evidence, evidenceSeparatorAlt)
-	out := make([]string, 0, len(segs))
-	for _, seg := range segs {
-		out = append(out, strings.Split(seg, evidenceSeparatorPrimary)...)
-	}
-	for _, seg := range out {
+	for _, seg := range reconcile.SplitEvidence(evidence) {
 		if strings.HasPrefix(strings.TrimSpace(seg), fixAttributionPrefix) {
 			return true
 		}
@@ -806,16 +815,8 @@ func hasAnyFixAttribution(evidence string) bool {
 	return false
 }
 
-// evidenceSeparatorPrimary / evidenceSeparatorAlt are the two joins Evidence is
-// assembled with: appendFixAttribution uses "; " and reconcile's joinEvidence
-// uses " / ". Kept as named constants so the guard and the producers cannot drift.
-const (
-	evidenceSeparatorPrimary = "; "
-	evidenceSeparatorAlt     = " / "
-)
-
 // appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
-// with the existing separator. It is idempotent: an Evidence already carrying the
+// with reclib.EvidenceSep. It is idempotent: an Evidence already carrying the
 // attribution as a delimited token is returned unchanged.
 func appendFixAttribution(evidence, name string) string {
 	attr := fixAttributionPrefix + name
@@ -825,7 +826,7 @@ func appendFixAttribution(evidence, name string) string {
 	if hasFixAttribution(evidence, name) {
 		return evidence
 	}
-	return evidence + "; " + attr
+	return evidence + reclib.EvidenceSep + attr
 }
 
 // invokeExecutor runs the executor in agent mode (Epic 7.4): it drives a read-only
@@ -902,8 +903,14 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 	// HasEnclosingThinkBlock, the same predicate invoke.go uses and for the same
 	// reason: a draft needs an opener to sit in. HasThinkMarkup's bare-closer rule
 	// is doctor's, and adopting it here refused a VALID fix from any reply whose
-	// prose named </think> — dropping the repair entirely, which is a worse outcome
-	// here than in the verify lane (TD internal/verify/executor.go:794).
+	// prose named </think>, dropping the repair entirely.
+	//
+	// A bare closer still costs one shape, by choice: executorFixFromAnswer refuses
+	// a real fix followed by prose quoting the closer ({fix} </think> prose), since
+	// nothing in the tag structure says whether the fix before it was committed or
+	// abandoned (TestGenerateFixes_PrefixOnlyDraftFixIsRefused). The repair is kept
+	// when the fix envelope follows a bare closer, when there is no closer at all,
+	// and when the closer appears only inside a JSON string.
 	if llmclient.HasEnclosingThinkBlock(maskJSONStrings(answer)) {
 		return "", agentRefusalPrefix + "think markup outside a JSON string survived the strip, so the first fix envelope may be a draft the model discarded", res.ResponseTruncated
 	}
