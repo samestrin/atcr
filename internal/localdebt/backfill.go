@@ -221,9 +221,12 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				rationaleIDs[rec.ID] = true
 			}
 		}
-		// One ownership cache for the whole pass: see ownershipCache.
+		// One ownership cache and one review-root walk for the whole pass: see
+		// ownershipCache and reviewTree.
 		ownership := ownershipCache{}
-		for _, r := range FoldRecords(recs) {
+		folded := FoldRecords(recs)
+		tree := newReviewTree(reviewRoot, folded)
+		for _, r := range folded {
 			if rationaleIDs[r.ID] {
 				// RATIONALE-BEARING, not merely closed — the distinction record.go
 				// draws between the predicates decides both directions here.
@@ -270,7 +273,7 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 				continue
 			}
 			res.Scanned++
-			cands, err := replayCandidates(reviewRoot, r, ownership)
+			cands, err := replayCandidates(tree, r, ownership)
 			if err != nil {
 				return err
 			}
@@ -365,19 +368,26 @@ type replayResult struct {
 }
 
 // replayCandidates returns the DISTINCT excerpts every surviving review.md under
-// reviewRoot yields for rec's anchor. Distinct rather than one-per-file: two copies
+// tree's root yields for rec's anchor. Distinct rather than one-per-file: two copies
 // of the same review (a re-run, a backup) agree, and treating that as ambiguity would
 // decline a repair that has only one answer.
+//
+// The candidates are tree's walked paths, filtered per record by pathHasSuffix, so
+// the review root is walked once per pass rather than once per record.
 //
 // ownership must be non-nil to be shared: it is written on the policy-refused path,
 // and BackfillJustifications passes one map for the whole pass so each review dir's
 // summary.json is read once. A nil one is defaulted to a fresh map for this call
 // rather than panicking on that write — correct, but cached for this record alone.
-func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (replayResult, error) {
+func replayCandidates(tree *reviewTree, rec Record, ownership ownershipCache) (replayResult, error) {
 	if ownership == nil {
 		ownership = ownershipCache{}
 	}
 	rel := filepath.FromSlash(rec.SourceReport.Path)
+	paths, err := tree.walk()
+	if err != nil {
+		return replayResult{}, err
+	}
 	var out []string
 	seen := map[string]bool{}
 	policyRefused := false
@@ -388,16 +398,9 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 	owns := func(p string) bool {
 		return ownership.owns(reviewDirOf(p, rel), rec.RunID)
 	}
-	err := filepath.WalkDir(reviewRoot, func(p string, d fs.DirEntry, walkErr error) error {
-		// An unreadable file or subtree is SKIPPED, not fatal: reviewRoot is an open
-		// tree — the same resilience stance collectReviewNarratives takes over
-		// sources/ — and one bad directory must not abort a repair pass over the
-		// whole store. Propagating walkErr here would do exactly that.
-		if walkErr != nil {
-			return nil
-		}
+	for _, p := range paths {
 		if !pathHasSuffix(p, rel) {
-			return nil
+			continue
 		}
 		// No IsRegular check here: a symlink, FIFO or device named review.md is one
 		// of the file-level arms reconcile's reviewPolicy owns (it Lstats, so a link
@@ -421,23 +424,12 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 			if r.PolicyDeclined && owns(p) {
 				policyRefused = true
 			}
-			return nil
+			continue
 		}
 		if !seen[r.Text] {
 			seen[r.Text] = true
 			out = append(out, r.Text)
 		}
-		return nil
-	})
-	if err != nil {
-		// Unreachable by design, so no test drives it: filepath.WalkDir returns only
-		// what its closure returns, and the closure returns nil on every path —
-		// including a non-nil walkErr, which it skips so one unreadable subtree cannot
-		// abort a repair pass over the whole store, and including an unreadable root,
-		// which WalkDir reports through that same walkErr. It stays as a guard for a
-		// future closure that does propagate an error; a test for it would have to
-		// change the closure first.
-		return replayResult{}, fmt.Errorf("searching %s for review narratives: %w", reviewRoot, err)
 	}
 	// `policyRefused` is "the producer's policy would refuse this candidate at all",
 	// never "a file was present and nothing matched". The weaker reading was the
@@ -453,6 +445,71 @@ func replayCandidates(reviewRoot string, rec Record, ownership ownershipCache) (
 	// otherwise lets a symlink or over-cap namesake in an unrelated review speak for a
 	// record whose own tree is pruned (TD internal/localdebt/backfill.go:382).
 	return replayResult{texts: out, policyRefused: policyRefused}, nil
+}
+
+// walkDir is the walk reviewTree goes through. A var so a test can count the walks
+// one backfill pass makes. It is package state, so a test that swaps it must not call
+// t.Parallel, nor run beside one that runs a backfill pass.
+var walkDir = filepath.WalkDir
+
+// reviewTree is the review root's candidate paths, walked at most once per
+// BackfillJustifications pass and only when a record first asks (walk), so a pass
+// with nothing to replay walks nothing. Only paths whose base name is the base of
+// some record's source_report path are kept: pathHasSuffix matches on a segment
+// boundary, so a path with any other base cannot match any record, and the kept
+// set stays proportional to the review files rather than to the whole tree.
+type reviewTree struct {
+	root   string
+	bases  map[string]bool
+	walked bool
+	paths  []string
+}
+
+// newReviewTree builds the (unwalked) tree for recs. Every record with a
+// source_report path contributes its base, a superset of the records the pass
+// replays, which costs nothing but a few kept paths.
+func newReviewTree(root string, recs []Record) *reviewTree {
+	bases := map[string]bool{}
+	for _, r := range recs {
+		if r.SourceReport != nil && r.SourceReport.Path != "" {
+			bases[filepath.Base(filepath.FromSlash(r.SourceReport.Path))] = true
+		}
+	}
+	return &reviewTree{root: root, bases: bases}
+}
+
+// walk returns the kept paths in walk order, walking the root on the first call.
+// The order is WalkDir's lexical one, so each record sees its candidates in the
+// order the per-record walk this replaced did.
+func (t *reviewTree) walk() ([]string, error) {
+	if t.walked {
+		return t.paths, nil
+	}
+	err := walkDir(t.root, func(p string, d fs.DirEntry, walkErr error) error {
+		// An unreadable file or subtree is SKIPPED, not fatal: the root is an open
+		// tree — the same resilience stance collectReviewNarratives takes over
+		// sources/ — and one bad directory must not abort a repair pass over the
+		// whole store. Propagating walkErr here would do exactly that.
+		if walkErr != nil {
+			return nil
+		}
+		if t.bases[filepath.Base(p)] {
+			t.paths = append(t.paths, p)
+		}
+		return nil
+	})
+	if err != nil {
+		// Unreachable by design, so no test drives it: filepath.WalkDir returns only
+		// what its closure returns, and the closure returns nil on every path —
+		// including a non-nil walkErr, which it skips so one unreadable subtree cannot
+		// abort a repair pass over the whole store, and including an unreadable root,
+		// which WalkDir reports through that same walkErr. It stays as a guard for a
+		// future closure that does propagate an error; a test for it would have to
+		// change the closure first.
+		return nil, fmt.Errorf("searching %s for review narratives: %w", t.root, err)
+	}
+	t.walked = true
+	return t.paths, nil
 }
 
 // reviewDirOf trims the review-dir-relative rel off candidate p, leaving the review
