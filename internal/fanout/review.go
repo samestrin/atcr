@@ -2407,7 +2407,17 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// resume rebuild path because PrepareResume reconstructs pending slots and
 			// the operator was already notified during the original preparation.
 			if warnOversized {
-				for _, ct := range chunks {
+				for ci, ct := range chunks {
+					// The BYTE check, independent of the line checks below: ml was
+					// derived from chunkClampBudget at a fixed bytes/line estimate, so a
+					// diff of longer lines fills ml and still ships past the budget,
+					// silently, under a derived ml as well as an explicit one. Report it;
+					// re-splitting by bytes is chunkDiff's job and would move every chunk
+					// boundary a cached or resumed bin is keyed on.
+					if payload.ChunkExceedsByteBudget(len(ct), chunkClampBudget) {
+						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk %d of %d is %d bytes, over its %d-byte chunk budget; its lines are longer than the chunk sizing assumes, so it may overflow the model\n",
+							name, ci+1, len(chunks), len(ct), chunkClampBudget)
+					}
 					fileCount := countDiffFiles(ct)
 					// The GATE runs on the delivered total: every line of the chunk,
 					// preamble included, is dispatched to the model, so a chunk over ml
