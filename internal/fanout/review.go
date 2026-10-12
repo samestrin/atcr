@@ -1218,6 +1218,15 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// silent clean review. The executor builds its own engine without this option.
 	opts = append(opts, WithTruncationFailover())
 
+	// Durable per-chunk record (Epic 35.16.13 T1): plan every baseline bin as
+	// pending on disk BEFORE dispatch, then rewrite each persona's chunks.json as
+	// its bins resolve, so a run killed mid-fan-out still names every bin it
+	// planned and which never finished. nil (no file) for a bulk or diff run.
+	if ledger := newChunkLedger(log.FromContext(ctx), poolDir, p.Slots); ledger != nil {
+		ledger.writePlan()
+		opts = append(opts, WithSlotDone(ledger.slotDone))
+	}
+
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
 	// Baseline partial-coverage attribution — MUST run before mergeChunkResults below,
