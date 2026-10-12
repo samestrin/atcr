@@ -2283,7 +2283,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			chunkScopeConstraint := capScopeConstraintForBudget(scopeConstraint, chunkPlanBudget, cfg.Settings.MaxSprintPlanBytes)
 			// Clamp the model-derived budget to the operator's CHUNK byte ceiling.
 			// ContextWindowTokensCap admits a 10,000,000-token declaration, which
-			// derives ~728,000 lines (~34.9 MB) per chunk — past any real proxy
+			// derives ~546,000 lines (~34.9 MB) per chunk — past any real proxy
 			// request-body limit. Applied BEFORE the branch below so an explicit
 			// max_context_lines still replaces it verbatim (least surprise).
 			//
@@ -2299,8 +2299,8 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// block's own length is known here, so no line-count proxy is needed and no
 			// proxy's floor errors can push the pair over the stated ceiling — WITHIN
 			// ClampLinesToByteBudget's own minChunkLines floor, which this reservation
-			// does not remove. That floor returns 64 lines (~3072 B at the module's
-			// AvgBytesPerLine of 48) for any positive byte budget too small to fund
+			// does not remove. That floor returns 64 lines (~4096 B at the module's
+			// AvgBytesPerLine of 64) for any positive byte budget too small to fund
 			// them, so a chunkClampBudget floored to 1 still ships a chunk provably
 			// over the stated ceiling, recorded as an ordinary degradationChunk.
 			//
@@ -2348,7 +2348,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// bound on it, and it cannot be pushed over the ceiling by the proxy's own
 			// floor errors. It is not floor-error-FREE, though: ClampLinesToByteBudget
 			// has a minChunkLines floor of its own (sizing.go), so a tiny positive
-			// budget still yields a ~3072 B chunk. Better than the proxy, not exact.
+			// budget still yields a ~4096 B chunk. Better than the proxy, not exact.
 			// An explicit operator max_context_lines still wins verbatim.
 			// The chunked twin of the bulk agentBudget == 0 arm below. A window that
 			// reserves no input budget at all is honest degradation on either
@@ -3184,6 +3184,13 @@ func entryPaths(entries []payload.FileEntry) []string {
 	return paths
 }
 
+// replayReasoningOff reports whether ac opted out of replaying reasoning
+// (Epic 35.16.11.2.2.9). It reads only ac's own replay_reasoning, so a fallback
+// never inherits its primary's value.
+func replayReasoningOff(ac registry.AgentConfig) bool {
+	return ac.ReplayReasoning == registry.ReplayReasoningOff
+}
+
 // renderAgent builds a fully-rendered review Agent for `name` over an explicit
 // payload text and its file-count/truncation metadata. buildSlots' bulk path
 // uses it for the whole-diff (bulk) payload; the chunked strategy (Epic 14.3)
@@ -3287,7 +3294,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		Tools:            ac.Tools,
 		SupportsFC:       ac.SupportsFC,
 		// Epic 35.16.11.2.2.9: the agent's own replay_reasoning opt-out.
-		ReplayReasoningOff: ac.ReplayReasoning == registry.ReplayReasoningOff,
+		ReplayReasoningOff: replayReasoningOff(ac),
 		MaxTurns:           derefMaxTurns(ac.MaxTurns),
 		ToolBudgetBytes:    derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:        ac.MinSeverity,
@@ -3923,7 +3930,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// replay_reasoning is per-agent too (Epic 35.16.11.2.2.9): whether an
 		// endpoint tolerates a replayed reasoning member is a property of the
 		// fallback's OWN provider, so it sends its own value, not the primary's.
-		ReplayReasoningOff: ac.ReplayReasoning == registry.ReplayReasoningOff,
+		ReplayReasoningOff: replayReasoningOff(ac),
 		// Review constraints follow the slot, not the substitute model (Epic 2.2):
 		// a fallback answers in the primary's place, so the primary's min_severity
 		// and max_findings still govern the output.
