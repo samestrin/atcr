@@ -2,7 +2,6 @@ package report
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +11,7 @@ import (
 // TestReviewSummaryAXI_CoverageColumns pins the Epic 35.16.13 T5 additive
 // columns: present (in order, after the base columns) only when coverage was
 // measured, and absent otherwise so a bulk or diff run's payload keeps its shape.
+// The frozen legacy pipe format never carries them.
 func TestReviewSummaryAXI_CoverageColumns(t *testing.T) {
 	measured := ReviewSummaryAXI{
 		ID: "2026-10-12_x", Dir: "d", AgentsTotal: 2,
@@ -34,14 +34,12 @@ func TestReviewSummaryAXI_CoverageColumns(t *testing.T) {
 	assert.Equal(t, reviewSummaryAXIHeader, decodeAXI(t, b.Bytes()).Fields,
 		"unmeasured coverage declares no coverage columns, even with stray counts set")
 
-	// The legacy pipe encoder carries the same columns in the same order.
-	var p bytes.Buffer
-	require.NoError(t, RenderReviewSummaryPipe(&p, measured))
-	head, row, _ := strings.Cut(p.String(), "\n")
-	assert.True(t, strings.HasSuffix(head, "|bins_reviewed|bins_planned|files_covered|files_in_scope}:"), head)
-	assert.True(t, strings.HasSuffix(strings.TrimSpace(row), "|68|128|64|128"), row)
-
-	p.Reset()
-	require.NoError(t, RenderReviewSummaryPipe(&p, unmeasured))
-	assert.NotContains(t, p.String(), "bins_reviewed")
+	// The legacy pipe format is frozen: coverage never reaches it, so a measured
+	// summary renders byte-identically to an unmeasured one (EST-937).
+	var measuredPipe, unmeasuredPipe bytes.Buffer
+	require.NoError(t, RenderReviewSummaryPipe(&measuredPipe, measured))
+	require.NoError(t, RenderReviewSummaryPipe(&unmeasuredPipe, unmeasured))
+	assert.Equal(t, unmeasuredPipe.String(), measuredPipe.String())
+	assert.Equal(t, "review_summary[1|]{id|dir|agents_succeeded|agents_total|agents_failed|agents_timed_out|api_calls|findings_total|findings_critical|findings_high|findings_medium|findings_low}:\n"+
+		"  2026-10-12_x|d|0|2|0|0|0|0|0|0|0|0\n", measuredPipe.String())
 }

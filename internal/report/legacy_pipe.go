@@ -139,9 +139,11 @@ func RenderPipeAXIPaginated(w io.Writer, findings []reconcile.JSONFinding, maxLi
 }
 
 // RenderReviewSummaryPipe writes s as the legacy single-row pipe-delimited
-// review_summary[1|]{...}: payload.
+// review_summary[1|]{...}: payload. The legacy column set is frozen, so the
+// Epic 35.16.13 coverage columns are never emitted here even when measured;
+// coverage reaches only the text summary and the standard --axi encoder.
 func RenderReviewSummaryPipe(w io.Writer, s ReviewSummaryAXI) error {
-	row := []string{
+	return writePipeSingleRow(w, "review_summary", reviewSummaryAXIHeader, []string{
 		pipeQuote(s.ID),
 		pipeQuote(s.Dir),
 		strconv.FormatInt(s.AgentsSucceeded, 10),
@@ -154,11 +156,7 @@ func RenderReviewSummaryPipe(w io.Writer, s ReviewSummaryAXI) error {
 		strconv.FormatInt(s.FindingsHigh, 10),
 		strconv.FormatInt(s.FindingsMedium, 10),
 		strconv.FormatInt(s.FindingsLow, 10),
-	}
-	for _, v := range s.coverageValues() {
-		row = append(row, strconv.FormatInt(v, 10))
-	}
-	return writePipeSingleRow(w, "review_summary", s.header(), row)
+	})
 }
 
 // RenderHomeViewPipe writes s as the legacy single-row pipe-delimited
