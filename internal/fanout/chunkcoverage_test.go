@@ -110,3 +110,15 @@ func TestChunkLedger_SlotDoneStampsCoverageSignals(t *testing.T) {
 func TestCoverage_FilePercentEmptyScopeIsZero(t *testing.T) {
 	assert.Zero(t, Coverage{}.FilePercent(), "no files in scope is never reported as covered")
 }
+
+// A record over maxChunksBytes is refused, not read: an error, never a figure.
+func TestReadCoverage_OversizedRecordIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "brad", chunksFile)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, make([]byte, maxChunksBytes+1), 0o644))
+	_, ok, err := ReadCoverage(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+	assert.False(t, ok)
+}

@@ -213,3 +213,41 @@ func TestReadRunCoverage_CorruptRecordIsUnavailable(t *testing.T) {
 	writeCoverageLine(&b, cov)
 	assert.True(t, strings.HasPrefix(b.String(), "Coverage: unavailable ("), b.String())
 }
+
+// The resume path that dispatches pending agents reads coverage after its
+// fan-out and gates on it last: --require-coverage 90 exits 1 after the summary,
+// while the unflagged and at-threshold runs exit 0. Each case gets a fresh
+// review, because a drained resume is all-complete on its next run.
+func TestResume_PendingAgentsReportsAndGatesCoverage(t *testing.T) {
+	fixture := coverageFixtureDir(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"unflagged", nil, 0},
+		{"at threshold", []string{"--require-coverage", "50"}, 0},
+		{"below threshold", []string{"--require-coverage", "90"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			t.Setenv(testReviewKeyEnv, "secret")
+			initGitRepoWithChange(t)
+			srv := liveMockProvider(t)
+			liveReviewConfig(t, srv.URL, "bruce", "robin")
+			base := gitRevParse(t, "HEAD^")
+			head := gitRevParse(t, "HEAD")
+			dir := writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+			installCoverageFixture(t, fixture, dir)
+
+			args := append([]string{"review", "--resume", "latest", "--base", "HEAD^"}, tc.args...)
+			code, out := execResume(t, args...)
+			require.Equal(t, tc.code, code, out)
+			assert.Contains(t, out, "1 completed, 1 pending", "the pending agent was dispatched")
+			assert.Contains(t, out, fixtureCoverageLine, "summary is written before any gate failure")
+			if tc.code != 0 {
+				assert.Contains(t, out, "below the threshold")
+			}
+		})
+	}
+}
