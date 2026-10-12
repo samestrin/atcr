@@ -449,10 +449,12 @@ func MaskJSONStrings(s string) string {
 	// the opener stays visible and HasEnclosingThinkBlock refuses anyway. Signature 2
 	// tests only that some closer survives the mask and that more openers than closers
 	// were removed. The quoted pair (one of each removed) and the reverse asymmetry (more
-	// closers removed) never satisfy the count, but the lone quoted opener does: it stays
-	// masked only when no closer survives, and refuses whenever a closer survives
-	// anywhere in the reply — the predicate does not ask where, so this is the same reply
-	// shape signature 2 exists to catch.
+	// closers removed) never satisfy the count, but the lone quoted opener can: it stays
+	// masked when no closer survives, and refuses only when BOTH hold — a closer survives
+	// the mask AND removed openers still exceed removed closers. A quoted closer in
+	// another value evens the count, so that reply stays masked even beside a surviving
+	// closer; the predicate does not ask where the survivor sits, so the refused shape is
+	// the one signature 2 exists to catch.
 	if cutPair ||
 		(strings.Contains(masked, thinkClose) &&
 			strings.Count(s, thinkOpen)-strings.Count(masked, thinkOpen) >
