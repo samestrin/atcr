@@ -161,7 +161,8 @@ func splitDiffFiles(diff string) []string {
 // exact feature meant to control cost. Once this many chunks are sealed, chunkDiff
 // stops opening new ones and packs every remaining file into the final chunk
 // (which may exceed maxLines), so the slot count never exceeds this ceiling while
-// the diff is still delivered whole.
+// the diff is still delivered whole. The baseline (--all / --dir) path shares
+// this ceiling but defers the bins past it instead of coalescing them (capChunks).
 const maxChunksPerAgent = 64
 
 // chunkDiff bin-packs a unified diff into chunks whose line counts do not exceed
