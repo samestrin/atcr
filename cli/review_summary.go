@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/spf13/cobra"
 )
 
 // severityOrder is the high-to-low display order for the findings breakdown.
@@ -100,7 +104,10 @@ func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration) {
 //
 // legacyPipe selects the deprecated pipe-delimited encoder (--legacy-pipe /
 // ATCR_LEGACY_PIPE); the deprecation notice is written once at flag-parse time.
-func writeReviewSummaryAXI(w io.Writer, legacyPipe bool, id, dir string, m summarySnapshot) error {
+//
+// cov carries the run's chunk coverage (Epic 35.16.13 T5) as scalars; an
+// unmeasured cov adds no columns, so a bulk or diff run's payload is unchanged.
+func writeReviewSummaryAXI(w io.Writer, legacyPipe bool, id, dir string, m summarySnapshot, cov runCoverage) error {
 	render := report.RenderReviewSummaryAXI
 	if legacyPipe {
 		render = report.RenderReviewSummaryPipe
@@ -120,7 +127,86 @@ func writeReviewSummaryAXI(w io.Writer, legacyPipe bool, id, dir string, m summa
 		FindingsHigh:     m.findingsBySeverity["HIGH"],
 		FindingsMedium:   m.findingsBySeverity["MEDIUM"],
 		FindingsLow:      m.findingsBySeverity["LOW"],
+		CoverageMeasured: cov.measured,
+		BinsReviewed:     int64(cov.BinsReviewed),
+		BinsPlanned:      int64(cov.BinsPlanned),
+		FilesCovered:     int64(cov.FilesCovered),
+		FilesInScope:     int64(cov.FilesInScope),
 	})
+}
+
+// runCoverage is a review's chunk coverage as read from its chunks.json records
+// (Epic 35.16.13 T5). measured is false when no persona wrote a record (a bulk
+// or diff review bins nothing) and when the records could not be read; err
+// distinguishes the second case, which the coverage gate fails closed on.
+type runCoverage struct {
+	fanout.Coverage
+	measured bool
+	err      error
+}
+
+// readRunCoverage reads dir's coverage, logging an unreadable record rather than
+// failing the run: coverage reporting must never cost a review its artifacts.
+func readRunCoverage(ctx context.Context, dir string) runCoverage {
+	cov, ok, err := fanout.ReadCoverage(dir)
+	if err != nil {
+		log.FromContext(ctx).Warn("review coverage could not be read from chunks.json", "dir", dir, "err", err)
+		return runCoverage{err: err}
+	}
+	return runCoverage{Coverage: cov, measured: ok}
+}
+
+// writeCoverageLine prints the human coverage line after the summary block:
+// persona-bins reviewed / planned summed across personas, and files covered by
+// at least one persona / files in scope. Nothing is printed when the run binned
+// nothing, so a bulk or diff run's summary is unchanged.
+func writeCoverageLine(w io.Writer, cov runCoverage) {
+	switch {
+	case cov.err != nil:
+		_, _ = fmt.Fprintf(w, "Coverage: unavailable (%v)\n", cov.err)
+	case cov.measured:
+		_, _ = fmt.Fprintf(w, "Coverage: %d/%d persona-bins reviewed, %d/%d files covered by at least one persona (%.1f%%)\n",
+			cov.BinsReviewed, cov.BinsPlanned, cov.FilesCovered, cov.FilesInScope, cov.FilePercent())
+	}
+}
+
+// requireCoverageFlag is the --require-coverage threshold flag name.
+const requireCoverageFlag = "require-coverage"
+
+// requireCoverageThreshold returns the --require-coverage percentage and whether
+// it was set; a value outside 0-100 is a usage error (exit 2).
+func requireCoverageThreshold(cmd *cobra.Command) (float64, bool, error) {
+	if !cmd.Flags().Changed(requireCoverageFlag) {
+		return 0, false, nil
+	}
+	pct, err := cmd.Flags().GetFloat64(requireCoverageFlag)
+	if err != nil {
+		return 0, false, usageError(err)
+	}
+	if pct < 0 || pct > 100 {
+		return 0, false, usageError(fmt.Errorf("--%s must be between 0 and 100, got %g", requireCoverageFlag, pct))
+	}
+	return pct, true, nil
+}
+
+// coverageGate applies --require-coverage to a finished run's FILE coverage. It
+// runs only after the artifacts and summary are written, and only when the flag
+// was set, so a run without it keeps today's exit code. Unreadable records fail
+// closed (exit 1): the gate cannot vouch for coverage it could not measure. A run
+// that binned nothing (bulk or diff) has no chunk coverage to gate; that is
+// noted on stderr and passes.
+func coverageGate(stderr io.Writer, cov runCoverage, pct float64) error {
+	switch {
+	case cov.err != nil:
+		return &codedError{code: exitFailure, err: fmt.Errorf("--%s %g: coverage could not be measured: %w", requireCoverageFlag, pct, cov.err)}
+	case !cov.measured:
+		_, _ = fmt.Fprintf(stderr, "note: --%s not applied: this run wrote no chunks.json (only a multi-chunk --all/--scope review is binned)\n", requireCoverageFlag)
+		return nil
+	case cov.FilePercent() < pct:
+		return &codedError{code: exitFailure, err: fmt.Errorf("--%s %g: %d/%d files covered (%.1f%%) is below the threshold",
+			requireCoverageFlag, pct, cov.FilesCovered, cov.FilesInScope, cov.FilePercent())}
+	}
+	return nil
 }
 
 // severityBreakdown renders " (2 HIGH, 3 MEDIUM)" for the non-zero severities in
