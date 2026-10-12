@@ -231,7 +231,10 @@ type PreparedReview struct {
 	// off for this run (empty when enabled), threaded from computeGroundingData into
 	// summary.json so a git-failure or diff-ingestion skip is auditable (Epic 14.1).
 	GroundingDisabledReason string
-	manifest                *payload.Manifest
+	// runCeiling is the run-level wall-clock ceiling runEngine places over the
+	// fan-out; 0 means defaultRunCeiling (registry.MaxTimeoutSecs).
+	runCeiling time.Duration
+	manifest   *payload.Manifest
 	// cache is the diff cache for this review (Epic 5.2), rooted at
 	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
 	// caching could not be set up; ExecuteReview wires it into the engine when
@@ -1153,23 +1156,19 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 // the review. Extracted from ExecuteReview so ExecuteResume runs the identical
 // engine setup; the two differ only in how they persist the results.
 func runEngine(ctx context.Context, completer Completer, p *PreparedReview, poolDir string) ([]Result, *payload.ReviewStage) {
-	runCtx := ctx
-	if p.TimeoutSec > 0 {
-		var cancel context.CancelFunc
-		// Epic 19.10 F6: a chunked persona needs ~N x the base wall clock — a serial
-		// lane runs its N chunk-Slots sequentially, and a parallel lane's N chunks
-		// queue behind max_parallel / a slow backend rather than truly overlapping.
-		// Scale the overall deadline by the largest per-persona chunk total across ALL
-		// lanes (clamped). This aggregate is the load-bearing seam for the production
-		// roster (serial_agents: [], so the confirmed greta/vera/brad timeouts are
-		// parallel): the per-call deadline in invokeAgent is a child of this runCtx and
-		// cannot extend past it, so the parent must carry the room. No-op (max chunk
-		// total <= 1) when nothing is chunked, preserving the flat deadline; unrelated
-		// non-chunked agents stay bounded by their own unscaled per-call deadline.
-		scaled := scaledTimeoutSecs(p.TimeoutSec, aggregateTimeoutFactor(p.Slots, p.MaxParallel))
-		runCtx, cancel = context.WithTimeout(ctx, time.Duration(scaled)*time.Second)
-		defer cancel()
+	// Epic 35.16.14 T2: one run-level wall-clock ceiling over the whole fan-out,
+	// not a deadline scaled by how many waves of max_parallel slots the run was
+	// expected to take. The wave-scaled aggregate cancelled every unit no worker
+	// had leased yet when it expired, so a long run lost its tail without a single
+	// provider call. Each unit now gets p.TimeoutSec (scaled by its chunk count)
+	// from the moment a worker leases it (WithUnitTimeout below); the ceiling only
+	// stops a hung run.
+	ceiling := p.runCeiling
+	if ceiling <= 0 {
+		ceiling = defaultRunCeiling
 	}
+	runCtx, cancelRun := context.WithTimeout(ctx, ceiling)
+	defer cancelRun()
 
 	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
 	// unless a snapshot actually runs and succeeds below.
@@ -1177,7 +1176,7 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// Seed the engine with the review_id-correlated context logger so every agent
 	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
 	// discard logger if none is set.
-	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
+	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithUnitTimeout(p.TimeoutSec), WithLogger(log.FromContext(ctx))}
 	// Hand the diff cache to the engine (Epic 5.2). Non-tool agents whose
 	// payload+model+persona key already has a stored result replay it instead of
 	// calling the provider; nil cache (direct construction) leaves caching off.
