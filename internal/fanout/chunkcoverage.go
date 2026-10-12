@@ -71,15 +71,11 @@ func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
 			for _, f := range b.Files {
 				inScope[f] = struct{}{}
 			}
-			if b.Outcome != StatusOK || b.ContributedNothing {
+			if !b.reviewed() {
 				continue
 			}
 			cov.BinsReviewed++
-			served := b.Files
-			if b.RePacked {
-				served = b.ServedFiles
-			}
-			for _, f := range served {
+			for _, f := range b.coveredFiles() {
 				covered[f] = struct{}{}
 			}
 		}

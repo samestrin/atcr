@@ -60,6 +60,48 @@ type chunkRecordBin struct {
 	ServedFiles []string `json:"served_files,omitempty"`
 }
 
+// reviewed is the file-hash index's bin predicate: the bin finished ok and its
+// lane did not refuse its content. It is the one "reviewed" rule every reader
+// of chunks.json applies — coverage (ReadCoverage), the gap over a resume's
+// carried bins (carriedGap) and the resume's open set (open) — so a bin the
+// coverage line counts as unreviewed is always one a resume re-dispatches.
+func (b chunkRecordBin) reviewed() bool {
+	return b.Outcome == StatusOK && !b.ContributedNothing
+}
+
+// coveredFiles returns the files the bin reviewed: none unless it is reviewed,
+// only the subset its server kept when a fallback re-packed it, and all of
+// Files otherwise.
+func (b chunkRecordBin) coveredFiles() []string {
+	switch {
+	case !b.reviewed():
+		return nil
+	case b.RePacked:
+		return b.ServedFiles
+	default:
+		return b.Files
+	}
+}
+
+// open reports whether a resume must re-dispatch the bin: it is not reviewed,
+// or a re-packed server left one of its files uncovered. An ok bin that
+// contributed nothing is open, not done.
+func (b chunkRecordBin) open() bool {
+	if !b.reviewed() {
+		return true
+	}
+	covered := map[string]bool{}
+	for _, f := range b.coveredFiles() {
+		covered[f] = true
+	}
+	for _, f := range b.Files {
+		if !covered[f] {
+			return true
+		}
+	}
+	return false
+}
+
 // chunkLedger owns the chunks.json records for one engine run. Every mutation
 // and write happens under mu, so concurrent per-bin completions from the
 // parallel lane are serialised and each file is always a whole, consistent
