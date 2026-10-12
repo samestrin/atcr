@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -129,6 +130,52 @@ func TestBenchmarkFit_UnknownOutcomeFailsClosed(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "fit", "--in", in)
 	assert.NotEqual(t, 0, code)
 	assert.Contains(t, out, `outcome "silent"`)
+}
+
+// A reviewer_fit row with no outcome fails the report instead of reading as a
+// healthy call: the empty string is a checkpoint's "never recorded", which a fit
+// row, written only for a replicate that recorded its outcome, never carries.
+func TestBenchmarkFit_EmptyOutcomeFailsClosed(t *testing.T) {
+	for name, row := range map[string]string{
+		"empty":   `"outcome":"",`,
+		"missing": ``,
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := writeFitRunResult(t, `{"suite":"s","suite_version":"1","reviewer_fit":[`+
+				`{"model":"m","persona":"p","case_id":"c","replicate":1,`+row+`"findings":0,"tokens_out":5,"chunk_count":1,"silent_chunks":0}]}`)
+			code, out := execCmdCapture(t, "benchmark", "fit", "--in", in)
+			assert.NotEqual(t, 0, code)
+			assert.Contains(t, out, `reviewer_fit row for "p" on "c" has an empty outcome`)
+			assert.NotContains(t, out, "PERSONA", "no report is printed")
+		})
+	}
+}
+
+// The refusal is the fit report's alone: a checkpoint written before the outcome
+// field existed still resumes, and the run-result it produces passes the report.
+func TestBenchmarkFit_PreOutcomeCheckpointStillResumes(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, replicatesGen, path)
+	require.NoError(t, err)
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	for i := range cp.Cases {
+		cp.Cases[i].Replicate = 0
+		for j := range cp.Cases[i].Reviewers {
+			cp.Cases[i].Reviewers[j].Outcome = benchmark.OutcomeUnknown
+		}
+	}
+	require.NoError(t, saveCheckpoint(path, cp))
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"outcome"`, "the legacy file must not carry an outcome")
+
+	rr, err := executeBenchmarkRunReplicates(context.Background(), cfg, &countingCompleter{}, suiteValidPath, replicatesGen, path, 2)
+	require.NoError(t, err)
+	require.NotEmpty(t, rr.Fit)
+	_, err = buildFitReport(rr.Fit)
+	require.NoError(t, err)
 }
 
 func TestBuildFitReport_Rules(t *testing.T) {
