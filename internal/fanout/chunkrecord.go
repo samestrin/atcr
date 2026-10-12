@@ -40,10 +40,24 @@ type chunkRecord struct {
 
 // chunkRecordBin is one planned bin: its index in the persona's chunk order, the
 // repo-relative files it carries (the primary's planned set), and its outcome.
+//
+// The two optional fields are stamped as the bin resolves (Epic 35.16.13 T5) so
+// the coverage reader can apply the same "reviewed" predicate the file-hash
+// index uses without the raw Result in hand. Both are omitempty, so a bin that
+// resolved plainly is written exactly as before.
 type chunkRecordBin struct {
 	Index   int      `json:"index"`
 	Files   []string `json:"files"`
 	Outcome string   `json:"outcome"`
+	// ContributedNothing marks an ok bin whose lane refused its content
+	// (contributedNothing): it did not read the files, so it covers none of them.
+	ContributedNothing bool `json:"contributed_nothing,omitempty"`
+	// RePacked marks a bin served by a fallback that re-packed the payload to its
+	// own budget; ServedFiles is then the subset it actually reviewed
+	// (servedCoverage), possibly empty. Without RePacked the serving agent
+	// reviewed all of Files.
+	RePacked    bool     `json:"re_packed,omitempty"`
+	ServedFiles []string `json:"served_files,omitempty"`
 }
 
 // chunkLedger owns the chunks.json records for one engine run. Every mutation
@@ -138,7 +152,13 @@ func (l *chunkLedger) slotDone(i int, r Result) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.records[ref.dir].Bins[ref.bin].Outcome = r.Status
+	bin := &l.records[ref.dir].Bins[ref.bin]
+	bin.Outcome = r.Status
+	bin.ContributedNothing = r.Status == StatusOK && contributedNothing(r)
+	if r.servedRePacked {
+		bin.RePacked = true
+		bin.ServedFiles = append([]string(nil), r.servedChunkFiles...)
+	}
 	l.writeLocked(ref.dir)
 }
 

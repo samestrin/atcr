@@ -100,6 +100,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (default when unset: 10 from config, not unbounded)")
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
+	cmd.Flags().Float64(requireCoverageFlag, 0, "exit 1 (after the artifacts and summary are written) when fewer than this percentage (0-100) of in-scope files were reviewed by at least one persona, read from the run's chunks.json; applies to multi-chunk --all/--scope runs and to --resume")
 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().Bool("reverify", false, "with --verify: re-verify findings that already carry a verdict (the verify meaning of the deprecated --fresh)")
 	cmd.Flags().Bool("no-file-cache", false, "with --all/--scope: bypass the file-hash skip and re-review every in-scope file (the baseline meaning of the deprecated --fresh)")
@@ -417,6 +418,12 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	if err != nil {
 		return err
 	}
+	// --require-coverage (Epic 35.16.13 T5): validated before any review work so a
+	// bad percentage is a usage error with no wasted API calls; applied last.
+	coveragePct, requireCoverage, err := requireCoverageThreshold(cmd)
+	if err != nil {
+		return err
+	}
 
 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
 	// --min-severity here too, before any API calls, so a bad value fails fast.
@@ -691,6 +698,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	var axiWerr error
 	if result != nil {
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+		// Chunk coverage (Epic 35.16.13 T5), read back from the chunks.json records
+		// the fan-out just finished writing; reported on success, partial and
+		// all-failed alike, since it is emitted before the error guard below.
+		cov := readRunCoverage(ctx, result.Dir)
 		// --axi replaces the one-line outcome + the four human summary lines with a
 		// single token-dense TOON run-summary payload on stdout; the human lines are
 		// gated off entirely (AC 01-03). An axi render fault is left unwrapped so it
@@ -703,13 +714,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			// undeliverable either way, but the compliance record is not). The fault
 			// stays unwrapped → exitFailure (1), never a usageError (AC 02-02 Error
 			// Scenario 3).
-			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta); werr != nil {
+			if werr := writeReviewSummaryAXI(cmd.OutOrStdout(), legacyMode, result.ID, result.Dir, summaryDelta, cov); werr != nil {
 				axiWerr = fmt.Errorf("axi output rendering failed: %w", werr)
 			}
 		} else {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 				result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 			writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
+			writeCoverageLine(cmd.OutOrStdout(), cov)
 		}
 
 		// --sync-cloud push (Story 4): an explicit, user-invoked action, DEFERRED so
@@ -776,6 +788,19 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// short-circuits at the top of runReview, so it is never reached on that path.
 		// The gate's unrecognized-env-value warning goes to this command's stderr.
 		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr(), "")
+
+		// --require-coverage gate (Epic 35.16.13 T5), DEFERRED so it fires only after
+		// every artifact, ledger and the one-shot stages have run, and registered
+		// LAST so LIFO runs it FIRST: the telemetry and --sync-cloud defers above then
+		// read the gated outcome. It never overrides an earlier failure, and without
+		// the flag the exit code is exactly what it was.
+		if requireCoverage {
+			defer func() {
+				if err == nil {
+					err = coverageGate(cmd.ErrOrStderr(), cov, coveragePct)
+				}
+			}()
+		}
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved

@@ -161,6 +161,8 @@ atcr review --resume ./path        # an explicit review directory
 
 `atcr review` does not require a diff range: `--all` scans the whole repository and `--scope <path>` scans a subtree — useful for a first pass over a legacy codebase or a periodic full audit. Baseline runs are incremental: files whose content hash is unchanged since the last baseline are skipped, and `--no-file-cache` forces a full rescan. `--all` / `--scope` are mutually exclusive with `--base` / `--head` / `--merge-commit`.
 
+A large baseline run can be partial. Its summary ends with a coverage line: persona-bins reviewed out of those planned, and files reviewed by at least one persona out of those in scope. `--require-coverage <pct>` makes the run exit 1 when file coverage is below `pct` (it also works with `--resume`).
+
 ## Auto-fix (`--auto-fix`)
 
 `atcr review --auto-fix` turns findings into fixes: an executor model generates a patch per eligible finding, atcr applies it to the working tree, validates it (build + tests), auto-reverts on failure, and opens a GitHub pull request with the results. It never auto-merges.
