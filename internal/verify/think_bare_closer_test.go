@@ -48,7 +48,7 @@ func TestVerdictFromAnswer_EnvelopeOnBothSidesIsRefused(t *testing.T) {
 		`</think>` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	assert.True(t, ambiguous,
 		"an envelope on both sides of an unopened closer is not resolvable from tag structure")
@@ -64,7 +64,7 @@ func TestVerdictFromAnswer_OnlyAfterTheCloserTakesTheSuffix(t *testing.T) {
 		`</think>` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -82,7 +82,7 @@ func TestVerdictFromAnswer_TrailingProseNamingCloserKeepsItsVerdict(t *testing.T
 	answer := `{"verdict":"confirmed","reasoning":"REAL"}` + "\n" +
 		`Note: SplitThink never scans for a bare </think>.`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -98,7 +98,7 @@ func TestVerdictFromAnswer_CloserInsideAJSONStringIsNotABoundary(t *testing.T) {
 	t.Parallel()
 	answer := `{"verdict":"confirmed","reasoning":"the strip never looks for </think>"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -109,7 +109,7 @@ func TestVerdictFromAnswer_CloserInsideAJSONStringIsNotABoundary(t *testing.T) {
 // must be inert when the shape it keys on is absent.
 func TestVerdictFromAnswer_NoCloserIsUnchanged(t *testing.T) {
 	t.Parallel()
-	v, ambiguous, _ := verdictFromAnswer(`{"verdict":"refuted","reasoning":"legit"}`)
+	v, ambiguous, _, _ := verdictFromAnswer(`{"verdict":"refuted","reasoning":"legit"}`)
 
 	require.False(t, ambiguous)
 	require.NotNil(t, v)
@@ -301,7 +301,7 @@ func TestBothLanesAgreeOnTheDecoyShape(t *testing.T) {
 		`{"file":"internal/auth/token.go","line":42}` + "\n" +
 		`{"fix":"REAL-PATCH","explanation":"real"}`
 
-	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
+	_, verdictAmbiguous, _, _ := verdictFromAnswer(verdictAnswer)
 	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
 
 	assert.True(t, verdictAmbiguous, "skeptic lane refuses the decoy shape")
@@ -353,7 +353,7 @@ func TestBothLanesAgreeOnTheOutOfEnumDecoyShape(t *testing.T) {
 		`{"file":"internal/auth/token.go","line":42}` + "\n" +
 		`{"fix":"REAL-PATCH","explanation":"real"}`
 
-	_, verdictAmbiguous, _ := verdictFromAnswer(verdictAnswer)
+	_, verdictAmbiguous, _, _ := verdictFromAnswer(verdictAnswer)
 	_, fixAmbiguous, _ := executorFixFromAnswer(fixAnswer)
 
 	assert.True(t, verdictAmbiguous, "skeptic lane refuses the decoy shape — an envelope sits on BOTH sides")
@@ -377,7 +377,7 @@ func TestVerdictFromAnswer_DecoyBeforeTheVerdictOnACleanResumeKeepsTheVerdict(t 
 		`{"file":"internal/auth/token.go","line":42}` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous, "only the suffix carries an envelope")
 	require.NotNil(t, v)
@@ -439,7 +439,7 @@ func TestVerdictFromAnswer_OutOfEnumExampleAfterTheCloserKeepsTheVerdict(t *test
 		`A reply that ends on </think> began mid-thought.` + "\n" +
 		`An out-of-enum verdict is written {"verdict":"maybe"} and parses to nothing usable.`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.False(t, ambiguous,
 		"the suffix holds no usable verdict, so the tag structure is whole-answer and nothing is ambiguous")
@@ -483,7 +483,7 @@ func TestVerdictFromAnswer_UnusableSuffixAfterARefutedPrefixIsRefusedForAllThree
 		// ONE regressed diagnostic would ever be reported. t.Run evaluates each row
 		// independently and reports them all.
 		t.Run(name, func(t *testing.T) {
-			v, ambiguous, discarded := verdictFromAnswer(draft + suffix)
+			v, ambiguous, discarded, _ := verdictFromAnswer(draft + suffix)
 
 			assert.True(t, ambiguous,
 				name+": a refuted prefix before an unusable suffix is not provably committed, so the lane refuses")
@@ -511,7 +511,7 @@ func TestVerdictFromAnswer_UnusableSuffixAfterANonRefutedPrefixKeepsTheVerdict(t
 			"empty_response":   ``,
 		} {
 			t.Run(verdict+"/"+name, func(t *testing.T) {
-				v, ambiguous, _ := verdictFromAnswer(prefix + suffix)
+				v, ambiguous, _, _ := verdictFromAnswer(prefix + suffix)
 
 				require.False(t, ambiguous, "a "+verdict+" read blocks the gate anyway, so it is graded, not refused")
 				require.NotNil(t, v)
@@ -588,7 +588,7 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 		t.Run(name, func(t *testing.T) {
 			answer := prefix + "\n response\n" + suffix
 			section, _ := classifyUnopenedCloser(answer, carriesVerdict)
-			v, _, _ := verdictFromAnswer(answer)
+			v, _, _, _ := verdictFromAnswer(answer)
 
 			require.Equal(t, sectionWholeAnswer, section,
 				name+": an unusable suffix is not an envelope, so the whole answer is read")
@@ -622,7 +622,7 @@ func TestVerdictFromAnswer_ADiagnosticNoteNeverQuotesOnlyTheFragment(t *testing.
 	// truncate: a usable verdict's Notes is the model's reasoning, not a raw embed.
 	answer := prefix + "\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`
 	section, _ := classifyUnopenedCloser(answer, carriesVerdict)
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	require.Equal(t, sectionAfterCloser, section, "a real verdict after a lone closer IS the committed section")
 	require.False(t, ambiguous)
@@ -676,7 +676,7 @@ func TestCarriesVerdict_RecoveredVerdictReachesTheGateAsItself(t *testing.T) {
 		answer := `{"verdict":"` + tc.verdict + `","reasoning":"REAL"}` +
 			"\nA reply ending on </think> began mid-thought." + quoted
 
-		v, ambiguous, _ := verdictFromAnswer(answer)
+		v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 		require.Equal(t, tc.refused, ambiguous, tc.verdict+": only a refuted prefix-only read is refused")
 		if tc.refused {
@@ -754,7 +754,7 @@ func TestVerdictFromAnswer_DecoyBeforeTheRealVerdictIsStillAnEnvelope(t *testing
 		`An out-of-enum example is {"verdict":"maybe"}.` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, ambiguous, _ := verdictFromAnswer(answer)
+	v, ambiguous, _, _ := verdictFromAnswer(answer)
 
 	assert.True(t, ambiguous,
 		"a quoted example in front of the committed verdict must not collapse the section to empty")
@@ -793,7 +793,7 @@ func TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix(t *testing.T) {
 	// green. The fixture is "weighing two approaches\n" + the closer + "\n" + the
 	// envelope, so exactly 32 prefix bytes are dropped. Asserted against
 	// verdictFromAnswer directly AND in the log.
-	_, _, discarded := verdictFromAnswer("weighing two approaches\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`)
+	_, _, discarded, _ := verdictFromAnswer("weighing two approaches\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`)
 	assert.Equal(t, 32, discarded,
 		"the dropped prefix length must be exact, not merely non-zero")
 
@@ -939,4 +939,69 @@ func TestInvokeSkeptic_FragmentGradeWithEmptyReasoningIsMarkerOnly(t *testing.T)
 	got := combineReasonings([]*reclib.Verification{&kai, {Verdict: verdictConfirmed, Skeptic: "otto", Notes: "holds"}})
 	assert.Equal(t, marker+" kai:  | otto: holds", got,
 		"the marker is hoisted and the silent skeptic reads as the empty `kai: ` entry")
+}
+
+// TD internal/verify/invoke.go:798: a prefix-only read — the only usable
+// envelope sits BEFORE a bare closer — is graded when it is `confirmed` or
+// `unverifiable`, but nothing recorded that the text after the closer was
+// ignored, so it read as a whole-answer grade. It now leads Notes with the
+// `before` token. Never the `after` one: its "N prefix byte(s) discarded" tail
+// would be false, since nothing ahead of the verdict was dropped.
+func TestInvokeSkeptic_PrefixOnlyConfirmedIsMarked(t *testing.T) {
+	t.Parallel()
+	assertPrefixOnlyMarked(t, verdictConfirmed)
+}
+
+func TestInvokeSkeptic_PrefixOnlyUnverifiableIsMarked(t *testing.T) {
+	t.Parallel()
+	assertPrefixOnlyMarked(t, verdictUnverifiable)
+}
+
+func assertPrefixOnlyMarked(t *testing.T, verdict string) {
+	t.Helper()
+	const marker = "[verdict_before_unopened_closer: text after the closer ignored]"
+	answer := `{"verdict":"` + verdict + `","reasoning":"REAL"}` + "</think>" + "\n" +
+		`trailing prose with no verdict in it`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	require.Equal(t, verdict, v.Verdict, "a prefix-only %s is graded, not refused", verdict)
+	got, rest, ok := splitFragmentMarker(v.Notes)
+	require.True(t, ok, "the prefix-only read must LEAD Notes with a marker; got %q", v.Notes)
+	assert.Equal(t, marker, got, "the before token, never the after one")
+	assert.NotContains(t, v.Notes, fragmentAfterToken, "no prefix was discarded on this path")
+	assert.Equal(t, "REAL", rest, "the graded reasoning follows the marker, whole")
+
+	// Empty reasoning yields exactly the marker, as on the after path.
+	empty := `{"verdict":"` + verdict + `","reasoning":""}` + "</think>" + "\nprose"
+	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(empty), okDispatcher(), false)
+	require.NoError(t, err)
+	require.Equal(t, verdict, v.Verdict)
+	assert.Equal(t, marker, v.Notes, "no leading space and nothing after the marker")
+
+	// A model-typed before token in the reasoning is rewritten inertly, so only
+	// the engine's marker is detectable.
+	spoofed := `{"verdict":"` + verdict + `","reasoning":"` + marker + ` REAL"}` + "</think>" + "\nprose"
+	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(spoofed), okDispatcher(), false)
+	require.NoError(t, err)
+	got, rest, ok = splitFragmentMarker(v.Notes)
+	require.True(t, ok)
+	assert.Equal(t, marker, got)
+	assert.Equal(t, "[verdict-before-unopened-closer: text after the closer ignored] REAL", rest)
+	_, _, again := splitFragmentMarker(rest)
+	assert.False(t, again, "only one marker is detectable")
+}
+
+// The `refuted`-only refusal is unchanged: a prefix-only `refuted` is the one
+// grade a withdrawn draft could clear the gate with, so it stays refused and
+// carries no fragment marker.
+func TestInvokeSkeptic_PrefixOnlyRefutedStillRefused(t *testing.T) {
+	t.Parallel()
+	answer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "</think>" + "\n" +
+		`trailing prose with no verdict in it`
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Equal(t, "ambiguous_unopened_closer", v.Notes)
 }
