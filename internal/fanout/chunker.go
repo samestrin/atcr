@@ -384,6 +384,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 	out.FallbackUsed = false
 	out.FallbackFrom = ""
 	out.FallbackModel = ""
+	out.Requeues = 0     // summed below over every chunk, g[0] included
+	out.UnitAttempts = 0 // the highest chunk's, below
 	// Invalidate the parsed-finding memo copied from g[0]. out.Content is rebuilt
 	// below from ALL chunks, so chunk[0]'s cached count is stale — and when chunk[0]
 	// truncated to zero findings the failover gate cached 0/set, which would make
@@ -456,6 +458,8 @@ func mergeResultGroup(g []Result, serialSet map[string]bool) Result {
 		out.ToolCalls += r.ToolCalls
 		out.ToolBytes += r.ToolBytes
 		out.CallRecords = append(out.CallRecords, r.CallRecords...)
+		out.Requeues += r.Requeues
+		out.UnitAttempts = max(out.UnitAttempts, r.UnitAttempts)
 		out.TrippedBudgets = append(out.TrippedBudgets, r.TrippedBudgets...)
 		if isSerial {
 			// Serial-lane chunks run sequentially, so the persona's wall-clock is the

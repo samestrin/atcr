@@ -312,6 +312,39 @@ func (l *chunkLedger) slotDone(i int, r Result) {
 	l.flush(ref.dir, want)
 }
 
+// recorded reports whether slot i is a bin this ledger records: the units the
+// outer per-unit retry covers (Epic 35.16.14 T3).
+func (l *chunkLedger) recorded(i int) bool {
+	_, ok := l.bySlot[i]
+	return ok
+}
+
+// slotRequeue is the engine's requeue hook: the bin's attempt failed retryably
+// and it goes back to the queue. It counts the attempt, releases the lease and
+// returns the bin to pending, clearing the failed attempt's outcome fields, and
+// returns only once chunks.json holds that, so a run killed during the backoff
+// leaves the bin open with its attempts counted.
+func (l *chunkLedger) slotRequeue(i int, _ Result) {
+	ref, ok := l.bySlot[i]
+	if !ok {
+		return
+	}
+	l.mu.Lock()
+	bin := &l.records[ref.dir].Bins[ref.bin]
+	if l.leased[i] {
+		bin.Attempts++
+		delete(l.leased, i)
+	}
+	bin.Outcome = chunkOutcomePending
+	bin.ContributedNothing = false
+	bin.RePacked = false
+	bin.ServedFiles = nil
+	l.gen[ref.dir]++
+	want := l.gen[ref.dir]
+	l.mu.Unlock()
+	l.flush(ref.dir, want)
+}
+
 // states counts every planned bin by its current state, leased included, so the
 // counts always sum to the planned bin total. A leased bin counts as leased in
 // place of its recorded outcome.

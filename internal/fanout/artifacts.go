@@ -767,6 +767,8 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		FallbackUsed:           r.FallbackUsed,
 		FallbackFrom:           r.FallbackFrom,
 		FallbackModel:          r.FallbackModel,
+		Requeues:               r.Requeues,
+		AttemptsMax:            r.UnitAttempts,
 		DroppedByMinSeverity:   fr.Dropped,
 		TruncatedByMaxFindings: fr.Truncated,
 		DroppedByGrounding:     fr.Ungrounded,

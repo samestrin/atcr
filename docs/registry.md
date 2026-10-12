@@ -195,6 +195,8 @@ A tier participates only where it explicitly sets a value; whitespace-only value
 
 The retry tunables (`max_retries`, `initial_backoff_ms`, Epic 4.6) resolve over a **shorter chain**: agent-level field > `registry.yaml` (global) > embedded default (`max_retries=5`, `initial_backoff_ms=500`). They are deliberately **not** carried by `.atcr/config.yaml` or a CLI flag — rate-limit resilience is a property of the user's provider/account, set once at the registry tier or refined per agent. An agent's effective budget is threaded onto each call so per-agent overrides take effect without rebuilding the shared client.
 
+These tunables size the retry of **one call**: at the defaults, six attempts and about 6.6 seconds of backoff, longer only when the provider sends `Retry-After`. A multi-chunk `atcr review --all` / `--dir` run adds a second, outer retry per bin (Epic 35.16.14) that no setting changes: a bin whose call still fails with a 429, a 5xx, a connection error or a timeout goes back to the queue and is sent again after 75s/150s/300s (rate limit) or 20s/40s/80s (other errors). A rate-limited bin is retried on its own model before any fallback is tried. A bin is sent at most 4 times and waits at most 10 minutes in all, so the worst case is 4 × (`max_retries` + 1) calls per bin. The retries show up as `requeues` and `attempts_max` in the persona's `status.json`.
+
 The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
 
 ```

@@ -322,7 +322,15 @@ type AgentStatus struct {
 	FallbackUsed  bool   `json:"fallback_used,omitempty"`
 	FallbackFrom  string `json:"fallback_from,omitempty"`
 	FallbackModel string `json:"fallback_model,omitempty"`
-	Error         string `json:"error,omitempty"`
+	// Requeues and AttemptsMax record the outer per-unit retry (Epic 35.16.14
+	// T3): how many times this agent's units failed retryably (429, 5xx,
+	// transport error, timeout) and went back to the work queue, and the most
+	// leases any one of its units took. A slow run and a throttled one read the
+	// same on duration alone; these tell them apart. Both are absent for an agent
+	// whose units never requeued, so a bulk run's status.json is unchanged.
+	Requeues    int    `json:"requeues,omitempty"`
+	AttemptsMax int    `json:"attempts_max,omitempty"`
+	Error       string `json:"error,omitempty"`
 
 	// ResponseTruncated marks that this agent's model response was cut off on
 	// finish_reason "length" (token budget exhausted) — DISTINCT from Truncated
