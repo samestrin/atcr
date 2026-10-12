@@ -350,6 +350,12 @@ type Slot struct {
 	// dispatched; the chunks.json ledger records them as deferred after the
 	// persona's dispatched bins.
 	deferredBins [][]string
+
+	// resumedBin marks a baseline bin a chunk-aware resume rebuilt from the
+	// persona's prior chunks.json (Epic 35.16.13 T4). Such a bin is recorded in
+	// the chunk ledger even when it is the persona's only dispatched bin, so the
+	// resume merges it with the bins already reviewed instead of overwriting them.
+	resumedBin bool
 }
 
 // Result is the outcome of one slot after fallback resolution. Status is one of

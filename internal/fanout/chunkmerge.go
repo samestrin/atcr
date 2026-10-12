@@ -45,7 +45,7 @@ func readPriorChunkRecords(poolDir string, slots []Slot) map[string]*chunkRecord
 	var prior map[string]*chunkRecord
 	seen := map[string]bool{}
 	for _, s := range slots {
-		if s.Primary.ChunkTotal <= 1 || len(s.Primary.chunkFiles) == 0 {
+		if !recordedBin(s) {
 			continue
 		}
 		dir, err := agentDirName(s.Primary.Name)
@@ -53,23 +53,43 @@ func readPriorChunkRecords(poolDir string, slots []Slot) map[string]*chunkRecord
 			continue
 		}
 		seen[dir] = true
-		data, err := readFileLimited(filepath.Join(poolDir, poolRawAgentDir, dir, chunksFile), maxAgentFileBytes)
-		if err != nil {
-			continue
-		}
-		var rec chunkRecord
-		if json.Unmarshal(data, &rec) != nil || rec.SchemaVersion != chunksSchemaVersion || rec.Agent != s.Primary.Name {
-			continue
-		}
-		if _, err := stream.SelectFindingsFile(filepath.Join(poolDir, poolRawAgentDir, dir)); err != nil {
+		rec, ok := trustedChunkRecord(filepath.Join(poolDir, poolRawAgentDir), dir, s.Primary.Name)
+		if !ok {
 			continue
 		}
 		if prior == nil {
 			prior = map[string]*chunkRecord{}
 		}
-		prior[dir] = &rec
+		prior[dir] = rec
 	}
 	return prior
+}
+
+// trustedChunkRecord reads one persona's chunks.json from rawDir/<dir>/ and reports
+// whether it can be trusted as the record of that persona's bins. It cannot when
+// it is missing, resolves outside rawDir (a symlink), is oversize, does not
+// parse, has an unknown schema, names a different agent, plans no bins, or sits
+// beside no findings file (see readPriorChunkRecords for why the last one). Both
+// readers of the prior record — the chunk-aware pending set (Epic 35.16.13 T4)
+// and the resume merge (T3) — go through it, so a record one of them refuses
+// the other refuses too.
+func trustedChunkRecord(rawDir, dir, agent string) (*chunkRecord, bool) {
+	p := filepath.Join(rawDir, dir, chunksFile)
+	if !pathWithin(rawDir, p) {
+		return nil, false
+	}
+	data, err := readFileLimited(p, maxAgentFileBytes)
+	if err != nil {
+		return nil, false
+	}
+	var rec chunkRecord
+	if json.Unmarshal(data, &rec) != nil || rec.SchemaVersion != chunksSchemaVersion || rec.Agent != agent || len(rec.Bins) == 0 {
+		return nil, false
+	}
+	if _, err := stream.SelectFindingsFile(filepath.Join(rawDir, dir)); err != nil {
+		return nil, false
+	}
+	return &rec, true
 }
 
 // carryReviewed prepends to each planned persona record the prior bins that
