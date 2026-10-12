@@ -270,13 +270,6 @@ func TestCorpus_NeutralContent(t *testing.T) {
 	}
 }
 
-// TestCorpus_RepairBar measures Repair against the corpus and holds it to the
-// bar (epic 35.16.11.2.2.10 T5): every damaged fixture repairs to its expected
-// value, every valid control comes back unchanged, and every cut-off fixture
-// is declined so its final element stays dropped. It logs the pass rate; run
-// it with -v to read it. A miss here means the plain repair is not enough and
-// the fallback (adopting kaptinlin/jsonrepair) is due.
-//
 // declinedBeforeRepair lists fixtures the findings parser's element recovery
 // already reads in full, so Repair is never asked: Repair must decline them,
 // since closing a top-level object open at end of input could admit a cut-off
@@ -285,6 +278,12 @@ var declinedBeforeRepair = map[string]bool{
 	"missing_closer_wrapper": true,
 }
 
+// TestCorpus_RepairBar measures Repair against the corpus and holds it to the
+// bar (epic 35.16.11.2.2.10 T5): every damaged fixture repairs to its expected
+// value, every valid control comes back unchanged, and every cut-off fixture
+// is declined so its final element stays dropped. It logs the pass rate; run
+// it with -v to read it. A miss here means the plain repair is not enough and
+// the fallback (adopting kaptinlin/jsonrepair) is due.
 func TestCorpus_RepairBar(t *testing.T) {
 	pass, total := 0, 0
 	for _, f := range loadCorpus(t) {
