@@ -127,6 +127,8 @@ func TestResumeMerge_SixtyOfSixtyFourKeepsReviewedBins(t *testing.T) {
 		sum, err := ReadPoolSummary(dir)
 		require.NoError(t, err)
 		assert.Equal(t, 64, sum.TotalFindings, "the rebuilt pool carries the union")
+
+		assertCoverage(t, dir, Coverage{BinsReviewed: 64, BinsPlanned: 64, FilesCovered: 64, FilesInScope: 64})
 	})
 
 	t.Run("two resumed bins fail again", func(t *testing.T) {
@@ -143,6 +145,7 @@ func TestResumeMerge_SixtyOfSixtyFourKeepsReviewedBins(t *testing.T) {
 		assert.Equal(t, StatusOK, st.Status)
 		assert.Equal(t, 2, st.UnreviewedChunks, "recomputed over 64 bins, not the original 60")
 		assert.Equal(t, 64, st.ChunkCount)
+		assertCoverage(t, dir, Coverage{BinsReviewed: 62, BinsPlanned: 64, FilesCovered: 62, FilesInScope: 64})
 	})
 
 	t.Run("every resumed bin fails again", func(t *testing.T) {
@@ -404,6 +407,7 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 		assert.Equal(t, StatusOK, st.Status)
 		assert.Equal(t, 6, st.UnreviewedChunks, "the 6 deferred bins are unreviewed")
 		assert.Equal(t, 70, st.ChunkCount)
+		assertCoverage(t, dir, Coverage{BinsReviewed: 64, BinsPlanned: 70, FilesCovered: 64, FilesInScope: 70})
 	})
 
 	t.Run("resume dispatches some deferred bins and defers the rest again", func(t *testing.T) {
@@ -429,5 +433,41 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 		st := readAgentStatus(t, poolDir, "greta")
 		assert.Equal(t, 2, st.UnreviewedChunks)
 		assert.Equal(t, 70, st.ChunkCount)
+		assertCoverage(t, dir, Coverage{BinsReviewed: 68, BinsPlanned: 70, FilesCovered: 68, FilesInScope: 70})
 	})
+}
+
+// assertCoverage checks the coverage T5 reads back from the resumed review's
+// chunks.json: the figure behind the summary's coverage line and the
+// --require-coverage gate.
+func assertCoverage(t *testing.T, dir string, want Coverage) {
+	t.Helper()
+	cov, ok, err := ReadCoverage(dir)
+	require.NoError(t, err)
+	require.True(t, ok, "the resumed review is measured")
+	assert.Equal(t, want, cov)
+}
+
+// A replayed bin keeps what the interrupted run recorded about it. An ok bin
+// whose lane refused its content, or one a fallback re-packed to a subset, must
+// not count as fully reviewed in T5's coverage just because a resume carried it.
+func TestCarryReviewed_KeepsCoverageMarkers(t *testing.T) {
+	entries := sixtyFourFiles()
+	dir := originalRun(t, entries, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	rewriteChunkRecord(t, poolDir, func(r *chunkRecord) {
+		r.Bins[0].ContributedNothing = true
+		r.Bins[1].RePacked = true
+		r.Bins[1].ServedFiles = nil
+	})
+	resumeGreta(t, dir, gretaBaselineSlots(t, entries[4:]), baselineChunkFindingCompleter{})
+
+	rec := readChunkRecord(t, poolDir, "greta")
+	require.Len(t, rec.Bins, 64)
+	assert.True(t, rec.Bins[0].ContributedNothing)
+	assert.True(t, rec.Bins[1].RePacked)
+	assert.Empty(t, rec.Bins[1].ServedFiles)
+	assert.False(t, rec.Bins[2].ContributedNothing || rec.Bins[2].RePacked)
+
+	assertCoverage(t, dir, Coverage{BinsReviewed: 63, BinsPlanned: 64, FilesCovered: 62, FilesInScope: 64})
 }

@@ -109,11 +109,16 @@ func (l *chunkLedger) carryReviewed(prior map[string]*chunkRecord) {
 			if len(b.Files) == 0 || anyIn(b.Files, fresh) {
 				continue
 			}
+			// The bin is carried whole: T5's coverage reads contributed_nothing and
+			// re_packed / served_files, so a replayed bin must not claim more of its
+			// files reviewed than the interrupted run did.
+			b.Files = append([]string(nil), b.Files...)
+			b.ServedFiles = append([]string(nil), b.ServedFiles...)
 			switch b.Outcome {
 			case StatusOK:
-				kept = append(kept, chunkRecordBin{Files: append([]string(nil), b.Files...), Outcome: StatusOK})
+				kept = append(kept, b)
 			case chunkOutcomeDeferred:
-				deferred = append(deferred, chunkRecordBin{Files: append([]string(nil), b.Files...), Outcome: chunkOutcomeDeferred})
+				deferred = append(deferred, b)
 			}
 		}
 		if len(kept) == 0 {
