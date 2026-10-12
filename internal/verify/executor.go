@@ -254,7 +254,15 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		// a name that is a strict prefix of another ("op" vs "opus") or unrelated
 		// evidence prose containing "fix by <name>" mid-sentence does not silently
 		// suppress generation.
+		//
+		// The skip is traceable but never warns: hasFixAttribution returns only a
+		// bool, so this site cannot tell a cluster-merged record whose "fix by" came
+		// from another member from the ordinary re-verify of a finding this executor
+		// already fixed, and a Warn per skip would repeat for every fixed finding on
+		// every run. Every attribution skip records executor_attribution_skip at Debug.
 		if hasFixAttribution(f.Evidence, ex.Name) {
+			logPipelineDetail(log.FromContext(ctx), "executor_attribution_skip",
+				fmt.Sprintf("%s:%d: skipped: evidence already carries fix by %s", f.File, f.Line, ex.Name))
 			continue
 		}
 		// Complexity ceiling (Sprint 32.1, original epic T4): the fourth pre-dispatch
