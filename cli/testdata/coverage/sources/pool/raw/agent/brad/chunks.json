@@ -1,0 +1,518 @@
+{
+  "schema_version": 1,
+  "agent": "brad",
+  "bins": [
+    {
+      "index": 0,
+      "files": [
+        "src/f000.go",
+        "src/f001.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 1,
+      "files": [
+        "src/f002.go",
+        "src/f003.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 2,
+      "files": [
+        "src/f004.go",
+        "src/f005.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 3,
+      "files": [
+        "src/f006.go",
+        "src/f007.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 4,
+      "files": [
+        "src/f008.go",
+        "src/f009.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 5,
+      "files": [
+        "src/f010.go",
+        "src/f011.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 6,
+      "files": [
+        "src/f012.go",
+        "src/f013.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 7,
+      "files": [
+        "src/f014.go",
+        "src/f015.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 8,
+      "files": [
+        "src/f016.go",
+        "src/f017.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 9,
+      "files": [
+        "src/f018.go",
+        "src/f019.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 10,
+      "files": [
+        "src/f020.go",
+        "src/f021.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 11,
+      "files": [
+        "src/f022.go",
+        "src/f023.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 12,
+      "files": [
+        "src/f024.go",
+        "src/f025.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 13,
+      "files": [
+        "src/f026.go",
+        "src/f027.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 14,
+      "files": [
+        "src/f028.go",
+        "src/f029.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 15,
+      "files": [
+        "src/f030.go",
+        "src/f031.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 16,
+      "files": [
+        "src/f032.go",
+        "src/f033.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 17,
+      "files": [
+        "src/f034.go",
+        "src/f035.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 18,
+      "files": [
+        "src/f036.go",
+        "src/f037.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 19,
+      "files": [
+        "src/f038.go",
+        "src/f039.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 20,
+      "files": [
+        "src/f040.go",
+        "src/f041.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 21,
+      "files": [
+        "src/f042.go",
+        "src/f043.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 22,
+      "files": [
+        "src/f044.go",
+        "src/f045.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 23,
+      "files": [
+        "src/f046.go",
+        "src/f047.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 24,
+      "files": [
+        "src/f048.go",
+        "src/f049.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 25,
+      "files": [
+        "src/f050.go",
+        "src/f051.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 26,
+      "files": [
+        "src/f052.go",
+        "src/f053.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 27,
+      "files": [
+        "src/f054.go",
+        "src/f055.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 28,
+      "files": [
+        "src/f056.go",
+        "src/f057.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 29,
+      "files": [
+        "src/f058.go",
+        "src/f059.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 30,
+      "files": [
+        "src/f060.go",
+        "src/f061.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 31,
+      "files": [
+        "src/f062.go",
+        "src/f063.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 32,
+      "files": [
+        "src/f064.go",
+        "src/f065.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 33,
+      "files": [
+        "src/f066.go",
+        "src/f067.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 34,
+      "files": [
+        "src/f068.go",
+        "src/f069.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 35,
+      "files": [
+        "src/f070.go",
+        "src/f071.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 36,
+      "files": [
+        "src/f072.go",
+        "src/f073.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 37,
+      "files": [
+        "src/f074.go",
+        "src/f075.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 38,
+      "files": [
+        "src/f076.go",
+        "src/f077.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 39,
+      "files": [
+        "src/f078.go",
+        "src/f079.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 40,
+      "files": [
+        "src/f080.go",
+        "src/f081.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 41,
+      "files": [
+        "src/f082.go",
+        "src/f083.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 42,
+      "files": [
+        "src/f084.go",
+        "src/f085.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 43,
+      "files": [
+        "src/f086.go",
+        "src/f087.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 44,
+      "files": [
+        "src/f088.go",
+        "src/f089.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 45,
+      "files": [
+        "src/f090.go",
+        "src/f091.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 46,
+      "files": [
+        "src/f092.go",
+        "src/f093.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 47,
+      "files": [
+        "src/f094.go",
+        "src/f095.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 48,
+      "files": [
+        "src/f096.go",
+        "src/f097.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 49,
+      "files": [
+        "src/f098.go",
+        "src/f099.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 50,
+      "files": [
+        "src/f100.go",
+        "src/f101.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 51,
+      "files": [
+        "src/f102.go",
+        "src/f103.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 52,
+      "files": [
+        "src/f104.go",
+        "src/f105.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 53,
+      "files": [
+        "src/f106.go",
+        "src/f107.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 54,
+      "files": [
+        "src/f108.go",
+        "src/f109.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 55,
+      "files": [
+        "src/f110.go",
+        "src/f111.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 56,
+      "files": [
+        "src/f112.go",
+        "src/f113.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 57,
+      "files": [
+        "src/f114.go",
+        "src/f115.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 58,
+      "files": [
+        "src/f116.go",
+        "src/f117.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 59,
+      "files": [
+        "src/f118.go",
+        "src/f119.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 60,
+      "files": [
+        "src/f120.go",
+        "src/f121.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 61,
+      "files": [
+        "src/f122.go",
+        "src/f123.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 62,
+      "files": [
+        "src/f124.go",
+        "src/f125.go"
+      ],
+      "outcome": "timeout"
+    },
+    {
+      "index": 63,
+      "files": [
+        "src/f126.go",
+        "src/f127.go"
+      ],
+      "outcome": "timeout"
+    }
+  ]
+}

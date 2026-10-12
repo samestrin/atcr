@@ -1,0 +1,454 @@
+{
+  "schema_version": 1,
+  "agent": "kai",
+  "bins": [
+    {
+      "index": 0,
+      "files": [
+        "src/f000.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 1,
+      "files": [
+        "src/f001.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 2,
+      "files": [
+        "src/f002.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 3,
+      "files": [
+        "src/f003.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 4,
+      "files": [
+        "src/f004.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 5,
+      "files": [
+        "src/f005.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 6,
+      "files": [
+        "src/f006.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 7,
+      "files": [
+        "src/f007.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 8,
+      "files": [
+        "src/f008.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 9,
+      "files": [
+        "src/f009.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 10,
+      "files": [
+        "src/f010.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 11,
+      "files": [
+        "src/f011.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 12,
+      "files": [
+        "src/f012.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 13,
+      "files": [
+        "src/f013.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 14,
+      "files": [
+        "src/f014.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 15,
+      "files": [
+        "src/f015.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 16,
+      "files": [
+        "src/f016.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 17,
+      "files": [
+        "src/f017.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 18,
+      "files": [
+        "src/f018.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 19,
+      "files": [
+        "src/f019.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 20,
+      "files": [
+        "src/f020.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 21,
+      "files": [
+        "src/f021.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 22,
+      "files": [
+        "src/f022.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 23,
+      "files": [
+        "src/f023.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 24,
+      "files": [
+        "src/f024.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 25,
+      "files": [
+        "src/f025.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 26,
+      "files": [
+        "src/f026.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 27,
+      "files": [
+        "src/f027.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 28,
+      "files": [
+        "src/f028.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 29,
+      "files": [
+        "src/f029.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 30,
+      "files": [
+        "src/f030.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 31,
+      "files": [
+        "src/f031.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 32,
+      "files": [
+        "src/f032.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 33,
+      "files": [
+        "src/f033.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 34,
+      "files": [
+        "src/f034.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 35,
+      "files": [
+        "src/f035.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 36,
+      "files": [
+        "src/f036.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 37,
+      "files": [
+        "src/f037.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 38,
+      "files": [
+        "src/f038.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 39,
+      "files": [
+        "src/f039.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 40,
+      "files": [
+        "src/f040.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 41,
+      "files": [
+        "src/f041.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 42,
+      "files": [
+        "src/f042.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 43,
+      "files": [
+        "src/f043.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 44,
+      "files": [
+        "src/f044.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 45,
+      "files": [
+        "src/f045.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 46,
+      "files": [
+        "src/f046.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 47,
+      "files": [
+        "src/f047.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 48,
+      "files": [
+        "src/f048.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 49,
+      "files": [
+        "src/f049.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 50,
+      "files": [
+        "src/f050.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 51,
+      "files": [
+        "src/f051.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 52,
+      "files": [
+        "src/f052.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 53,
+      "files": [
+        "src/f053.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 54,
+      "files": [
+        "src/f054.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 55,
+      "files": [
+        "src/f055.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 56,
+      "files": [
+        "src/f056.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 57,
+      "files": [
+        "src/f057.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 58,
+      "files": [
+        "src/f058.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 59,
+      "files": [
+        "src/f059.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 60,
+      "files": [
+        "src/f060.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 61,
+      "files": [
+        "src/f061.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 62,
+      "files": [
+        "src/f062.go"
+      ],
+      "outcome": "ok"
+    },
+    {
+      "index": 63,
+      "files": [
+        "src/f063.go"
+      ],
+      "outcome": "ok"
+    }
+  ]
+}
