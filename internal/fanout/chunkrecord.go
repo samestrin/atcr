@@ -232,3 +232,5 @@ func (l *chunkLedger) writeLocked(dir string) {
 		l.log.Warn("chunks.json write failed", "agent", l.records[dir].Agent, "path", path, "err", err)
 	}
 }
+
+func (l *chunkLedger) writeErr() error { return nil }

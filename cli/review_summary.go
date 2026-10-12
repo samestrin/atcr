@@ -148,7 +148,7 @@ type runCoverage struct {
 
 // readRunCoverage reads dir's coverage, logging an unreadable record rather than
 // failing the run: coverage reporting must never cost a review its artifacts.
-func readRunCoverage(ctx context.Context, dir string) runCoverage {
+func readRunCoverage(ctx context.Context, dir string, recordErr error) runCoverage {
 	cov, ok, err := fanout.ReadCoverage(dir)
 	if err != nil {
 		log.FromContext(ctx).Warn("review coverage could not be read from chunks.json", "dir", dir, "err", err)

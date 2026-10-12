@@ -151,6 +151,7 @@ type ReviewResult struct {
 	ID      string
 	Dir     string
 	Summary Summary
+	ChunkRecordErr error
 }
 
 // LoadReviewConfig loads the registry and project config under root, validates
