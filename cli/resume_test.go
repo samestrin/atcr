@@ -473,6 +473,7 @@ func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 0, code, "resume runs the pending agent and reconciles -> exit 0")
 	require.Contains(t, out, "1 completed, 1 pending")
+	require.NotContains(t, out, "unit(s) to re-lease", "a diff resume's announce line is unchanged")
 	require.Contains(t, out, "reconciled")
 
 	// AC4/AC6: robin now has results and the review derives to completed.

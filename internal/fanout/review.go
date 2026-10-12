@@ -1236,7 +1236,11 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// On resume (Epic 35.16.13 T3) the record starts as the union with the prior
 	// run's reviewed bins this run does not re-dispatch, and p.chunks keeps the
 	// ledger so writeResumedAgents can rebuild the persona from that union.
+	// A resumed bin starts from the attempts its prior record counted
+	// (inheritAttempts, Epic 35.16.14 T6), so the ledger's count is the unit's
+	// whole history rather than this run's share.
 	if ledger := newChunkLedger(log.FromContext(ctx), poolDir, p.Slots); ledger != nil {
+		ledger.inheritAttempts(p.priorChunks)
 		ledger.carryReviewed(p.priorChunks)
 		p.chunks = ledger
 		ledger.writePlan()

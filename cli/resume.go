@@ -294,8 +294,14 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	}
 
 	if !axiMode { // gated under --axi: stdout stays payload-only
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
-			prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
+		// A baseline resume names how many bins it re-leases, the unit a resumed
+		// run is billed in (Epic 35.16.14 T6); a diff resume keeps its line.
+		units := ""
+		if info.Units > 0 {
+			units = fmt.Sprintf("; %d unit(s) to re-lease", info.Units)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)%s\n",
+			prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "), units)
 	}
 
 	// Snapshot the summary counters before the resumed fan-out so the end-of-review

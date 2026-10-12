@@ -200,6 +200,28 @@ func TestReviewAll_PartialRunCoverageLineAndGate(t *testing.T) {
 	assert.True(t, ok, "artifacts are written before the gate fails")
 }
 
+// A baseline resume drains the ledger: the announce line names the units it
+// re-leases, here the one bin the first run failed (Epic 35.16.14 T6).
+func TestResume_BaselineNamesUnitsToRelease(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	for name, ch := range map[string]byte{"big1.txt": 'x', "big2.txt": 'x', "big3.txt": 'y'} {
+		require.NoError(t, os.WriteFile(name, bytes.Repeat([]byte{ch}, 80_000), 0o644))
+	}
+	gitRun(t, "add", "-A")
+	gitRun(t, "commit", "-qm", "add big files")
+	srv := failingContentProvider(t, strings.Repeat("y", 64))
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, _, stderr := execCmdSplit(t, "review", "--all", "--no-file-cache")
+	require.Equal(t, 0, code, stderr)
+
+	code, stdout, stderr := execCmdSplit(t, "review", "--resume", "latest")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stdout, "0 completed, 1 pending (bruce); 1 unit(s) to re-lease")
+}
+
 // An unreadable record is reported as unavailable, never as a figure.
 func TestReadRunCoverage_CorruptRecordIsUnavailable(t *testing.T) {
 	dir := t.TempDir()
