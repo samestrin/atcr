@@ -807,6 +807,12 @@ type Engine struct {
 	// parallel lane; the callee must serialise its own state. nil (the default)
 	// makes Run behave exactly as before.
 	slotDone func(i int, r Result)
+	// slotStart, when set, is called once per slot the moment a worker takes it
+	// (after the parallel lane's semaphore token is won, or when the serial lane
+	// reaches it), before the provider is called. It is the work ledger's lease
+	// hook (Epic 35.16.14 T1). A slot the run's cancellation reaches first never
+	// starts. Called concurrently; nil makes Run behave as before.
+	slotStart func(i int)
 }
 
 // EngineOption configures an Engine at construction.
@@ -871,6 +877,14 @@ func WithTruncationFailover() EngineOption {
 // engine, so f must not panic; log and continue instead.
 func WithSlotDone(f func(i int, r Result)) EngineOption {
 	return func(e *Engine) { e.slotDone = f }
+}
+
+// WithSlotStart wires a per-slot lease hook: f(i) runs once for every slot a
+// worker takes, before its provider call, and is always followed by the slot's
+// WithSlotDone hook. f is called concurrently and must be goroutine-safe and
+// must not panic.
+func WithSlotStart(f func(i int)) EngineOption {
+	return func(e *Engine) { e.slotStart = f }
 }
 
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
@@ -978,6 +992,13 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			e.slotDone(i, results[i])
 		}
 	}
+	// lease reports to the lease hook that a worker took slot i. A slot taken
+	// after the run was cancelled makes no call, so it is not leased.
+	lease := func(i int) {
+		if e.slotStart != nil && ctx.Err() == nil {
+			e.slotStart(i)
+		}
+	}
 
 	// Serial slots share one goroutine so they never overlap; parallel slots
 	// each get their own. Both lanes start together and the WaitGroup joins them.
@@ -1015,6 +1036,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 					return
 				}
 			}
+			lease(i)
 			results[i] = e.invokeSlot(ctx, s)
 		}(i, slots[i])
 	}
@@ -1052,6 +1074,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 						}
 						return
 					}
+					lease(i)
 					results[i] = e.invokeSlot(ctx, s)
 				}(i)
 			}
