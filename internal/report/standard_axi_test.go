@@ -19,9 +19,15 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
-// withFindingIDs returns a copy of findings with each ID stamped the way the
-// reconcile emitter stamps it (history.FindingID over file, line and problem),
-// so a golden shows a filled id column rather than an empty one.
+// withFindingIDs returns a copy of findings with each ID stamped as
+// history.FindingID over the File, Line and Problem the finding carries, so a
+// golden shows a filled id column rather than an empty one. The copy is shallow:
+// the struct values are copied, so the ID stamp never reaches the caller's
+// slice, but the Reviewers slice and the Verification and EvidenceExec pointers
+// are shared with it. The stamp is over the Problem as given: the reconcile
+// emitter hashes the "(symbol) "-anchored Problem stampSymbolAnchors leaves, so
+// this matches the emitter's id only when the fixture's Problem already carries
+// any "(symbol)" anchor itself.
 func withFindingIDs(findings []reconcile.JSONFinding) []reconcile.JSONFinding {
 	out := append([]reconcile.JSONFinding(nil), findings...)
 	for i := range out {
@@ -199,6 +205,7 @@ func TestAXIRowKeysMatchColumnHeader(t *testing.T) {
 			got = append(got, strings.Trim(strings.TrimSpace(col), `"`))
 		}
 		legacy := axiColumnsFor(findings).header()
+		require.GreaterOrEqualf(t, len(legacy), 9, "mask=%d: legacy header %q is shorter than the nine base columns", mask, legacy)
 		require.Equal(t, "confidence", legacy[8], "the id column follows the nine base columns")
 		want := append(append(append([]string{}, legacy[:9]...), "id"), legacy[9:]...)
 		assert.Equalf(t, want, got,
@@ -243,6 +250,35 @@ func TestEncodeAXI_WritesNothingOnFailure(t *testing.T) {
 	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
 	var kce *goaxi.KeyCollisionError
 	assert.ErrorAs(t, err, &kce)
+}
+
+// TestEncodeAXI_WritesNothingOnFailure_CfKeyCollision is the Cf-character twin
+// of TestEncodeAXI_WritesNothingOnFailure: go-axi v0.4.0 strips Unicode Cf
+// format characters (here U+200B zero-width space) from map keys too, so
+// "na\u200bme" cleans to "name" and collides with the real "name" key. The
+// encode must fail with a *KeyCollisionError and write nothing.
+func TestEncodeAXI_WritesNothingOnFailure_CfKeyCollision(t *testing.T) {
+	dirty := map[string]any{"na\u200bme": 1, "name": 2}
+	var b bytes.Buffer
+	err := encodeAXI(&b, dirty)
+	require.Error(t, err)
+	assert.Empty(t, b.String(), "a failed encode must leave the writer untouched")
+	var kce *goaxi.KeyCollisionError
+	assert.ErrorAs(t, err, &kce)
+}
+
+// TestWithFindingIDs_DoesNotMutateInput pins the copy half of withFindingIDs'
+// contract: the returned findings carry IDs, but the caller's structs stay
+// unstamped, so a fixture reused across tests never picks up an ID it did not
+// declare.
+func TestWithFindingIDs_DoesNotMutateInput(t *testing.T) {
+	in := sample()
+	out := withFindingIDs(in)
+	require.Len(t, out, len(in))
+	for i := range in {
+		assert.NotEmptyf(t, out[i].ID, "returned finding %d must be stamped", i)
+		assert.Emptyf(t, in[i].ID, "caller's finding %d must stay unstamped", i)
+	}
 }
 
 // TestRenderAXI_MixedPayloadDecodesWithTypedPointers pins AC1 for the common
@@ -388,8 +424,15 @@ func TestRenderAXI_IDColumnDeclaredAndFilled(t *testing.T) {
 	var plain, paged bytes.Buffer
 	require.NoError(t, renderAXI(&plain, findings))
 	require.NoError(t, RenderAXIPaginated(&paged, findings, AXIMaxLinesDefault))
-	for name, payload := range map[string][]byte{"renderAXI": plain.Bytes(), "RenderAXIPaginated": paged.Bytes()} {
-		doc := decodeAXI(t, payload)
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+	}{
+		{"renderAXI", plain.Bytes()},
+		{"RenderAXIPaginated", paged.Bytes()},
+	} {
+		name := tc.name
+		doc := decodeAXI(t, tc.payload)
 		assert.Containsf(t, doc.Fields, "id", "%s must declare the id column", name)
 		require.Lenf(t, doc.Rows, 3, "%s", name)
 		for i, f := range findings {
