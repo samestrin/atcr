@@ -114,12 +114,12 @@ func duplicateIdentityError(path, what string, key reviewerKey, prevModel, prevP
 // the same argument that keeps the outer list uncapped, applied one level in.
 const maxNamedMissingCases = 3
 
-// halfSeparator divides describeMissing's labelled parts. It is deliberately NOT the
+// labelSeparator divides describeMissing's labelled parts. It is deliberately NOT the
 // "; " checkCoverage uses between distinct short rows: the row list is the outer
 // nesting level, and a message that nests both must keep the two delimiters
 // distinguishable — otherwise a reader, or anything downstream that splits on it,
 // reads one reviewer row as two.
-const halfSeparator = " / "
+const labelSeparator = " / "
 
 // checkCoverage is the publication gate: no reviewer row may reach the public board
 // having been scored over less than the suite the run-result declares.
@@ -911,7 +911,7 @@ func describeMissing(missing []string, failed, slotFailed map[string]string) str
 	// multi-short-row run is the normal case on a large roster. Using one delimiter at
 	// two nesting levels fragments a single reviewer row into two for a reader — and
 	// for anything downstream that splits the message on it.
-	return strings.Join(parts, halfSeparator)
+	return strings.Join(parts, labelSeparator)
 }
 
 // firstNonPrintingRune reports the first control (Cc) or format (Cf) rune in s —
