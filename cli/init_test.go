@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1082,6 +1083,75 @@ func TestRefreshPersonas_ReplacesSymlinkLeavesTarget(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.Mode().IsRegular(), "the symlink must be replaced by a regular file")
 	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
+}
+
+// TestRefreshPersonas_SymlinkIsNotReadThrough: a symlinked copy is queued for
+// replacement without reading its target, so a link to a directory (unreadable)
+// or to /dev/zero (endless) neither fails nor hangs the refresh. A stamped link
+// is marked edited, as a dangling one always was.
+func TestRefreshPersonas_SymlinkIsNotReadThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	for _, target := range []string{t.TempDir(), "/dev/zero"} {
+		t.Run(filepath.Base(target), func(t *testing.T) {
+			if _, err := os.Stat(target); err != nil {
+				t.Skipf("%s: %v", target, err)
+			}
+			dir := t.TempDir()
+			initDir(t, dir)
+			pdir := filepath.Join(dir, ".atcr", "personas")
+			brucePath := filepath.Join(pdir, "bruce.md")
+			require.NoError(t, os.Remove(brucePath))
+			require.NoError(t, os.Symlink(target, brucePath))
+
+			done := make(chan error, 1)
+			var out bytes.Buffer
+			go func() { done <- runRefreshPersonas(dir, true, &out) }()
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("refresh hung reading through the symlink")
+			}
+			assert.Contains(t, out.String(), "Would refresh 1 persona file(s)")
+			assert.Contains(t, out.String(), "  bruce.md (edited by hand")
+		})
+	}
+}
+
+// TestHashPersonaCopy_CapsTheRead: a copy over maxPersonaCopyBytes is not read
+// whole and hashes to "" (differs from any embedded content); one at the cap
+// hashes normally.
+func TestHashPersonaCopy_CapsTheRead(t *testing.T) {
+	pdir := t.TempDir()
+	atCap := filepath.Join(pdir, "at.md")
+	require.NoError(t, os.WriteFile(atCap, bytes.Repeat([]byte("a"), maxPersonaCopyBytes), 0o644))
+	over := filepath.Join(pdir, "over.md")
+	require.NoError(t, os.WriteFile(over, bytes.Repeat([]byte("a"), maxPersonaCopyBytes+1), 0o644))
+
+	hash, err := hashPersonaCopy(atCap)
+	require.NoError(t, err)
+	assert.Equal(t, registry.HashPersonaContent(bytes.Repeat([]byte("a"), maxPersonaCopyBytes)), hash)
+
+	hash, err = hashPersonaCopy(over)
+	require.NoError(t, err)
+	assert.Empty(t, hash)
+}
+
+// TestRefreshPersonas_OversizedCopyIsRefreshed: a regular copy over the cap is
+// treated as differing from the embedded content and replaced.
+func TestRefreshPersonas_OversizedCopyIsRefreshed(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	brucePath := filepath.Join(pdir, "bruce.md")
+	require.NoError(t, os.WriteFile(brucePath, bytes.Repeat([]byte("a"), maxPersonaCopyBytes+1), 0o644))
+
+	var out bytes.Buffer
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	assert.Contains(t, out.String(), "  bruce.md (edited by hand")
 	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
 }
 
