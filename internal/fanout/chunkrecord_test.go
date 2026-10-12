@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -156,8 +157,36 @@ func TestChunkRecord_ParallelLaneRecordsEveryBin(t *testing.T) {
 
 // AC7: a run that is not a baseline multi-chunk fan-out writes no chunks.json —
 // neither a single-chunk baseline (which falls through to one bulk slot per
-// persona) nor a full bulk diff review.
+// persona), a multi-chunk diff review, nor a full bulk diff review.
 func TestChunkRecord_BulkRunWritesNoFile(t *testing.T) {
+	// A chunked diff splits text on diff markers, so its slots carry
+	// ChunkTotal > 1 but no file set. Only the chunkFiles half of
+	// newChunkLedger's guard keeps them out; without it this run would write a
+	// chunks.json whose bins name no files.
+	t.Run("multi-chunk diff", func(t *testing.T) {
+		cfg := twoAgentConfig("http://unused")
+		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+		cfg.Settings.ReviewStrategy = "chunked"
+		mcl := 5 // tiny budget so the two-file diff splits into two chunks
+		g := cfg.Registry.Agents["greta"]
+		g.MaxContextLines = &mcl
+		cfg.Registry.Agents["greta"] = g
+		payloads := map[string]modePayload{"blocks": {Text: fileSeg("a.go", 6) + fileSeg("b.go", 6), FileCount: 2}}
+
+		slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		require.NoError(t, err)
+		require.Len(t, slots, 2, "one persona bin-packs into two diff chunk slots")
+		for i, s := range slots {
+			require.Greater(t, s.Primary.ChunkTotal, 1, "slot %d is a multi-chunk slot", i)
+			require.Empty(t, s.Primary.chunkFiles, "slot %d carries no file set", i)
+		}
+		assert.Nil(t, newChunkLedger(log.Discard(), t.TempDir(), slots), "a diff run plans no chunk record")
+
+		poolDir := t.TempDir()
+		runEngine(context.Background(), promptRoutingCompleter{}, &PreparedReview{Slots: slots}, poolDir)
+		assertNoChunkRecord(t, poolDir)
+	})
+
 	t.Run("single-chunk baseline", func(t *testing.T) {
 		cfg := twoAgentConfig("http://unused")
 		entries, _ := eightBinEntries()
