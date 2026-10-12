@@ -918,12 +918,12 @@ func mixedShortfallRun() benchmark.RunResult {
 // The two halves of one row's description and the list of distinct short ROWS are
 // different nesting levels, so they must not share a delimiter. With both at "; " a
 // reader — or anything downstream that splits on it — reads one reviewer row as two.
-func TestCheckCoverage_HalfSeparatorDoesNotCollideWithTheRowSeparator(t *testing.T) {
+func TestCheckCoverage_LabelSeparatorDoesNotCollideWithTheRowSeparator(t *testing.T) {
 	err := checkCoverage(io.Discard, mixedShortfallRun(), "rr.json", false)
 
 	require.Error(t, err)
 	msg := err.Error()
-	assert.Equal(t, 2, strings.Count(msg, halfSeparator),
+	assert.Equal(t, 2, strings.Count(msg, labelSeparator),
 		"each of the two short rows splits its own description in half: %s", msg)
 	// One boundary between the two rows, plus the one the remedy clause is appended
 	// after. Both are row-level, which is the property "; " now exclusively carries.
