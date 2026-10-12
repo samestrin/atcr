@@ -226,13 +226,13 @@ func collectReviewNarratives(sourcesDir, reviewDir string) (out []reviewNarrativ
 		// unfinished chain-of-thought into it, so parseFindings reads no findings
 		// from it at all. (A salvage on a stop finish reason is a finished answer
 		// whose findings ship; sourceSalvage does not report it, so it is indexed
-		// like any other narrative.) The leading-run
-		// exclusion below cannot catch it: promoted reasoning carries no <think> tags,
-		// so SplitThink returns it unchanged and the whole file is indexed. Since
-		// matchNarrative ranks by tier before reviewer, one reasoning line citing the
-		// exact FILE:LINE then outranks a real reviewer's prose and is published as
-		// the finding's provenance — into localdebt's append-only store, where no
-		// later reconcile can replace it (TD internal/reconcile/justification.go:225).
+		// like any other narrative.) The leading-run exclusion below cannot catch
+		// it: promoted reasoning carries no <think> tags, so SplitThink returns it
+		// unchanged and the whole file is indexed. Since matchNarrative ranks by
+		// tier before reviewer, one reasoning line citing the exact FILE:LINE then
+		// outranks a real reviewer's prose and is published as the finding's
+		// provenance — into localdebt's append-only store, where no later reconcile
+		// can replace it (TD internal/reconcile/justification.go:225).
 		//
 		// Withheld WHOLE only when no bin index narrows it: that is the unchunked
 		// persona, whose entire reply is promoted reasoning. When salvaged_chunks
