@@ -107,6 +107,29 @@ func TestChunkLedger_SlotDoneStampsCoverageSignals(t *testing.T) {
 	assert.False(t, readChunkRecord(t, poolDir, "brad").Bins[1].ContributedNothing)
 }
 
+// open is the resume's side of ReadCoverage's predicate: a bin is open when any
+// of its files is not covered, so every bin coverage leaves a file of
+// unreviewed is one a resume re-dispatches.
+func TestChunkRecordBin_OpenMatchesCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		bin  chunkRecordBin
+		open bool
+	}{
+		{chunkRecordBin{Files: []string{"a", "b"}, Outcome: StatusOK}, false},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: StatusOK, ContributedNothing: true}, true},
+		{chunkRecordBin{Files: []string{"a", "b"}, Outcome: StatusOK, RePacked: true, ServedFiles: []string{"a"}}, true},
+		{chunkRecordBin{Files: []string{"a", "b"}, Outcome: StatusOK, RePacked: true, ServedFiles: []string{"b", "a"}}, false},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: StatusOK, RePacked: true}, true},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: StatusFailed}, true},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: StatusTimeout}, true},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: chunkOutcomePending}, true},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: chunkOutcomeDeferred}, true},
+		{chunkRecordBin{Files: []string{"a"}, Outcome: "unknown"}, true},
+	} {
+		assert.Equal(t, tc.open, tc.bin.open(), "%+v", tc.bin)
+	}
+}
+
 func TestCoverage_FilePercentEmptyScopeIsZero(t *testing.T) {
 	assert.Zero(t, Coverage{}.FilePercent(), "no files in scope is never reported as covered")
 }
