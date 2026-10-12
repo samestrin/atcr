@@ -498,21 +498,21 @@ When any case fails — or any single reviewer **slot** fails — the **work dir
 **That retention is unbounded, and reclaiming it is yours to do.** Nothing prunes, caps or expires a retained work dir, deliberately: it holds the only copy of a panel you already paid for, so the run will not delete it on your behalf. The trade is that a scheduled suite losing one case per run — or one slot per run, which on a large roster is the more common trigger — leaves one full work dir behind per run. The partial-run warning reports the size alongside the path so the growth is visible before the volume is:
 
 ```
-WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 unmeasured_slots=1 failed_reviewers=0 retained_dirs=3 retained_bytes=41231882
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 unmeasured_slots=1 other_slot_failures=0 failed_reviewers=0 retained_dirs=3 retained_bytes=41231882
 ```
 
 A failed run (one that exits non-zero, including a cancellation or a consecutive-failure abort) retains its work dir too, and its warning carries the same fields, so a monitor keyed on `retained_bytes` sees both arms:
 
 ```
-WARN benchmark work dir retained after a failed run path=/tmp/atcr-repo-state-5678 failed_cases=2 failed_slots=0 unmeasured_slots=0 failed_reviewers=0 retained_dirs=4 retained_bytes=18204113
+WARN benchmark work dir retained after a failed run path=/tmp/atcr-repo-state-5678 failed_cases=2 failed_slots=0 unmeasured_slots=0 other_slot_failures=0 failed_reviewers=0 retained_dirs=4 retained_bytes=18204113
 ```
 
-Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. `retained_dirs` counts every retained `atcr-repo-state-*` work dir in the same temp directory, this one included, so growth across runs is visible on one line; it matches by name and reads no sizes. `failed_slots` is the number of **infrastructure**-failed reviewer slots (one reviewer failing 200 cases is 200), `failed_reviewers` is how many reviewers own at least one of them, and `unmeasured_slots` is the OK-but-worthless shortfall reported separately so a healthy panel is never labelled `failed_slots=N`. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
+Watch `retained_bytes`, and once you have inspected or rescored a run, reclaim it with `rm -rf` on the path from that line. `retained_dirs` counts every retained `atcr-repo-state-*` work dir in the same temp directory, this one included, so growth across runs is visible on one line; it matches by name and reads no sizes. `failed_slots` is the number of **infrastructure**-failed reviewer slots (one reviewer failing 200 cases is 200), `failed_reviewers` is how many reviewers own at least one of them, and `unmeasured_slots` is the OK-but-worthless shortfall reported separately so a healthy panel is never labelled `failed_slots=N`. Any remaining recorded slot failure — an empty reason, or one this build does not recognize, such as one a newer producer wrote — is neither infrastructure nor unmeasured-ok and lands in `other_slot_failures` (which also retains the work dir), so the three counts add up to every slot failure recorded and an all-zero read still names its cause. A run that scores every case cleans up after itself, so only partial and failed runs accumulate.
 
 `retained_bytes` is always a number, so you can build a numeric monitor on it — including under `ATCR_LOG_FORMAT=json`, where it is a JSON number. When the size cannot be measured (the walk could not read the work dir's root, or the tree holds more than 200,000 entries, where the walk stops rather than delay exit), the key is **omitted** and a boolean says so in its place, rather than the key changing type:
 
 ```
-WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 unmeasured_slots=0 failed_reviewers=0 retained_dirs=3 retained_bytes_unmeasured=true
+WARN benchmark work dir retained after a partial run path=/tmp/atcr-repo-state-1234 failed_cases=1 failed_slots=0 unmeasured_slots=0 other_slot_failures=0 failed_reviewers=0 retained_dirs=3 retained_bytes_unmeasured=true
 ```
 
 The dir is still retained and its path is still on the line; only the size is unknown. Treat `retained_bytes_unmeasured=true` as "go look" — an unmeasurable work dir is the one case where the growth figure cannot warn you.
