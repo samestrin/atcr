@@ -69,6 +69,31 @@ func TestInvokeSlot_SilentLaneWarning(t *testing.T) {
 			assert.Equal(t, tc.wantWarnings, r.SilentChunks)
 		})
 	}
+
+	// A fallback that served the slot is judged on its own Invocation (Epic 59 T1):
+	// the primary truncates empty and declares no thinking, the fallback answers in
+	// the ronin-backup shape with thinking on. Reading the primary's flag instead
+	// would leave the lane silent, so the declarations disagree on purpose.
+	t.Run("fallback-served lane is judged on the fallback's thinking", func(t *testing.T) {
+		slot := Slot{
+			Primary:   Agent{Name: "ronin", Invocation: llmclient.Invocation{Model: "primary"}},
+			Fallbacks: []Agent{{Name: "ronin-backup", Invocation: llmclient.Invocation{Model: "fallback", Thinking: registry.ThinkingOn}}},
+		}
+		c := &mapMetaCompleter{byModel: map[string]llmclient.Completion{
+			"primary":  {Content: "", Truncated: true},
+			"fallback": {Content: "NO FINDINGS", Usage: usage(158304, 10)},
+		}}
+		ctx, buf := failoverLogCapture()
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+		require.True(t, r.FallbackUsed, "the truncated primary must hand the slot to the fallback")
+		require.Equal(t, 1, strings.Count(buf.String(), msg), buf.String())
+		assert.Contains(t, buf.String(),
+			`level=WARN `+msg+` agent=ronin-backup model=fallback tokens_in=158304 tokens_out=10`+"\n")
+		assert.Equal(t, StatusOK, r.Status)
+		assert.NoError(t, r.Err)
+		assert.Equal(t, 1, r.SilentChunks)
+	})
 }
 
 // silentLaneResult drives one invokeSlot call the way TestInvokeSlot_SilentLaneWarning
