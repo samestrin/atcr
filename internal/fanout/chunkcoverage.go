@@ -50,11 +50,10 @@ func (c Coverage) FilePercent() float64 {
 // A persona that ran as a single bin writes no record, so its reviewed files are
 // not counted here; on a run that mixes the two the figure can only understate.
 func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
-	paths, err := filepath.Glob(filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir, "*", chunksFile))
+	paths, err := chunkRecordPaths(reviewDir)
 	if err != nil {
 		return Coverage{}, false, err
 	}
-	sort.Strings(paths)
 	inScope := map[string]struct{}{}
 	covered := map[string]struct{}{}
 	for _, p := range paths {
@@ -88,6 +87,36 @@ func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
 	}
 	cov.FilesInScope = len(inScope)
 	return cov, ok, nil
+}
+
+// chunkRecordPaths lists the candidate chunks.json paths under reviewDir's pool,
+// one per agent directory, sorted. It lists the directory rather than globbing,
+// because reviewDir is user-supplied: a path holding [, * or ? would be read as
+// a pattern, match nothing, and turn a binned run into an unmeasured one. A
+// missing agent directory is no records; a path without a record is skipped by
+// the caller as a raced rename is.
+func chunkRecordPaths(reviewDir string) ([]string, error) {
+	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
+	entries, err := os.ReadDir(rawDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, e := range entries {
+		dir := filepath.Join(rawDir, e.Name())
+		if !e.IsDir() {
+			// Follow a symlinked agent directory as the glob did.
+			if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+				continue
+			}
+		}
+		paths = append(paths, filepath.Join(dir, chunksFile))
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func loadChunkRecord(path string) (*chunkRecord, error) {

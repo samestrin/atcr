@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -148,7 +149,16 @@ type runCoverage struct {
 
 // readRunCoverage reads dir's coverage, logging an unreadable record rather than
 // failing the run: coverage reporting must never cost a review its artifacts.
+//
+// recordErr is the run's chunks.json write failure (ReviewResult.ChunkRecordErr),
+// nil when there is no run in hand. A failed write may have left no record, which
+// would read as "binned nothing", so it makes the coverage unmeasurable instead.
 func readRunCoverage(ctx context.Context, dir string, recordErr error) runCoverage {
+	if recordErr != nil {
+		err := fmt.Errorf("a chunks.json write failed: %w", recordErr)
+		log.FromContext(ctx).Warn("review coverage cannot be measured", "dir", dir, "err", err)
+		return runCoverage{err: err}
+	}
 	cov, ok, err := fanout.ReadCoverage(dir)
 	if err != nil {
 		log.FromContext(ctx).Warn("review coverage could not be read from chunks.json", "dir", dir, "err", err)
@@ -175,7 +185,7 @@ func writeCoverageLine(w io.Writer, cov runCoverage) {
 const requireCoverageFlag = "require-coverage"
 
 // requireCoverageThreshold returns the --require-coverage percentage and whether
-// it was set; a value outside 0-100 is a usage error (exit 2).
+// it was set; a value outside 0-100, NaN or an infinity is a usage error (exit 2).
 func requireCoverageThreshold(cmd *cobra.Command) (float64, bool, error) {
 	if !cmd.Flags().Changed(requireCoverageFlag) {
 		return 0, false, nil
@@ -184,7 +194,9 @@ func requireCoverageThreshold(cmd *cobra.Command) (float64, bool, error) {
 	if err != nil {
 		return 0, false, usageError(err)
 	}
-	if pct < 0 || pct > 100 {
+	// NaN passes both bound checks and no percentage is ever below it, so it
+	// would silently disable the gate.
+	if math.IsNaN(pct) || math.IsInf(pct, 0) || pct < 0 || pct > 100 {
 		return 0, false, usageError(fmt.Errorf("--%s must be between 0 and 100, got %g", requireCoverageFlag, pct))
 	}
 	return pct, true, nil
