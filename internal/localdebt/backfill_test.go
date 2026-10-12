@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1235,7 +1236,7 @@ func TestReplayCandidates_NilOwnershipCacheDoesNotPanic(t *testing.T) {
 
 	var res replayResult
 	var err error
-	require.NotPanics(t, func() { res, err = replayCandidates(reviewRoot, rec, nil) })
+	require.NotPanics(t, func() { res, err = replayCandidates(newReviewTree(reviewRoot, []Record{rec}), rec, nil) })
 	require.NoError(t, err)
 	assert.Empty(t, res.texts, "the symlink must never yield an excerpt")
 	assert.True(t, res.policyRefused,
@@ -1601,4 +1602,73 @@ func TestReviewDirOwnsRun_RealRunIDAndSummaryAgree(t *testing.T) {
 	require.Len(t, recs, 1, "the real mint must have persisted the one finding")
 	assert.True(t, reviewDirOwnsRun(reviewDir, recs[0].RunID),
 		"run_id %q was minted for this review dir, so its own summary.json must own it", recs[0].RunID)
+}
+
+// countWalks swaps walkDir for one that counts the walks it starts and runs the real
+// one. Package state, so a test that calls it must not call t.Parallel.
+func countWalks(t *testing.T) *int {
+	t.Helper()
+	walks := 0
+	orig := walkDir
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		walks++
+		return orig(root, fn)
+	}
+	t.Cleanup(func() { walkDir = orig })
+	return &walks
+}
+
+// TD internal/localdebt/backfill.go:382 — replayCandidates walked the whole review
+// root once per record, so a pass was O(records x review files). One pass walks it
+// once however many records replay, and a pass with no replayable record walks it
+// not at all.
+func TestBackfillJustifications_WalksTheReviewRootOncePerPass(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	agents := []string{"dax", "kira", "odo"}
+	lines := make([]string, 0, len(agents))
+	for i, agent := range agents {
+		rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", agent)
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+			[]byte("# review\n\n- **internal/thing.go:42** the narrative "+agent+" wrote.\n"), 0o600))
+		id := fmt.Sprintf("bbbb000%d", i+1)
+		lines = append(lines, `{"schema_version":3,"id":"`+id+`","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-`+id+`","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["`+agent+`"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** a stale excerpt.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/`+agent+`/review.md","line":3}}`)
+	}
+	writeShard(t, store, "2026-08", lines...)
+
+	walks := countWalks(t)
+	res, err := BackfillJustifications(store, reviewRoot, true)
+	require.NoError(t, err)
+	assert.Equal(t, len(agents), res.Scanned)
+	assert.Equal(t, len(agents), res.Rewritten, "each record still finds its own review.md in the shared walk")
+	assert.Equal(t, 1, *walks, "one walk for the whole pass, not one per record")
+}
+
+func TestBackfillJustifications_NothingToReplayWalksNothing(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+	require.NoError(t, os.MkdirAll(reviewRoot, 0o750))
+
+	// No source_report: skipped before replayCandidates.
+	writeShard(t, store, "2026-08",
+		`{"schema_version":3,"id":"cccc0001","run_id":"r","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** an excerpt."}`)
+
+	walks := countWalks(t)
+	res, err := BackfillJustifications(store, reviewRoot, true)
+	require.NoError(t, err)
+	assert.Zero(t, res.Scanned)
+	assert.Zero(t, *walks, "a pass with nothing to replay must not walk the review root")
 }
