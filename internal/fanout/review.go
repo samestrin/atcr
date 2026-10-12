@@ -1241,7 +1241,7 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		ledger.carryReviewed(p.priorChunks)
 		p.chunks = ledger
 		ledger.writePlan()
-		opts = append(opts, WithSlotDone(ledger.slotDone))
+		opts = append(opts, WithSlotStart(ledger.slotStart), WithSlotDone(ledger.slotDone))
 	}
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
