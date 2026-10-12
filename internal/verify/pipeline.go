@@ -593,6 +593,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}, nil
 }
 
+// faultVerification is the unverifiable verdict verifyFinding synthesises when
+// invokeSkeptic returns an error. The error text lands in Notes, which
+// combineReasonings scans for the engine marker by prefix, so it is passed
+// through neutraliseMarkerTokens like every other non-engine Notes.
+func faultVerification(skeptic string, err error) *reclib.Verification {
+	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: neutraliseMarkerTokens(err.Error()), Skeptic: skeptic}
+}
+
 // verifyFinding produces the verdict (the compact block for findings.json) and
 // the rich record (for verification.json) for one finding. With no eligible
 // skeptic it records unverifiable/no_eligible_skeptic; with the tool harness
@@ -632,7 +640,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 			// ever fires, then synthesize an unverifiable verdict rather than dropping
 			// the finding.
 			logSkepticFailure(log.FromContext(ctx), sk.Name, "programming_fault", ierr.Error())
-			v = &reclib.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
+			v = faultVerification(sk.Name, ierr)
 			tripped = []string{}
 		}
 		perSkeptic = append(perSkeptic, v)
