@@ -47,6 +47,11 @@ func baselinePayloads(entries []payload.FileEntry) map[string]modePayload {
 func slotsContainMarker(slots []Slot, path string) bool {
 	marker := fmt.Sprintf("// FILE:%s\n", path)
 	for _, s := range slots {
+		// A baseline bin's prompt is rendered when a worker leases it.
+		s, err := s.leased()
+		if err != nil {
+			return false
+		}
 		if strings.Contains(s.Primary.Prompt, marker) {
 			return true
 		}
@@ -129,6 +134,7 @@ func TestBaselineSlots_FallbackChainPerChunk(t *testing.T) {
 	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "one persona × three chunks")
+	slots = renderedSlots(t, slots) // prompts as a worker leases them
 	for i, s := range slots {
 		require.NotEmpty(t, s.Fallbacks, "slot %d has no fallback chain", i)
 		// The fallback must review the SAME chunk as its primary: the primary and its

@@ -90,3 +90,73 @@ func TestBaselineUnits_ResidentPromptBytesTrackMaxParallel(t *testing.T) {
 	assert.LessOrEqual(t, c.maxPlan, bound,
 		"the plan held %d prompt bytes during the run; max_parallel=%d units in flight need at most %d", c.maxPlan, maxParallel, bound)
 }
+
+// renderedSlots returns each slot as a worker runs it: a baseline bin, which the
+// plan holds without its prompts, rendered as at lease time.
+func renderedSlots(t *testing.T, slots []Slot) []Slot {
+	t.Helper()
+	out := make([]Slot, len(slots))
+	for i, s := range slots {
+		r, err := s.leased()
+		require.NoError(t, err, "slot %d: lease-time render", i)
+		out[i] = r
+	}
+	return out
+}
+
+// AC7 (Epic 35.16.14): rendering at lease time changes when a unit's prompts
+// exist, not what the unit is. Every field the plan keeps (identity, coverage
+// tag, cache key, sizing, the fallback chain) matches the lease-time render, and
+// two leases of one unit render the same prompts.
+func TestBaselineUnits_LeaseRenderMatchesThePlan(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = 100
+	g := cfg.Registry.Agents["greta"]
+	g.Fallback = "kai"
+	cfg.Registry.Agents["greta"] = g
+
+	entries := make([]payload.FileEntry, 6)
+	for i := range entries {
+		entries[i] = baselineEntry(fmt.Sprintf("f%02d.go", i), 100)
+	}
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	require.NoError(t, err)
+	require.Len(t, slots, 12, "two personas x six bins")
+
+	for i, s := range slots {
+		require.NotNil(t, s.render, "slot %d: a baseline bin renders at lease time", i)
+		assert.Zero(t, planPromptBytes([]Slot{s}), "slot %d: the plan holds no prompt text", i)
+
+		first, err := s.leased()
+		require.NoError(t, err)
+		again, err := s.leased()
+		require.NoError(t, err)
+		assert.Equal(t, first, again, "slot %d: two leases render the same unit", i)
+
+		for _, p := range s.Primary.chunkFiles {
+			assert.Contains(t, first.Primary.Prompt, "// FILE:"+p+"\n", "slot %d: the rendered primary ships its bin", i)
+			for _, fb := range first.Fallbacks {
+				assert.Contains(t, fb.Prompt, "// FILE:"+p+"\n", "slot %d: the rendered fallback ships the same bin", i)
+			}
+		}
+		planned := s
+		planned.render = nil
+		assert.Equal(t, planned, first.deferRender(nil), "slot %d: the plan keeps exactly the lease-time unit, prompts aside", i)
+	}
+}
+
+// A unit whose lease-time render fails resolves as a failed result under its
+// own name; it neither panics the worker nor stalls the queue.
+func TestEngineRun_LeaseRenderErrorFailsTheUnit(t *testing.T) {
+	bad := Slot{Primary: Agent{Name: "greta", PayloadMode: "files"}}
+	bad.render = func() (Slot, error) { return Slot{}, fmt.Errorf("persona vanished") }
+	good := Slot{Primary: Agent{Name: "kai", Invocation: llmclient.Invocation{Prompt: "p"}}}
+
+	res := NewEngine(&residentPromptCompleter{seenMarker: map[string]bool{}}, WithMaxParallel(1)).Run(context.Background(), []Slot{bad, good})
+	require.Len(t, res, 2)
+	assert.Equal(t, "greta", res[0].Agent)
+	assert.Equal(t, StatusFailed, res[0].Status)
+	assert.ErrorContains(t, res[0].Err, "persona vanished")
+	assert.Equal(t, "files", res[0].PayloadMode)
+	assert.Equal(t, StatusOK, res[1].Status)
+}

@@ -1857,6 +1857,37 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 		return p, nil
 	}
 
+	// chainFor builds primary's fallback chain from a resolved refit context. A
+	// lease-time rebuild (refit.leaseRender) runs on a worker, concurrently with
+	// others, so it reads none of this function's shared maps: it emits no
+	// warning, so it neither consults nor marks the lane dedup.
+	chainFor := func(name string, primary Agent, refit fallbackRefit) ([]Agent, error) {
+		var fbs []Agent
+		seen := map[string]bool{name: true}
+		warn := warnOversized && !refit.leaseRender
+		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
+			if seen[fb] {
+				break // registry validation guarantees acyclic; defensive stop
+			}
+			seen[fb] = true
+			// Suppress only after a warning was actually EMITTED, never merely
+			// after a call. Packing is greedy, so a lane's first chunk can be the
+			// small remainder that fits (silent) while a later one genuinely
+			// overflows: marking the lane on every call would swallow that second
+			// warning entirely, which is the opposite of the dedup's purpose.
+			lane := name + "\x00" + fb
+			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warn && !warnedFallbackOverflow[lane], refit)
+			if err != nil {
+				return nil, err
+			}
+			if warned {
+				warnedFallbackOverflow[lane] = true
+			}
+			fbs = append(fbs, agent)
+		}
+		return fbs, nil
+	}
+
 	// buildChain resolves the fallback chain for a primary. Extracted so both the
 	// bulk one-slot path and the chunked per-chunk path attach identical chains
 	// (a fallback reviews the same persona prompt/payload as its primary — here,
@@ -1871,15 +1902,13 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 	// agentScopeConstraint, persona) travel with it because renderAgent needs all
 	// four and this closure captured none of them.
 	buildChain := func(name string, primary Agent, ac registry.AgentConfig, mode, agentScopeConstraint string, entries []payload.FileEntry) ([]Agent, error) {
-		var fbs []Agent
-		seen := map[string]bool{name: true}
 		// Always a cache hit: the primary's renderAgent resolved this persona
 		// moments ago on every path that reaches buildChain.
 		persona, err := personaFor(name, ac)
 		if err != nil {
 			return nil, err
 		}
-		refit := fallbackRefit{
+		return chainFor(name, primary, fallbackRefit{
 			primaryName:     name,
 			primaryConfig:   ac,
 			mode:            mode,
@@ -1887,28 +1916,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			scopeConstraint: agentScopeConstraint,
 			entries:         entries,
 			persona:         persona,
-		}
-		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
-			if seen[fb] {
-				break // registry validation guarantees acyclic; defensive stop
-			}
-			seen[fb] = true
-			// Suppress only after a warning was actually EMITTED, never merely
-			// after a call. Packing is greedy, so a lane's first chunk can be the
-			// small remainder that fits (silent) while a later one genuinely
-			// overflows: marking the lane on every call would swallow that second
-			// warning entirely, which is the opposite of the dedup's purpose.
-			lane := name + "\x00" + fb
-			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warnOversized && !warnedFallbackOverflow[lane], refit)
-			if err != nil {
-				return nil, err
-			}
-			if warned {
-				warnedFallbackOverflow[lane] = true
-			}
-			fbs = append(fbs, agent)
-		}
-		return fbs, nil
+		})
 	}
 
 	// wholePayloadPaths memoizes, per payload mode, the coverage tag for a baseline
@@ -2152,7 +2160,17 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						chunkTotal:      len(chunks),
 						action:          degradationChunk,
 					}
-					for _, ck := range chunks {
+					persona, perr := personaFor(name, ac)
+					if perr != nil {
+						return perr
+					}
+					// renderBin builds one bin's unit. The plan keeps the unit with its
+					// prompts dropped and renders it again when a worker leases it
+					// (Slot.render), so the prompt bytes a run holds follow the units in
+					// flight, not the bins planned (Epic 35.16.14 F1). The lease-time call
+					// rebuilds from the same inputs, so it yields the same unit; it reads
+					// none of buildSlots' shared state, since workers call it concurrently.
+					renderBin := func(ck []payload.FileEntry, leaseRender bool) (Slot, error) {
 						var pb strings.Builder
 						chunkFiles := make([]string, 0, len(ck))
 						for _, e := range ck {
@@ -2161,13 +2179,9 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						}
 						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
 						// event decided upstream, not a per-chunk property (mirrors the chunked path).
-						persona, perr := personaFor(name, ac)
-						if perr != nil {
-							return perr
-						}
 						primary, rerr := renderAgent(cfg, name, ac, persona, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 						if rerr != nil {
-							return rerr
+							return Slot{}, rerr
 						}
 						// NO DiffTruncation stamp here, deliberately — and this is the one
 						// place the baseline branch differs from its git-range twin below.
@@ -2207,11 +2221,27 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						// set — pb above is built from exactly these entries — so the carried
 						// list, the rendered payload, and chunkFiles above are the same fact
 						// recorded three ways and cannot drift.
-						fbs, cerr := buildChain(name, primary, ac, mode, agentScopeConstraint, ck)
+						fbs, cerr := chainFor(name, primary, fallbackRefit{
+							primaryName:     name,
+							primaryConfig:   ac,
+							mode:            mode,
+							rng:             rng,
+							scopeConstraint: agentScopeConstraint,
+							entries:         ck,
+							persona:         persona,
+							leaseRender:     leaseRender,
+						})
 						if cerr != nil {
-							return cerr
+							return Slot{}, cerr
 						}
-						slots = append(slots, Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed})
+						return Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed}, nil
+					}
+					for _, ck := range chunks {
+						s, err := renderBin(ck, false)
+						if err != nil {
+							return err
+						}
+						slots = append(slots, s.deferRender(func() (Slot, error) { return renderBin(ck, true) }))
 					}
 					return nil
 				}
@@ -3555,6 +3585,10 @@ type fallbackRefit struct {
 	// was never entry-decomposed (the chunked-diff path), which disables the
 	// re-fit — see Slot.entries.
 	entries []payload.FileEntry
+	// leaseRender marks the rebuild of a unit a worker has just leased (see
+	// Slot.render). The prepare-time build of the same unit already emitted every
+	// stderr line, so this one emits none.
+	leaseRender bool
 }
 
 // canRefit reports whether a refit context is usable as a re-pack source. An
@@ -3595,7 +3629,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// constraints (min_severity, max_findings, scope) govern — the fallback's
 	// own are intentionally ignored (Epic 2.2). Surface that override so an
 	// operator who set these on a fallback-only agent is not silently ignored.
-	if ac.MinSeverity != "" || ac.MaxFindings != nil || len(ac.Scope) > 0 {
+	if (ac.MinSeverity != "" || ac.MaxFindings != nil || len(ac.Scope) > 0) && !refit.leaseRender {
 		fmt.Fprintf(os.Stderr, "warn: fallback agent %q sets its own min_severity/max_findings/scope; these are ignored — the primary lane's constraints govern\n", name)
 	}
 	// Epic 19.10 F7/F8: a fallback reviews the SAME (already-sized/chunked) prompt

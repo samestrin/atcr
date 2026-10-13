@@ -94,6 +94,7 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
+	slots = renderedSlots(t, slots) // prompts as a worker leases them
 	s := slots[0]
 	require.Len(t, s.Fallbacks, 1, "precondition: the fallback chain is attached")
 	require.True(t, s.Fallbacks[0].rePacked, "precondition: this fixture's fallback re-fits (fails if the re-fit arm is reverted)")
