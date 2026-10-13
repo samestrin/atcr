@@ -405,7 +405,7 @@ func TestChunkResume_RecordedPathsOutsidePayloadAreNeverDispatched(t *testing.T)
 	require.Len(t, rprep.Slots, 2, "only the bins with an in-payload file survive")
 	assert.Equal(t, []string{"f02.go"}, rprep.Slots[0].Primary.chunkFiles)
 	assert.Equal(t, []string{"f03.go"}, rprep.Slots[1].Primary.chunkFiles, "a file two bins name goes to the first")
-	for _, s := range rprep.Slots {
+	for _, s := range renderedSlots(t, rprep.Slots) {
 		assert.NotContains(t, s.Primary.Prompt, "OUTSIDE_SENTINEL")
 		assert.NotContains(t, s.Primary.Prompt, "outside.go")
 		assert.NotContains(t, s.Primary.Prompt, "/etc/passwd")

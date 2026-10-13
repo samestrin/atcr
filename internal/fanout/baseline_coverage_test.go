@@ -330,6 +330,7 @@ func TestBaselineSlots_TagChunkFilesPerSlot(t *testing.T) {
 	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "one persona × three chunks")
+	slots = renderedSlots(t, slots) // prompts as a worker leases them
 
 	var tagged []string
 	for i, s := range slots {
@@ -408,6 +409,7 @@ func TestBaselineSlots_BulkTagNeverNamesAnUnshippedFile(t *testing.T) {
 
 	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
+	slots = renderedSlots(t, slots) // prompts as a worker leases them
 
 	for i, s := range slots {
 		require.NotEmpty(t, s.Primary.chunkFiles, "baseline slot %d must be tagged", i)
