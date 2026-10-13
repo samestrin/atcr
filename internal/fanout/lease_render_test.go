@@ -160,3 +160,40 @@ func TestEngineRun_LeaseRenderErrorFailsTheUnit(t *testing.T) {
 	assert.Equal(t, "files", res[0].PayloadMode)
 	assert.Equal(t, StatusOK, res[1].Status)
 }
+
+// A lease-time render is silent. The prepare-time build of a unit already
+// printed its warnings, so a worker re-rendering it must print none, and must not
+// touch buildSlots' lane-warning dedup map, which only the single-threaded
+// prepare-time build may write. The fixture makes both of the fallback's
+// warnings fire at prepare: the AC4 "may overflow" line (kai's window is too
+// small for greta's bins) and the "sets its own min_severity" line (kai declares
+// one). Run two workers wide over several bins, so a lease that printed or wrote
+// the map would show here, and as a data race under -race.
+func TestBaselineUnits_LeaseRenderPrintsNoWarnings(t *testing.T) {
+	const overflow, ownSeverity = "may overflow", "sets its own min_severity"
+	cfg := refitRoster(t, 128000, OverflowChunk)
+	kai := cfg.Registry.Agents["kai"]
+	kai.MinSeverity = "HIGH"
+	cfg.Registry.Agents["kai"] = kai
+
+	var slots []Slot
+	var err error
+	prepared := captureStderr(t, func() {
+		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(slots), 1, "precondition: the payload partitions into several bins")
+	for i, s := range slots {
+		require.NotNil(t, s.render, "precondition: slot %d renders at lease time", i)
+	}
+	require.Equal(t, 1, strings.Count(prepared, overflow), "precondition: the lane's overflow warning prints once, at prepare")
+	require.Equal(t, len(slots), strings.Count(prepared, ownSeverity), "precondition: the min_severity warning prints at prepare, once per bin")
+
+	var res []Result
+	ran := captureStderr(t, func() {
+		res = NewEngine(&residentPromptCompleter{seenMarker: map[string]bool{}}, WithMaxParallel(2)).Run(context.Background(), slots)
+	})
+	require.Len(t, res, len(slots))
+	assert.NotContains(t, ran, overflow, "a lease re-render must not repeat the overflow warning")
+	assert.NotContains(t, ran, ownSeverity, "a lease re-render must not repeat the min_severity warning")
+}

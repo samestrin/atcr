@@ -1857,14 +1857,15 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 		return p, nil
 	}
 
-	// chainFor builds primary's fallback chain from a resolved refit context. A
-	// lease-time rebuild (refit.leaseRender) runs on a worker, concurrently with
-	// others, so it reads none of this function's shared maps: it emits no
-	// warning, so it neither consults nor marks the lane dedup.
-	chainFor := func(name string, primary Agent, refit fallbackRefit) ([]Agent, error) {
+	// chainFor builds primary's fallback chain from a resolved refit context.
+	// warned is the lane dedup for the AC4 overflow warning; nil means "warn
+	// nothing". A lease-time rebuild (refit.leaseRender) passes nil: it runs on a
+	// worker, concurrently with others, so it must not see buildSlots' shared map,
+	// and the prepare-time build of the same unit already printed the warning.
+	chainFor := func(name string, primary Agent, refit fallbackRefit, warned map[string]bool) ([]Agent, error) {
 		var fbs []Agent
 		seen := map[string]bool{name: true}
-		warn := warnOversized && !refit.leaseRender
+		warn := warnOversized && warned != nil
 		for fb := cfg.Registry.Agents[name].Fallback; fb != ""; fb = cfg.Registry.Agents[fb].Fallback {
 			if seen[fb] {
 				break // registry validation guarantees acyclic; defensive stop
@@ -1876,12 +1877,12 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// overflows: marking the lane on every call would swallow that second
 			// warning entirely, which is the opposite of the dedup's purpose.
 			lane := name + "\x00" + fb
-			agent, warned, err := buildFallbackAgent(cfg, primary, fb, warn && !warnedFallbackOverflow[lane], refit)
+			agent, emitted, err := buildFallbackAgent(cfg, primary, fb, warn && !warned[lane], refit)
 			if err != nil {
 				return nil, err
 			}
-			if warned {
-				warnedFallbackOverflow[lane] = true
+			if emitted {
+				warned[lane] = true
 			}
 			fbs = append(fbs, agent)
 		}
@@ -1916,7 +1917,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			scopeConstraint: agentScopeConstraint,
 			entries:         entries,
 			persona:         persona,
-		})
+		}, warnedFallbackOverflow)
 	}
 
 	// wholePayloadPaths memoizes, per payload mode, the coverage tag for a baseline
@@ -2171,6 +2172,10 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					// rebuilds from the same inputs, so it yields the same unit; it reads
 					// none of buildSlots' shared state, since workers call it concurrently.
 					renderBin := func(ck []payload.FileEntry, leaseRender bool) (Slot, error) {
+						laneWarnings := warnedFallbackOverflow
+						if leaseRender {
+							laneWarnings = nil
+						}
 						var pb strings.Builder
 						chunkFiles := make([]string, 0, len(ck))
 						for _, e := range ck {
@@ -2230,7 +2235,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 							entries:         ck,
 							persona:         persona,
 							leaseRender:     leaseRender,
-						})
+						}, laneWarnings)
 						if cerr != nil {
 							return Slot{}, cerr
 						}
