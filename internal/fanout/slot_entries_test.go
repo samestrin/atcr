@@ -186,7 +186,7 @@ func TestPrepareReviewFromRepo_BaselineSlotEntriesSubsetOfPrompt(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, prep.Slots)
 
-	for i, slot := range prep.Slots {
+	for i, slot := range renderedSlots(t, prep.Slots) {
 		got := entryPathSet(slot.entries)
 		require.NotEmpty(t, got, "slot %d: a bulk slot must carry its entries", i)
 		assert.NotContains(t, got, "big.go",

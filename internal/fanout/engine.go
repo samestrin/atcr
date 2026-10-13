@@ -357,6 +357,50 @@ type Slot struct {
 	// the chunk ledger even when it is the persona's only dispatched bin, so the
 	// resume merges it with the bins already reviewed instead of overwriting them.
 	resumedBin bool
+
+	// render, when set, rebuilds this unit's prompts — the primary's and every
+	// fallback's — when a worker leases it (Epic 35.16.14 F1). Such a slot is held
+	// in the plan with its rendered prompt text dropped (deferRender), so the
+	// prompt bytes resident during a run follow the units in flight, which
+	// max_parallel bounds, rather than the number of units planned. Everything
+	// else on the slot is the prepare-time render's, and render reproduces it: it
+	// re-runs the same deterministic build from the same inputs, quietly, since
+	// that build already emitted its warnings. nil (every non-baseline slot and
+	// any hand-built one) means the slot already carries its prompts.
+	render func() (Slot, error)
+}
+
+// leased returns the slot a worker runs: s itself, or for a slot that defers its
+// render, the freshly rendered unit. The caller drops it once the unit settles.
+func (s Slot) leased() (Slot, error) {
+	if s.render == nil {
+		return s, nil
+	}
+	return s.render()
+}
+
+// deferRender returns s as the plan holds it until lease time: every agent's
+// prompt-bearing text dropped and render set to rebuild it.
+func (s Slot) deferRender(render func() (Slot, error)) Slot {
+	s.Primary = s.Primary.withoutPrompt()
+	fbs := make([]Agent, len(s.Fallbacks))
+	for i, fb := range s.Fallbacks {
+		fbs[i] = fb.withoutPrompt()
+	}
+	s.Fallbacks = fbs
+	s.render = render
+	return s
+}
+
+// withoutPrompt drops every field of a that holds rendered prompt text: the
+// prompt itself, the per-file CodeContext (its bodies are substrings of the
+// payload and would keep it alive), and the output-format swap span (its section
+// is a substring of the prompt). Nothing reads them before a call.
+func (a Agent) withoutPrompt() Agent {
+	a.Prompt, a.Invocation.Prompt = "", ""
+	a.CodeContext = nil
+	a.swap = swapSpan{}
+	return a
 }
 
 // Result is the outcome of one slot after fallback resolution. Status is one of
@@ -1056,14 +1100,29 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	// holds it. A unit that may still requeue on a rate limit holds its 429 on
 	// the primary instead of walking the fallback chain.
 	retry := make([]unitRetryState, len(slots))
+	// A slot that defers its render is rendered here, so its prompts live only
+	// while a worker holds it.
 	invoke := func(i int) Result {
-		uctx, cancel := unitDeadline(ctx, e.unitTimeoutSecs, slots[i])
+		s, err := slots[i].leased()
+		if err != nil {
+			return Result{
+				Agent:          slots[i].Primary.Name,
+				Status:         StatusFailed,
+				Err:            fmt.Errorf("render unit at lease: %w", err),
+				PayloadMode:    slots[i].Primary.PayloadMode,
+				Truncation:     slots[i].Primary.Truncation,
+				DiffTruncation: slots[i].Primary.DiffTruncation,
+				MinSeverity:    slots[i].Primary.MinSeverity,
+				MaxFindings:    slots[i].Primary.MaxFindings,
+			}
+		}
+		uctx, cancel := unitDeadline(ctx, e.unitTimeoutSecs, s)
 		defer cancel()
 		holdRateLimit := false
 		if e.requeueable != nil && e.requeueable(i) {
 			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].attempts+1, retry[i].spent)
 		}
-		return e.invokeSlotWithRetry(uctx, slots[i], holdRateLimit)
+		return e.invokeSlotWithRetry(uctx, s, holdRateLimit)
 	}
 	// recoverUnit turns a panic in slot i into a failed result so the worker
 	// survives to lease the next unit.
