@@ -36,10 +36,13 @@ type StalePersona struct {
 // dirs.Project that has fallen behind the embedded content.
 //
 // Only a persona whose resolved source is a built-in's own file in the project
-// directory is considered: `<agent>.md` for a registered built-in name, or
-// `_base.md`. Community (Registry-tier) personas, explicit refs (a persona name
-// other than the agent's), embedded-source personas and personas that fail to
-// resolve have no installed copy to fall behind, and are never reported.
+// directory is considered: `<persona>.md` for a registered built-in name, or
+// `_base.md`. An explicit ref (a persona name other than the agent's) is
+// resolved the same way, so an agent pointing at a built-in's copy is reported
+// under that copy alongside the agents that reach it by name. Community
+// (Registry-tier) personas, project-only personas, embedded-source personas and
+// personas that fail to resolve have no installed copy to fall behind, and are
+// never reported.
 //
 // With a stamp entry for the file, three hashes decide it — the embedded
 // content's, the stamp's (what init wrote) and the file's own:
@@ -64,14 +67,11 @@ func StalePersonas(agentToPersona map[string]string, dirs PersonaDirs) []StalePe
 	var ruleGaps map[string]bool // lazily filled: only stamp-less copies need it
 	byFile := map[string]*StalePersona{}
 	for agent, personaRef := range agentToPersona {
-		if personaRef != agent {
-			continue // explicit ref: no built-in counterpart to compare against
-		}
 		p, err := ResolvePersona(agent, personaRef, nil, dirs)
 		if err != nil {
 			continue // PredicateRuleGaps reports it as unresolved
 		}
-		file, embedded, ok := builtinCopy(p.Source, agent, dirs.Project)
+		file, embedded, ok := builtinCopy(p.Source, personaRef, dirs.Project)
 		if !ok {
 			continue
 		}
@@ -119,18 +119,19 @@ func StalePersonas(agentToPersona map[string]string, dirs PersonaDirs) []StalePe
 }
 
 // builtinCopy reports whether source, a resolved persona's source path, is a
-// built-in's file directly under projectDir — `<agent>.md` for a registered
+// built-in's file directly under projectDir — `<persona>.md` for a registered
 // built-in, or `_base.md` — and returns its base name and the embedded content
-// it was copied from.
-func builtinCopy(source, agent, projectDir string) (file, embedded string, ok bool) {
+// it was copied from. persona is the ref the agent resolved through: its own
+// name, or an explicit ref.
+func builtinCopy(source, persona, projectDir string) (file, embedded string, ok bool) {
 	dir := filepath.Clean(projectDir)
 	switch filepath.Clean(source) {
-	case filepath.Join(dir, agent+".md"):
-		text, err := personas.Get(agent)
+	case filepath.Join(dir, persona+".md"):
+		text, err := personas.Get(persona)
 		if err != nil {
 			return "", "", false // not a built-in name: a project-only persona
 		}
-		return agent + ".md", text, true
+		return persona + ".md", text, true
 	case filepath.Join(dir, basePersonaFile):
 		text, err := personas.Base()
 		if err != nil {
