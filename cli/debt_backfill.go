@@ -107,11 +107,15 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// the pruned-tree half, as does a refusal in an own tree whose reconciled/summary.json
 	// is gone: the safe under-count, which sends the operator to look for a file rather
 	// than telling them not to restore one that would fix it.
+	//
+	// The last clause says why one such dir may own nothing: a reconciled/summary.json
+	// over 1 MiB is ignored (BackfillResult.OversizedSummaries). It counts summary
+	// files, not records, so it stands apart from the partition and the split.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
 		res.Unchanged, res.Unresolved, res.Unresolved-res.PolicyUnrepairable, res.PolicyUnrepairable,
-		res.Ambiguous, res.SkippedRationaleBearing)
+		res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries)
 
 	// A dry run shows the text, not just the count. It is documented as the step to
 	// run FIRST on the one subcommand that rewrites the store in place, and a bare
