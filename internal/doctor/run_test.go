@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -735,4 +736,34 @@ func TestClassify_SalvagedMarkerAbsentKeepsTheFlagRemedy(t *testing.T) {
 	assert.NotContains(t, got.hint, "raise this agent's max_tokens declaration",
 		"the declaration was overridden by the flag, so raising it changes nothing")
 	assert.Contains(t, got.hint, "salvaged")
+}
+
+// PersonaStampDamaged goes through the same wrapper door as PredicateRuleGaps:
+// RenderJSON marshals a private struct, so a json tag on Report alone emits
+// nothing. Pin that the key reaches --json as a real boolean when it is set.
+func TestRenderJSON_ReportsPersonaStampDamaged(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{
+		Agents:              []AgentResult{},
+		PersonaStampDamaged: true,
+	}))
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &parsed))
+	assert.Equal(t, true, parsed["persona_stamp_damaged"],
+		"a damaged stamp must reach --json; a Report-only json tag emits nothing through the wrapper")
+}
+
+// Omitted when false, so a workspace with a missing or valid stamp emits exactly
+// the JSON it emitted before the field existed. Compared byte for byte against
+// the pre-field shape rather than with NotContains, so any other drift the new
+// field drags in (ordering, a stray null) fails here too.
+func TestRenderJSON_OmitsPersonaStampDamagedWhenTheStampIsFine(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, &Report{
+		Agents:            []AgentResult{},
+		PredicateRuleGaps: []string{"sec-agent"},
+	}))
+	assert.Equal(t, "{\n  \"agents\": [],\n  \"predicate_rule_gaps\": [\n    \"sec-agent\"\n  ]\n}\n", buf.String(),
+		"a report without a damaged stamp must render byte-identical to the pre-field JSON")
 }
