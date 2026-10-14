@@ -453,3 +453,93 @@ func TestDoctor_StalePersonasOmittedFromJSONWhenCurrent(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, stdout, "stale_personas")
 }
+
+// writeRawPersonaStamp writes body verbatim as the stamp file, so a test can
+// set up a damaged stamp that WritePersonaStamp would never produce.
+func writeRawPersonaStamp(t *testing.T, body string) {
+	t.Helper()
+	dir := filepath.Join(".atcr", "personas")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(registry.PersonaStampPath(dir), []byte(body), 0o644))
+}
+
+// A stamp that exists but does not parse is read as no stamp, by design, but
+// that used to happen silently. Doctor names the damaged file and the command
+// that rewrites it, once, without failing the exit code; the staleness verdict
+// is still the no-stamp one.
+func TestDoctor_NotesADamagedPersonaStamp(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+	writeRawPersonaStamp(t, "{")
+
+	stdout, stderr, err := executeSplit(t, "doctor")
+	require.NoError(t, err, "a damaged stamp is advisory: the exit code must stay 0")
+
+	var notes []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "damaged") {
+			notes = append(notes, line)
+		}
+	}
+	require.Len(t, notes, 1, "the damaged stamp is noted exactly once:\n%s", stderr)
+	assert.True(t, strings.HasPrefix(notes[0], "doctor: "), "the note is a doctor: line")
+	assert.Contains(t, notes[0], filepath.Join(".atcr", "personas", ".stamp.json"))
+	assert.Contains(t, notes[0], "atcr init --refresh-personas")
+	assert.NotContains(t, stdout, "damaged", "the note goes to stderr, not the table")
+
+	assert.Contains(t, stderr, "bruce.md (bruce; no stamp, edits unknown)",
+		"a damaged stamp keeps the no-stamp staleness verdict")
+	assert.Less(t, strings.Index(stderr, "stale persona files"), strings.Index(stderr, notes[0]),
+		"the note follows the stale-persona warning")
+}
+
+// --json skips the stderr note, so the field is how a JSON consumer learns the
+// stamp is damaged.
+func TestDoctor_DamagedPersonaStampInJSON(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeRawPersonaStamp(t, "{")
+
+	stdout, stderr, err := executeSplit(t, "doctor", "--json")
+	require.NoError(t, err, "the exit code is unchanged under --json too")
+
+	var got struct {
+		PersonaStampDamaged bool `json:"persona_stamp_damaged"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &got), "stdout must be valid JSON: %s", stdout)
+	assert.True(t, got.PersonaStampDamaged)
+	assert.NotContains(t, stderr, "damaged", "--json prints no human note")
+}
+
+// A missing stamp is a workspace that predates stamps, and a valid stamp is
+// usable: neither is damaged, so neither prints the note or sets the field.
+func TestDoctor_SilentOnAMissingOrValidPersonaStamp(t *testing.T) {
+	embedded, err := personas.Get("bruce")
+	require.NoError(t, err)
+
+	for name, stamp := range map[string]bool{"missing": false, "valid": true} {
+		t.Run(name, func(t *testing.T) {
+			srv := echoProvider(t, 0)
+			setupDoctorEnv(t, srv.URL)
+			t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+			writeProjectPersona(t, "bruce", embedded)
+			if stamp {
+				writePersonaStamp(t, map[string]string{"bruce.md": registry.HashPersonaContent([]byte(embedded))})
+			}
+
+			out, err := execute(t, "doctor")
+			require.NoError(t, err)
+			assert.NotContains(t, out, "damaged")
+
+			stdout, _, err := executeSplit(t, "doctor", "--json")
+			require.NoError(t, err)
+			assert.NotContains(t, stdout, "persona_stamp_damaged")
+		})
+	}
+}
