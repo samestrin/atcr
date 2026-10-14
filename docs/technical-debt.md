@@ -339,7 +339,7 @@ relative paths, so the path alone selects dozens of namesakes. The anchor line i
 re-scored against the record's own `file:line` to tell them apart, and a record
 whose candidates disagree is left alone rather than rewritten from a guess. The
 run reports those as `ambiguous`, and records no `review.md` yielded an excerpt for
-as `unresolved`. The `unresolved` count is split into two parts. `declined by policy`
+as `unresolved`. The `unresolved` count is split into three parts. `declined by policy`
 counts a record whose own review holds a `review.md` that the producer refuses (a
 symlink, or a file over the size cap), so restoring the file cannot help. The run
 treats a review dir as the record's own only when its `reconciled/summary.json`
@@ -347,8 +347,22 @@ carries the `reconciled_at` the record's `run_id` was built from, and the dir's 
 matches the one in the `run_id`. For a review dir reached through a symlink, either
 the link's name or its target's name matches. A `summary.json` that is not a plain
 file (a symlink or a named pipe, for example) or is over 1 MiB is not read, so its
-review is not the record's own; the oversized case is logged at debug level. A
-refused file in any other review does not count. `review tree pruned` counts everything else.
+review is not the record's own. `policy refusal not tied to the record` counts a
+refused `review.md` that sits in a review dir which owns another run, or whose
+`reconciled/summary.json` is missing or ignored, so the dir owns nothing: the
+refusal may not concern the record at all, and restoring the record's own
+`review.md` may still help. `review tree pruned` counts everything else. The three
+figures are exclusive and add up to `unresolved`.
+
+A final clause, `N summary.json over 1 MiB ignored`, counts the
+`reconciled/summary.json` files the pass ignored for exceeding the size cap —
+summary files, not records, so it stands apart from the record counters above. A
+review dir whose summary is ignored owns nothing, so a refused `review.md` in it
+counts under `policy refusal not tied to the record`, not `declined by policy`. The
+pass reads a dir's summary only when a refused `review.md` in that dir made it ask
+who owns the record, so `0` here does not prove no oversized summary exists — only
+that none was asked about (each skip is also logged at debug level, hidden by
+default).
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the
@@ -359,7 +373,7 @@ that line alone. The run reports both counts, e.g. `3 rewritten (5 lines)`, and
 
 ```console
 $ atcr debt backfill-justifications --dry-run
-dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (0 review tree pruned, 0 declined by policy), 0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)
+dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (0 review tree pruned, 0 declined by policy, 0 policy refusal not tied to the record), 0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), 0 summary.json over 1 MiB ignored
   2026-08.jsonl:1 "aaaa1111"
     before: "- **internal/thing.go:42** the real narrative explaining the defect."
     after:  "```\n- **internal/thing.go:42** the real narrative explaining the defect."
