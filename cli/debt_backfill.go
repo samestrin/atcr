@@ -104,18 +104,25 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// and only from a candidate in the record's own review dir
 	// (BackfillResult.PolicyUnrepairable). A record-level refusal — chiefly an anchor
 	// line the producer discarded as a draft — is equally unrepairable but prints under
-	// the pruned-tree half, as does a refusal in an own tree whose reconciled/summary.json
-	// is gone: the safe under-count, which sends the operator to look for a file rather
-	// than telling them not to restore one that would fix it.
+	// the pruned-tree half: the safe under-count, which sends the operator to look for a
+	// file rather than telling them not to restore one that would fix it.
+	//
+	// The third clause is a FILE-level refusal the pass cannot tie to the record: the
+	// refused file sits in a review dir that owns another run, or one whose
+	// reconciled/summary.json is gone or ignored, so it owns nothing
+	// (BackfillResult.PolicyUnattributed). It says a refusal exists without telling the
+	// operator to leave a file alone, because the file may not be the record's own. The
+	// three clauses are exclusive and sum to the unresolved count, so the pruned-tree
+	// figure is what is left after both policy counts.
 	//
 	// The last clause says why one such dir may own nothing: a reconciled/summary.json
 	// over 1 MiB is ignored (BackfillResult.OversizedSummaries). It counts summary
 	// files, not records, so it stands apart from the partition and the split.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
-		res.Unchanged, res.Unresolved, res.Unresolved-res.PolicyUnrepairable, res.PolicyUnrepairable,
-		res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries)
+		res.Unchanged, res.Unresolved, res.Unresolved-res.PolicyUnrepairable-res.PolicyUnattributed,
+		res.PolicyUnrepairable, res.PolicyUnattributed, res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries)
 
 	// A dry run shows the text, not just the count. It is documented as the step to
 	// run FIRST on the one subcommand that rewrites the store in place, and a bare

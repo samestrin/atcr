@@ -1892,3 +1892,84 @@ func TestOwnershipCache_CountsAFileThatGrewPastTheCapAfterTheLstat(t *testing.T)
 	assert.False(t, c.owns(reviewDir, "2026-08-01T00:00:00Z-"+filepath.Base(reviewDir)))
 	assert.Equal(t, 1, c.oversized, "the post-read length arm is an oversized skip too: %s", path)
 }
+
+// TD internal/localdebt/backfill.go:372 — a policy refusal the pass cannot tie to the
+// record (its review dir provably owns another run, or its summary.json is missing or
+// oversized, so it owns nothing) fell into the pruned-tree half of Unresolved, so the
+// operator read "review tree pruned" for a record whose tree held a refused file.
+// PolicyUnattributed names it without claiming the file is the record's own, so it
+// still does not tell the operator to leave a file alone. It is exclusive with
+// PolicyUnrepairable, which wins when both hold, and the three counts sum to
+// Unresolved.
+func TestBackfillJustifications_CountsAnUnattributedPolicyRefusalApart(t *testing.T) {
+	const runID = "2026-08-01T00:00:00Z-multi-agent"
+	rec := `{"schema_version":3,"id":"eeee0001","run_id":"` + runID + `","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+
+	// plantSymlink puts a symlinked review.md — a file-level policy refusal — at the
+	// record's relative path inside reviewDir.
+	plantSymlink := func(t *testing.T, root, reviewDir string) {
+		t.Helper()
+		target := filepath.Join(root, "elsewhere", "review.md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+		require.NoError(t, os.WriteFile(target,
+			[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+		rd := filepath.Join(reviewDir, "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+	}
+
+	cases := []struct {
+		name                       string
+		plant                      func(t *testing.T, root, reviewRoot string)
+		pruned, owned, unattribute int
+	}{
+		{"refusal in an unrelated review", func(t *testing.T, root, reviewRoot string) {
+			other := filepath.Join(reviewRoot, "sprint-b", "multi-agent")
+			writeReconciledSummary(t, other, "2026-08-09T00:00:00Z")
+			plantSymlink(t, root, other)
+		}, 0, 0, 1},
+		{"refusal in a dir whose summary.json is gone", func(t *testing.T, root, reviewRoot string) {
+			plantSymlink(t, root, filepath.Join(reviewRoot, "sprint-a", "multi-agent"))
+		}, 0, 0, 1},
+		{"refusal in a dir whose summary.json is oversized", func(t *testing.T, root, reviewRoot string) {
+			own := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+			rawSummary(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", maxSummaryBytes))(t, own)
+			plantSymlink(t, root, own)
+		}, 0, 0, 1},
+		{"an owned refusal wins over an unattributed one", func(t *testing.T, root, reviewRoot string) {
+			own := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+			writeReconciledSummary(t, own, "2026-08-01T00:00:00Z")
+			plantSymlink(t, root, own)
+			other := filepath.Join(reviewRoot, "sprint-b", "multi-agent")
+			writeReconciledSummary(t, other, "2026-08-09T00:00:00Z")
+			plantSymlink(t, root, other)
+		}, 0, 1, 0},
+		{"no candidate at all is the pruned tree", func(*testing.T, string, string) {}, 1, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			reviewRoot := filepath.Join(root, "reviews")
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			require.NoError(t, os.MkdirAll(reviewRoot, 0o750))
+			tc.plant(t, root, reviewRoot)
+			writeShard(t, store, "2026-08", rec)
+
+			res, err := BackfillJustifications(store, reviewRoot, true)
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, res.Unresolved, "premise: nothing yielded an excerpt")
+			assert.Equal(t, tc.owned, res.PolicyUnrepairable)
+			assert.Equal(t, tc.unattribute, res.PolicyUnattributed)
+			assert.Equal(t, tc.pruned, res.Unresolved-res.PolicyUnrepairable-res.PolicyUnattributed,
+				"the pruned-tree figure the CLI prints")
+			assert.Equal(t, res.Unresolved, tc.pruned+res.PolicyUnrepairable+res.PolicyUnattributed,
+				"the three counts sum to Unresolved")
+		})
+	}
+}
