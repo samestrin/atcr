@@ -1490,12 +1490,11 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 	require.NoError(t, os.MkdirAll(store, 0o750))
 
 	opens := map[string]int{}
-	orig := openSummary
-	openSummary = func(name string) (*os.File, error) {
+	seams := defaultBackfillSeams()
+	seams.open = func(name string) (*os.File, error) {
 		opens[name]++
-		return orig(name)
+		return os.Open(name)
 	}
-	t.Cleanup(func() { openSummary = orig })
 
 	target := filepath.Join(root, "elsewhere", "review.md")
 	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
@@ -1520,7 +1519,7 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 	}
 	writeShard(t, store, "2026-08", lines...)
 
-	res, err := BackfillJustifications(store, reviewRoot, false)
+	res, err := backfillJustifications(store, reviewRoot, false, seams)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(agents), res.PolicyUnrepairable,
@@ -1532,18 +1531,16 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 // TD internal/localdebt/backfill.go:464 — an oversized summary.json owned nothing
 // silently. The skip is logged at debug with the path and the size, as the
 // producer's oversized review.md is (internal/reconcile/justification.go).
-// Swaps the process-wide default logger, so it must not run in parallel.
+// The logger is injected, so the test leaves the process-wide default alone.
 func TestReadReconciledAt_OversizedLogsAtDebug(t *testing.T) {
 	var buf bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(old) })
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	reviewDir := t.TempDir()
 	body := `{"reconciled_at":"2026-08-04T10:00:00Z"}` + strings.Repeat(" ", maxSummaryBytes)
 	rawSummary(body)(t, reviewDir)
 
-	assert.Empty(t, readReconciledAt(reviewDir))
+	assert.Empty(t, readReconciledAt(reviewDir, os.Open, log))
 	out := buf.String()
 	assert.Contains(t, out, "level=DEBUG")
 	assert.Contains(t, out, filepath.Join(reviewDir, "reconciled", "summary.json"))
@@ -1604,18 +1601,16 @@ func TestReviewDirOwnsRun_RealRunIDAndSummaryAgree(t *testing.T) {
 		"run_id %q was minted for this review dir, so its own summary.json must own it", recs[0].RunID)
 }
 
-// countWalks swaps walkDir for one that counts the walks it starts and runs the real
-// one. Package state, so a test that calls it must not call t.Parallel.
-func countWalks(t *testing.T) *int {
-	t.Helper()
+// countWalks returns seams whose walk counts the walks it starts and runs the real
+// one. The counter is the caller's own, so tests using it may run in parallel.
+func countWalks() (backfillSeams, *int) {
 	walks := 0
-	orig := walkDir
-	walkDir = func(root string, fn fs.WalkDirFunc) error {
+	seams := defaultBackfillSeams()
+	seams.walk = func(root string, fn fs.WalkDirFunc) error {
 		walks++
-		return orig(root, fn)
+		return filepath.WalkDir(root, fn)
 	}
-	t.Cleanup(func() { walkDir = orig })
-	return &walks
+	return seams, &walks
 }
 
 // TD internal/localdebt/backfill.go:382 — replayCandidates walked the whole review
@@ -1644,8 +1639,8 @@ func TestBackfillJustifications_WalksTheReviewRootOncePerPass(t *testing.T) {
 	}
 	writeShard(t, store, "2026-08", lines...)
 
-	walks := countWalks(t)
-	res, err := BackfillJustifications(store, reviewRoot, true)
+	seams, walks := countWalks()
+	res, err := backfillJustifications(store, reviewRoot, true, seams)
 	require.NoError(t, err)
 	assert.Equal(t, len(agents), res.Scanned)
 	assert.Equal(t, len(agents), res.Rewritten, "each record still finds its own review.md in the shared walk")
@@ -1666,9 +1661,74 @@ func TestBackfillJustifications_NothingToReplayWalksNothing(t *testing.T) {
 			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
 			`"justification":"- **internal/thing.go:42** an excerpt."}`)
 
-	walks := countWalks(t)
-	res, err := BackfillJustifications(store, reviewRoot, true)
+	seams, walks := countWalks()
+	res, err := backfillJustifications(store, reviewRoot, true, seams)
 	require.NoError(t, err)
 	assert.Zero(t, res.Scanned)
 	assert.Zero(t, *walks, "a pass with nothing to replay must not walk the review root")
+}
+
+// TD internal/localdebt/backfill.go:453 — the walk and the summary open were package
+// vars, so two tests counting through them corrupted each other's counts the moment
+// either ran in parallel. Each pass now carries its own seams: these two run side by
+// side (and under -race) and each sees only its own pass.
+func TestBackfillJustifications_SeamsAreCarriedPerPass(t *testing.T) {
+	t.Run("walks", func(t *testing.T) {
+		t.Parallel()
+		for range 5 {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			rd := filepath.Join(root, "reviews", "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			require.NoError(t, os.MkdirAll(rd, 0o750))
+			require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+				[]byte("# review\n\n- **internal/thing.go:42** the narrative dax wrote.\n"), 0o600))
+			writeShard(t, store, "2026-08",
+				`{"schema_version":3,"id":"dddd0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+					`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+					`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+					`"justification":"- **internal/thing.go:42** a stale excerpt.",`+
+					`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`)
+
+			seams, walks := countWalks()
+			res, err := backfillJustifications(store, filepath.Join(root, "reviews"), true, seams)
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Rewritten)
+			assert.Equal(t, 1, *walks, "this pass walks once, whatever a parallel pass does")
+		}
+	})
+	t.Run("opens", func(t *testing.T) {
+		t.Parallel()
+		for range 5 {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			target := filepath.Join(root, "elsewhere", "review.md")
+			require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+			require.NoError(t, os.WriteFile(target,
+				[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+			ownDir := filepath.Join(root, "reviews", "sprint-a", "multi-agent")
+			writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+			rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
+			require.NoError(t, os.MkdirAll(rd, 0o750))
+			require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+			writeShard(t, store, "2026-08",
+				`{"schema_version":3,"id":"eeee0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+					`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+					`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+					`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",`+
+					`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`)
+
+			opens := 0
+			seams := defaultBackfillSeams()
+			seams.open = func(name string) (*os.File, error) {
+				opens++
+				return os.Open(name)
+			}
+			res, err := backfillJustifications(store, filepath.Join(root, "reviews"), false, seams)
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.PolicyUnrepairable)
+			assert.Equal(t, 1, opens, "this pass opens its summary once, whatever a parallel pass does")
+		}
+	})
 }
