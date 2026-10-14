@@ -20,11 +20,13 @@ func RenderJSON(w io.Writer, rep *Report) error {
 		PredicateRuleGaps       []string       `json:"predicate_rule_gaps,omitempty"`
 		PersonaResolutionErrors []string       `json:"persona_resolution_errors,omitempty"`
 		StalePersonas           []StalePersona `json:"stale_personas,omitempty"`
+		PersonaStampDamaged     bool           `json:"persona_stamp_damaged,omitempty"`
 	}{
 		Agents:                  rep.Agents,
 		PredicateRuleGaps:       rep.PredicateRuleGaps,
 		PersonaResolutionErrors: rep.PersonaResolutionErrors,
 		StalePersonas:           rep.StalePersonas,
+		PersonaStampDamaged:     rep.PersonaStampDamaged,
 	}
 	if out.Agents == nil {
 		out.Agents = []AgentResult{}
