@@ -97,6 +97,17 @@ type BackfillResult struct {
 	// described the wrong set on the one command that rewrites the store in place.
 	SkippedRationaleBearing int
 
+	// OversizedSummaries counts the review dirs' reconciled/summary.json files this
+	// pass ignored for being over maxSummaryBytes. Such a dir owns nothing, so a
+	// policy refusal in it falls to the pruned-tree half of Unresolved; the slog.Debug
+	// line that notes each skip is dropped by the default Info logger, and this count
+	// is what reaches the operator. It sits outside the record partition: it counts
+	// summary FILES, each at most once per pass (ownershipCache reads a dir once), and
+	// a file is read only when a policy-refused candidate in its dir makes the pass ask
+	// who owns the record, so an oversized summary the pass never asks about is not
+	// counted.
+	OversizedSummaries int
+
 	// RewrittenLines counts the SHARD LINES the pass wrote, which Rewritten does
 	// not: one id can carry several lines (a re-detection after a resolution
 	// appends a fresh record under the same id), so a record count understates the
@@ -244,6 +255,8 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 		// One ownership cache and one review-root walk for the whole pass: see
 		// ownershipCache and reviewTree.
 		ownership := &ownershipCache{open: seams.open, log: seams.log}
+		// Deferred so every return below carries the count the pass reached.
+		defer func() { res.OversizedSummaries = ownership.oversized }()
 		folded := FoldRecords(recs)
 		tree := newReviewTree(reviewRoot, folded)
 		tree.walkFn = seams.walk
@@ -365,7 +378,8 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 		// take away from a half-completed rewrite of an append-only store.
 		//
 		// Only the fields describing WORK DONE survive. The scan counters (Scanned,
-		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedRationaleBearing) describe a pass
+		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedRationaleBearing,
+		// OversizedSummaries) describe a pass
 		// that completed, and this one did not, so carrying them would report a
 		// partition of a scan whose writes were never finished.
 		return BackfillResult{
@@ -605,45 +619,58 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 // oversized file is logged at debug on log, so the skip is visible when asked for.
 // open is how the file is opened, os.Open outside a test.
 func readReconciledAt(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) string {
+	at, _ := readSummary(reviewDir, open, log)
+	return at
+}
+
+// readSummary is readReconciledAt that also reports whether the file was skipped for
+// being over maxSummaryBytes, on either arm: the Lstat size check, or the read of a
+// file that grew past the cap since the Lstat. ownershipCache counts that report.
+func readSummary(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) (reconciledAt string, oversized bool) {
 	path := filepath.Join(reviewDir, "reconciled", "summary.json")
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
-		return ""
+		return "", false
 	}
 	if info.Size() > maxSummaryBytes {
 		log.Debug("skipping oversized summary.json", "path", path, "size", info.Size())
-		return ""
+		return "", true
 	}
 	f, err := open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer func() { _ = f.Close() }()
 	// One byte PAST the cap, so a file exactly at it still reads whole and one that
 	// grew past it since the Lstat is still detectable by length.
 	data, err := io.ReadAll(io.LimitReader(f, maxSummaryBytes+1))
-	if err != nil || len(data) > maxSummaryBytes {
-		return ""
+	if err != nil {
+		return "", false
+	}
+	if len(data) > maxSummaryBytes {
+		return "", true
 	}
 	var s struct {
 		ReconciledAt string `json:"reconciled_at"`
 	}
 	if json.Unmarshal(data, &s) != nil {
-		return ""
+		return "", false
 	}
-	return s.ReconciledAt
+	return s.ReconciledAt, false
 }
 
 // ownershipCache holds each review dir's reconciled_at ("" for one that owns
 // nothing) for the life of one BackfillJustifications call. replayCandidates runs
 // once per record, and records from one review all ask that review's dir, so
 // without it every policy-refused candidate re-reads the same summary.json. open
-// and log are handed to readReconciledAt; the zero value uses os.Open and the
-// default logger.
+// and log are handed to readSummary; the zero value uses os.Open and the default
+// logger. oversized counts the summaries read that were over maxSummaryBytes, once
+// per review dir because each dir is read once.
 type ownershipCache struct {
-	at   map[string]string
-	open func(name string) (*os.File, error)
-	log  *slog.Logger
+	at        map[string]string
+	open      func(name string) (*os.File, error)
+	log       *slog.Logger
+	oversized int
 }
 
 // owns is reviewDirOwnsRun, reading reviewDir's summary.json at most once.
@@ -657,7 +684,11 @@ func (c *ownershipCache) owns(reviewDir, runID string) bool {
 		if log == nil {
 			log = slog.Default()
 		}
-		at = readReconciledAt(reviewDir, open, log)
+		var oversized bool
+		at, oversized = readSummary(reviewDir, open, log)
+		if oversized {
+			c.oversized++
+		}
 		if c.at == nil {
 			c.at = map[string]string{}
 		}

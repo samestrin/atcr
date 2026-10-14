@@ -1797,3 +1797,98 @@ func TestReviewTree_WalkKeepsTheBaseAndReplayMatchesOnlyTheRecordsRel(t *testing
 	assert.Zero(t, pass.Ambiguous,
 		"the namesake at another rel must not become a second, disagreeing candidate")
 }
+
+// TD internal/localdebt/backfill.go:596 — an oversized summary.json was skipped at
+// slog.Debug only, which the default Info logger drops, so the record whose own review
+// dir it sits in quietly lost its policy attribution. The pass now counts the skip.
+//
+// Two records refuse a symlinked review.md in ONE review dir whose summary.json is
+// over the cap, so the pass asks that dir who owns the run twice; the cache reads
+// the file once, and the count is per summary file per pass, not per record.
+func TestBackfillJustifications_CountsAnOversizedSummaryOncePerFile(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	// The summary carries the run's own reconciled_at, so only the size stands
+	// between this dir and owning the records.
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	rawSummary(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", maxSummaryBytes))(t, ownDir)
+
+	agents := []string{"dax", "kira"}
+	lines := make([]string, 0, len(agents))
+	for i, agent := range agents {
+		rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", agent)
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+		id := fmt.Sprintf("cccc000%d", i+1)
+		lines = append(lines, `{"schema_version":3,"id":"`+id+`","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p-`+id+`","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["`+agent+`"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/`+agent+`/review.md","line":3}}`)
+	}
+	writeShard(t, store, "2026-08", lines...)
+
+	res, err := BackfillJustifications(store, reviewRoot, true)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, res.Unresolved, "premise: neither symlink yields an excerpt")
+	assert.Zero(t, res.PolicyUnrepairable, "premise: an oversized summary.json owns nothing")
+	assert.Equal(t, 1, res.OversizedSummaries,
+		"one summary.json over the cap was ignored, however many records asked its dir")
+}
+
+// A summary.json within the cap is not counted, and neither is one the pass never
+// reads: the count moves only when a refusal makes the pass ask who owns the record.
+func TestBackfillJustifications_DoesNotCountASummaryWithinTheCap(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target, []byte("# review\n"), 0o600))
+
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	writeReconciledSummary(t, ownDir, "2026-08-01T00:00:00Z")
+	rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+	writeShard(t, store, "2026-08", `{"schema_version":3,"id":"cccc0003","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",`+
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`)
+
+	res, err := BackfillJustifications(store, reviewRoot, true)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, res.PolicyUnrepairable, "premise: the summary was read and owns the record")
+	assert.Zero(t, res.OversizedSummaries)
+}
+
+// readReconciledAt has two oversized arms: the Lstat size check and the post-read
+// length check for a file that grew past the cap after the Lstat. Both are counted.
+func TestOwnershipCache_CountsAFileThatGrewPastTheCapAfterTheLstat(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
+	path := filepath.Join(reviewDir, "reconciled", "summary.json")
+	c := &ownershipCache{open: func(name string) (*os.File, error) {
+		// Grow the file between the Lstat and the read.
+		if err := os.WriteFile(name, []byte(strings.Repeat(" ", maxSummaryBytes+1)), 0o600); err != nil {
+			return nil, err
+		}
+		return os.Open(name)
+	}}
+
+	assert.False(t, c.owns(reviewDir, "2026-08-01T00:00:00Z-"+filepath.Base(reviewDir)))
+	assert.Equal(t, 1, c.oversized, "the post-read length arm is an oversized skip too: %s", path)
+}
