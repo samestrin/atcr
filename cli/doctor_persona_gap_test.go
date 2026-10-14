@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -326,6 +327,45 @@ func TestDoctor_StaleWarningNamesAPreRuleFile(t *testing.T) {
 	assert.Contains(t, out, "bruce.md (bruce; no stamp, edits unknown)",
 		"the warning names the file, the agent it serves, and that edits cannot be known without a stamp")
 	assert.Contains(t, out, "atcr init --refresh-personas", "the warning must say how to fix it")
+}
+
+// The staleness scan reads the same filtered agentToPersona as the rule-gap scan,
+// so with --agents it covers only the selected subset — and copies serving
+// unselected agents go unchecked. The stale line has to name that scope too, or it
+// reads as "every copy was checked". Isolated to the stale line: the rule-gap line
+// fires on the same fixture and carries the scope already.
+func TestDoctor_StaleWarningNamesTheSelectedScope(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	staleLine := func(out string) string {
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, "stale persona files") {
+				return line
+			}
+		}
+		t.Fatalf("no stale persona warning in output:\n%s", out)
+		return ""
+	}
+
+	filtered, err := execute(t, "doctor", "--agents", "bruce")
+	require.NoError(t, err, "a stale persona copy is advisory: the exit code must stay 0")
+	line := staleLine(filtered)
+	assert.Contains(t, line, "serve the selected agents",
+		"with --agents the scan covers the selected subset, and the stale warning must say so")
+	assert.Contains(t, line, "bruce.md (bruce; no stamp, edits unknown)", "the file list is unchanged")
+	assert.Contains(t, line, "run `atcr init --refresh-personas` to update them", "the refresh command is unchanged")
+
+	unfiltered, err := execute(t, "doctor")
+	require.NoError(t, err)
+	line = staleLine(unfiltered)
+	assert.Contains(t, line, "serve the roster agents",
+		"without --agents the scan covers the roster, and the stale warning must say so")
+	assert.Contains(t, line, "bruce.md (bruce; no stamp, edits unknown)", "the file list is unchanged")
+	assert.Contains(t, line, "run `atcr init --refresh-personas` to update them", "the refresh command is unchanged")
 }
 
 // A stamped copy whose embedded content has since changed, and which the operator
