@@ -153,16 +153,18 @@ func TestStageTestDeletion_GuardsBeforeWriting(t *testing.T) {
 		stageTestDeletion(t)
 		return
 	}
-	// A scratch dir inside the repo (NOT under os.TempDir()) so the guard
-	// fires; any pre-guard writes land here and are removed with it.
-	dir := filepath.Join("..", ".planning", ".temp", "stage-guard")
-	abs, err := filepath.Abs(dir)
-	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(abs, 0o755))
-	defer func() { _ = os.RemoveAll(abs) }()
+	// The helper runs in work while its os.TempDir() is the sibling alt, so
+	// work is NOT under the temp dir the guard checks and the guard fires.
+	// Both live under t.TempDir(), so any pre-guard writes are cleaned up and
+	// the test holds wherever the checkout sits, even under $TMPDIR.
+	root := t.TempDir()
+	abs := filepath.Join(root, "work")
+	alt := filepath.Join(root, "alt")
+	require.NoError(t, os.Mkdir(abs, 0o755))
+	require.NoError(t, os.Mkdir(alt, 0o755))
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStageTestDeletion_GuardsBeforeWriting$")
-	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1")
+	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1", "TMPDIR="+alt)
 	cmd.Dir = abs
 	out, runErr := cmd.CombinedOutput()
 	require.Error(t, runErr, "the helper must fail outside a temp workdir, got: %s", out)
