@@ -251,6 +251,13 @@ type Report struct {
 	// and advisory like it: the copy was read and reviews run on it, so the exit
 	// code is unchanged. Empty (omitted) when every copy is current.
 	StalePersonas []StalePersona `json:"stale_personas,omitempty"`
+	// PersonaStampDamaged is true when `.atcr/personas/.stamp.json` exists but
+	// does not parse or has no `files` object (Epic 66). The staleness verdict
+	// still takes the no-stamp path, as registry.ReadPersonaStamp has it; this
+	// field only stops that degradation from being silent. Populated by
+	// cli/doctor.go after Run, advisory like StalePersonas, so the exit code is
+	// unchanged. False (omitted) when the stamp is missing or valid.
+	PersonaStampDamaged bool `json:"persona_stamp_damaged,omitempty"`
 }
 
 // StalePersona is the --json shape of one stale persona copy. It restates
