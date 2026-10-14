@@ -885,3 +885,56 @@ func TestDebtBackfillJustifications_UnresolvedSplitsPolicyFromPrunedTree(t *test
 	assert.NotContains(t, out, "no surviving review.md",
 		"the lumped label is what conflated the two remedies")
 }
+
+// TD internal/localdebt/backfill.go:596 — an oversized summary.json was skipped at
+// debug level only, so the operator never saw why a refusal in the record's own
+// review dir went unattributed. The count is printed with the others, zero included,
+// as the final clause, and the counters before it keep their exact text.
+func TestDebtBackfillJustifications_ReportsOversizedSummaries(t *testing.T) {
+	const prefix = "dry run: 1 scanned, 0 rewritten (0 lines), 0 unchanged, 1 unresolved (%d review tree pruned, %d declined by policy), " +
+		"0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)"
+
+	run := func(t *testing.T, summary []byte) string {
+		t.Helper()
+		root := t.TempDir()
+		store := filepath.Join(root, "debt")
+		reviewRoot := filepath.Join(root, "reviews")
+		require.NoError(t, os.MkdirAll(store, 0o750))
+
+		target := filepath.Join(root, "elsewhere", "review.md")
+		require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+		require.NoError(t, os.WriteFile(target,
+			[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+		// The symlinked review.md is a policy refusal, which is what makes the pass
+		// read the record's own review dir's summary.json at all.
+		ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+		require.NoError(t, os.MkdirAll(filepath.Join(ownDir, "reconciled"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(ownDir, "reconciled", "summary.json"), summary, 0o600))
+		rd := filepath.Join(ownDir, "sources", "pool", "raw", "agent", "dax")
+		require.NoError(t, os.MkdirAll(rd, 0o750))
+		require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+
+		rec := `{"schema_version":3,"id":"dddd0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+		require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+		code, out := execCmdCapture(t, "debt", "backfill-justifications",
+			"--store", store, "--review-root", reviewRoot, "--dry-run")
+		require.Equal(t, 0, code, out)
+		return out
+	}
+
+	t.Run("an oversized summary.json is counted", func(t *testing.T) {
+		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", 1<<20)))
+		assert.Contains(t, out, fmt.Sprintf(prefix, 1, 0)+", 1 summary.json over 1 MiB ignored\n")
+	})
+
+	t.Run("a normal summary.json prints a zero", func(t *testing.T) {
+		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`))
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1)+", 0 summary.json over 1 MiB ignored\n")
+	})
+}
