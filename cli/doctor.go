@@ -155,6 +155,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			File: sp.File, Agents: sp.Agents, Edited: sp.Edited, Stamped: sp.Stamped,
 		})
 	}
+	// The staleness scan above reads a damaged stamp as no stamp, by design; this
+	// is the separate signal that keeps that fallback from being silent. Advisory,
+	// so the exit code is unchanged.
+	rep.PersonaStampDamaged = registry.PersonaStampDamaged(personaDirs.Project)
 
 	// A persona that cannot be RESOLVED is invocation health, not composition, so it
 	// fails the exit code. The command's contract is "exits 0 when every agent has a
@@ -215,6 +219,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		if len(rep.StalePersonas) > 0 {
 			_, _ = fmt.Fprint(cmd.ErrOrStderr(), stalePersonaWarning(rep.StalePersonas, scope))
+		}
+		if rep.PersonaStampDamaged {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"doctor: note — %s is damaged (it does not parse or has no \"files\" object), so "+
+					"persona copies were checked as if unstamped; run `atcr init --refresh-personas` to rewrite it\n",
+				registry.PersonaStampPath(personaDirs.Project))
 		}
 		// Named by agent AND model, since the mismatch belongs to the model behind the
 		// declaration. The endpoint answered, so the ok/failed count and the exit code
