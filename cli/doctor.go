@@ -198,15 +198,15 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "doctor: %d ok / %d failed\n", okCount, len(rep.Agents)-okCount)
+		// Both persona scans cover whatever filterRoster left in proj, so with
+		// --agents they cover the SELECTED subset — not the roster. Naming the real
+		// scope is what keeps either warning from implying the unselected agents
+		// were checked and found clean.
+		scope := "roster agents"
+		if len(agentsFilter) > 0 {
+			scope = "selected agents"
+		}
 		if len(rep.PredicateRuleGaps) > 0 {
-			// The scan covers whatever filterRoster left in proj, so with --agents it
-			// covers the SELECTED subset — not the roster the old wording claimed.
-			// Naming the real scope is what keeps the warning from implying the
-			// unselected agents were checked and found clean.
-			scope := "roster agents"
-			if len(agentsFilter) > 0 {
-				scope = "selected agents"
-			}
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 				"doctor: WARNING — predicate-exhaustiveness rule gaps: these %s resolve "+
 					"to personas that do not carry the panel-wide rule (built-ins are test-enforced; "+
@@ -214,7 +214,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				scope, strings.Join(rep.PredicateRuleGaps, ", "))
 		}
 		if len(rep.StalePersonas) > 0 {
-			_, _ = fmt.Fprint(cmd.ErrOrStderr(), stalePersonaWarning(rep.StalePersonas))
+			_, _ = fmt.Fprint(cmd.ErrOrStderr(), stalePersonaWarning(rep.StalePersonas, scope))
 		}
 		// Named by agent AND model, since the mismatch belongs to the model behind the
 		// declaration. The endpoint answered, so the ok/failed count and the exit code
@@ -350,8 +350,9 @@ func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.Proje
 // stalePersonaWarning renders the stale-persona warning: each file under
 // `.atcr/personas/` by name, the agents it serves, whether it was hand edited
 // (a refresh would overwrite the edit) or carries no stamp (so whether it was
-// edited is unknown), and the command that brings it up to date.
-func stalePersonaWarning(stale []doctor.StalePersona) string {
+// edited is unknown), and the command that brings it up to date. scope names
+// which agents the scan covered ("roster agents" or "selected agents").
+func stalePersonaWarning(stale []doctor.StalePersona, scope string) string {
 	files := make([]string, 0, len(stale))
 	for _, sp := range stale {
 		entry := sp.File + " (" + strings.Join(sp.Agents, ", ")
@@ -364,10 +365,10 @@ func stalePersonaWarning(stale []doctor.StalePersona) string {
 		files = append(files, entry+")")
 	}
 	return fmt.Sprintf("doctor: WARNING — stale persona files: these copies under %s "+
-		"have fallen behind the personas built into this atcr, so reviews run the older prompt; "+
+		"serve the %s and have fallen behind the personas built into this atcr, so reviews run the older prompt; "+
 		"run `atcr init --refresh-personas` to update them (it overwrites edited copies; "+
 		"add --dry-run to preview): %s\n",
-		filepath.Join(".atcr", "personas"), strings.Join(files, ", "))
+		filepath.Join(".atcr", "personas"), scope, strings.Join(files, ", "))
 }
 
 // thinkingNotHonoredWarnings splits the "thinking not honored" warning by the
