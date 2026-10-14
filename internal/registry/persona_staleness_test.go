@@ -117,25 +117,60 @@ func TestStalePersonas_FileMatchesEmbeddedIsCurrent(t *testing.T) {
 	require.Empty(t, StalePersonas(map[string]string{"bruce": "bruce"}, PersonaDirs{Project: project}))
 }
 
-// Community and explicit-ref personas have no built-in counterpart and are never
-// reported, however far behind the rule they are; nor is a built-in's copy in the
-// Registry tier, which is not under `.atcr/personas/`.
-func TestStalePersonas_CommunityAndExplicitRefNeverReported(t *testing.T) {
+// An explicit ref that resolves to a built-in's stale copy under
+// `.atcr/personas/` is reported under that copy, with the referring agent among
+// its Agents.
+func TestStalePersonas_ExplicitRefToBuiltinCopyReported(t *testing.T) {
+	project := t.TempDir()
+	writePersona(t, project, "bruce", ruleLessPersona)
+
+	got := StalePersonas(map[string]string{
+		"bruce":     "bruce",
+		"bruce-bot": "bruce", // explicit ref to a stale built-in copy
+	}, PersonaDirs{Project: project})
+
+	require.Equal(t, []StalePersona{
+		{File: "bruce.md", Path: filepath.Join(project, "bruce.md"), Agents: []string{"bruce", "bruce-bot"}},
+	}, got)
+}
+
+// A stamped built-in copy reached only through an explicit ref is judged by the
+// same stamp comparison as one reached through the agent's own name.
+func TestStalePersonas_ExplicitRefStampedCopyReported(t *testing.T) {
+	project := t.TempDir()
+	old := embeddedPersona(t, "greta") + "\n<!-- an older release -->\n"
+	writePersona(t, project, "greta", old)
+	stamp := NewPersonaStamp()
+	stamp.Record("greta.md", []byte(old))
+	require.NoError(t, WritePersonaStamp(project, stamp))
+
+	got := StalePersonas(map[string]string{"reviewer": "greta"}, PersonaDirs{Project: project})
+
+	require.Equal(t, []StalePersona{
+		{File: "greta.md", Path: filepath.Join(project, "greta.md"), Agents: []string{"reviewer"}, Stamped: true},
+	}, got)
+}
+
+// Community personas, project-only personas and refs that fail to resolve have
+// no built-in counterpart and are never reported, however far behind the rule
+// they are — whether reached through the agent's name or an explicit ref; nor is
+// a built-in's copy in the Registry tier, which is not under `.atcr/personas/`.
+func TestStalePersonas_CommunityAndNonBuiltinRefNeverReported(t *testing.T) {
 	project := t.TempDir()
 	registryDir := t.TempDir()
 	writePersona(t, registryDir, "owasp", ruleLessPersona) // community persona
 	writePersona(t, registryDir, "kai", ruleLessPersona)   // built-in name, Registry tier
 	writePersona(t, project, "strict", ruleLessPersona)    // project-only persona
-	writePersona(t, project, "bruce", ruleLessPersona)     // built-in copy, but only via an explicit ref
 	writePersona(t, registryDir, "_base", ruleLessPersona) // Registry-tier base
 
 	got := StalePersonas(map[string]string{
-		"sec-agent": "owasp",  // explicit ref to a community persona
-		"kai":       "kai",    // resolves to the Registry tier
-		"strict":    "strict", // project persona with no embedded counterpart
-		"bruce-bot": "bruce",  // explicit ref to a stale built-in copy
-		"helper":    "helper", // falls to the Registry _base.md
-		"missing":   "nowhere",
+		"sec-agent":  "owasp",  // explicit ref to a community persona
+		"kai":        "kai",    // resolves to the Registry tier
+		"strict":     "strict", // project persona with no embedded counterpart
+		"strict-bot": "strict", // explicit ref to a project-only persona
+		"kai-bot":    "kai",    // explicit ref to a built-in's Registry-tier copy
+		"helper":     "helper", // falls to the Registry _base.md
+		"missing":    "nowhere",
 	}, PersonaDirs{Project: project, Registry: registryDir})
 
 	require.Empty(t, got)
