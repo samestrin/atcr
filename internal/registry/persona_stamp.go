@@ -66,6 +66,30 @@ func ReadPersonaStamp(personasDir string) (stamp PersonaStamp, ok bool) {
 	if err != nil {
 		return PersonaStamp{}, false
 	}
+	return parsePersonaStamp(data)
+}
+
+// PersonaStampDamaged reports whether personasDir holds a stamp file that
+// exists but is unusable: unreadable, unparseable, or with no "files" object.
+// ReadPersonaStamp folds that case into "no stamp" on purpose; this is the
+// separate signal that lets a caller say the stamp is damaged rather than
+// stay silent. A missing stamp (or a missing personasDir) is not damaged.
+func PersonaStampDamaged(personasDir string) bool {
+	path := PersonaStampPath(personasDir)
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	_, ok := parsePersonaStamp(data)
+	return !ok
+}
+
+// parsePersonaStamp is the one rule for what counts as a usable stamp: it
+// parses as JSON and carries a "files" object.
+func parsePersonaStamp(data []byte) (stamp PersonaStamp, ok bool) {
 	if err := json.Unmarshal(data, &stamp); err != nil || stamp.Files == nil {
 		return PersonaStamp{}, false
 	}

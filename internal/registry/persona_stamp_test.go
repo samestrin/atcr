@@ -128,3 +128,43 @@ func TestPersonaStamp_WriteReplacesExisting(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, stamp, got)
 }
+
+// TestPersonaStampDamaged pins the damaged-stamp signal (Epic 66): a stamp
+// file that exists but does not parse, or has no "files" object, is damaged;
+// a missing stamp and a valid one are not. ReadPersonaStamp still treats a
+// damaged stamp as no stamp, so the staleness verdict is unchanged.
+func TestPersonaStampDamaged(t *testing.T) {
+	for name, body := range map[string]string{
+		"unparseable":     "{",
+		"no files object": `{"version": 1}`,
+		"null files":      `{"files": null}`,
+		"empty file":      "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(PersonaStampPath(dir), []byte(body), 0o644))
+			require.True(t, PersonaStampDamaged(dir))
+			got, ok := ReadPersonaStamp(dir)
+			require.False(t, ok)
+			require.Nil(t, got.Files)
+		})
+	}
+	t.Run("missing file", func(t *testing.T) {
+		require.False(t, PersonaStampDamaged(t.TempDir()))
+	})
+	t.Run("missing directory", func(t *testing.T) {
+		require.False(t, PersonaStampDamaged(filepath.Join(t.TempDir(), "absent")))
+	})
+	t.Run("valid stamp", func(t *testing.T) {
+		dir := t.TempDir()
+		stamp := NewPersonaStamp()
+		stamp.Record("bruce.md", []byte("# bruce\n"))
+		require.NoError(t, WritePersonaStamp(dir, stamp))
+		require.False(t, PersonaStampDamaged(dir))
+	})
+	t.Run("valid empty stamp", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, WritePersonaStamp(dir, NewPersonaStamp()))
+		require.False(t, PersonaStampDamaged(dir))
+	})
+}
