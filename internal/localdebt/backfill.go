@@ -38,9 +38,11 @@ type BackfillResult struct {
 	// an excerpt), not infer a cause ("no surviving review.md"), which sent them to
 	// restore a file that was already there.
 	//
-	// PolicyUnrepairable splits the policy half out of this count; the two are
-	// subtracted, never added, so this field keeps its historical meaning as the full
-	// observation count and no existing consumer loses a row.
+	// PolicyUnrepairable and PolicyUnattributed split the policy refusals out of this
+	// count; they are subtracted, never added, so this field keeps its historical
+	// meaning as the full observation count and no existing consumer loses a row. The
+	// two are exclusive, so `Unresolved - PolicyUnrepairable - PolicyUnattributed` is
+	// the pruned-tree figure and the three sum to Unresolved.
 	Unresolved int
 	// PolicyUnrepairable carves the "the file is there and still cannot help" half out
 	// of Unresolved. ReExtractJustification returns OK=false both because no candidate
@@ -75,14 +77,22 @@ type BackfillResult struct {
 	// `<reviewDir>/reconciled/summary.json` carries a reconciled_at for which
 	// `reconciled_at + "-" + base(reviewDir)` equals the record's RunID — the exact
 	// form the run_id was minted in. A dir with a missing, oversized or unparseable
-	// summary.json owns nothing. The cost is an UNDER-count: a policy refusal in an own tree whose
-	// summary.json is gone, and every record-level unrepairable — chiefly an anchor
-	// line the producer refused as a draft — land in the absent-tree half instead.
-	// That direction is the safe one: it sends the operator to look for a file, which
-	// wastes a minute, rather than telling them not to, which loses the repair.
-	// `Unresolved - PolicyUnrepairable` is therefore "absent tree, or a refusal this
-	// pass cannot attribute to the record".
+	// summary.json owns nothing. The cost is an UNDER-count: a policy refusal in an own
+	// tree whose summary.json is gone is counted under PolicyUnattributed instead, and
+	// every record-level unrepairable — chiefly an anchor line the producer refused as
+	// a draft — lands in the absent-tree half. That direction is the safe one: it
+	// sends the operator to look for a file, which wastes a minute, rather than
+	// telling them not to, which loses the repair.
 	PolicyUnrepairable int
+	// PolicyUnattributed counts a record with no policy refusal its own review dir
+	// owns but at least one candidate the policy declined in a dir that does NOT own it
+	// — a dir that provably owns another run, or one whose summary.json is missing,
+	// oversized or unparseable, so it owns nothing. Before it these fell into the
+	// pruned-tree half, which told the operator the tree was gone when a refused file
+	// was there. It does not claim the file is the record's own, so it does not tell
+	// the operator to leave a file alone either: restoring the record's own review.md
+	// may still help. Exclusive with PolicyUnrepairable, which wins when both hold.
+	PolicyUnattributed int
 	Ambiguous          int // several surviving candidates disagreed, so none was written
 
 	// SkippedRationaleBearing counts effective records the fold filter suppressed
@@ -99,7 +109,7 @@ type BackfillResult struct {
 
 	// OversizedSummaries counts the review dirs' reconciled/summary.json files this
 	// pass ignored for being over maxSummaryBytes. Such a dir owns nothing, so a
-	// policy refusal in it falls to the pruned-tree half of Unresolved; the slog.Debug
+	// policy refusal in it counts under PolicyUnattributed, not PolicyUnrepairable; the slog.Debug
 	// line that notes each skip is dropped by the default Info logger, and this count
 	// is what reaches the operator. It sits outside the record partition: it counts
 	// summary FILES, each at most once per pass (ownershipCache reads a dir once), and
@@ -317,10 +327,14 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 				// See BackfillResult.Unresolved: this covers a pruned review tree AND
 				// a review.md the replay declined by policy. The COUNT is split so the
 				// operator can tell which remedy applies; only the policy half is
-				// unrepairable with the tree intact.
+				// unrepairable with the tree intact, and a refusal the pass cannot tie
+				// to the record is counted apart from both.
 				res.Unresolved++
-				if cands.policyRefused {
+				switch {
+				case cands.policyRefused:
 					res.PolicyUnrepairable++
+				case cands.policyUnattributed:
+					res.PolicyUnattributed++
 				}
 			case len(texts) > 1:
 				res.Ambiguous++
@@ -378,8 +392,8 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 		// take away from a half-completed rewrite of an append-only store.
 		//
 		// Only the fields describing WORK DONE survive. The scan counters (Scanned,
-		// Rewritten, Unresolved, Ambiguous, Unchanged, SkippedRationaleBearing,
-		// OversizedSummaries) describe a pass
+		// Rewritten, Unresolved, PolicyUnrepairable, PolicyUnattributed, Ambiguous,
+		// Unchanged, SkippedRationaleBearing, OversizedSummaries) describe a pass
 		// that completed, and this one did not, so carrying them would report a
 		// partition of a scan whose writes were never finished.
 		return BackfillResult{
@@ -396,10 +410,14 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 // when the record's OWN source_report path holds a present, regular review.md that
 // the producer's policy declined — the one signal that separates an unrepairable
 // refusal from a pruned tree, and the one an operator needs to pick a remedy
-// (TD cli/debt_resolve.go:81).
+// (TD cli/debt_resolve.go:81). `policyUnattributed` is set when no candidate set
+// `policyRefused` but at least one the policy declined sits in a review dir that does
+// not own the record: a refusal exists, but this pass cannot tie it to the record
+// (TD internal/localdebt/backfill.go:372).
 type replayResult struct {
-	texts         []string
-	policyRefused bool
+	texts              []string
+	policyRefused      bool
+	policyUnattributed bool
 }
 
 // replayCandidates returns the DISTINCT excerpts every surviving review.md under
@@ -427,7 +445,7 @@ func replayCandidates(tree *reviewTree, rec Record, ownership *ownershipCache) (
 	}
 	var out []string
 	seen := map[string]bool{}
-	policyRefused := false
+	policyRefused, declinedElsewhere := false, false
 	// owns reports whether candidate p sits in the record's own review dir. Asked
 	// only once a candidate is already refused, so the summary.json read is paid on
 	// the rare path, not for every namesake — and through the pass-wide cache, so at
@@ -457,9 +475,14 @@ func replayCandidates(tree *reviewTree, rec Record, ownership *ownershipCache) (
 			// policy is evaluated once per candidate — and only from a candidate whose
 			// review dir owns the record. An error is not evidence either way;
 			// PolicyDeclined is never set alongside one, so testing it alone already
-			// leaves the flag alone on an error.
-			if r.PolicyDeclined && owns(p) {
-				policyRefused = true
+			// leaves the flag alone on an error. A refusal from a dir that does not
+			// own the record is remembered apart, for policyUnattributed.
+			if r.PolicyDeclined {
+				if owns(p) {
+					policyRefused = true
+				} else {
+					declinedElsewhere = true
+				}
 			}
 			continue
 		}
@@ -481,7 +504,11 @@ func replayCandidates(tree *reviewTree, rec Record, ownership *ownershipCache) (
 	// path-independent; attributing it to this record is not, and an unscoped walk
 	// otherwise lets a symlink or over-cap namesake in an unrelated review speak for a
 	// record whose own tree is pruned (TD internal/localdebt/backfill.go:382).
-	return replayResult{texts: out, policyRefused: policyRefused}, nil
+	return replayResult{
+		texts:              out,
+		policyRefused:      policyRefused,
+		policyUnattributed: declinedElsewhere && !policyRefused,
+	}, nil
 }
 
 // reviewTree is the review root's candidate paths, walked at most once per

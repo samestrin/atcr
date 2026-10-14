@@ -891,7 +891,7 @@ func TestDebtBackfillJustifications_UnresolvedSplitsPolicyFromPrunedTree(t *test
 // review dir went unattributed. The count is printed with the others, zero included,
 // as the final clause, and the counters before it keep their exact text.
 func TestDebtBackfillJustifications_ReportsOversizedSummaries(t *testing.T) {
-	const prefix = "dry run: 1 scanned, 0 rewritten (0 lines), 0 unchanged, 1 unresolved (%d review tree pruned, %d declined by policy), " +
+	const prefix = "dry run: 1 scanned, 0 rewritten (0 lines), 0 unchanged, 1 unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), " +
 		"0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted)"
 
 	run := func(t *testing.T, summary []byte) string {
@@ -929,12 +929,55 @@ func TestDebtBackfillJustifications_ReportsOversizedSummaries(t *testing.T) {
 	}
 
 	t.Run("an oversized summary.json is counted", func(t *testing.T) {
+		// The oversized summary owns nothing, so the refusal beside it is counted
+		// as not tied to the record (BackfillResult.PolicyUnattributed).
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", 1<<20)))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 1, 0)+", 1 summary.json over 1 MiB ignored\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 0, 1)+", 1 summary.json over 1 MiB ignored\n")
 	})
 
 	t.Run("a normal summary.json prints a zero", func(t *testing.T) {
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1)+", 0 summary.json over 1 MiB ignored\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1, 0)+", 0 summary.json over 1 MiB ignored\n")
 	})
+}
+
+// TD internal/localdebt/backfill.go:372 — a policy refusal the pass cannot tie to the
+// record printed under "review tree pruned". It now has its own clause inside the
+// unresolved split, and the pruned-tree figure no longer includes it. The clause says
+// a refusal exists; it does not tell the operator to leave a file alone, because the
+// refused file may not be the record's own.
+func TestDebtBackfillJustifications_ReportsAnUnattributedPolicyRefusalApart(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	target := filepath.Join(root, "elsewhere", "review.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+	require.NoError(t, os.WriteFile(target,
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative a follow would have stamped.\n"), 0o600))
+
+	// The record's own review is gone. sprint-b is another review (a different
+	// reconciled_at) holding a symlinked review.md the policy refuses.
+	otherDir := filepath.Join(reviewRoot, "sprint-b", "multi-agent")
+	require.NoError(t, os.MkdirAll(filepath.Join(otherDir, "reconciled"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "reconciled", "summary.json"),
+		[]byte(`{"reconciled_at":"2026-08-09T00:00:00Z"}`), 0o600))
+	rd := filepath.Join(otherDir, "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+
+	rec := `{"schema_version":3,"id":"eeee0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	assert.Contains(t, out,
+		"1 unresolved (0 review tree pruned, 0 declined by policy, 1 policy refusal not tied to the record), ")
 }
