@@ -149,6 +149,14 @@ func TestPersonaStampDamaged(t *testing.T) {
 			require.Nil(t, got.Files)
 		})
 	}
+	t.Run("unreadable", func(t *testing.T) {
+		// A directory at the stamp path exists but cannot be read as a file.
+		dir := t.TempDir()
+		require.NoError(t, os.Mkdir(PersonaStampPath(dir), 0o755))
+		require.True(t, PersonaStampDamaged(dir))
+		_, ok := ReadPersonaStamp(dir)
+		require.False(t, ok)
+	})
 	t.Run("missing file", func(t *testing.T) {
 		require.False(t, PersonaStampDamaged(t.TempDir()))
 	})
