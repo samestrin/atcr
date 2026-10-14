@@ -183,6 +183,26 @@ type JustificationChange struct {
 // sorted), which is cosmetic in JSONL. Every line the pass does not change is copied
 // through byte-for-byte and is not re-marshaled at all.
 func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult, error) {
+	return backfillJustifications(dir, reviewRoot, dryRun, defaultBackfillSeams())
+}
+
+// backfillSeams is what one backfill pass reaches the review tree and the log
+// through. Carried by value rather than held in package vars, so a test injecting a
+// counting walk or opener sees only its own pass and may run in parallel.
+type backfillSeams struct {
+	walk func(root string, fn fs.WalkDirFunc) error // the review-root walk (reviewTree)
+	open func(name string) (*os.File, error)        // the summary.json open (readReconciledAt)
+	log  *slog.Logger                               // where an oversized summary.json is noted
+}
+
+// defaultBackfillSeams is the real filesystem and the process-wide logger as it
+// stands when the pass starts.
+func defaultBackfillSeams() backfillSeams {
+	return backfillSeams{walk: filepath.WalkDir, open: os.Open, log: slog.Default()}
+}
+
+// backfillJustifications is BackfillJustifications over the given seams.
+func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillSeams) (BackfillResult, error) {
 	var res BackfillResult
 	err := withLock(dir, "backfill-justifications", func() error {
 		recs, err := ReadAll(dir, ReadOpts{})
@@ -223,9 +243,10 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 		}
 		// One ownership cache and one review-root walk for the whole pass: see
 		// ownershipCache and reviewTree.
-		ownership := ownershipCache{}
+		ownership := &ownershipCache{open: seams.open, log: seams.log}
 		folded := FoldRecords(recs)
 		tree := newReviewTree(reviewRoot, folded)
+		tree.walkFn = seams.walk
 		for _, r := range folded {
 			if rationaleIDs[r.ID] {
 				// RATIONALE-BEARING, not merely closed — the distinction record.go
@@ -375,13 +396,15 @@ type replayResult struct {
 // The candidates are tree's walked paths, filtered per record by pathHasSuffix, so
 // the review root is walked once per pass rather than once per record.
 //
-// ownership must be non-nil to be shared: it is written on the policy-refused path,
-// and BackfillJustifications passes one map for the whole pass so each review dir's
-// summary.json is read once. A nil one is defaulted to a fresh map for this call
-// rather than panicking on that write — correct, but cached for this record alone.
-func replayCandidates(tree *reviewTree, rec Record, ownership ownershipCache) (replayResult, error) {
+// ownership is written on the policy-refused path, and BackfillJustifications passes
+// one cache for the whole pass so each review dir's summary.json is read once. A nil
+// one is tolerated: it is defaulted to a fresh cache (real opener, default logger)
+// that lives for this call alone and is not shared, so the refusal is still
+// attributed but the read is cached for this record only. A nil tree is NOT
+// tolerated: it is dereferenced unconditionally, and every caller builds one.
+func replayCandidates(tree *reviewTree, rec Record, ownership *ownershipCache) (replayResult, error) {
 	if ownership == nil {
-		ownership = ownershipCache{}
+		ownership = &ownershipCache{}
 	}
 	rel := filepath.FromSlash(rec.SourceReport.Path)
 	paths, err := tree.walk()
@@ -447,20 +470,19 @@ func replayCandidates(tree *reviewTree, rec Record, ownership ownershipCache) (r
 	return replayResult{texts: out, policyRefused: policyRefused}, nil
 }
 
-// walkDir is the walk reviewTree goes through. A var so a test can count the walks
-// one backfill pass makes. It is package state, so a test that swaps it must not call
-// t.Parallel, nor run beside one that runs a backfill pass.
-var walkDir = filepath.WalkDir
-
 // reviewTree is the review root's candidate paths, walked at most once per
 // BackfillJustifications pass and only when a record first asks (walk), so a pass
 // with nothing to replay walks nothing. Only paths whose base name is the base of
 // some record's source_report path are kept: pathHasSuffix matches on a segment
 // boundary, so a path with any other base cannot match any record, and the kept
 // set stays proportional to the review files rather than to the whole tree.
+//
+// walkFn is the walk it goes through, filepath.WalkDir unless the pass's seams say
+// otherwise (backfillSeams), so a test can count the walks one pass makes.
 type reviewTree struct {
 	root   string
 	bases  map[string]bool
+	walkFn func(root string, fn fs.WalkDirFunc) error
 	walked bool
 	paths  []string
 }
@@ -475,7 +497,7 @@ func newReviewTree(root string, recs []Record) *reviewTree {
 			bases[filepath.Base(filepath.FromSlash(r.SourceReport.Path))] = true
 		}
 	}
-	return &reviewTree{root: root, bases: bases}
+	return &reviewTree{root: root, bases: bases, walkFn: filepath.WalkDir}
 }
 
 // walk returns the kept paths in walk order, walking the root on the first call.
@@ -485,7 +507,7 @@ func (t *reviewTree) walk() ([]string, error) {
 	if t.walked {
 		return t.paths, nil
 	}
-	err := walkDir(t.root, func(p string, d fs.DirEntry, walkErr error) error {
+	err := t.walkFn(t.root, func(p string, d fs.DirEntry, walkErr error) error {
 		// An unreadable file or subtree is SKIPPED, not fatal: the root is an open
 		// tree — the same resilience stance collectReviewNarratives takes over
 		// sources/ — and one bad directory must not abort a repair pass over the
@@ -529,11 +551,6 @@ func reviewDirOf(p, rel string) string {
 // every other unreadable summary.
 const maxSummaryBytes = 1 << 20
 
-// openSummary opens a review dir's reconciled/summary.json. A var so a test can
-// count the opens one backfill pass makes. It is package state, so a test that
-// swaps it must not call t.Parallel, nor run beside one that reads a summary.
-var openSummary = os.Open
-
 // reviewDirOwnsRun reports whether reviewDir is the review that minted runID.
 //
 // A record's RunID is `<reconciled_at>-<base(reviewDir)>` (internal/localdebt/
@@ -552,7 +569,7 @@ var openSummary = os.Open
 // pass itself asks ownershipCache.owns, which composes the same two functions but
 // reads each review dir's summary.json at most once per pass.
 func reviewDirOwnsRun(reviewDir, runID string) bool {
-	return runOwnedBy(reviewDir, readReconciledAt(reviewDir), runID)
+	return runOwnedBy(reviewDir, readReconciledAt(reviewDir, os.Open, slog.Default()), runID)
 }
 
 // runOwnedBy is reviewDirOwnsRun's comparison over a reconciled_at already read. An
@@ -585,18 +602,19 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 // as owning nothing. The Lstat comes before the open because opening a FIFO blocks
 // until a writer appears, and the backfill pass holds the store lock meanwhile; a
 // symlink is refused with it, as the producer refuses a non-regular review.md. An
-// oversized file is logged at debug, so the skip is visible when asked for.
-func readReconciledAt(reviewDir string) string {
+// oversized file is logged at debug on log, so the skip is visible when asked for.
+// open is how the file is opened, os.Open outside a test.
+func readReconciledAt(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) string {
 	path := filepath.Join(reviewDir, "reconciled", "summary.json")
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
 	if info.Size() > maxSummaryBytes {
-		slog.Debug("skipping oversized summary.json", "path", path, "size", info.Size())
+		log.Debug("skipping oversized summary.json", "path", path, "size", info.Size())
 		return ""
 	}
-	f, err := openSummary(path)
+	f, err := open(path)
 	if err != nil {
 		return ""
 	}
@@ -619,15 +637,31 @@ func readReconciledAt(reviewDir string) string {
 // ownershipCache holds each review dir's reconciled_at ("" for one that owns
 // nothing) for the life of one BackfillJustifications call. replayCandidates runs
 // once per record, and records from one review all ask that review's dir, so
-// without it every policy-refused candidate re-reads the same summary.json.
-type ownershipCache map[string]string
+// without it every policy-refused candidate re-reads the same summary.json. open
+// and log are handed to readReconciledAt; the zero value uses os.Open and the
+// default logger.
+type ownershipCache struct {
+	at   map[string]string
+	open func(name string) (*os.File, error)
+	log  *slog.Logger
+}
 
 // owns is reviewDirOwnsRun, reading reviewDir's summary.json at most once.
-func (c ownershipCache) owns(reviewDir, runID string) bool {
-	at, ok := c[reviewDir]
+func (c *ownershipCache) owns(reviewDir, runID string) bool {
+	at, ok := c.at[reviewDir]
 	if !ok {
-		at = readReconciledAt(reviewDir)
-		c[reviewDir] = at
+		open, log := c.open, c.log
+		if open == nil {
+			open = os.Open
+		}
+		if log == nil {
+			log = slog.Default()
+		}
+		at = readReconciledAt(reviewDir, open, log)
+		if c.at == nil {
+			c.at = map[string]string{}
+		}
+		c.at[reviewDir] = at
 	}
 	return runOwnedBy(reviewDir, at, runID)
 }
