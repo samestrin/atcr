@@ -1732,3 +1732,68 @@ func TestBackfillJustifications_SeamsAreCarriedPerPass(t *testing.T) {
 		}
 	})
 }
+
+// TD internal/localdebt/backfill.go:496 — reviewTree.walk keeps every path whose
+// base is some record's source_report base, a superset of what any one record may
+// replay from; replayCandidates' pathHasSuffix is what narrows it to the record's
+// own rel. Nothing pinned that split: relaxing the per-record filter to a base-name
+// match left the suite green.
+//
+// Three files sit under one review dir: the record's own review.md (kept and
+// matched), a same-base review.md at another agent's rel (kept by walk, not matched)
+// and a summary.md (dropped by walk). The namesake carries the record's anchor at the
+// same source line with a different excerpt, so a relaxed match would add a second
+// distinct text and turn this Rewritten record into an Ambiguous one.
+func TestReviewTree_WalkKeepsTheBaseAndReplayMatchesOnlyTheRecordsRel(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	agentDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent")
+	own := filepath.Join(agentDir, "dax", "review.md")
+	namesake := filepath.Join(agentDir, "kira", "review.md")
+	otherBase := filepath.Join(agentDir, "dax", "summary.md")
+	for p, body := range map[string]string{
+		own:       "# review\n\n- **internal/thing.go:42** the narrative dax wrote.\n",
+		namesake:  "# review\n\n- **internal/thing.go:42** the narrative kira wrote.\n",
+		otherBase: "# review\n\n- **internal/thing.go:42** a summary nobody stamped from.\n",
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	}
+
+	rec := Record{
+		RunID:        "2026-08-01T00:00:00Z-multi-agent",
+		File:         "internal/thing.go",
+		Line:         42,
+		SourceReport: &SourceReport{Path: "sources/pool/raw/agent/dax/review.md", Line: 3},
+	}
+
+	tree := newReviewTree(reviewRoot, []Record{rec})
+	paths, err := tree.walk()
+	require.NoError(t, err)
+	assert.Equal(t, []string{own, namesake}, paths,
+		"walk keeps every path with the record's base, its own rel and the namesake alike, "+
+			"and drops the file with another base")
+
+	res, err := replayCandidates(tree, rec, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"- **internal/thing.go:42** the narrative dax wrote."}, res.texts,
+		"only the file at the record's own rel is matched; the namesake's excerpt is not a candidate")
+	assert.False(t, res.policyRefused)
+
+	writeShard(t, store, "2026-08",
+		`{"schema_version":3,"id":"ffff0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** a stale excerpt.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`)
+
+	pass, err := BackfillJustifications(store, reviewRoot, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, pass.Scanned)
+	assert.Equal(t, 1, pass.Rewritten, "the record's own review.md is its one candidate")
+	assert.Zero(t, pass.Ambiguous,
+		"the namesake at another rel must not become a second, disagreeing candidate")
+}
