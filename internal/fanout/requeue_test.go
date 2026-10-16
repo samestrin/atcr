@@ -117,7 +117,7 @@ func ledgerEngine(t *testing.T, c Completer, slots []Slot, retry bool, opts ...E
 	ledger.writePlan()
 	opts = append([]EngineOption{WithMaxParallel(3), WithSlotStart(ledger.slotStart), WithSlotDone(ledger.slotDone)}, opts...)
 	if retry {
-		opts = append(opts, WithUnitRetry(ledger.recorded, ledger.slotRequeue))
+		opts = append(opts, WithUnitRetry(ledger.retryable, ledger.slotRequeue))
 	}
 	return NewEngine(c, opts...).Run(context.Background(), slots), poolDir
 }

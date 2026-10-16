@@ -84,6 +84,12 @@ type chunkRecordBin struct {
 	// nothing and has none; a record written before this field has none either,
 	// and its files are then left out of a resume's write-back (fail-open).
 	Hashes map[string]string `json:"hashes,omitempty"`
+	// OverWindow marks a bin holding one file larger than its reviewer's context
+	// window, stamped when the bin is planned (Epic 35.16.14 fix AC1b): the
+	// outer retry never requeues it, and a coverage reader names it as the
+	// reason the bin went unreviewed. omitempty, so every other bin is written
+	// exactly as before.
+	OverWindow bool `json:"over_window,omitempty"`
 }
 
 // reviewed is the file-hash index's bin predicate: the bin finished ok and its
@@ -212,10 +218,11 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		}
 		bin := len(rec.Bins)
 		rec.Bins = append(rec.Bins, chunkRecordBin{
-			Index:   bin,
-			Files:   append([]string(nil), s.Primary.chunkFiles...),
-			Outcome: chunkOutcomePending,
-			Hashes:  entryHashes(s.entries),
+			Index:      bin,
+			Files:      append([]string(nil), s.Primary.chunkFiles...),
+			Outcome:    chunkOutcomePending,
+			Hashes:     entryHashes(s.entries),
+			OverWindow: s.overWindow,
 		})
 		l.bySlot[i] = chunkSlotRef{dir: dir, bin: bin}
 		// Bins the ceiling deferred follow the persona's dispatched bins. No slot
@@ -319,6 +326,20 @@ func (l *chunkLedger) slotDone(i int, r Result) {
 func (l *chunkLedger) recorded(i int) bool {
 	_, ok := l.bySlot[i]
 	return ok
+}
+
+// retryable reports whether the outer per-unit retry covers slot i: a recorded
+// bin that is not over its reviewer's window. A bin that can never fit is tried
+// once (Epic 35.16.14 fix AC1b); requeueing it would only spend the attempt
+// budget on a call the provider must refuse.
+func (l *chunkLedger) retryable(i int) bool {
+	ref, ok := l.bySlot[i]
+	if !ok {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return !l.records[ref.dir].Bins[ref.bin].OverWindow
 }
 
 // slotRequeue is the engine's requeue hook: the bin's attempt failed retryably
