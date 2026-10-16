@@ -201,27 +201,10 @@ func TestPrepareReviewFromRepo_AllIgnoreFilteredHintsNoIgnore(t *testing.T) {
 	assert.NoDirExists(t, out, "no scaffold when there is nothing to review")
 }
 
-// Epic 35.16.14 fix AC1b: a scope holding only binary files names that cause,
-// not the generic empty-repository message, so the operator knows the files
-// exist and why none of them was planned.
-func TestPrepareReviewFromRepo_AllNonTextNamesCause(t *testing.T) {
-	cfg := twoAgentConfig("http://unused")
-	out := filepath.Join(t.TempDir(), "ext-review")
-	repo := baselineRepo(t, map[string]string{
-		"rates.xlsx": "PK\x03\x04\x14\x00\x06\x00",
-		"logo.png":   "\x89PNG\r\n\x1a\n\x00\x00",
-	})
-
-	_, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, out))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNoReviewableContent)
-	assert.Contains(t, err.Error(), "all 2 tracked file(s) in scope are binary")
-	assert.NoDirExists(t, out, "no scaffold when there is nothing to review")
-}
-
-// When some candidates were ignore-filtered and the rest are binary, the error
-// names both counts rather than claiming either cause for all of them.
-func TestPrepareReviewFromRepo_IgnoredAndNonTextNamesBoth(t *testing.T) {
+// Epic 35.16.14 fix AC1b: when some candidates were ignore-filtered and the rest
+// are binary, the error names both counts rather than claiming either cause for
+// all of them.
+func TestPrepareReviewFromRepo_IgnoredAndBinaryNamesBoth(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	repo := baselineRepo(t, map[string]string{
 		".atcrignore": ".atcrignore\n*.go\n",
@@ -234,7 +217,7 @@ func TestPrepareReviewFromRepo_IgnoredAndNonTextNamesBoth(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNoReviewableContent)
 	assert.Contains(t, err.Error(), "2 were excluded by .gitignore/.atcrignore")
 	assert.Contains(t, err.Error(), "--no-ignore")
-	assert.Contains(t, err.Error(), "1 are binary")
+	assert.Contains(t, err.Error(), "1 are non-text (binary)")
 }
 
 // TD-010 (fanout contract): a baseline re-scan whose every in-scope candidate
