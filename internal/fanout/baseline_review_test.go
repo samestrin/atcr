@@ -201,6 +201,24 @@ func TestPrepareReviewFromRepo_AllIgnoreFilteredHintsNoIgnore(t *testing.T) {
 	assert.NoDirExists(t, out, "no scaffold when there is nothing to review")
 }
 
+// Epic 35.16.14 fix AC1b: a scope holding only binary files names that cause,
+// not the generic empty-repository message, so the operator knows the files
+// exist and why none of them was planned.
+func TestPrepareReviewFromRepo_AllNonTextNamesCause(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	repo := baselineRepo(t, map[string]string{
+		"rates.xlsx": "PK\x03\x04\x14\x00\x06\x00",
+		"logo.png":   "\x89PNG\r\n\x1a\n\x00\x00",
+	})
+
+	_, err := PrepareReviewFromRepo(context.Background(), cfg, repoReq(repo, out))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoReviewableContent)
+	assert.Contains(t, err.Error(), "all 2 tracked file(s) in scope are binary")
+	assert.NoDirExists(t, out, "no scaffold when there is nothing to review")
+}
+
 // TD-010 (fanout contract): a baseline re-scan whose every in-scope candidate
 // is skipped by the incremental hash index (nothing changed since the last
 // completed review) is reported as ErrAllFilesUnchanged — distinct from the

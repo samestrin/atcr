@@ -320,8 +320,10 @@ func TestEnumerateRepoFiles_NoIgnoreBypassesFilter(t *testing.T) {
 	assert.True(t, present, "--no-ignore must include the .gitignore-matched file")
 }
 
-// AC 01-02 Edge Case 3: a tracked binary (non-UTF8) file is included with its raw
-// byte size recorded; the walker must not crash or corrupt output.
+// AC 01-02 Edge Case 3, revised by Epic 35.16.14 fix AC1b: a tracked binary file
+// is skipped, not planned. The 2026-10-15 coned re-run planned .xlsx files as
+// bins, and one came to 1,101,765 tokens against a 524,288-token window, a bin no
+// reviewer could ever take. The walker must still not crash on the bytes.
 func TestEnumerateRepoFiles_BinaryFile(t *testing.T) {
 	dir := initRepo(t)
 	blob := []byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x99}
@@ -331,9 +333,81 @@ func TestEnumerateRepoFiles_BinaryFile(t *testing.T) {
 
 	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
-	e, ok := findEntry(entries, "blob.bin")
-	require.True(t, ok, "binary file must be included")
-	assert.Equal(t, int64(len(blob)), e.Size, "raw byte size recorded")
+	_, ok := findEntry(entries, "blob.bin")
+	assert.False(t, ok, "a binary file must not reach the plan")
+	_, ok = findEntry(entries, "a.go")
+	assert.True(t, ok, "text files around it are still enumerated")
+}
+
+// A non-UTF8 file with no NUL byte (Latin-1 source, say) is text by git's rule,
+// so it is still enumerated with its raw byte size (the rest of Edge Case 3).
+func TestEnumerateRepoFiles_NonUTF8TextIncluded(t *testing.T) {
+	dir := initRepo(t)
+	latin1 := []byte("caf\xe9 = 1\n")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "latin1.txt"), latin1, 0o644))
+	commitAll(t, dir, "init")
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	e, ok := findEntry(entries, "latin1.txt")
+	require.True(t, ok, "a NUL-free file is text")
+	assert.Equal(t, int64(len(latin1)), e.Size, "raw byte size recorded")
+}
+
+// The binary test is git's own: a NUL in the first 8000 bytes. A NUL past that
+// window does not make the file binary, matching what `git diff` shows for it.
+func TestEnumerateRepoFiles_BinarySniffWindow(t *testing.T) {
+	dir := initRepo(t)
+	late := append([]byte(strings.Repeat("a", binarySniffBytes)), 0x00)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "late.txt"), late, 0o644))
+	early := append([]byte(strings.Repeat("a", binarySniffBytes-1)), 0x00)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "early.dat"), early, 0o644))
+	commitAll(t, dir, "init")
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	_, ok := findEntry(entries, "late.txt")
+	assert.True(t, ok, "a NUL past the sniff window is text")
+	_, ok = findEntry(entries, "early.dat")
+	assert.False(t, ok, "a NUL inside the sniff window is binary")
+}
+
+// The skipped binaries are counted, and one Warn line says how many were skipped
+// and names them, so a coverage figure that leaves them out is never a mystery.
+func TestBuildRepoEntriesWithStats_CountsNonText(t *testing.T) {
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rates.xlsx"), []byte("PK\x03\x04\x14\x00\x06\x00"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), 0o644))
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	logger, buf := debugLogger()
+	entries, stats, err := BuildRepoEntriesWithStats(context.Background(), dir, logger, false, "", nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go"}, sortedPaths(entries))
+	assert.Equal(t, 2, stats.NonText)
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "skipping non-text tracked files"), "one summary line, not one per file")
+	assert.Contains(t, out, "count=2")
+	assert.Contains(t, out, "rates.xlsx")
+	assert.Contains(t, out, "logo.png")
+}
+
+// A non-text file never enters memory's running total: it was read, judged
+// binary and dropped, so it must not trip DefaultMaxRepoBytes either.
+func TestEnumerateRepoFiles_NonTextDoesNotCountTowardTotal(t *testing.T) {
+	orig := DefaultMaxRepoBytes
+	DefaultMaxRepoBytes = 64
+	t.Cleanup(func() { DefaultMaxRepoBytes = orig })
+
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.bin"), append([]byte{0x00}, bytes.Repeat([]byte("x"), 200)...), 0o644))
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go"}, sortedPaths(entries))
 }
 
 // AC 01-02 Edge Case 4: a tracked symlink captures its LITERAL target string as

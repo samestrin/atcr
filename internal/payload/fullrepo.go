@@ -41,6 +41,12 @@ var errTrackedFileTooLarge = errors.New("full-repo scan: tracked file exceeds th
 // const) so tests can pin the boundary with small fixtures.
 var maxTrackedFileReadBytes int64 = 32 << 20
 
+// binarySniffBytes is how much of a tracked file the baseline walker inspects to
+// decide it is binary: a NUL byte in this prefix marks it non-text. It is git's
+// own rule (xdiff's FIRST_FEW_BYTES), so a file the walker skips is one `git
+// diff` would also show as "Binary files differ" (Epic 35.16.14 fix AC1b).
+const binarySniffBytes = 8000
+
 // DefaultMaxRepoBytes caps the TOTAL bytes a baseline (--all/--dir) scan reads
 // into memory during enumeration (TD-005) — the whole-repo counterpart of
 // ingest.go's DefaultMaxDiffBytes fail-loud input guard. It mirrors that
@@ -97,6 +103,11 @@ type RepoScanStats struct {
 	// incremental file-hash index as byte-for-byte unchanged since last review
 	// (always zero for a --fresh/nil-index scan, which skips nothing).
 	HashSkipped int
+	// NonText is the number of in-scope tracked candidates skipped as binary
+	// (a NUL byte in their first binarySniffBytes, Epic 35.16.14 fix AC1b).
+	// They are never planned as bins: no reviewer can read them, and one can be
+	// larger than any model window.
+	NonText int
 }
 
 // BuildRepoEntriesWithStats is BuildRepoEntries plus the reduction counters a
