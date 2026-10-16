@@ -31,6 +31,10 @@ type Coverage struct {
 	BinsPlanned  int
 	FilesCovered int
 	FilesInScope int
+	// BinsOverWindow counts the planned bins left unreviewed because they hold
+	// one file larger than their reviewer's context window (Epic 35.16.14 fix
+	// AC1b), so the coverage line can name that reason for them.
+	BinsOverWindow int
 }
 
 // FilePercent is FilesCovered as a percentage of FilesInScope.
@@ -71,6 +75,9 @@ func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
 				inScope[f] = struct{}{}
 			}
 			if !b.reviewed() {
+				if b.OverWindow {
+					cov.BinsOverWindow++
+				}
 				continue
 			}
 			cov.BinsReviewed++

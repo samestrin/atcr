@@ -415,6 +415,38 @@ func TestEnumerateRepoFiles_NoBinaryNoSkipLine(t *testing.T) {
 	assert.NotContains(t, buf.String(), "non-text")
 }
 
+// Epic 35.16.14 fix AC1b: the binary count survives the hash-skip stage, so the
+// public entry point the fan-out reads reports it, not only the walker.
+func TestBuildRepoEntriesWithStats_CountsBinarySkipped(t *testing.T) {
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rates.xlsx"), xlsxLike(), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), 0o644))
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	entries, stats, err := BuildRepoEntriesWithStats(context.Background(), dir, log.Discard(), false, "", nil, true)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go"}, sortedPaths(entries))
+	assert.Equal(t, 2, stats.BinarySkipped)
+}
+
+// Epic 35.16.14 fix AC1b: a binary file never enters the running total: it was
+// read, judged binary and dropped, so it must not trip DefaultMaxRepoBytes either.
+func TestEnumerateRepoFiles_BinaryDoesNotCountTowardTotal(t *testing.T) {
+	orig := DefaultMaxRepoBytes
+	DefaultMaxRepoBytes = 64
+	t.Cleanup(func() { DefaultMaxRepoBytes = orig })
+
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.bin"), append([]byte{0x00}, bytes.Repeat([]byte("x"), 200)...), 0o644))
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go"}, sortedPaths(entries))
+}
+
 // AC 01-02 Edge Case 4: a tracked symlink captures its LITERAL target string as
 // Body (git-object semantics) and is never resolved/followed, so a link pointing
 // outside root cannot cause a read escape. Must not panic on the non-regular entry.

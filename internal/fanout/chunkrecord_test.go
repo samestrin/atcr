@@ -574,6 +574,11 @@ func TestChunkLedger_UnrecordedSlotIsANoOp(t *testing.T) {
 	l.writePlan()
 
 	for _, i := range []int{1, 2} {
+		// The engine's requeue hook asks about every slot; an unrecorded one is
+		// never retried (Epic 35.16.14 fix AC1b), and an index past the plan
+		// neither panics nor reads as retryable.
+		assert.False(t, l.retryable(i), "slot %d is not retryable", i)
+		assert.False(t, l.retryable(len(slots)+i), "index %d is past the plan", len(slots)+i)
 		l.slotStart(i)
 		assert.Equal(t, map[string]int{chunkOutcomePending: 1}, l.states(), "slot %d is not leased", i)
 		l.slotDone(i, Result{Status: StatusOK})

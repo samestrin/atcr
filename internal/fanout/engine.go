@@ -358,6 +358,13 @@ type Slot struct {
 	// resume merges it with the bins already reviewed instead of overwriting them.
 	resumedBin bool
 
+	// overWindow marks a baseline bin holding a single file larger than its
+	// reviewer's context window (Epic 35.16.14 fix AC1b). It is still dispatched
+	// once, since a fallback with a bigger window may serve it, but the outer
+	// per-unit retry never requeues it, and chunks.json records why it went
+	// unreviewed (chunkRecordBin.OverWindow).
+	overWindow bool
+
 	// render, when set, rebuilds this unit's prompts — the primary's and every
 	// fallback's — when a worker leases it (Epic 35.16.14 F1). Such a slot is held
 	// in the plan with its rendered prompt text dropped (deferRender), so the

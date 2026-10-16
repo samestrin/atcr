@@ -55,6 +55,22 @@ func TestReadRunCoverage_FixtureTotals(t *testing.T) {
 	assert.NotContains(t, legacy.String(), "|68|128|64|128")
 }
 
+// Epic 35.16.14 fix AC1b: unreviewed bins that hold a file larger than the
+// reviewer's window get a second line naming that reason, so they are never
+// counted as unreviewed without one. With none, the line is unchanged.
+func TestWriteCoverageLine_NamesOverWindowBins(t *testing.T) {
+	cov := runCoverage{measured: true, Coverage: fanout.Coverage{BinsReviewed: 2, BinsPlanned: 3, FilesCovered: 2, FilesInScope: 3, BinsOverWindow: 1}}
+	var b bytes.Buffer
+	writeCoverageLine(&b, cov)
+	assert.Equal(t, "Coverage: 2/3 persona-bins reviewed, 2/3 files covered by at least one persona (66.7%)\n"+
+		"Coverage: 1 unreviewed persona-bin(s) hold a single file larger than the reviewer's context window; they were sent once and not retried (over_window in chunks.json)\n", b.String())
+
+	cov.BinsOverWindow = 0
+	b.Reset()
+	writeCoverageLine(&b, cov)
+	assert.Equal(t, "Coverage: 2/3 persona-bins reviewed, 2/3 files covered by at least one persona (66.7%)\n", b.String())
+}
+
 func TestWriteCoverageLine_UnmeasuredPrintsNothing(t *testing.T) {
 	var b bytes.Buffer
 	writeCoverageLine(&b, runCoverage{})
