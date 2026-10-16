@@ -205,6 +205,15 @@ func (b *Breaker) ForceHalfOpen() {
 	b.probeInFlight = false
 }
 
+// SetClock replaces the breaker's clock. It exists for test isolation so a
+// test outside this package can drive the cooldown on the same fake clock as
+// the code under test. Not for production use.
+func (b *Breaker) SetClock(now func() time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.now = now
+}
+
 // State returns the current state, rolling a cooldown-elapsed open circuit
 // forward to half-open first so the reported state never lags the clock.
 func (b *Breaker) State() State {

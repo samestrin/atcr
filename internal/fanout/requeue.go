@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 )
 
@@ -39,6 +40,13 @@ const (
 	outageBackoff    = 20 * time.Second
 )
 
+// A lease that met an open circuit breaker made no call (Epic 35.16.14 fix
+// AC1a).
+const (
+	circuitOpenBackoff    = circuitbreaker.DefaultCooldown
+	unitCircuitWaitBudget = 30 * time.Minute
+)
+
 // failureClass is why a unit's attempt failed, as far as requeueing cares.
 type failureClass int
 
@@ -56,6 +64,9 @@ const (
 	failureTransport
 	// failureTimeout is a call or unit deadline that fired.
 	failureTimeout
+	// failureCircuitOpen is a lease whose provider's circuit breaker was open,
+	// so no call was made.
+	failureCircuitOpen
 )
 
 func (c failureClass) String() string {
