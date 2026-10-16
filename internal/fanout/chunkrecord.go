@@ -218,10 +218,11 @@ func newChunkLedger(logger *slog.Logger, poolDir string, slots []Slot) *chunkLed
 		}
 		bin := len(rec.Bins)
 		rec.Bins = append(rec.Bins, chunkRecordBin{
-			Index:   bin,
-			Files:   append([]string(nil), s.Primary.chunkFiles...),
-			Outcome: chunkOutcomePending,
-			Hashes:  entryHashes(s.entries),
+			Index:      bin,
+			Files:      append([]string(nil), s.Primary.chunkFiles...),
+			Outcome:    chunkOutcomePending,
+			Hashes:     entryHashes(s.entries),
+			OverWindow: s.overWindow,
 		})
 		l.bySlot[i] = chunkSlotRef{dir: dir, bin: bin}
 		// Bins the ceiling deferred follow the persona's dispatched bins. No slot
@@ -332,7 +333,13 @@ func (l *chunkLedger) recorded(i int) bool {
 // once (Epic 35.16.14 fix AC1b); requeueing it would only spend the attempt
 // budget on a call the provider must refuse.
 func (l *chunkLedger) retryable(i int) bool {
-	return l.recorded(i)
+	ref, ok := l.bySlot[i]
+	if !ok {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return !l.records[ref.dir].Bins[ref.bin].OverWindow
 }
 
 // slotRequeue is the engine's requeue hook: the bin's attempt failed retryably

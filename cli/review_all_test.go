@@ -738,8 +738,10 @@ func TestReviewAll_PartialChunkFailureRecordsCoveredFilesOnly(t *testing.T) {
 	// An oversized file (own chunk) carrying a marker the provider fails on; the small
 	// files (a.txt/b.go/internal/c.go) share a separate chunk that succeeds. One persona
 	// → one failed chunk under an OK persona → Summary.UnreviewedChunks > 0.
+	// The padding is printable: a NUL-padded file is binary and is never planned
+	// (Epic 35.16.14 fix AC1b), which is not what this test is about.
 	big := []byte("FAILME\n")
-	big = append(big, make([]byte, 80_000)...)
+	big = append(big, bytes.Repeat([]byte("x"), 80_000)...)
 	require.NoError(t, os.WriteFile("fail.txt", big, 0o644))
 	gitRun(t, "add", "-A")
 	gitRun(t, "commit", "-qm", "add fail.txt")

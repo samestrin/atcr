@@ -178,6 +178,11 @@ func writeCoverageLine(w io.Writer, cov runCoverage) {
 	case cov.measured:
 		_, _ = fmt.Fprintf(w, "Coverage: %d/%d persona-bins reviewed, %d/%d files covered by at least one persona (%.1f%%)\n",
 			cov.BinsReviewed, cov.BinsPlanned, cov.FilesCovered, cov.FilesInScope, cov.FilePercent())
+		// Epic 35.16.14 fix AC1b: name the reason for bins no reviewer could take.
+		if cov.BinsOverWindow > 0 {
+			_, _ = fmt.Fprintf(w, "Coverage: %d unreviewed persona-bin(s) hold a single file larger than the reviewer's context window; they were sent once and not retried (over_window in chunks.json)\n",
+				cov.BinsOverWindow)
+		}
 	}
 }
 

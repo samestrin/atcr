@@ -75,6 +75,9 @@ func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
 				inScope[f] = struct{}{}
 			}
 			if !b.reviewed() {
+				if b.OverWindow {
+					cov.BinsOverWindow++
+				}
 				continue
 			}
 			cov.BinsReviewed++

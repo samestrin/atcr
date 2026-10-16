@@ -1252,8 +1252,9 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		// Outer per-unit retry (Epic 35.16.14 T3): a recorded bin that fails with a
 		// 429, a 5xx, a transport error or a timeout goes back to pending in the
 		// ledger and is leased again after a backoff. Only on the ledger's units, so
-		// a bulk or diff run is unchanged.
-		opts = append(opts, WithUnitRetry(ledger.recorded, ledger.slotRequeue))
+		// a bulk or diff run is unchanged, and never on a bin over its reviewer's
+		// window (Epic 35.16.14 fix AC1b), which no retry can make fit.
+		opts = append(opts, WithUnitRetry(ledger.retryable, ledger.slotRequeue))
 	}
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
@@ -2132,6 +2133,21 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					if warnOversized {
 						fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q fanned out across %d chunk(s) (%d file(s))\n", name, len(chunks), len(mp.Entries))
 					}
+					// A bin holding one file larger than this reviewer's WINDOW can never be
+					// served by it (Epic 35.16.14 fix AC1b). The window budget, not chunkBudget:
+					// a file over the payload_byte_budget cap but inside the window still ships
+					// whole as its own bin and fits.
+					windowBudget := appliedByteBudget(agentBudget, 0, agentScopeConstraint)
+					overWindow := func(ck []payload.FileEntry) bool {
+						return len(ck) == 1 && ck[0].Size > windowBudget
+					}
+					if warnOversized {
+						for _, ck := range chunks {
+							if overWindow(ck) {
+								fmt.Fprintf(os.Stderr, "atcr: baseline scan: agent %q: %s (%d bytes) is larger than its context window (%d-byte budget); its bin is sent once, not retried, and recorded as over_window if it goes unreviewed\n", name, ck[0].Path, ck[0].Size, windowBudget)
+							}
+						}
+					}
 					chunkSizing := agentSizing{
 						// The budget the partition ACTUALLY used, not the raw per-agent
 						// one. effective_budget means ONE quantity on every payload
@@ -2243,7 +2259,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						if cerr != nil {
 							return Slot{}, cerr
 						}
-						return Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed}, nil
+						return Slot{Primary: primary, Fallbacks: fbs, Serial: serial, entries: ck, resumedBin: resumed, overWindow: overWindow(ck)}, nil
 					}
 					for _, ck := range chunks {
 						s, err := renderBin(ck, false)
