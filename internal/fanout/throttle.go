@@ -24,6 +24,11 @@ import (
 //     back at the ceiling the provider is no longer throttled.
 //   - A provider whose breaker is open or half-open is held to one lease until
 //     the breaker closes.
+//   - A provider whose breaker is half-open with none of its units in flight is
+//     waiting for its probe, so its next unit is leased first, ahead of the
+//     healthy providers' (Epic 35.16.14 fix AC1a). The breaker only moves when
+//     a call reaches it: a probe deferred behind a long healthy backlog left it
+//     open for as long as that backlog lasted, and its units unleased.
 //
 // A throttled provider always keeps one lease, so its units still drain and the
 // queue cannot wedge on a provider with nothing in flight.
@@ -93,29 +98,52 @@ func (t *providerThrottle) capFor(p string) (int, bool) {
 
 // pick is the position in pending of the unit to lease next, or -1 when every
 // pending unit's provider is at its cap. The first unit of an unthrottled
-// provider wins; a throttled provider's unit is taken only when no healthy one
-// can be.
+// provider, or of one whose half-open breaker awaits its probe, wins; a
+// throttled provider's unit is taken only when no healthy one can be.
 func (t *providerThrottle) pick(pending []int) int {
-	type verdict struct{ admit, throttled bool }
-	seen := map[string]verdict{}
-	deferred := -1
+	seen := map[string]leaseVerdict{}
+	healthy, deferred := -1, -1
 	for k, i := range pending {
 		p := t.provider(i)
 		v, ok := seen[p]
 		if !ok {
-			limit, throttled := t.capFor(p)
-			v = verdict{admit: p == "" || t.lane(p).inFlight < limit, throttled: throttled}
+			v = t.verdict(p)
 			seen[p] = v
 		}
 		switch {
 		case !v.admit:
-		case !v.throttled:
+		case v.probe:
 			return k
+		case !v.throttled:
+			if healthy < 0 {
+				healthy = k
+			}
 		case deferred < 0:
 			deferred = k
 		}
 	}
+	if healthy >= 0 {
+		return healthy
+	}
 	return deferred
+}
+
+// leaseVerdict is whether provider p may take a lease now, whether it is
+// throttled, and whether its next lease is the probe its half-open breaker is
+// waiting for.
+type leaseVerdict struct{ admit, throttled, probe bool }
+
+func (t *providerThrottle) verdict(p string) leaseVerdict {
+	if p == "" {
+		return leaseVerdict{admit: true}
+	}
+	limit, throttled := t.capFor(p)
+	inFlight := t.lane(p).inFlight
+	return leaseVerdict{
+		admit:     inFlight < limit,
+		throttled: throttled,
+		probe:     inFlight == 0 && t.breaker(p) == circuitbreaker.StateHalfOpen,
+	}
 }
 
 // acquire counts a lease of unit i against its provider.
