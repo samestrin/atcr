@@ -22,6 +22,15 @@ import (
 // multiply into an unbounded wait: at most unitMaxAttempts leases per unit
 // (with six inner attempts each, 24 calls) and at most unitBackoffBudget of
 // backoff between them. A unit that exhausts either is marked failed.
+//
+// A lease whose whole chain failed fast on an open circuit breaker reached no
+// provider, so it is charged to neither budget (Epic 35.16.14 F2): charging it
+// let one outage spend every queued unit's attempts on fail-fasts, after which
+// nothing was left to make the half-open probe and the breaker never closed
+// again. Such a unit instead waits out the breaker's cooldown and comes back as
+// the probe is admitted. Two things bound it: each probe is a real call and is
+// charged to the unit that made it, and unitCircuitWaitBudget caps one unit's
+// summed waits, past which its fail-fasts are charged as transport failures.
 const (
 	// unitMaxAttempts is how many times one unit may be leased.
 	unitMaxAttempts = 4
@@ -31,6 +40,8 @@ const (
 	// unitCircuitWaitBudget caps how long one unit may wait, summed, on an open
 	// circuit breaker without being charged an attempt.
 	unitCircuitWaitBudget = 30 * time.Minute
+	// minCircuitWait is the shortest wait one fail-fast requeue counts.
+	minCircuitWait = time.Second
 )
 
 // Base backoffs by failure class, doubled per attempt. A rate limit waits
@@ -146,7 +157,15 @@ func (p unitRetryPolicy) next(c failureClass, attempt int, spent time.Duration) 
 // worker holding the unit touches it; the queue's mutex orders the handoff
 // between workers.
 type unitRetryState struct {
-	attempts int
-	requeues int
-	spent    time.Duration
+	// attempts counts every lease; circuitWaits those that failed fast on an
+	// open circuit breaker and were not charged, having waited circuitWaited.
+	attempts      int
+	requeues      int
+	spent         time.Duration
+	circuitWaits  int
+	circuitWaited time.Duration
 }
+
+// charged is how many leases count against the attempt budget: the ones that
+// reached a provider.
+func (s unitRetryState) charged() int { return s.attempts - s.circuitWaits }

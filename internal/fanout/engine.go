@@ -435,8 +435,9 @@ type Result struct {
 	UnitAttempts int
 	// circuitWaits is how many of those leases failed fast on an open circuit
 	// breaker and were requeued without spending an attempt (Epic 35.16.14 F2).
-	// In-process only.
-	circuitWaits int
+	// circuitWaited is the backoff they waited out, summed. In-process only.
+	circuitWaits  int
+	circuitWaited time.Duration
 	// circuitOpenOnly marks an attempt whose every chain member failed fast on an
 	// open circuit breaker, so no provider was called.
 	circuitOpenOnly bool
@@ -1131,7 +1132,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		defer cancel()
 		holdRateLimit := false
 		if e.requeueable != nil && e.requeueable(i) {
-			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].attempts+1, retry[i].spent)
+			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].charged()+1, retry[i].spent)
 		}
 		return e.invokeSlotWithRetry(uctx, s, holdRateLimit)
 	}
@@ -1154,16 +1155,33 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		if e.requeueable == nil || !e.requeueable(i) || res.Status == StatusOK || ctx.Err() != nil {
 			return 0, false, res
 		}
+		// A unit whose whole chain failed fast on an open breaker made no call, so
+		// it learned nothing and is not charged an attempt: it waits for the
+		// breaker to admit a probe and is leased again (Epic 35.16.14 F2). Past
+		// unitCircuitWaitBudget the fail-fast is charged like any transport failure
+		// below, which is what keeps a provider that never recovers from holding
+		// its units forever.
+		if res.circuitOpenOnly {
+			if d, ok := e.circuitWait(slots[i].Primary.Provider, st.circuitWaited); ok {
+				st.circuitWaits++
+				st.circuitWaited += d
+				st.requeues++
+				e.logger().Info("provider circuit open; unit requeued without spending an attempt",
+					"agent", slots[i].Primary.Name, "unit", i, "provider", slots[i].Primary.Provider,
+					"wait", d.String(), "circuit_waits", st.circuitWaits, "err", res.Err)
+				return d, true, res
+			}
+		}
 		class := classifyUnitFailure(res.Err)
 		if class == failureFinal {
 			return 0, false, res
 		}
-		backoff, ok := e.retry.next(class, st.attempts, st.spent)
+		backoff, ok := e.retry.next(class, st.charged(), st.spent)
 		if !ok {
 			res.Status = StatusFailed
 			e.logger().Warn("unit exhausted its retry budget; marking it failed",
 				"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
-				"attempts", st.attempts, "requeues", st.requeues, "backoff", st.spent.String(),
+				"attempts", st.charged(), "circuit_waits", st.circuitWaits, "requeues", st.requeues, "backoff", st.spent.String(),
 				"max_attempts", e.retry.maxAttempts, "backoff_budget", e.retry.budget.String(),
 				"err", res.Err)
 			return 0, false, res
@@ -1172,7 +1190,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		st.spent += backoff
 		e.logger().Info("unit failed retryably; requeued",
 			"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
-			"attempt", st.attempts, "backoff", backoff.String(), "err", res.Err)
+			"attempt", st.charged(), "backoff", backoff.String(), "err", res.Err)
 		return backoff, true, res
 	}
 	// runUnit runs one lease of slot i. A requeued unit goes back to q and its
@@ -1190,6 +1208,8 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			if st := retry[i]; st.requeues > 0 {
 				results[i].Requeues = st.requeues
 				results[i].UnitAttempts = st.attempts
+				results[i].circuitWaits = st.circuitWaits
+				results[i].circuitWaited = st.circuitWaited
 			}
 			done(i)
 			q.release(i, results[i])
@@ -1259,8 +1279,12 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	workers := poolWorkers(len(parallelIdx), e.maxParallel)
 	pool := newUnitQueue(parallelIdx, e.clock)
 	if e.requeueable != nil {
+		breakerState := e.breakerState
+		if breakerState == nil {
+			breakerState = func(p string) circuitbreaker.State { return e.breakerFor(p).State() }
+		}
 		pool.throttle = newProviderThrottle(workers, pool.clock, e.logger(),
-			func(i int) string { return slots[i].Primary.Provider }, e.breakerState)
+			func(i int) string { return slots[i].Primary.Provider }, breakerState)
 	}
 	for w := workers; w > 0; w-- {
 		wg.Add(1)
@@ -1306,6 +1330,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	thinkOnlyAttempts := 0
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
+	// ran and circuitOpen count the chain members called and those that failed
+	// fast on an open circuit breaker: equal means no provider was reached.
+	ran, circuitOpen := 0, 0
 	for i, a := range chain {
 		// Stop descending the chain once the context is done — further attempts
 		// would only fail the same way and waste the remaining budget. Preserve a
@@ -1318,6 +1345,10 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			break
 		}
 		r := e.invokeAgent(ctx, a)
+		ran++
+		if errors.As(r.Err, new(*llmclient.CircuitOpenError)) {
+			circuitOpen++
+		}
 		if i > 0 {
 			r.FallbackUsed = true
 			r.FallbackFrom = s.Primary.Name
@@ -1618,8 +1649,37 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
 	// (TD internal/fanout/engine.go:429). In-process only, as above.
 	last.ThinkOnlyAttempts = thinkOnlyAttempts
+	last.circuitOpenOnly = ran > 0 && circuitOpen == ran
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
+}
+
+// breakerFor is provider's circuit breaker: the injected one in tests, the
+// process-wide registry's otherwise.
+func (e *Engine) breakerFor(provider string) *circuitbreaker.Breaker {
+	if e.breakers != nil {
+		return e.breakers(provider)
+	}
+	return circuitbreaker.DefaultRegistry.Get(provider)
+}
+
+// circuitWait is how long a unit that failed fast on provider's open breaker
+// waits before it is leased again, having already waited waited on it. It is
+// the breaker's remaining cooldown, so the unit comes back as the probe is
+// admitted; a half-open breaker whose probe someone else holds is rechecked
+// after outageBackoff. Every wait counts at least minCircuitWait, so the budget
+// always drains. ok is false once unitCircuitWaitBudget would be exceeded.
+func (e *Engine) circuitWait(provider string, waited time.Duration) (time.Duration, bool) {
+	br := e.breakerFor(provider)
+	d := br.ProbeIn()
+	if d == 0 && br.State() == circuitbreaker.StateHalfOpen {
+		d = outageBackoff
+	}
+	d = max(d, minCircuitWait)
+	if waited+d > unitCircuitWaitBudget {
+		return 0, false
+	}
+	return d, true
 }
 
 // invokeAgent performs a single agent's LLM call and classifies the outcome on
