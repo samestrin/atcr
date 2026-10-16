@@ -314,3 +314,19 @@ func TestReleaseProbeNoOpWhenClosed(t *testing.T) {
 		t.Fatal("Allow() = false after no-op ReleaseProbe, want true")
 	}
 }
+
+// SetClock lets a test outside the package run the cooldown on its own clock:
+// the breaker opens on that clock and half-opens once it has moved a cooldown.
+func TestSetClockDrivesTheCooldown(t *testing.T) {
+	b, _ := newTestBreaker(t, 1, time.Minute)
+	clk := &clock{t: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)}
+	b.SetClock(clk.now)
+	b.RecordFailure()
+	if got := b.State(); got != StateOpen {
+		t.Fatalf("State() = %v, want open", got)
+	}
+	clk.advance(time.Minute)
+	if got := b.State(); got != StateHalfOpen {
+		t.Fatalf("State() after the cooldown = %v, want half-open", got)
+	}
+}

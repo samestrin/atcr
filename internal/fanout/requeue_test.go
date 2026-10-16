@@ -494,7 +494,7 @@ func TestClassifyUnitFailure(t *testing.T) {
 		{"deadline", fmt.Errorf("x: %w", context.DeadlineExceeded), failureTimeout},
 		{"cancelled", context.Canceled, failureFinal},
 		{"transport", fmt.Errorf("request failed: %w", &url.Error{Op: "Post", URL: "http://x", Err: errors.New("connection reset")}), failureTransport},
-		{"circuit open", &llmclient.CircuitOpenError{}, failureTransport},
+		{"circuit open", &llmclient.CircuitOpenError{}, failureCircuitOpen},
 		{"truncated", errTruncatedZeroFindings, failureFinal},
 		{"empty", errEmptyResponse, failureFinal},
 	}
