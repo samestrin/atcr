@@ -1038,6 +1038,9 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 		//   - IgnoreFiltered > 0: candidates existed but .gitignore/.atcrignore
 		//     dropped them all — recoverable, so hint at --no-ignore, mirroring
 		//     the diff/range path's rb.AllIgnored() diagnostic.
+		//   - BinarySkipped > 0 and nothing else survived: every candidate was
+		//     non-text (Epic 35.16.14 fix F3); say so rather than call the
+		//     repository empty. No flag brings binaries back.
 		//   - otherwise: a genuinely empty repository/scope (or every file
 		//     over-cap) — the original generic error.
 		switch {
@@ -1045,6 +1048,8 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 			return nil, fmt.Errorf("%w: %d file(s) unchanged since last review", ErrAllFilesUnchanged, stats.HashSkipped)
 		case stats.IgnoreFiltered > 0:
 			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope were excluded by .gitignore/.atcrignore; re-run with --no-ignore to review them", ErrNoReviewableContent, stats.IgnoreFiltered)
+		case stats.BinarySkipped > 0:
+			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope are non-text (binary) and were skipped", ErrNoReviewableContent, stats.BinarySkipped)
 		default:
 			return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
 		}

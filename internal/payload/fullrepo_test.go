@@ -3,6 +3,7 @@ package payload
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -320,20 +321,98 @@ func TestEnumerateRepoFiles_NoIgnoreBypassesFilter(t *testing.T) {
 	assert.True(t, present, "--no-ignore must include the .gitignore-matched file")
 }
 
-// AC 01-02 Edge Case 3: a tracked binary (non-UTF8) file is included with its raw
-// byte size recorded; the walker must not crash or corrupt output.
+// AC 01-02 Edge Case 3, as revised by Epic 35.16.14 fix F3: a tracked binary file
+// no longer becomes an entry. Sprint 35.0 kept it verbatim, and on a 1871-file
+// repository that planned .xlsx files into a bin of 1,101,765 tokens, past the
+// model window. The walker must still not crash, and the text files beside the
+// binary are kept, with non-UTF8 text (no NUL) still captured verbatim.
 func TestEnumerateRepoFiles_BinaryFile(t *testing.T) {
 	dir := initRepo(t)
 	blob := []byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x99}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "blob.bin"), blob, 0o644))
+	latin1 := []byte("caf\xe9\n") // non-UTF8 but text: no NUL byte
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "latin1.txt"), latin1, 0o644))
 	write(t, dir, "a.go", "package a\n")
 	commitAll(t, dir, "init")
 
-	entries, _, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	entries, stats, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
 	require.NoError(t, err)
-	e, ok := findEntry(entries, "blob.bin")
-	require.True(t, ok, "binary file must be included")
-	assert.Equal(t, int64(len(blob)), e.Size, "raw byte size recorded")
+	_, ok := findEntry(entries, "blob.bin")
+	assert.False(t, ok, "binary file must not become an entry")
+	assert.Equal(t, 1, stats.BinarySkipped)
+	e, ok := findEntry(entries, "latin1.txt")
+	require.True(t, ok, "non-UTF8 text without a NUL byte is still text")
+	assert.Equal(t, string(latin1), e.Body, "captured verbatim")
+	assert.Equal(t, int64(len(latin1)), e.Size, "raw byte size recorded")
+}
+
+// xlsxLike is a small stand-in for an Office Open XML workbook: a ZIP local file
+// header, whose version and flag fields carry NUL bytes within the first bytes.
+func xlsxLike() []byte {
+	b := []byte("PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00")
+	return append(b, []byte("[Content_Types].xml")...)
+}
+
+// Epic 35.16.14 fix F3: binary detection reads the content, not the extension. A
+// NUL byte in the first 8 KiB marks a file binary whatever it is called; a file
+// with a binary-sounding name but text content is kept; and a NUL that only
+// appears past the first 8 KiB does not mark the file binary (git's own rule).
+func TestEnumerateRepoFiles_BinaryDetectedByContent(t *testing.T) {
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rates.xlsx"), xlsxLike(), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "disguised.txt"), []byte("text\x00more"), 0o644))
+	write(t, dir, "notes.xlsx", "plain text despite the name\n")
+	late := strings.Repeat("x", binarySniffBytes) + "\x00tail"
+	write(t, dir, "late-nul.txt", late)
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	entries, stats, err := enumerateRepoFiles(context.Background(), dir, log.Discard(), false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go", "late-nul.txt", "notes.xlsx"}, sortedPaths(entries))
+	assert.Equal(t, 2, stats.BinarySkipped)
+}
+
+// Epic 35.16.14 fix F3: the skipped binaries are reported once, in one log line
+// carrying the count and the first few paths, never one line per file.
+func TestEnumerateRepoFiles_BinarySkipLoggedOnce(t *testing.T) {
+	dir := initRepo(t)
+	for i := 0; i < binarySkipLogNames+3; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("sheet%02d.xlsx", i))
+		require.NoError(t, os.WriteFile(name, xlsxLike(), 0o644))
+	}
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	logger, buf := debugLogger()
+	entries, stats, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.go"}, sortedPaths(entries))
+	assert.Equal(t, binarySkipLogNames+3, stats.BinarySkipped)
+
+	var lines []string
+	for _, ln := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if strings.Contains(ln, "non-text") {
+			lines = append(lines, ln)
+		}
+	}
+	require.Len(t, lines, 1, "one line for every skipped binary: %s", buf.String())
+	assert.Contains(t, lines[0], fmt.Sprintf("count=%d", binarySkipLogNames+3))
+	assert.Contains(t, lines[0], "sheet00.xlsx", "names the first skipped paths")
+	assert.NotContains(t, lines[0], fmt.Sprintf("sheet%02d.xlsx", binarySkipLogNames+2), "only the first few names")
+}
+
+// Epic 35.16.14 fix F3: no binaries, no skip line.
+func TestEnumerateRepoFiles_NoBinaryNoSkipLine(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	commitAll(t, dir, "init")
+
+	logger, buf := debugLogger()
+	_, stats, err := enumerateRepoFiles(context.Background(), dir, logger, false, "")
+	require.NoError(t, err)
+	assert.Zero(t, stats.BinarySkipped)
+	assert.NotContains(t, buf.String(), "non-text")
 }
 
 // AC 01-02 Edge Case 4: a tracked symlink captures its LITERAL target string as
