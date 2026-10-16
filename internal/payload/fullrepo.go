@@ -245,6 +245,10 @@ func filterByScope(paths []string, scope string) []string {
 //     mid-enumeration (TD-005) — the whole-repo counterpart of
 //     DefaultMaxDiffBytes, tripping only on a genuine OOM-scale repository
 //     (PartitionByBudget handles normal large-repo sizing).
+//   - A non-text file (a NUL byte in its first binarySniffBytes) is skipped, not
+//     returned (Epic 35.16.14 fix F3): it never reaches the partitioner, so it can
+//     never plan a bin past the model window. The skips are counted in
+//     RepoScanStats.BinarySkipped and logged once, as one summary line.
 //   - Untracked working-tree files are excluded by construction: the candidate set
 //     is git ls-files only (Edge Case 5), an explicit non-goal of this epic.
 //   - Enumeration order is unspecified (FileIndex.Paths() iterates a map);
@@ -290,6 +294,7 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	}
 	entries := make([]FileEntry, 0, len(paths))
 	ignoreFiltered := 0
+	var binary []string
 	var totalBytes int64
 	for _, rel := range paths {
 		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
@@ -314,6 +319,13 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 			}
 			return nil, RepoScanStats{}, err
 		}
+		// Epic 35.16.14 fix F3: a non-text file is never review content. Kept, a
+		// .xlsx planned a bin past the model window. It is skipped here, before the
+		// total cap and before any sizing, and reported once after the walk.
+		if isBinaryContent(entry.Body) {
+			binary = append(binary, rel)
+			continue
+		}
 		// TD-005: bound the TOTAL in-memory assembly, not just each file — many
 		// individually-under-cap files (or many per-file-skipped binaries around
 		// them) still sum to an OOM on a huge repository. Fail loudly before any
@@ -326,7 +338,29 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 		}
 		entries = append(entries, entry)
 	}
-	return entries, RepoScanStats{IgnoreFiltered: ignoreFiltered}, nil
+	logBinarySkips(logger, binary)
+	return entries, RepoScanStats{IgnoreFiltered: ignoreFiltered, BinarySkipped: len(binary)}, nil
+}
+
+// isBinaryContent reports whether body is non-text: a NUL byte within its first
+// binarySniffBytes. Content decides, never the extension, so a binary under a
+// text name is caught and a text file under a binary name is kept. Non-UTF8 text
+// without a NUL (Latin-1 source, for one) stays text.
+func isBinaryContent(body string) bool {
+	return strings.IndexByte(body[:min(len(body), binarySniffBytes)], 0) >= 0
+}
+
+// logBinarySkips reports the binary files a baseline walk skipped in ONE line:
+// the count and the first binarySkipLogNames paths in sorted order (enumeration
+// order is a map's), so a repository with hundreds of binaries does not log
+// hundreds of lines. Nothing is logged when nothing was skipped.
+func logBinarySkips(logger *slog.Logger, paths []string) {
+	if logger == nil || len(paths) == 0 {
+		return
+	}
+	sort.Strings(paths)
+	logger.Info("full-repo scan: skipping non-text (binary) tracked files",
+		"count", len(paths), "first", paths[:min(len(paths), binarySkipLogNames)])
 }
 
 // readTrackedFile reads one tracked file's content into a FileEntry. rel is a
@@ -338,7 +372,8 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 // path components of a git ls-files path are always real directories (git tracks a
 // symlink as its own leaf entry, never traverses through one), so os.ReadFile of a
 // regular file stays rooted at root. Binary/non-UTF8 content is captured verbatim
-// with its raw byte size (Edge Case 3). A regular file larger than
+// with its raw byte size (Edge Case 3); deciding whether it is review content is
+// the walker's job (isBinaryContent), not this reader's. A regular file larger than
 // maxTrackedFileReadBytes is NOT read: it returns errTrackedFileTooLarge so the
 // caller can skip + flag it instead of exhausting memory (TD-002).
 func readTrackedFile(root, rel string) (FileEntry, error) {
