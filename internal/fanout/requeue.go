@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 )
 
@@ -39,6 +40,25 @@ const (
 	outageBackoff    = 20 * time.Second
 )
 
+// A lease that met an open circuit breaker made no call (Epic 35.16.14 fix
+// AC1a), so it says nothing about the unit and spends neither of the budgets
+// above. Counting it did: four fail-fasts in about two minutes marked a unit
+// failed, so a provider restart of a few minutes failed every unit on that
+// provider, and with none left to call it the breaker was never asked to
+// half-open again. Such a unit waits one breaker cooldown, by which time the
+// breaker admits a probe, and is leased again. Its own budget bounds it: a
+// provider that never recovers ends the unit after unitCircuitWaitBudget of
+// these waits, summed, so it cannot requeue forever.
+const (
+	// circuitOpenBackoff is the wait before a unit that failed fast is leased
+	// again: the breaker's cooldown, not doubled, since the wait is for the
+	// breaker rather than the provider.
+	circuitOpenBackoff = circuitbreaker.DefaultCooldown
+	// unitCircuitWaitBudget caps how long one unit may wait on an open breaker,
+	// summed: thirty leases a cooldown apart.
+	unitCircuitWaitBudget = 30 * time.Minute
+)
+
 // failureClass is why a unit's attempt failed, as far as requeueing cares.
 type failureClass int
 
@@ -51,11 +71,13 @@ const (
 	failureRateLimit
 	// failureServer is an HTTP 5xx.
 	failureServer
-	// failureTransport is a request that got no HTTP response, or a provider
-	// whose circuit breaker is open.
+	// failureTransport is a request that got no HTTP response.
 	failureTransport
 	// failureTimeout is a call or unit deadline that fired.
 	failureTimeout
+	// failureCircuitOpen is a lease whose provider's circuit breaker was open,
+	// so no call was made.
+	failureCircuitOpen
 )
 
 func (c failureClass) String() string {
@@ -68,6 +90,8 @@ func (c failureClass) String() string {
 		return "transport"
 	case failureTimeout:
 		return "timeout"
+	case failureCircuitOpen:
+		return "circuit_open"
 	default:
 		return "final"
 	}
@@ -96,8 +120,11 @@ func classifyUnitFailure(err error) failureClass {
 		return failureTimeout
 	}
 	var co *llmclient.CircuitOpenError
+	if errors.As(err, &co) {
+		return failureCircuitOpen
+	}
 	var ue *url.Error
-	if errors.As(err, &co) || errors.As(err, &ue) {
+	if errors.As(err, &ue) {
 		return failureTransport
 	}
 	return failureFinal
@@ -109,10 +136,17 @@ type unitRetryPolicy struct {
 	maxAttempts int
 	budget      time.Duration
 	backoff     func(c failureClass, attempt int) time.Duration
+	// circuitWait and circuitBudget are the wait after a fail-fast on an open
+	// breaker and the cap on those waits, summed.
+	circuitWait   time.Duration
+	circuitBudget time.Duration
 }
 
 func defaultUnitRetryPolicy() unitRetryPolicy {
-	return unitRetryPolicy{maxAttempts: unitMaxAttempts, budget: unitBackoffBudget, backoff: unitBackoff}
+	return unitRetryPolicy{
+		maxAttempts: unitMaxAttempts, budget: unitBackoffBudget, backoff: unitBackoff,
+		circuitWait: circuitOpenBackoff, circuitBudget: unitCircuitWaitBudget,
+	}
 }
 
 // unitBackoff is the wait before lease attempt+1, after attempt (1-based)
@@ -139,11 +173,30 @@ func (p unitRetryPolicy) next(c failureClass, attempt int, spent time.Duration) 
 	return d, true
 }
 
+// nextCircuitWait reports the wait before the next lease of a unit whose lease
+// failed fast on an open breaker, having already waited waited on open
+// breakers. ok is false when the circuit-wait budget is exhausted.
+func (p unitRetryPolicy) nextCircuitWait(waited time.Duration) (time.Duration, bool) {
+	if waited+p.circuitWait > p.circuitBudget {
+		return 0, false
+	}
+	return p.circuitWait, true
+}
+
 // unitRetryState is one unit's progress through its outer budget. Only the
 // worker holding the unit touches it; the queue's mutex orders the handoff
 // between workers.
 type unitRetryState struct {
-	attempts int
-	requeues int
-	spent    time.Duration
+	// attempts counts every lease; circuitWaits the ones that failed fast on
+	// an open breaker, which made no call.
+	attempts     int
+	circuitWaits int
+	requeues     int
+	spent        time.Duration
+	// circuitSpent is the wait summed over circuitWaits.
+	circuitSpent time.Duration
 }
+
+// calls is how many of the unit's leases made a call: the count the attempt
+// budget bounds.
+func (s unitRetryState) calls() int { return s.attempts - s.circuitWaits }

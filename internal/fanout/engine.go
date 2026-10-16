@@ -440,6 +440,12 @@ type Result struct {
 	// UnitAttempts.
 	Requeues     int
 	UnitAttempts int
+	// failedFastOnly marks a failed walk on which every chain member failed fast
+	// on an open circuit breaker, so no call was made (Epic 35.16.14 fix AC1a).
+	// Only such a lease waits for the breaker without spending an attempt; a walk
+	// whose primary made a real call and whose fallback then failed fast spent
+	// one. In-process only, read by the outer retry.
+	failedFastOnly bool
 
 	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
 	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
@@ -1127,7 +1133,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		defer cancel()
 		holdRateLimit := false
 		if e.requeueable != nil && e.requeueable(i) {
-			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].attempts+1, retry[i].spent)
+			_, holdRateLimit = e.retry.next(failureRateLimit, retry[i].calls()+1, retry[i].spent)
 		}
 		return e.invokeSlotWithRetry(uctx, s, holdRateLimit)
 	}
@@ -1154,18 +1160,37 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		if class == failureFinal {
 			return 0, false, res
 		}
-		backoff, ok := e.retry.next(class, st.attempts, st.spent)
+		if class == failureCircuitOpen && !res.failedFastOnly {
+			// A chain member made a real call before the walk ended on an open
+			// breaker: the lease spent an attempt, as any transport failure does.
+			class = failureTransport
+		}
+		// A fail-fast on an open breaker made no call: it waits for the breaker
+		// on its own budget and spends none of the attempt or backoff budget.
+		var backoff time.Duration
+		var ok bool
+		if class == failureCircuitOpen {
+			st.circuitWaits++
+			backoff, ok = e.retry.nextCircuitWait(st.circuitSpent)
+		} else {
+			backoff, ok = e.retry.next(class, st.calls(), st.spent)
+		}
 		if !ok {
 			res.Status = StatusFailed
 			e.logger().Warn("unit exhausted its retry budget; marking it failed",
 				"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
 				"attempts", st.attempts, "requeues", st.requeues, "backoff", st.spent.String(),
 				"max_attempts", e.retry.maxAttempts, "backoff_budget", e.retry.budget.String(),
+				"circuit_wait", st.circuitSpent.String(), "circuit_wait_budget", e.retry.circuitBudget.String(),
 				"err", res.Err)
 			return 0, false, res
 		}
 		st.requeues++
-		st.spent += backoff
+		if class == failureCircuitOpen {
+			st.circuitSpent += backoff
+		} else {
+			st.spent += backoff
+		}
 		e.logger().Info("unit failed retryably; requeued",
 			"agent", slots[i].Primary.Name, "unit", i, "class", class.String(),
 			"attempt", st.attempts, "backoff", backoff.String(), "err", res.Err)
@@ -1300,6 +1325,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit bool) Result {
 	start := time.Now()
 	thinkOnlyAttempts := 0
+	madeCall := false
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	for i, a := range chain {
@@ -1314,6 +1340,10 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			break
 		}
 		r := e.invokeAgent(ctx, a)
+		var co *llmclient.CircuitOpenError
+		if !errors.As(r.Err, &co) {
+			madeCall = true
+		}
 		if i > 0 {
 			r.FallbackUsed = true
 			r.FallbackFrom = s.Primary.Name
@@ -1614,6 +1644,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
 	// (TD internal/fanout/engine.go:429). In-process only, as above.
 	last.ThinkOnlyAttempts = thinkOnlyAttempts
+	last.failedFastOnly = !madeCall && classifyUnitFailure(last.Err) == failureCircuitOpen
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
