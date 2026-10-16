@@ -433,6 +433,13 @@ type Result struct {
 	// UnitAttempts.
 	Requeues     int
 	UnitAttempts int
+	// circuitWaits is how many of those leases failed fast on an open circuit
+	// breaker and were requeued without spending an attempt (Epic 35.16.14 F2).
+	// In-process only.
+	circuitWaits int
+	// circuitOpenOnly marks an attempt whose every chain member failed fast on an
+	// open circuit breaker, so no provider was called.
+	circuitOpenOnly bool
 
 	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
 	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
@@ -886,6 +893,10 @@ type Engine struct {
 	// breakerState reads a provider's circuit for the lease throttle; nil reads
 	// circuitbreaker.DefaultRegistry. Tests replace it.
 	breakerState func(provider string) circuitbreaker.State
+	// breakers finds a provider's circuit breaker, for a unit that failed fast on
+	// it to wait out its cooldown; nil reads circuitbreaker.DefaultRegistry.
+	// Tests replace it.
+	breakers func(provider string) *circuitbreaker.Breaker
 }
 
 // EngineOption configures an Engine at construction.

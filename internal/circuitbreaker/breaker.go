@@ -108,6 +108,17 @@ func New(provider string, threshold int, cooldown time.Duration) *Breaker {
 	return b
 }
 
+// NewWithClock is New with an injected clock, so a test can run the breaker on
+// the same fake time as the code it gates and drive the cooldown without real
+// sleeps. A nil now keeps time.Now. Not for production use.
+func NewWithClock(provider string, threshold int, cooldown time.Duration, now func() time.Time) *Breaker {
+	b := New(provider, threshold, cooldown)
+	if now != nil {
+		b.now = now
+	}
+	return b
+}
+
 // Allow reports whether a request may proceed. It returns true when the circuit
 // is closed, or when it is half-open and no probe is currently in flight (the
 // caller becomes the probe). It returns false when the circuit is open, or
@@ -212,6 +223,21 @@ func (b *Breaker) State() State {
 	defer b.mu.Unlock()
 	b.refresh()
 	return b.state
+}
+
+// ProbeIn is how long until an open circuit's cooldown ends and it admits a
+// half-open probe. It is zero for a closed or half-open circuit, and for an open
+// one whose cooldown has just elapsed (which it first rolls forward to
+// half-open, as State does), so a positive value always means "open, wait this
+// long".
+func (b *Breaker) ProbeIn() time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.refresh()
+	if b.state != StateOpen {
+		return 0
+	}
+	return b.cooldown - b.now().Sub(b.openedAt)
 }
 
 // refresh applies the time-based transition: an open circuit whose cooldown has

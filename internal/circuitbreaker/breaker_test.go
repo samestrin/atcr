@@ -314,3 +314,44 @@ func TestReleaseProbeNoOpWhenClosed(t *testing.T) {
 		t.Fatal("Allow() = false after no-op ReleaseProbe, want true")
 	}
 }
+
+// ProbeIn reports the cooldown left on an open circuit and zero otherwise, so a
+// caller holding work for the provider knows how long until a probe is admitted.
+func TestProbeInCountsDownTheCooldown(t *testing.T) {
+	b, clk := newTestBreaker(t, 1, 60*time.Second)
+	if got := b.ProbeIn(); got != 0 {
+		t.Fatalf("closed ProbeIn() = %v, want 0", got)
+	}
+	b.RecordFailure() // open
+	if got := b.ProbeIn(); got != 60*time.Second {
+		t.Fatalf("just-opened ProbeIn() = %v, want 60s", got)
+	}
+	clk.advance(45 * time.Second)
+	if got := b.ProbeIn(); got != 15*time.Second {
+		t.Fatalf("ProbeIn() 45s in = %v, want 15s", got)
+	}
+	clk.advance(15 * time.Second)
+	if got := b.ProbeIn(); got != 0 {
+		t.Fatalf("cooldown-elapsed ProbeIn() = %v, want 0", got)
+	}
+	if got := b.State(); got != StateHalfOpen {
+		t.Fatalf("ProbeIn rolled the circuit to %v, want half-open", got)
+	}
+}
+
+// NewWithClock runs the cooldown on the injected clock; a nil clock keeps the
+// wall clock.
+func TestNewWithClockDrivesTheCooldown(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+	clk := &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	b := NewWithClock("openai", 1, 60*time.Second, clk.now)
+	b.RecordFailure()
+	clk.advance(60 * time.Second)
+	if !b.Allow() {
+		t.Fatal("Allow() = false after the injected cooldown, want the probe")
+	}
+	if NewWithClock("openai", 1, time.Second, nil).now == nil {
+		t.Fatal("a nil clock left the breaker with no clock")
+	}
+}

@@ -28,6 +28,9 @@ const (
 	// unitBackoffBudget caps the backoff one unit may wait out across its
 	// requeues, summed.
 	unitBackoffBudget = 10 * time.Minute
+	// unitCircuitWaitBudget caps how long one unit may wait, summed, on an open
+	// circuit breaker without being charged an attempt.
+	unitCircuitWaitBudget = 30 * time.Minute
 )
 
 // Base backoffs by failure class, doubled per attempt. A rate limit waits
