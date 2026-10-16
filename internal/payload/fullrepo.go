@@ -115,12 +115,13 @@ type RepoScanStats struct {
 // points share the single enumerate → hash-skip pipeline so their candidate
 // sets can never diverge.
 func BuildRepoEntriesWithStats(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string, idx *FileHashIndex, fresh bool) ([]FileEntry, RepoScanStats, error) {
-	entries, ignoreFiltered, err := enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
+	entries, stats, err := enumerateRepoFiles(ctx, root, logger, noIgnore, scope)
 	if err != nil {
 		return nil, RepoScanStats{}, err
 	}
 	kept, hashSkipped := applyHashSkip(entries, idx, fresh)
-	return kept, RepoScanStats{IgnoreFiltered: ignoreFiltered, HashSkipped: hashSkipped}, nil
+	stats.HashSkipped = hashSkipped
+	return kept, stats, nil
 }
 
 // applyHashSkip drops candidates whose content hash matches the recorded index entry
@@ -259,11 +260,17 @@ func filterByScope(paths []string, scope string) []string {
 // The second return counts the candidates the ignore filter dropped, so a
 // caller handed an empty slice can distinguish "every candidate
 // ignore-filtered" (recoverable with --no-ignore, TD-008) from a genuinely
-// empty repository/scope.
-func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, int, error) {
+// empty repository/scope, and the binary files it skipped (NonText). Its
+// HashSkipped is always zero: the hash skip runs after the walk.
+//
+// A binary file (a NUL byte in its first binarySniffBytes) is read, judged and
+// dropped, never planned (Epic 35.16.14 fix AC1b): no reviewer can read it, and
+// one is easily larger than any model window, a bin that could never be served.
+// One Warn line counts and names them.
+func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, noIgnore bool, scope string) ([]FileEntry, RepoScanStats, error) {
 	idx := stream.BuildFileIndex(ctx, root)
 	if idx == nil {
-		return nil, 0, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
+		return nil, RepoScanStats{}, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
 	}
 	// A nil matcher's match() is a no-op (returns false), so --no-ignore includes
 	// every tracked file — the same effect as diff-mode's WithoutIgnoreFilter.
@@ -283,21 +290,22 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	// (inlined here so the whole-repo "" / "." test sees the same form it does).
 	if len(paths) == 0 && len(tracked) > 0 {
 		if normalized := NormalizeScope(scope); normalized != "" && normalized != "." {
-			return nil, 0, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
+			return nil, RepoScanStats{}, fmt.Errorf("full-repo scan: --dir %q matched no tracked files", normalized)
 		}
 	}
 	entries := make([]FileEntry, 0, len(paths))
-	ignoreFiltered := 0
+	var stats RepoScanStats
+	var nonText []string
 	var totalBytes int64
 	for _, rel := range paths {
 		// TD-003: ctx bounded the git ls-files inside BuildFileIndex but nothing
 		// bounded this loop — honor cancellation mid-walk so a cancelled/timed-out
 		// context interrupts enumeration of a very large repository.
 		if err := ctx.Err(); err != nil {
-			return nil, 0, fmt.Errorf("full-repo scan: enumeration interrupted: %w", err)
+			return nil, RepoScanStats{}, fmt.Errorf("full-repo scan: enumeration interrupted: %w", err)
 		}
 		if matcher.match(rel) {
-			ignoreFiltered++
+			stats.IgnoreFiltered++
 			continue // .gitignore/.atcrignore parity with diff-mode
 		}
 		entry, err := readTrackedFile(root, rel)
@@ -310,7 +318,11 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 				}
 				continue
 			}
-			return nil, 0, err
+			return nil, RepoScanStats{}, err
+		}
+		if isBinaryContent(entry.Body) {
+			nonText = append(nonText, rel)
+			continue // never planned; dropped before it counts toward the total
 		}
 		// TD-005: bound the TOTAL in-memory assembly, not just each file — many
 		// individually-under-cap files (or many per-file-skipped binaries around
@@ -320,11 +332,26 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 		// entered memory, so it must not trip the total.
 		totalBytes += entry.Size
 		if totalBytes > DefaultMaxRepoBytes {
-			return nil, 0, fmt.Errorf("full-repo scan: tracked files total at least %d bytes exceeds the %d-byte in-memory assembly cap; scope the scan with --dir or review a diff range", totalBytes, DefaultMaxRepoBytes)
+			return nil, RepoScanStats{}, fmt.Errorf("full-repo scan: tracked files total at least %d bytes exceeds the %d-byte in-memory assembly cap; scope the scan with --dir or review a diff range", totalBytes, DefaultMaxRepoBytes)
 		}
 		entries = append(entries, entry)
 	}
-	return entries, ignoreFiltered, nil
+	stats.NonText = len(nonText)
+	if len(nonText) > 0 && logger != nil {
+		sort.Strings(nonText) // paths come off a map; sort for a stable line
+		logger.Warn("full-repo scan: skipping non-text tracked files; binary content is never planned as a review bin",
+			"count", len(nonText), "paths", nonText)
+	}
+	return entries, stats, nil
+}
+
+// isBinaryContent is git's binary test: a NUL byte in the first
+// binarySniffBytes of the content.
+func isBinaryContent(body string) bool {
+	if len(body) > binarySniffBytes {
+		body = body[:binarySniffBytes]
+	}
+	return strings.IndexByte(body, 0) >= 0
 }
 
 // readTrackedFile reads one tracked file's content into a FileEntry. rel is a
@@ -335,8 +362,8 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 // a read escape (AC 01-02 Edge Case 4 / Security Considerations). Intermediate
 // path components of a git ls-files path are always real directories (git tracks a
 // symlink as its own leaf entry, never traverses through one), so os.ReadFile of a
-// regular file stays rooted at root. Binary/non-UTF8 content is captured verbatim
-// with its raw byte size (Edge Case 3). A regular file larger than
+// regular file stays rooted at root. Content is captured verbatim with its raw
+// byte size (Edge Case 3); the caller drops binary content (isBinaryContent). A regular file larger than
 // maxTrackedFileReadBytes is NOT read: it returns errTrackedFileTooLarge so the
 // caller can skip + flag it instead of exhausting memory (TD-002).
 func readTrackedFile(root, rel string) (FileEntry, error) {

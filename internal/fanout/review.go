@@ -1043,8 +1043,12 @@ func buildRepoPayloads(ctx context.Context, cfg *ReviewConfig, repo string, noIg
 		switch {
 		case stats.HashSkipped > 0:
 			return nil, fmt.Errorf("%w: %d file(s) unchanged since last review", ErrAllFilesUnchanged, stats.HashSkipped)
+		case stats.IgnoreFiltered > 0 && stats.NonText > 0:
+			return nil, fmt.Errorf("%w: of the tracked files in scope, %d were excluded by .gitignore/.atcrignore (re-run with --no-ignore to review them) and %d are binary, and binary files are never reviewed", ErrNoReviewableContent, stats.IgnoreFiltered, stats.NonText)
 		case stats.IgnoreFiltered > 0:
 			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope were excluded by .gitignore/.atcrignore; re-run with --no-ignore to review them", ErrNoReviewableContent, stats.IgnoreFiltered)
+		case stats.NonText > 0:
+			return nil, fmt.Errorf("%w: all %d tracked file(s) in scope are binary, and binary files are never reviewed", ErrNoReviewableContent, stats.NonText)
 		default:
 			return nil, fmt.Errorf("%w: the repository contains no reviewable tracked files", ErrNoReviewableContent)
 		}
