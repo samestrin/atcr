@@ -50,9 +50,9 @@ type unitQueue struct {
 	// changed is closed and replaced whenever a held unit is released or
 	// requeued, waking workers waiting for one.
 	changed chan struct{}
-	// throttle, when set, caps each provider's leases (Epic 35.16.14 T4): a
-	// pending unit whose provider is at its cap is skipped, and a throttled
-	// provider's units wait behind every healthy provider's.
+	// throttle, when set, caps each lane's leases (Epic 35.16.14 T4; a lane is a
+	// provider and model): a pending unit whose lane is at its cap is skipped,
+	// and a throttled lane's units wait behind every healthy lane's.
 	throttle *providerThrottle
 }
 
@@ -82,7 +82,7 @@ func (q *unitQueue) lease(ctx context.Context) (i int, ok bool) {
 			return i, true
 		}
 		// Nothing leasable. A pending unit the throttle skipped has a unit of its
-		// provider held (the throttle always admits a provider with none in
+		// lane or provider held (the throttle always admits a provider with none in
 		// flight), so its release is a change to wait for.
 		if len(q.pending) == 0 && len(q.delayed) == 0 && q.held == 0 {
 			q.mu.Unlock()
