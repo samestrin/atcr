@@ -15,3 +15,7 @@ import "os/exec"
 // and windows/arm64, while CI is ubuntu-latest only and would never surface the
 // break before a release tag.
 func configureSandboxProcessGroup(_ *exec.Cmd) {}
+
+// reapSandboxProcessGroup is a no-op for the same reason: no process group was
+// created, and Run never spawns a process on these platforms.
+func reapSandboxProcessGroup(_ *exec.Cmd) error { return nil }
