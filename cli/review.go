@@ -774,9 +774,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// the sync defer may layer onto err (matching reconcile.go, which sends from the
 		// findings gateErr, not the auth-overridden return). The opt-out gate (Story 2)
 		// is checked at fire time so a disabled run spawns no goroutine; a nil client
-		// no-ops. It never blocks or changes this command's outcome (Story 1).
+		// no-ops. It reads the opt-out from the cfg.Project this run already loaded,
+		// not from a second parse of .atcr/config.yaml. It never blocks or changes
+		// this command's outcome (Story 1).
 		defer func() {
-			if telemetryGate(cmd.ErrOrStderr()) {
+			if telemetryGateFromConfig(cmd.ErrOrStderr(), cfg.Project.Telemetry) {
 				status := "success"
 				if err != nil {
 					status = "failure"

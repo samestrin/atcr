@@ -95,7 +95,6 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // model. `--sync-cloud` gets its own opt-in surface (the presence of a valid
 // ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
 func telemetryGate(w io.Writer) bool {
-	env := telemetryEnabledFromEnv(w)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
@@ -104,12 +103,33 @@ func telemetryGate(w io.Writer) bool {
 	if rerr != nil {
 		root = "."
 	}
-	cfg, err := registry.LoadTelemetrySetting(root)
+	cfg, err := loadTelemetrySetting(root)
 	if err != nil {
-		return false
+		// Fail safe to disabled, but still route through the env read so an
+		// unrecognized ATCR_TELEMETRY value warns exactly as before.
+		disabled := false
+		cfg = &disabled
 	}
-	return telemetryEnabled(env, cfg)
+	return telemetryGateFromConfig(w, cfg)
 }
+
+// telemetryGateFromConfig is telemetryGate for a caller that has ALREADY parsed
+// the project config: it combines the live ATCR_TELEMETRY env var with the
+// caller's Telemetry value and never reads disk. nil means "unset" (enabled
+// unless the env var disables it), exactly as ProjectConfig.Telemetry does — it
+// does NOT mean "go read the file".
+//
+// The review path calls it with cfg.Project.Telemetry so the opt-out resolves
+// through the same strict parse as the roster load. A second, separate read via
+// LoadTelemetrySetting could silently disagree with that parse after a schema
+// change. Reconcile loads no ProjectConfig, so it keeps telemetryGate.
+func telemetryGateFromConfig(w io.Writer, cfg *bool) bool {
+	return telemetryEnabled(telemetryEnabledFromEnv(w), cfg)
+}
+
+// loadTelemetrySetting is the on-disk telemetry-setting reader telemetryGate
+// uses. It is a var only so tests can count reads; production never reassigns it.
+var loadTelemetrySetting = registry.LoadTelemetrySetting
 
 // maybeDiscloseTelemetry prints the one-time, per-repository notice that this
 // build transmits an anonymous usage ping, then records that it has done so.
