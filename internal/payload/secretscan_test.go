@@ -19,11 +19,11 @@ import (
 // would fail the secret-scan job; concatenation keeps the source clean while
 // the scanner under test still sees the whole value.
 var (
-	plantedAWSKey   = "AKIA" + "QYLPMN5HHHFPZAM2"
-	plantedAPIToken = "Zx9Kq2Lm8Np4" + "Rt7Vw3Yb6Cd1Fg5Hj0"
-	pemBegin        = "-----BEGIN " + "RSA PRIVATE KEY-----"
-	pemEnd          = "-----END " + "RSA PRIVATE KEY-----"
-	pemBody         = "MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2yPB\n" +
+	plantedAWSKey     = "AKIA" + "QYLPMN5HHHFPZAM2"
+	plantedGenericVal = "Zx9Kq2Lm8Np4" + "Rt7Vw3Yb6Cd1Fg5Hj0"
+	pemBegin          = "-----BEGIN " + "RSA PRIVATE KEY-----"
+	pemEnd            = "-----END " + "RSA PRIVATE KEY-----"
+	pemBody           = "MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgHcTz6sE2I2yPB\n" +
 		"+aFDrBz9vFqU4yJmR4Mkm3vXcbYlYzG7t5MPvXk2p6q1JQZ8R4sYvL9dW3hK2nQe7"
 	plantedPEM = pemBegin + "\n+" + pemBody + "\n+" + pemEnd
 )
@@ -36,7 +36,7 @@ func plantedPayload() string {
 		"+const port = 8080\n" +
 		"+// port=8080 and user.email are ordinary code, not secrets\n" +
 		"+awsKey := \"" + plantedAWSKey + "\"\n" +
-		"+api_token = \"" + plantedAPIToken + "\"\n" +
+		"+api_token = \"" + plantedGenericVal + "\"\n" +
 		"+key := `" + plantedPEM + "`\n" +
 		"+fmt.Println(user.email)\n"
 }
@@ -203,7 +203,7 @@ func TestScanPayload_BuiltinPath_DetectsPlantedKeyAndPEM(t *testing.T) {
 		t.Fatalf("built-in path err = %v, want nil (gitleaks absence is not a failure)", err)
 	}
 	assertCovered(t, text, hits, plantedAWSKey)
-	assertCovered(t, text, hits, plantedAPIToken)
+	assertCovered(t, text, hits, plantedGenericVal)
 	assertCovered(t, text, hits, plantedPEM)
 
 	kinds := map[string]bool{}
@@ -321,7 +321,7 @@ func TestScanPayload_GitleaksFailureFallsBackToBuiltin(t *testing.T) {
 			if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "built-in") {
 				t.Errorf("want a WARN naming the built-in fallback, got %q", logged)
 			}
-			for _, secret := range []string{plantedAWSKey, plantedAPIToken, "MIIEowIBAAKCAQEA", "boom"} {
+			for _, secret := range []string{plantedAWSKey, plantedGenericVal, "MIIEowIBAAKCAQEA", "boom"} {
 				if strings.Contains(logged, secret) || strings.Contains(err.Error(), secret) {
 					t.Errorf("secret material or scanner stderr %q leaked into the log/error", secret)
 				}
@@ -335,7 +335,7 @@ func TestRedactSecrets_ReplacesEachSpanWithPlaceholder(t *testing.T) {
 	text := plantedPayload()
 	out := RedactSecrets(text, ScanPayload(text))
 
-	for _, secret := range []string{plantedAWSKey, plantedAPIToken, "MIIEowIBAAKCAQEA", pemBegin} {
+	for _, secret := range []string{plantedAWSKey, plantedGenericVal, "MIIEowIBAAKCAQEA", pemBegin} {
 		if strings.Contains(out, secret) {
 			t.Errorf("redacted payload still holds %q", secret)
 		}
