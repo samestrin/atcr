@@ -1,8 +1,8 @@
 # Telemetry
 
 `atcr` can emit an **anonymous, opt-out usage ping** when a `review` or
-`reconcile` run completes, and — only when you explicitly ask for it — push an
-anonymized copy of your local scorecard to a cloud dashboard with
+`reconcile` run completes, and — only when you explicitly ask for it — push a
+pseudonymous copy of your local scorecard to a cloud dashboard with
 `--sync-cloud`. Both paths are designed so that no source code, file paths, or
 file contents ever leave your machine.
 
@@ -246,8 +246,8 @@ is an explicit, per-run action you request with the `` `--sync-cloud` `` flag,
 and it is gated by its own opt-in: you must both pass the flag and provide a
 valid API key. It is never sent in the background.
 
-When set, `--sync-cloud` pushes the anonymized scorecard for the just-finished
-run to the configured cloud dashboard as a single POST after the run's outcome
+When set, `--sync-cloud` pushes the pseudonymous scorecard for the
+just-finished run to the configured cloud dashboard as a single POST after the run's outcome
 is finalized:
 
 ```sh
@@ -473,8 +473,8 @@ SHA-256** of the canonicalized persona/reviewer name (`strings.ToLower(strings.T
   often publicly-known set, someone who pre-hashes a list of known persona names
   could match a digest back to a name. Treat `persona_id_hash` as a stable
   pseudonym, not a secret. Hardening the hash to a keyed HMAC is tracked as
-  **TD-007**; the quality-signal path shares that same unsalted scheme and would
-  be hardened in lockstep.
+  **TD-007**, where the keyed step happens at ingestion; the quality-signal
+  path shares that same unsalted scheme and would be hardened in lockstep.
 
 ---
 
