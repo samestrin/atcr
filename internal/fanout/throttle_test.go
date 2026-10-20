@@ -47,8 +47,13 @@ func throttledQueue(providers []string, ceiling int, clock unitClock, breakers *
 	}
 	q := newUnitQueue(idx, clock)
 	q.throttle = newProviderThrottle(ceiling, clock, slog.New(slog.DiscardHandler),
-		func(i int) string { return providers[i] }, breakers.state)
+		func(i int) leaseKey { return leaseKey{provider: providers[i]} }, breakers.state)
 	return q
+}
+
+// onLane puts every unit on one provider and model.
+func onLane(provider, model string) func(int) leaseKey {
+	return func(int) leaseKey { return leaseKey{provider: provider, model: model} }
 }
 
 // tryLease leases without waiting: ok is false when nothing is leasable now.
@@ -69,15 +74,15 @@ func rateLimited() Result { return Result{Status: StatusFailed, Err: exhausted42
 func TestThrottle_RateLimitHalvesTheCap(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	for _, want := range []int{3, 1, 1} {
 		th.acquire(0)
 		th.done(0, rateLimited())
-		got, throttled := th.capFor("alpha")
+		got, throttled := th.capFor(leaseKey{provider: "alpha"})
 		assert.Equal(t, want, got)
 		assert.True(t, throttled)
 	}
-	got, throttled := th.capFor("beta")
+	got, throttled := th.capFor(leaseKey{provider: "beta"})
 	assert.Equal(t, 6, got, "another provider keeps the ceiling")
 	assert.False(t, throttled)
 }
@@ -135,36 +140,36 @@ func TestThrottle_RecoversAsTheWindowPasses(t *testing.T) {
 	clock := newFakeUnitClock()
 	var buf bytes.Buffer
 	th := newProviderThrottle(4, clock, slog.New(slog.NewTextHandler(&buf, nil)),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	ok := Result{Status: StatusOK}
 	th.acquire(0)
 	th.done(0, rateLimited())
 	th.acquire(0)
 	th.done(0, rateLimited())
-	got, _ := th.capFor("alpha")
+	got, _ := th.capFor(leaseKey{provider: "alpha"})
 	require.Equal(t, 1, got)
 
 	th.acquire(0)
 	th.done(0, ok)
-	got, _ = th.capFor("alpha")
+	got, _ = th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 1, got, "a success inside the window does not raise the cap")
 
 	clock.After(throttleWindow)
 	for _, want := range []int{2, 3} {
 		th.acquire(0)
 		th.done(0, ok)
-		got, throttled := th.capFor("alpha")
+		got, throttled := th.capFor(leaseKey{provider: "alpha"})
 		assert.Equal(t, want, got)
 		assert.True(t, throttled)
 	}
 	th.acquire(0)
 	th.done(0, ok)
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled, "back at the ceiling")
 	assert.Equal(t, 2, strings.Count(buf.String(), "provider rate-limited; lowering its lease cap"))
 	assert.Equal(t, 1, strings.Count(buf.String(), "provider recovered; lease cap back at the ceiling"))
-	assert.Equal(t, 0, th.lanes["alpha"].inFlight)
+	assert.Equal(t, 0, th.lanes[leaseKey{provider: "alpha"}].inFlight)
 }
 
 // An open or half-open breaker holds its provider to one lease, deferred behind
@@ -195,7 +200,121 @@ func TestThrottle_OpenBreakerHoldsProviderToOneLease(t *testing.T) {
 	i, ok := tryLease(q)
 	assert.True(t, ok)
 	assert.Equal(t, 1, i, "closed: back to the ceiling")
-	assert.Zero(t, q.throttle.lanes["alpha"].limit)
+	assert.Zero(t, q.throttle.lanes[leaseKey{provider: "alpha"}].limit)
+}
+
+// laneQueue is a queue over units whose lanes are named by keys, throttled at
+// ceiling.
+func laneQueue(keys []leaseKey, ceiling int, breakers *breakerStates) *unitQueue {
+	idx := make([]int, len(keys))
+	for i := range idx {
+		idx[i] = i
+	}
+	q := newUnitQueue(idx, newFakeUnitClock())
+	q.throttle = newProviderThrottle(ceiling, q.clock, slog.New(slog.DiscardHandler),
+		func(i int) leaseKey { return keys[i] }, breakers.state)
+	return q
+}
+
+// Epic 35.16.14 fix AC1c: every reviewer behind one litellm shares a provider,
+// so a 429 from one model must lower only that model's cap. Two 429s from a
+// one-slot local model held the whole panel to one lease.
+func TestThrottle_RateLimitLowersOnlyThatModelsCap(t *testing.T) {
+	t.Parallel()
+	slow := leaseKey{provider: "litellm", model: "gpt-oss-20b"}
+	fast := leaseKey{provider: "litellm", model: "qwen3-coder"}
+	keys := []leaseKey{slow, slow, slow, fast, fast, fast, fast, fast, fast}
+	q := laneQueue(keys, 6, &breakerStates{})
+
+	for range 2 {
+		q.throttle.acquire(0)
+		q.throttle.done(0, rateLimited()) // slow: cap 6 -> 3 -> 1
+	}
+	got, throttled := q.throttle.capFor(slow)
+	assert.Equal(t, 1, got, "the rate-limited model is held to one lease")
+	assert.True(t, throttled)
+	got, throttled = q.throttle.capFor(fast)
+	assert.Equal(t, 6, got, "another model behind the same provider keeps the ceiling")
+	assert.False(t, throttled)
+
+	var leased []int
+	for {
+		i, ok := tryLease(q)
+		if !ok {
+			break
+		}
+		leased = append(leased, i)
+	}
+	assert.Equal(t, []int{3, 4, 5, 6, 7, 8, 0}, leased,
+		"every fast unit at full width, then the slow model's one lease")
+}
+
+// A rate-limited model's own cap still recovers as the window passes, one
+// success at a time, without touching its neighbour's.
+func TestThrottle_RateLimitedModelRecoversOnItsOwnLane(t *testing.T) {
+	t.Parallel()
+	clock := newFakeUnitClock()
+	slow := leaseKey{provider: "litellm", model: "gpt-oss-20b"}
+	fast := leaseKey{provider: "litellm", model: "qwen3-coder"}
+	keys := []leaseKey{slow, fast}
+	var buf bytes.Buffer
+	th := newProviderThrottle(4, clock, slog.New(slog.NewTextHandler(&buf, nil)),
+		func(i int) leaseKey { return keys[i] }, (&breakerStates{}).state)
+	th.acquire(0)
+	th.done(0, rateLimited())
+	got, _ := th.capFor(slow)
+	require.Equal(t, 2, got)
+
+	clock.After(throttleWindow)
+	for _, want := range []int{3, 4} {
+		before := got
+		th.acquire(1)
+		th.done(1, Result{Status: StatusOK})
+		got, _ = th.capFor(slow)
+		assert.Equal(t, before, got, "a success on another model does not raise this one's cap")
+		th.acquire(0)
+		th.done(0, Result{Status: StatusOK})
+		got, _ = th.capFor(slow)
+		assert.Equal(t, want, got)
+	}
+	_, throttled := th.capFor(slow)
+	assert.False(t, throttled, "back at the ceiling")
+	out := buf.String()
+	assert.Contains(t, out, "provider=litellm model=gpt-oss-20b lease_cap=2")
+	assert.Contains(t, out, `msg="provider recovered; lease cap back at the ceiling" provider=litellm model=gpt-oss-20b`)
+	assert.NotContains(t, out, "qwen3-coder")
+}
+
+// An outage is provider-wide: an open breaker holds every model of that
+// provider to one lease between them, and a half-open breaker's probe goes to
+// whichever model's unit is first.
+func TestThrottle_OpenBreakerHoldsEveryModelOfTheProvider(t *testing.T) {
+	t.Parallel()
+	breakers := &breakerStates{}
+	a := leaseKey{provider: "litellm", model: "gpt-oss-20b"}
+	b := leaseKey{provider: "litellm", model: "qwen3-coder"}
+	other := leaseKey{provider: "openai", model: "gpt-5"}
+	keys := []leaseKey{a, b, other, a, b}
+	q := laneQueue(keys, 4, breakers)
+
+	breakers.set("litellm", circuitbreaker.StateOpen)
+	var leased []int
+	for {
+		i, ok := tryLease(q)
+		if !ok {
+			break
+		}
+		leased = append(leased, i)
+	}
+	assert.Equal(t, []int{2, 0}, leased, "the other provider first, then one lease for all of litellm")
+
+	q.release(0, Result{Status: StatusFailed})
+	breakers.set("litellm", circuitbreaker.StateHalfOpen)
+	i, ok := tryLease(q)
+	require.True(t, ok)
+	assert.Equal(t, 1, i, "the probe goes to the next litellm unit, whatever its model")
+	_, ok = tryLease(q)
+	assert.False(t, ok, "half-open: one lease across the provider")
 }
 
 // Only the primary's own answer feeds its provider: a unit a fallback served,
@@ -203,15 +322,15 @@ func TestThrottle_OpenBreakerHoldsProviderToOneLease(t *testing.T) {
 func TestThrottle_FallbackOutcomeIsNotCounted(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(4, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	r := rateLimited()
 	r.FallbackUsed = true
 	th.acquire(0)
 	th.done(0, r)
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled)
-	assert.Equal(t, 0, th.lanes["alpha"].inFlight, "the lease is still returned")
+	assert.Equal(t, 0, th.lanes[leaseKey{provider: "alpha"}].inFlight, "the lease is still returned")
 }
 
 // Only a 429 lowers the cap: a 5xx is the breaker's to judge, and a final
@@ -219,12 +338,12 @@ func TestThrottle_FallbackOutcomeIsNotCounted(t *testing.T) {
 func TestThrottle_OnlyRateLimitLowersTheCap(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(4, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	for _, err := range []error{exhausted503(), &llmclient.HTTPStatusError{Status: 400}, fmt.Errorf("call: %w", context.DeadlineExceeded)} {
 		th.acquire(0)
 		th.done(0, Result{Status: StatusFailed, Err: err})
 	}
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled)
 }
@@ -233,7 +352,7 @@ func TestThrottle_OnlyRateLimitLowersTheCap(t *testing.T) {
 func TestThrottle_CancelledRunLeasesPastTheCap(t *testing.T) {
 	t.Parallel()
 	q := throttledQueue([]string{"alpha", "alpha", "alpha"}, 4, newFakeUnitClock(), &breakerStates{})
-	q.throttle.lane("alpha").limit = 1
+	q.throttle.lane(leaseKey{provider: "alpha"}).limit = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for range 3 {

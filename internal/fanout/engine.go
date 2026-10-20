@@ -907,8 +907,8 @@ type EngineOption func(*Engine)
 // WithMaxParallel sizes the parallel lane's worker pool to n. n <= 0 leaves
 // the lane unbounded (the documented escape hatch). The serial lane is
 // unaffected — it is already sequential. With WithUnitRetry the width is a
-// ceiling per provider: a provider that rate-limits or has an open breaker is
-// leased less (Epic 35.16.14 T4, throttle.go).
+// ceiling per provider and model: a model that rate-limits, or a provider with
+// an open breaker, is leased less (Epic 35.16.14 T4, throttle.go).
 func WithMaxParallel(n int) EngineOption {
 	return func(e *Engine) { e.maxParallel = n }
 }
@@ -1273,15 +1273,17 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	// The pool. A unit leased after the run's ctx is done still resolves —
 	// invokeSlot short-circuits to a timeout result without a provider call — so
 	// every slot gets a Result and the queue always drains.
-	// With the outer retry on, the pool's width is a ceiling per provider: a
-	// provider that rate-limits or has an open breaker gets fewer leases and
-	// waits behind the healthy ones (Epic 35.16.14 T4). Without it the pool
+	// With the outer retry on, the pool's width is a ceiling per provider and
+	// model: a model that rate-limits, or a provider with an open breaker, gets
+	// fewer leases and waits behind the healthy ones (Epic 35.16.14 T4). Without it the pool
 	// leases in order, as before.
 	workers := poolWorkers(len(parallelIdx), e.maxParallel)
 	pool := newUnitQueue(parallelIdx, e.clock)
 	if e.requeueable != nil {
 		pool.throttle = newProviderThrottle(workers, pool.clock, e.logger(),
-			func(i int) string { return slots[i].Primary.Provider }, e.breakerState)
+			func(i int) leaseKey {
+				return leaseKey{provider: slots[i].Primary.Provider, model: slots[i].Primary.Invocation.Model}
+			}, e.breakerState)
 	}
 	for w := workers; w > 0; w-- {
 		wg.Add(1)
