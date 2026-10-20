@@ -33,82 +33,92 @@ import (
 // A throttled provider always keeps one lease, so its units still drain and the
 // queue cannot wedge on a provider with nothing in flight.
 
-// throttleWindow is how long a 429 keeps its provider's cap lowered before
+// throttleWindow is how long a 429 keeps its lane's cap lowered before
 // successes may raise it again: the rate-limit backoff, the same estimate of how
 // long an upstream's rate-limit window lasts.
 const throttleWindow = rateLimitBackoff
 
-// providerThrottle caps leases per provider for one unitQueue. The queue's
-// mutex guards it; it has no lock of its own.
+// leaseKey names the lane a unit is leased on: its primary's provider and model.
+type leaseKey struct{ provider, model string }
+
+// providerThrottle caps leases per lane for one unitQueue. The queue's mutex
+// guards it; it has no lock of its own.
 type providerThrottle struct {
 	clock   unitClock
 	ceiling int
 	window  time.Duration
 	logger  *slog.Logger
-	// provider names unit i's provider: its primary's, which is where a held 429
-	// came from. An empty provider is never throttled.
-	provider func(i int) string
+	// key names unit i's lane: its primary's provider and model, which is where a
+	// held 429 came from. A unit with an empty provider is never throttled.
+	key func(i int) leaseKey
 	// breaker reads a provider's circuit state.
 	breaker func(provider string) circuitbreaker.State
-	lanes   map[string]*providerLane
+	// lanes is the rate-limit state of each lane; inFlight counts each
+	// provider's leases across all its lanes, for the breaker.
+	lanes    map[leaseKey]*providerLane
+	inFlight map[string]int
 }
 
-// providerLane is one provider's lease state.
+// providerLane is one lane's lease state.
 type providerLane struct {
 	inFlight int
-	// limit is the lowered cap; 0 means the provider runs at the ceiling.
+	// limit is the lowered cap; 0 means the lane runs at the ceiling.
 	limit int
 	// until is when the latest rate-limit window ends.
 	until time.Time
 }
 
-func newProviderThrottle(ceiling int, clock unitClock, logger *slog.Logger, provider func(int) string, breaker func(string) circuitbreaker.State) *providerThrottle {
+func newProviderThrottle(ceiling int, clock unitClock, logger *slog.Logger, key func(int) leaseKey, breaker func(string) circuitbreaker.State) *providerThrottle {
 	if breaker == nil {
 		breaker = func(p string) circuitbreaker.State { return circuitbreaker.DefaultRegistry.Get(p).State() }
 	}
 	return &providerThrottle{
 		clock: clock, ceiling: max(ceiling, 1), window: throttleWindow, logger: logger,
-		provider: provider, breaker: breaker, lanes: map[string]*providerLane{},
+		key: key, breaker: breaker, lanes: map[leaseKey]*providerLane{}, inFlight: map[string]int{},
 	}
 }
 
-func (t *providerThrottle) lane(p string) *providerLane {
-	l, ok := t.lanes[p]
+// rateKey is the lane whose rate-limit state k shares.
+func rateKey(k leaseKey) leaseKey { return leaseKey{provider: k.provider} }
+
+func (t *providerThrottle) lane(k leaseKey) *providerLane {
+	k = rateKey(k)
+	l, ok := t.lanes[k]
 	if !ok {
 		l = &providerLane{}
-		t.lanes[p] = l
+		t.lanes[k] = l
 	}
 	return l
 }
 
-// capFor is how many leases provider p may hold now, and whether p is throttled.
-func (t *providerThrottle) capFor(p string) (int, bool) {
-	if p == "" {
+// capFor is how many leases lane k may hold now, and whether it is throttled.
+func (t *providerThrottle) capFor(k leaseKey) (int, bool) {
+	if k.provider == "" {
 		return t.ceiling, false
 	}
 	limit, throttled := t.ceiling, false
-	if l := t.lane(p); l.limit > 0 {
+	if l := t.lane(k); l.limit > 0 {
 		limit, throttled = l.limit, true
 	}
-	if t.breaker(p) != circuitbreaker.StateClosed {
+	if t.breaker(k.provider) != circuitbreaker.StateClosed {
 		limit, throttled = 1, true
 	}
 	return limit, throttled
 }
 
 // pick is the position in pending of the unit to lease next, or -1 when every
-// pending unit's provider is at its cap. The first unit of an unthrottled
-// provider, or of one whose half-open breaker awaits its probe, wins; a
-// throttled provider's unit is taken only when no healthy one can be.
+// pending unit's lane is at its cap. The first unit of an unthrottled lane, or
+// of a provider whose half-open breaker awaits its probe, wins; a throttled
+// lane's unit is taken only when no healthy one can be.
 func (t *providerThrottle) pick(pending []int) int {
-	seen := map[string]leaseVerdict{}
+	seen := map[leaseKey]leaseVerdict{}
 	healthy, deferred := -1, -1
 	for k, i := range pending {
-		p := t.provider(i)
-		v, ok := seen[p]
+		key := t.key(i)
+		v, ok := seen[key]
 		if !ok {
-			v = t.verdict(p)
-			seen[p] = v
+			v = t.verdict(key)
+			seen[key] = v
 		}
 		switch {
 		case !v.admit:
@@ -128,41 +138,49 @@ func (t *providerThrottle) pick(pending []int) int {
 	return deferred
 }
 
-// leaseVerdict is whether provider p may take a lease now, whether it is
-// throttled, and whether its next lease is the probe its half-open breaker is
-// waiting for.
+// leaseVerdict is whether lane k may take a lease now, whether it is
+// throttled, and whether its next lease is the probe its provider's half-open
+// breaker is waiting for.
 type leaseVerdict struct{ admit, throttled, probe bool }
 
-func (t *providerThrottle) verdict(p string) leaseVerdict {
-	if p == "" {
+func (t *providerThrottle) verdict(k leaseKey) leaseVerdict {
+	if k.provider == "" {
 		return leaseVerdict{admit: true}
 	}
-	limit, throttled := t.capFor(p)
-	inFlight := t.lane(p).inFlight
+	limit, throttled := t.capFor(k)
+	state := t.breaker(k.provider)
+	providerInFlight := t.inFlight[k.provider]
+	admit := t.lane(k).inFlight < limit
+	if state != circuitbreaker.StateClosed {
+		// An outage is provider-wide: one lease across all its models.
+		admit = providerInFlight < 1
+	}
 	return leaseVerdict{
-		admit:     inFlight < limit,
+		admit:     admit,
 		throttled: throttled,
-		probe:     inFlight == 0 && t.breaker(p) == circuitbreaker.StateHalfOpen,
+		probe:     providerInFlight == 0 && state == circuitbreaker.StateHalfOpen,
 	}
 }
 
-// acquire counts a lease of unit i against its provider.
+// acquire counts a lease of unit i against its lane and provider.
 func (t *providerThrottle) acquire(i int) {
-	if p := t.provider(i); p != "" {
-		t.lane(p).inFlight++
+	if k := t.key(i); k.provider != "" {
+		t.lane(k).inFlight++
+		t.inFlight[k.provider]++
 	}
 }
 
-// done returns unit i's lease and feeds the attempt's outcome to its provider's
+// done returns unit i's lease and feeds the attempt's outcome to its lane's
 // cap. Only an attempt the primary itself answered says anything about the
-// primary's provider: a fallback-served or chain-wide failure is not counted.
+// primary's lane: a fallback-served or chain-wide failure is not counted.
 func (t *providerThrottle) done(i int, r Result) {
-	p := t.provider(i)
-	if p == "" {
+	k := t.key(i)
+	if k.provider == "" {
 		return
 	}
-	l := t.lane(p)
+	l := t.lane(k)
 	l.inFlight--
+	t.inFlight[k.provider]--
 	if r.FallbackUsed {
 		return
 	}
@@ -176,12 +194,13 @@ func (t *providerThrottle) done(i int, r Result) {
 		l.limit = max(1, limit/2)
 		l.until = now.Add(t.window)
 		t.logger.Info("provider rate-limited; lowering its lease cap",
-			"provider", p, "lease_cap", l.limit, "ceiling", t.ceiling, "window", t.window.String())
+			"provider", k.provider, "model", k.model, "lease_cap", l.limit, "ceiling", t.ceiling, "window", t.window.String())
 	case r.Status == StatusOK && l.limit > 0 && !now.Before(l.until):
 		l.limit++
 		if l.limit >= t.ceiling {
 			l.limit = 0
-			t.logger.Info("provider recovered; lease cap back at the ceiling", "provider", p, "ceiling", t.ceiling)
+			t.logger.Info("provider recovered; lease cap back at the ceiling",
+				"provider", k.provider, "model", k.model, "ceiling", t.ceiling)
 		}
 	}
 }

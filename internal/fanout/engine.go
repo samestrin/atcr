@@ -1281,7 +1281,9 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	pool := newUnitQueue(parallelIdx, e.clock)
 	if e.requeueable != nil {
 		pool.throttle = newProviderThrottle(workers, pool.clock, e.logger(),
-			func(i int) string { return slots[i].Primary.Provider }, e.breakerState)
+			func(i int) leaseKey {
+				return leaseKey{provider: slots[i].Primary.Provider, model: slots[i].Primary.Invocation.Model}
+			}, e.breakerState)
 	}
 	for w := workers; w > 0; w-- {
 		wg.Add(1)

@@ -47,8 +47,13 @@ func throttledQueue(providers []string, ceiling int, clock unitClock, breakers *
 	}
 	q := newUnitQueue(idx, clock)
 	q.throttle = newProviderThrottle(ceiling, clock, slog.New(slog.DiscardHandler),
-		func(i int) string { return providers[i] }, breakers.state)
+		func(i int) leaseKey { return leaseKey{provider: providers[i]} }, breakers.state)
 	return q
+}
+
+// onLane puts every unit on one provider and model.
+func onLane(provider, model string) func(int) leaseKey {
+	return func(int) leaseKey { return leaseKey{provider: provider, model: model} }
 }
 
 // tryLease leases without waiting: ok is false when nothing is leasable now.
@@ -69,15 +74,15 @@ func rateLimited() Result { return Result{Status: StatusFailed, Err: exhausted42
 func TestThrottle_RateLimitHalvesTheCap(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	for _, want := range []int{3, 1, 1} {
 		th.acquire(0)
 		th.done(0, rateLimited())
-		got, throttled := th.capFor("alpha")
+		got, throttled := th.capFor(leaseKey{provider: "alpha"})
 		assert.Equal(t, want, got)
 		assert.True(t, throttled)
 	}
-	got, throttled := th.capFor("beta")
+	got, throttled := th.capFor(leaseKey{provider: "beta"})
 	assert.Equal(t, 6, got, "another provider keeps the ceiling")
 	assert.False(t, throttled)
 }
@@ -135,36 +140,36 @@ func TestThrottle_RecoversAsTheWindowPasses(t *testing.T) {
 	clock := newFakeUnitClock()
 	var buf bytes.Buffer
 	th := newProviderThrottle(4, clock, slog.New(slog.NewTextHandler(&buf, nil)),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	ok := Result{Status: StatusOK}
 	th.acquire(0)
 	th.done(0, rateLimited())
 	th.acquire(0)
 	th.done(0, rateLimited())
-	got, _ := th.capFor("alpha")
+	got, _ := th.capFor(leaseKey{provider: "alpha"})
 	require.Equal(t, 1, got)
 
 	th.acquire(0)
 	th.done(0, ok)
-	got, _ = th.capFor("alpha")
+	got, _ = th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 1, got, "a success inside the window does not raise the cap")
 
 	clock.After(throttleWindow)
 	for _, want := range []int{2, 3} {
 		th.acquire(0)
 		th.done(0, ok)
-		got, throttled := th.capFor("alpha")
+		got, throttled := th.capFor(leaseKey{provider: "alpha"})
 		assert.Equal(t, want, got)
 		assert.True(t, throttled)
 	}
 	th.acquire(0)
 	th.done(0, ok)
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled, "back at the ceiling")
 	assert.Equal(t, 2, strings.Count(buf.String(), "provider rate-limited; lowering its lease cap"))
 	assert.Equal(t, 1, strings.Count(buf.String(), "provider recovered; lease cap back at the ceiling"))
-	assert.Equal(t, 0, th.lanes["alpha"].inFlight)
+	assert.Equal(t, 0, th.lanes[leaseKey{provider: "alpha"}].inFlight)
 }
 
 // An open or half-open breaker holds its provider to one lease, deferred behind
@@ -195,7 +200,7 @@ func TestThrottle_OpenBreakerHoldsProviderToOneLease(t *testing.T) {
 	i, ok := tryLease(q)
 	assert.True(t, ok)
 	assert.Equal(t, 1, i, "closed: back to the ceiling")
-	assert.Zero(t, q.throttle.lanes["alpha"].limit)
+	assert.Zero(t, q.throttle.lanes[leaseKey{provider: "alpha"}].limit)
 }
 
 // Only the primary's own answer feeds its provider: a unit a fallback served,
@@ -203,15 +208,15 @@ func TestThrottle_OpenBreakerHoldsProviderToOneLease(t *testing.T) {
 func TestThrottle_FallbackOutcomeIsNotCounted(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(4, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	r := rateLimited()
 	r.FallbackUsed = true
 	th.acquire(0)
 	th.done(0, r)
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled)
-	assert.Equal(t, 0, th.lanes["alpha"].inFlight, "the lease is still returned")
+	assert.Equal(t, 0, th.lanes[leaseKey{provider: "alpha"}].inFlight, "the lease is still returned")
 }
 
 // Only a 429 lowers the cap: a 5xx is the breaker's to judge, and a final
@@ -219,12 +224,12 @@ func TestThrottle_FallbackOutcomeIsNotCounted(t *testing.T) {
 func TestThrottle_OnlyRateLimitLowersTheCap(t *testing.T) {
 	t.Parallel()
 	th := newProviderThrottle(4, newFakeUnitClock(), slog.New(slog.DiscardHandler),
-		func(int) string { return "alpha" }, (&breakerStates{}).state)
+		onLane("alpha", ""), (&breakerStates{}).state)
 	for _, err := range []error{exhausted503(), &llmclient.HTTPStatusError{Status: 400}, fmt.Errorf("call: %w", context.DeadlineExceeded)} {
 		th.acquire(0)
 		th.done(0, Result{Status: StatusFailed, Err: err})
 	}
-	got, throttled := th.capFor("alpha")
+	got, throttled := th.capFor(leaseKey{provider: "alpha"})
 	assert.Equal(t, 4, got)
 	assert.False(t, throttled)
 }
@@ -233,7 +238,7 @@ func TestThrottle_OnlyRateLimitLowersTheCap(t *testing.T) {
 func TestThrottle_CancelledRunLeasesPastTheCap(t *testing.T) {
 	t.Parallel()
 	q := throttledQueue([]string{"alpha", "alpha", "alpha"}, 4, newFakeUnitClock(), &breakerStates{})
-	q.throttle.lane("alpha").limit = 1
+	q.throttle.lane(leaseKey{provider: "alpha"}).limit = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for range 3 {
