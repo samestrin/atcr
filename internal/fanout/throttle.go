@@ -8,30 +8,37 @@ import (
 )
 
 // Adaptive leasing (Epic 35.16.14 T4). max_parallel is the pool's width, but it
-// is a ceiling per provider, not a fixed share: a provider that answers 429 gets
-// fewer concurrent leases and its units are deferred behind every healthy
-// provider's, so one throttling upstream does not stall the run or burn the
-// fallback chain while the others still have capacity.
+// is a ceiling per lane, not a fixed share: a lane that answers 429 gets fewer
+// concurrent leases and its units are deferred behind every healthy lane's, so
+// one throttling upstream does not stall the run or burn the fallback chain
+// while the others still have capacity.
+//
+// A lane is a provider and model (Epic 35.16.14 fix AC1c). A rate limit belongs
+// to one deployment: every reviewer behind one litellm proxy shares the provider
+// name, and keying the cap by provider let two 429s from a one-slot local model
+// hold the whole panel to one lease. An outage is provider-wide, so the breaker
+// part stays keyed by provider, as circuitbreaker is.
 //
 // The two signals come from different places. The circuit breaker counts only
 // 5xx, provider stalls and transport errors; it records a 429 as a healthy
 // reply (llmclient's send). So the rate-limit signal is the error class of the
 // unit that failed, and the breaker is read, never fed, for the outage case.
 //
-//   - A unit whose primary answered 429 halves its provider's lease cap (never
-//     below 1) and opens a rate-limit window of throttleWindow.
-//   - A success on the primary once the window has passed raises the cap by one;
-//     back at the ceiling the provider is no longer throttled.
-//   - A provider whose breaker is open or half-open is held to one lease until
-//     the breaker closes.
+//   - A unit whose primary answered 429 halves its lane's lease cap (never
+//     below 1) and opens a rate-limit window of throttleWindow. Other models of
+//     the same provider keep their own caps.
+//   - A success on the primary once the window has passed raises its lane's cap
+//     by one; back at the ceiling the lane is no longer throttled.
+//   - A provider whose breaker is open or half-open is held to one lease across
+//     all its models until the breaker closes.
 //   - A provider whose breaker is half-open with none of its units in flight is
 //     waiting for its probe, so its next unit is leased first, ahead of the
-//     healthy providers' (Epic 35.16.14 fix AC1a). The breaker only moves when
-//     a call reaches it: a probe deferred behind a long healthy backlog left it
+//     healthy lanes' (Epic 35.16.14 fix AC1a). The breaker only moves when a
+//     call reaches it: a probe deferred behind a long healthy backlog left it
 //     open for as long as that backlog lasted, and its units unleased.
 //
-// A throttled provider always keeps one lease, so its units still drain and the
-// queue cannot wedge on a provider with nothing in flight.
+// A throttled lane always keeps one lease, so its units still drain and the
+// queue cannot wedge on a lane with nothing in flight.
 
 // throttleWindow is how long a 429 keeps its lane's cap lowered before
 // successes may raise it again: the rate-limit backoff, the same estimate of how
@@ -78,11 +85,7 @@ func newProviderThrottle(ceiling int, clock unitClock, logger *slog.Logger, key 
 	}
 }
 
-// rateKey is the lane whose rate-limit state k shares.
-func rateKey(k leaseKey) leaseKey { return leaseKey{provider: k.provider} }
-
 func (t *providerThrottle) lane(k leaseKey) *providerLane {
-	k = rateKey(k)
 	l, ok := t.lanes[k]
 	if !ok {
 		l = &providerLane{}
