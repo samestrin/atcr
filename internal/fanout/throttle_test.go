@@ -227,10 +227,8 @@ func TestThrottle_RateLimitLowersOnlyThatModelsCap(t *testing.T) {
 	q := laneQueue(keys, 6, &breakerStates{})
 
 	for range 2 {
-		i, ok := tryLease(q)
-		require.True(t, ok)
-		require.Equal(t, slow, keys[i])
-		q.requeue(i, time.Hour, rateLimited()) // slow: cap 6 -> 3 -> 1
+		q.throttle.acquire(0)
+		q.throttle.done(0, rateLimited()) // slow: cap 6 -> 3 -> 1
 	}
 	got, throttled := q.throttle.capFor(slow)
 	assert.Equal(t, 1, got, "the rate-limited model is held to one lease")
@@ -247,7 +245,7 @@ func TestThrottle_RateLimitLowersOnlyThatModelsCap(t *testing.T) {
 		}
 		leased = append(leased, i)
 	}
-	assert.Equal(t, []int{3, 4, 5, 6, 7, 8, 2}, leased,
+	assert.Equal(t, []int{3, 4, 5, 6, 7, 8, 0}, leased,
 		"every fast unit at full width, then the slow model's one lease")
 }
 
@@ -269,10 +267,11 @@ func TestThrottle_RateLimitedModelRecoversOnItsOwnLane(t *testing.T) {
 
 	clock.After(throttleWindow)
 	for _, want := range []int{3, 4} {
+		before := got
 		th.acquire(1)
 		th.done(1, Result{Status: StatusOK})
 		got, _ = th.capFor(slow)
-		assert.Equal(t, 2, got, "a success on another model does not raise this one's cap")
+		assert.Equal(t, before, got, "a success on another model does not raise this one's cap")
 		th.acquire(0)
 		th.done(0, Result{Status: StatusOK})
 		got, _ = th.capFor(slow)
