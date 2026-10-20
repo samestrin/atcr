@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -191,6 +192,25 @@ func TestScanPayload_GitleaksPath_CleanReportIsNoHit(t *testing.T) {
 	hits, err := ScanPayloadContext(context.Background(), "port=8080\nuser.email\n", nil)
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("hits=%+v err=%v, want none", hits, err)
+	}
+}
+
+// TestScanPayload_RealGitleaks pins the CLI contract the fake mimics (argv,
+// `[]` on a clean scan, Secret verbatim in the payload) against a real
+// gitleaks. It runs only where one is installed.
+func TestScanPayload_RealGitleaks(t *testing.T) {
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("gitleaks not on PATH")
+	}
+	text := plantedPayload()
+	hits, err := ScanPayloadContext(context.Background(), text, nil)
+	if err != nil {
+		t.Fatalf("real gitleaks err = %v", err)
+	}
+	assertCovered(t, text, hits, plantedAWSKey)
+	assertCovered(t, text, hits, plantedPEM)
+	if hits, err := ScanPayloadContext(context.Background(), "port=8080\nuser.email\n", nil); err != nil || len(hits) != 0 {
+		t.Errorf("clean payload: hits=%+v err=%v, want none", hits, err)
 	}
 }
 
