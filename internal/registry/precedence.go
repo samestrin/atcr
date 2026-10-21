@@ -101,7 +101,11 @@ type Settings struct {
 	// OnOverflow is the resolved F4 degradation policy (plan 19.10) —
 	// chunk/truncate/fallback/fail — dispatched by internal/fanout when a payload
 	// exceeds budget (see Task 04). Resolved once here, like ReviewStrategy.
-	OnOverflow  string
+	OnOverflow string
+	// SecretGuard is the resolved payload-egress secret-guard policy (Epic
+	// 35.20) — off/warn/redact/block — applied by internal/fanout to each review
+	// prompt before dispatch. Resolved once here, like OnOverflow.
+	SecretGuard string
 	TimeoutSecs int
 	// PayloadByteBudget is the per-payload byte budget fed to
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
@@ -156,6 +160,11 @@ type Settings struct {
 	// failure direction where capability vanishes and nothing says so. Read it
 	// through ResolvedMaxPrefetchBytes, never directly.
 	MaxPrefetchBytes *int64
+	// SemanticPrefetch is the resolved `context_prefetch.semantic` block (Epic
+	// 35.16.12). Unlike the byte ceilings above it is a plain value: its zero value
+	// is DISABLED, which is the safe direction for a feature that calls an
+	// external service. Read it through ResolvedSemanticPrefetch, never directly.
+	SemanticPrefetch SemanticPrefetch
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -185,6 +194,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		PayloadMode:        DefaultPayloadMode,
 		ReviewStrategy:     DefaultReviewStrategy,
 		OnOverflow:         DefaultOnOverflow,
+		SecretGuard:        DefaultSecretGuard,
 		TimeoutSecs:        DefaultTimeoutSecs,
 		PayloadByteBudget:  DefaultPayloadByteBudget,
 		MaxParallel:        DefaultMaxParallel,
@@ -203,6 +213,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// indistinguishable from unset and would silently inherit the payload cap —
 	// turning the one escape hatch an operator reaches for into a no-op.
 	chunkBudgetSet := false
+	// semanticTopKSet records whether any tier WROTE top_k, so the resolver can
+	// reject an explicit 0 while still treating unset as the default.
+	semanticTopKSet := false
 
 	if reg != nil {
 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
@@ -233,6 +246,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if reg.MaxPrefetchBytes != nil {
 			s.MaxPrefetchBytes = byteCeilingPtr(*reg.MaxPrefetchBytes)
 		}
+		// context_prefetch.semantic (Epic 35.16.12) sits at the registry and
+		// project tiers only, like MaxPrefetchBytes, and overlays field by field.
+		overlaySemanticPrefetch(&s.SemanticPrefetch, reg.ContextPrefetch, &semanticTopKSet)
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
 		// so they are overlaid here rather than through applyTier.
@@ -253,6 +269,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if v := strings.TrimSpace(reg.OnOverflow); v != "" {
 			s.OnOverflow = v
 		}
+		// SecretGuard (Epic 35.20) lives at the registry and project tiers only,
+		// like OnOverflow. Empty/whitespace is "unset" and falls through.
+		if v := strings.TrimSpace(reg.SecretGuard); v != "" {
+			s.SecretGuard = v
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
@@ -272,11 +293,15 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if proj.MaxPrefetchBytes != nil {
 			s.MaxPrefetchBytes = byteCeilingPtr(*proj.MaxPrefetchBytes)
 		}
+		overlaySemanticPrefetch(&s.SemanticPrefetch, proj.ContextPrefetch, &semanticTopKSet)
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
 		}
 		if v := strings.TrimSpace(proj.OnOverflow); v != "" {
 			s.OnOverflow = v
+		}
+		if v := strings.TrimSpace(proj.SecretGuard); v != "" {
+			s.SecretGuard = v
 		}
 	}
 
@@ -381,6 +406,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if s.MaxPrefetchBytes != nil && *s.MaxPrefetchBytes < 0 {
 		return Settings{}, fmt.Errorf("max_prefetch_bytes must be >= 0 (0 = disabled), got %d", *s.MaxPrefetchBytes)
 	}
+	// context_prefetch.semantic: re-check the merged block (a directly-constructed
+	// proj/reg bypasses the loaders), and require an enabled block to name both an
+	// endpoint and a collection — only the merged value can say whether it does.
+	if err := validateResolvedSemanticPrefetch(s.SemanticPrefetch, semanticTopKSet); err != nil {
+		return Settings{}, err
+	}
 	// ReviewStrategy (Epic 14.3): the file tiers are checked at load, but the
 	// project tier and a directly-constructed proj/reg bypass that — re-check the
 	// resolved value so the engine never receives an unknown strategy.
@@ -392,6 +423,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// value so internal/fanout never receives an unknown policy.
 	if !onOverflowValid(s.OnOverflow) {
 		return Settings{}, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", s.OnOverflow)
+	}
+	// SecretGuard (Epic 35.20): same post-resolution re-check, so a
+	// directly-constructed proj/reg never hands internal/fanout an unknown policy.
+	if !secretGuardValid(s.SecretGuard) {
+		return Settings{}, fmt.Errorf("invalid secret_guard '%s': must be one of %s", s.SecretGuard, secretGuardAllowed)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never
