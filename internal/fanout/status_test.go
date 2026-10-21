@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -457,4 +458,385 @@ func TestEnsureReviewComplete_StaleNamesAnMCPReachableAction(t *testing.T) {
 	// The CLI recovery stays primary — resume is cheaper than starting over.
 	assert.Contains(t, err.Error(), "--resume", "the cheap CLI recovery is still named")
 	assert.Contains(t, err.Error(), "run-42")
+}
+
+// --- Epic 35.16.14.1 T3: live counts and per-persona rows ---
+
+// liveReview scaffolds an in-window review with roster and no summary.json, and
+// returns its dir and raw/agent dir.
+func liveReview(t *testing.T, roster ...string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	m := &payload.Manifest{Base: "a", Head: "b", Roster: roster, StartedAt: time.Now().UTC(), TimeoutSecs: 600}
+	require.NoError(t, WriteManifest(dir, m))
+	raw := filepath.Join(dir, "sources", "pool", poolRawAgentDir)
+	require.NoError(t, os.MkdirAll(raw, 0o755))
+	return dir, raw
+}
+
+func writeAgentStatus(t *testing.T, raw, agent, status string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, agent), 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(raw, agent, statusFile), &AgentStatus{Agent: agent, Status: status}))
+}
+
+func writeAgentChunks(t *testing.T, raw, agent string, outcomes ...string) {
+	t.Helper()
+	rec := chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: agent}
+	for i, o := range outcomes {
+		rec.Bins = append(rec.Bins, chunkRecordBin{Index: i, Files: []string{"f.go"}, Outcome: o})
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, agent), 0o755))
+	require.NoError(t, writeJSON(filepath.Join(raw, agent, chunksFile), rec))
+}
+
+func agentRow(t *testing.T, st *ReviewStatus, name string) AgentProgress {
+	t.Helper()
+	for _, r := range st.Agents {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("no agents row for %q", name)
+	return AgentProgress{}
+}
+
+// While the fan-out runs, the personas that wrote status.json count as done
+// before summary.json exists.
+func TestReadReviewStatus_InProgress_IncrementalAgents(t *testing.T) {
+	dir, raw := liveReview(t, "agent1", "agent2", "agent3", "agent4")
+	writeAgentStatus(t, raw, "agent2", StatusOK)
+	writeAgentStatus(t, raw, "agent1", StatusOK)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+	assert.Equal(t, 4, st.AgentCount)
+	assert.Equal(t, 2, st.AgentsDone)
+	assert.Equal(t, 2, st.AgentsPending)
+	assert.Equal(t, []string{"agent1", "agent2"}, st.CompletedAgents)
+	assert.Equal(t, StageFanout, st.CurrentStage)
+	assert.False(t, st.Partial)
+
+	require.Len(t, st.Agents, 4)
+	for i, name := range []string{"agent1", "agent2", "agent3", "agent4"} {
+		assert.Equal(t, name, st.Agents[i].Name, "rows follow roster order")
+	}
+	done := agentRow(t, st, "agent1")
+	assert.Equal(t, AgentDone, done.State)
+	assert.Equal(t, 1, done.ChunksDone)
+	assert.Equal(t, 1, done.ChunksTotal)
+	ts, err := time.Parse(time.RFC3339, done.LastActivityAt)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now(), ts, time.Minute)
+
+	pending := agentRow(t, st, "agent3")
+	assert.Equal(t, AgentPending, pending.State)
+	assert.Equal(t, 0, pending.ChunksDone)
+	assert.Equal(t, 1, pending.ChunksTotal)
+	assert.Empty(t, pending.LastActivityAt)
+}
+
+// A failed or timed-out persona has finished: it counts as done, is named in
+// completed_agents, and its row carries the outcome.
+func TestReadReviewStatus_InProgress_FailedAndTimeoutCountAsDone(t *testing.T) {
+	dir, raw := liveReview(t, "a", "b", "c")
+	writeAgentStatus(t, raw, "a", StatusFailed)
+	writeAgentStatus(t, raw, "b", StatusTimeout)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, 2, st.AgentsDone)
+	assert.Equal(t, 1, st.AgentsPending)
+	assert.Equal(t, []string{"a", "b"}, st.CompletedAgents)
+	assert.Equal(t, AgentFailed, agentRow(t, st, "a").State)
+	assert.Equal(t, AgentTimeout, agentRow(t, st, "b").State)
+	assert.Equal(t, AgentPending, agentRow(t, st, "c").State)
+}
+
+// A chunked persona's chunks.json gives its chunk counts and moves its last
+// activity, before its status.json exists.
+func TestReadReviewStatus_ChunkCountsFromChunksJSON(t *testing.T) {
+	dir, raw := liveReview(t, "chunky", "solo")
+	writeAgentChunks(t, raw, "chunky", StatusOK, StatusFailed, chunkOutcomePending, chunkOutcomePending, chunkOutcomeDeferred)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	row := agentRow(t, st, "chunky")
+	assert.Equal(t, AgentPending, row.State, "no status.json yet")
+	assert.Equal(t, 2, row.ChunksDone)
+	assert.Equal(t, 5, row.ChunksTotal)
+	assert.NotEmpty(t, row.LastActivityAt)
+	assert.Equal(t, 0, st.AgentsDone)
+	assert.Empty(t, st.CompletedAgents)
+
+	writeAgentChunks(t, raw, "chunky", StatusOK, StatusOK, StatusOK)
+	writeAgentStatus(t, raw, "chunky", StatusOK)
+	st, err = ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	row = agentRow(t, st, "chunky")
+	assert.Equal(t, AgentDone, row.State)
+	assert.Equal(t, 3, row.ChunksDone)
+	assert.Equal(t, 3, row.ChunksTotal)
+}
+
+// last_activity_at is the newer of status.json and chunks.json.
+func TestReadReviewStatus_LastActivityIsNewestWrite(t *testing.T) {
+	dir, raw := liveReview(t, "p")
+	writeAgentChunks(t, raw, "p", StatusOK)
+	writeAgentStatus(t, raw, "p", StatusOK)
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(filepath.Join(raw, "p", statusFile), older, older))
+	require.NoError(t, os.Chtimes(filepath.Join(raw, "p", chunksFile), newer, newer))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, "2026-01-01T00:05:00Z", agentRow(t, st, "p").LastActivityAt)
+
+	require.NoError(t, os.Chtimes(filepath.Join(raw, "p", statusFile), newer.Add(time.Minute), newer.Add(time.Minute)))
+	st, err = ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, "2026-01-01T00:06:00Z", agentRow(t, st, "p").LastActivityAt)
+}
+
+// A corrupt status.json or chunks.json is skipped, never an error for the
+// whole read: the persona reads as if the file were absent.
+func TestReadReviewStatus_CorruptAgentFilesSkipped(t *testing.T) {
+	dir, raw := liveReview(t, "bad-status", "bad-chunks", "wrong-agent", "good")
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "bad-status"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "bad-status", statusFile), []byte("{not json"), 0o644))
+	writeAgentStatus(t, raw, "bad-chunks", StatusOK)
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "bad-chunks", chunksFile), []byte("[[["), 0o644))
+	// A status.json naming another agent is not this persona's record.
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "wrong-agent"), 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(raw, "wrong-agent", statusFile), &AgentStatus{Agent: "someone-else", Status: StatusOK}))
+	writeAgentStatus(t, raw, "good", StatusOK)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+	assert.Equal(t, 2, st.AgentsDone)
+	assert.Equal(t, 2, st.AgentsPending)
+	assert.Equal(t, []string{"bad-chunks", "good"}, st.CompletedAgents)
+	assert.Equal(t, AgentPending, agentRow(t, st, "bad-status").State)
+	assert.Equal(t, AgentPending, agentRow(t, st, "wrong-agent").State)
+	bc := agentRow(t, st, "bad-chunks")
+	assert.Equal(t, AgentDone, bc.State)
+	assert.Equal(t, 1, bc.ChunksDone, "a corrupt chunks.json falls back to the single-chunk reading")
+	assert.Equal(t, 1, bc.ChunksTotal)
+}
+
+// Only roster personas are visited, each at its agentDirName: a stray directory
+// under raw/agent is not counted.
+func TestReadReviewStatus_OnlyRosterPersonasVisited(t *testing.T) {
+	dir, raw := liveReview(t, "greta")
+	writeAgentStatus(t, raw, "orphan", StatusOK)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.AgentsDone)
+	assert.Equal(t, 1, st.AgentsPending)
+	assert.Empty(t, st.CompletedAgents)
+	require.Len(t, st.Agents, 1)
+	assert.Equal(t, "greta", st.Agents[0].Name)
+}
+
+// A chunks.json or status.json symlinked outside the review tree is refused by
+// pathWithin: its counts and its write time are never read.
+func TestReadReviewStatus_SymlinkOutsideTreeRefused(t *testing.T) {
+	dir, raw := liveReview(t, "linked", "linkedstatus")
+	outside := t.TempDir()
+
+	// A chunks.json pointing outside the tree, with an out-of-tree mtime.
+	extRec := chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "linked",
+		Bins: []chunkRecordBin{{Index: 0, Outcome: StatusOK}, {Index: 1, Outcome: StatusOK}, {Index: 2, Outcome: StatusOK}}}
+	extChunks := filepath.Join(outside, "chunks.json")
+	require.NoError(t, writeJSON(extChunks, extRec))
+	when := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+	require.NoError(t, os.Chtimes(extChunks, when, when))
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "linked"), 0o755))
+	if err := os.Symlink(extChunks, filepath.Join(raw, "linked", chunksFile)); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	// A status.json pointing outside the tree.
+	extStatus := filepath.Join(outside, "status.json")
+	require.NoError(t, WriteStatus(extStatus, &AgentStatus{Agent: "linkedstatus", Status: StatusOK}))
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "linkedstatus"), 0o755))
+	require.NoError(t, os.Symlink(extStatus, filepath.Join(raw, "linkedstatus", statusFile)))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	row := agentRow(t, st, "linked")
+	assert.Equal(t, 0, row.ChunksDone, "an escaping chunks.json is never read")
+	assert.Equal(t, 1, row.ChunksTotal)
+	assert.Empty(t, row.LastActivityAt, "an escaping file's write time never leaks")
+
+	ls := agentRow(t, st, "linkedstatus")
+	assert.Equal(t, AgentPending, ls.State, "an escaping status.json is not a completion record")
+	assert.Empty(t, ls.LastActivityAt)
+	assert.Equal(t, 0, st.AgentsDone)
+	assert.Empty(t, st.CompletedAgents)
+}
+
+// Once summary.json lands the counts are its final tally, as before, and the
+// rows stay.
+func TestReadReviewStatus_SummaryCountsWinOverLiveCounts(t *testing.T) {
+	dir, raw := liveReview(t, "a", "b")
+	writeAgentStatus(t, raw, "a", StatusOK)
+	require.NoError(t, writeJSON(filepath.Join(dir, "sources", "pool", summaryFile),
+		PoolSummary{Total: 2, Succeeded: 1, Failed: 1}))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunCompleted, st.Status)
+	assert.Equal(t, 2, st.AgentsDone)
+	assert.Equal(t, 0, st.AgentsPending)
+	assert.Equal(t, []string{"a"}, st.CompletedAgents)
+	assert.Len(t, st.Agents, 2)
+}
+
+// A raw/agent dir that is itself a symlink out of the review tree is refused
+// too: the guard is the review tree, not the directory the files sit in.
+func TestReadReviewStatus_SymlinkedRawDirRefused(t *testing.T) {
+	dir := t.TempDir()
+	m := &payload.Manifest{Base: "a", Head: "b", Roster: []string{"greta"}, StartedAt: time.Now().UTC(), TimeoutSecs: 600}
+	require.NoError(t, WriteManifest(dir, m))
+	outside := t.TempDir()
+	writeAgentStatus(t, outside, "greta", StatusOK)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	if err := os.Symlink(outside, filepath.Join(dir, "sources", "pool", poolRawAgentDir)); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, 0, st.AgentsDone)
+	assert.Equal(t, AgentPending, agentRow(t, st, "greta").State)
+	assert.Empty(t, agentRow(t, st, "greta").LastActivityAt)
+}
+
+// A chunks.json that fails the trust checks (an unknown schema_version, a
+// record naming another persona, or no bins) is skipped: the row falls back to
+// the single-chunk reading, and the file never counts the persona as done.
+func TestReadReviewStatus_UntrustedChunksJSONSkipped(t *testing.T) {
+	dir, raw := liveReview(t, "old-schema", "other-agent", "no-bins", "done-other")
+	write := func(agent string, rec chunkRecord) {
+		require.NoError(t, os.MkdirAll(filepath.Join(raw, agent), 0o755))
+		require.NoError(t, writeJSON(filepath.Join(raw, agent, chunksFile), rec))
+	}
+	bins := []chunkRecordBin{{Index: 0, Outcome: StatusOK}, {Index: 1, Outcome: StatusOK}, {Index: 2, Outcome: chunkOutcomePending}}
+	write("old-schema", chunkRecord{SchemaVersion: chunksSchemaVersion + 1, Agent: "old-schema", Bins: bins})
+	write("other-agent", chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "someone-else", Bins: bins})
+	write("no-bins", chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "no-bins"})
+	// A persona with a valid status.json keeps its done reading over a
+	// misattributed chunks.json.
+	writeAgentStatus(t, raw, "done-other", StatusOK)
+	write("done-other", chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "someone-else", Bins: bins})
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	for _, name := range []string{"old-schema", "other-agent", "no-bins"} {
+		row := agentRow(t, st, name)
+		assert.Equal(t, AgentPending, row.State, name)
+		assert.Equal(t, 0, row.ChunksDone, name)
+		assert.Equal(t, 1, row.ChunksTotal, name)
+		assert.Empty(t, row.LastActivityAt, "%s: an untrusted chunks.json's write time is not activity", name)
+	}
+	row := agentRow(t, st, "done-other")
+	assert.Equal(t, AgentDone, row.State)
+	assert.Equal(t, 1, row.ChunksDone)
+	assert.Equal(t, 1, row.ChunksTotal)
+	assert.Equal(t, 1, st.AgentsDone)
+	assert.Equal(t, []string{"done-other"}, st.CompletedAgents)
+}
+
+// A status.json or chunks.json that is a directory, larger than its read cap,
+// or unreadable is skipped: the read still succeeds and the persona reads as if
+// the file were absent.
+func TestReadReviewStatus_UnreadableAgentFilesSkipped(t *testing.T) {
+	prev := maxAgentFileBytes
+	maxAgentFileBytes = 4 << 10
+	defer func() { maxAgentFileBytes = prev }()
+
+	dir, raw := liveReview(t, "dir-status", "dir-chunks", "big-status", "big-chunks", "noperm", "good")
+	// Directories where the files should be.
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "dir-status", statusFile), 0o755))
+	writeAgentStatus(t, raw, "dir-chunks", StatusOK)
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "dir-chunks", chunksFile), 0o755))
+	// A status.json over maxAgentFileBytes, still valid JSON for its persona.
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "big-status"), 0o755))
+	big := AgentStatus{Agent: "big-status", Status: StatusOK, FilesDropped: []string{strings.Repeat("p", 8<<10)}}
+	require.NoError(t, WriteStatus(filepath.Join(raw, "big-status", statusFile), &big))
+	fi, err := os.Stat(filepath.Join(raw, "big-status", statusFile))
+	require.NoError(t, err)
+	require.Greater(t, fi.Size(), maxAgentFileBytes)
+	// A chunks.json over maxChunksBytes.
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "big-chunks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "big-chunks", chunksFile), make([]byte, maxChunksBytes+1), 0o644))
+	// A status.json that stats but cannot be opened.
+	writeAgentStatus(t, raw, "noperm", StatusOK)
+	noperm := filepath.Join(raw, "noperm", statusFile)
+	require.NoError(t, os.Chmod(noperm, 0))
+	t.Cleanup(func() { _ = os.Chmod(noperm, 0o644) })
+	_, readErr := os.ReadFile(noperm)
+	// A short status.json under the cap.
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, "good"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "good", statusFile), []byte(`{"agent":"good","status":"ok"}`), 0o644))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+	for _, name := range []string{"dir-status", "big-status"} {
+		row := agentRow(t, st, name)
+		assert.Equal(t, AgentPending, row.State, name)
+		assert.Empty(t, row.LastActivityAt, name)
+	}
+	assert.Equal(t, 1, agentRow(t, st, "big-chunks").ChunksTotal)
+	assert.Equal(t, 0, agentRow(t, st, "big-chunks").ChunksDone)
+	dc := agentRow(t, st, "dir-chunks")
+	assert.Equal(t, AgentDone, dc.State, "a directory chunks.json leaves status.json's reading")
+	assert.Equal(t, 1, dc.ChunksTotal)
+	want := []string{"dir-chunks", "good"}
+	if readErr == nil {
+		// Permissions do not bind this user (root), so the file reads normally.
+		want = []string{"dir-chunks", "good", "noperm"}
+	} else {
+		assert.Equal(t, AgentPending, agentRow(t, st, "noperm").State, "an unreadable status.json is skipped")
+	}
+	assert.Equal(t, want, st.CompletedAgents)
+	assert.Equal(t, len(want), st.AgentsDone)
+}
+
+// A roster name agentDirName rejects ("." or "..") gets no row and reads no
+// file, even when a status.json naming it sits where its empty dir name would
+// point; the read still succeeds.
+func TestReadReviewStatus_RejectedAgentDirNameSkipped(t *testing.T) {
+	dir, raw := liveReview(t, "..", ".", "greta")
+	require.NoError(t, WriteStatus(filepath.Join(raw, statusFile), &AgentStatus{Agent: "..", Status: StatusOK}))
+	writeAgentStatus(t, raw, "greta", StatusOK)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	require.Len(t, st.Agents, 1)
+	assert.Equal(t, "greta", st.Agents[0].Name)
+	assert.Equal(t, []string{"greta"}, st.CompletedAgents)
+	assert.Equal(t, 1, st.AgentsDone)
+	assert.Equal(t, 3, st.AgentCount)
+	assert.Equal(t, 2, st.AgentsPending)
+}
+
+// A roster that repeats a name yields one row and counts the persona once.
+func TestReadReviewStatus_DuplicateRosterNameCountedOnce(t *testing.T) {
+	dir, raw := liveReview(t, "greta", "kai", "greta")
+	writeAgentStatus(t, raw, "greta", StatusOK)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	require.Len(t, st.Agents, 2)
+	assert.Equal(t, "greta", st.Agents[0].Name)
+	assert.Equal(t, "kai", st.Agents[1].Name)
+	assert.Equal(t, []string{"greta"}, st.CompletedAgents)
+	assert.Equal(t, 1, st.AgentsDone)
 }
