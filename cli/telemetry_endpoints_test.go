@@ -172,7 +172,7 @@ func TestProcessTelemetryClient_HonorsOverriddenEndpoints(t *testing.T) {
 
 	_, hits := recordingTransport(t)
 
-	client := newProcessTelemetryClient()
+	client := newProcessTelemetryClient("")
 	root := NewRootCmdWithClient(client)
 	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
 	root.SetOut(io.Discard)
@@ -395,4 +395,117 @@ func TestRootCmd_RoutesPingAndQualitySignalToDistinctEndpoints(t *testing.T) {
 	}
 	assert.Equal(t, 1, sawPing, "exactly one usage ping must reach the usage-ping endpoint")
 	assert.Equal(t, 1, sawQuality, "exactly one quality signal must reach the quality-signal endpoint")
+}
+
+// --- Epic 35.19: --telemetry-endpoint operator redirect ----------------------
+
+// TestValidateTelemetryEndpoint pins the flag's acceptance rule, which mirrors
+// scorecard.ValidateCloudEndpoint: https always, plaintext http only for a
+// loopback host, and nothing else.
+func TestValidateTelemetryEndpoint(t *testing.T) {
+	cases := []struct {
+		endpoint string
+		ok       bool
+	}{
+		{"https://collector.internal/usage", true},
+		{"  https://collector.internal/usage  ", true},
+		{"HTTPS://collector.internal/usage", true},
+		{"http://127.0.0.1:9000/usage", true},
+		{"http://[::1]:9000/usage", true},
+		{"http://localhost:9000/usage", true},
+		{"http://collector.internal/usage", false},
+		{"http://10.0.0.5/usage", false},
+		{"ftp://collector.internal/usage", false},
+		{"collector.internal/usage", false},
+		{"https://", false},
+		{"://bad", false},
+		{"", false},
+		{"   ", false},
+	}
+	for _, tc := range cases {
+		err := ValidateTelemetryEndpoint(tc.endpoint)
+		if tc.ok {
+			assert.NoError(t, err, "ValidateTelemetryEndpoint(%q)", tc.endpoint)
+			continue
+		}
+		if assert.Error(t, err, "ValidateTelemetryEndpoint(%q)", tc.endpoint) {
+			assert.Contains(t, err.Error(), "--telemetry-endpoint")
+		}
+	}
+}
+
+// TestRunMain_TelemetryEndpointFlagRoutesUsagePingOnly is the T1 success
+// criterion on the shipping path: a valid --telemetry-endpoint sends the usage
+// ping there, and the quality signal stays on its compiled-in destination. The
+// flag is given AFTER the subcommand to prove it is a persistent root flag.
+func TestRunMain_TelemetryEndpointFlagRoutesUsagePingOnly(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	t.Setenv("ATCR_TELEMETRY", "1")
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	_, hits := recordingTransport(t)
+
+	const override = "https://collector.internal/usage"
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"atcr", "review", "--base", "HEAD^", "--head", "HEAD", "--telemetry-endpoint", override}
+
+	code := runMain(context.Background(), io.Discard, io.Discard)
+	waitQualitySignalInFlight()
+	require.NotEqual(t, exitUsage, code, "a valid --telemetry-endpoint must not be a usage error")
+
+	var sawOverridePing, sawQuality int
+	for _, h := range hits() {
+		if strings.HasPrefix(strings.TrimSpace(h.Body), "[") {
+			if h.URL == defaultQualitySignalEndpoint {
+				sawQuality++
+			}
+			assert.NotEqual(t, override, h.URL,
+				"--telemetry-endpoint must not redirect the quality signal")
+			continue
+		}
+		if h.URL == override {
+			sawOverridePing++
+		}
+		assert.NotEqual(t, defaultTelemetryEndpoint, h.URL,
+			"the usage ping must not reach the compiled-in destination once overridden")
+	}
+	assert.Equal(t, 1, sawOverridePing, "exactly one usage ping must reach the --telemetry-endpoint value")
+	assert.Equal(t, 1, sawQuality, "the quality signal must still reach its compiled-in destination")
+}
+
+// TestRunMain_TelemetryEndpointFlagRejectsUnsafeValues proves an invalid or
+// plaintext non-loopback --telemetry-endpoint is a usage error (exit 2) that
+// stops the run before anything can transmit.
+func TestRunMain_TelemetryEndpointFlagRejectsUnsafeValues(t *testing.T) {
+	for _, bad := range []string{
+		"http://collector.internal/usage",
+		"ftp://collector.internal/usage",
+		"collector.internal/usage",
+		"",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			isolate(t)
+			t.Setenv("ATCR_TELEMETRY", "1")
+			withTelemetryEndpoints(t, "https://usage.test/ingest", "https://quality.test/ingest")
+			_, hits := recordingTransport(t)
+
+			origArgs := os.Args
+			t.Cleanup(func() { os.Args = origArgs })
+			os.Args = []string{"atcr", "--telemetry-endpoint=" + bad, "version"}
+
+			var stdout, stderr bytes.Buffer
+			code := runMain(context.Background(), &stdout, &stderr)
+			assert.Equal(t, exitUsage, code, "stderr: %s", stderr.String())
+			assert.Contains(t, stderr.String(), "--telemetry-endpoint")
+			assert.Empty(t, stdout.String(), "the subcommand must not run after a rejected --telemetry-endpoint")
+			assert.Empty(t, hits(), "a rejected --telemetry-endpoint must transmit nothing")
+		})
+	}
 }

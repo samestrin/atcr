@@ -41,7 +41,7 @@ import (
 func execTransmitting(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
-	root := NewRootCmdWithClient(newProcessTelemetryClient())
+	root := NewRootCmdWithClient(newProcessTelemetryClient(""))
 	root.SetArgs(args)
 	root.SetOut(&outBuf)
 	root.SetErr(&errBuf)

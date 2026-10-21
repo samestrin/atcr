@@ -128,8 +128,15 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 		cancel()
 	}, stderr)
 
-	telemetryClient := newProcessTelemetryClient()
-	root := NewRootCmdWithClient(telemetryClient)
+	// The process client is built inside the root PersistentPreRunE, once the
+	// --telemetry-endpoint flag has been parsed and validated, so this handle is
+	// nil on paths that never reach it (--help, --version, a rejected flag);
+	// drainTelemetry is nil-safe.
+	var telemetryClient *telemetry.Client
+	root := newRootCmd(func(usageOverride string) *telemetry.Client {
+		telemetryClient = newProcessTelemetryClient(usageOverride)
+		return telemetryClient
+	})
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	err := root.ExecuteContext(ctx)
@@ -325,7 +332,7 @@ func NewRootCmd() *cobra.Command {
 // AND largely undelivered (nothing ever calls drainTelemetry there, so its sends
 // were stranded at exit). Emitting to a live host with neither disclosure nor
 // delivery is the worst of both worlds; an embedder that wants telemetry now says
-// so via NewRootCmdWithClient(newProcessTelemetryClient()) — or its own client.
+// so via NewRootCmdWithClient with its own client.
 //
 // RECONCILIATION WITH EPIC 35.12's T2ab. That task required cli/main.go:121 AND
 // :242 to both construct the process client, because "missing :242 leaves
@@ -346,8 +353,13 @@ func newNoTelemetryClient() *telemetry.Client {
 }
 
 // newProcessTelemetryClient builds the process telemetry client from the two
-// compiled-in destinations. It is the SINGLE construction site, shared by runMain
-// and NewRootCmd.
+// compiled-in destinations. It is the SINGLE construction site for the shipped
+// binary's client.
+//
+// usageOverride is the validated --telemetry-endpoint value, or "" when the flag
+// was not given. It replaces the usage-ping destination ONLY: the quality signal
+// always keeps defaultQualitySignalEndpoint, because the two surfaces are not
+// interchangeable and one operator URL cannot serve both.
 //
 // The two used to construct the client independently, with the same expression
 // written twice — and only NewRootCmd was covered by a test. runMain is the entry
@@ -357,8 +369,12 @@ func newNoTelemetryClient() *telemetry.Client {
 // fail-open send path drops silently — invisible in production and invisible to
 // the test that exists to catch exactly that. Collapsing the duplication means
 // there is now one place to get it wrong, and it is covered.
-func newProcessTelemetryClient() *telemetry.Client {
-	return telemetry.NewWithQualitySignal(defaultTelemetryEndpoint, defaultQualitySignalEndpoint)
+func newProcessTelemetryClient(usageOverride string) *telemetry.Client {
+	usage := defaultTelemetryEndpoint
+	if usageOverride != "" {
+		usage = usageOverride
+	}
+	return telemetry.NewWithQualitySignal(usage, defaultQualitySignalEndpoint)
 }
 
 // NewRootCmdWithClient is NewRootCmd with the single opt-in process telemetry
@@ -371,7 +387,20 @@ func newProcessTelemetryClient() *telemetry.Client {
 // so the transport no longer suppresses either surface; whether anything is
 // transmitted is decided by the consent gates at the call sites plus the
 // per-path endpoint check (an empty endpoint is a silent no-op in dispatch).
+//
+// The supplied client is authoritative: --telemetry-endpoint is still validated
+// (a bad value is a usage error on every tree), but it does not replace the
+// destinations of a client the embedder chose. Only runMain, which builds the
+// client itself, honors the override.
 func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
+	return newRootCmd(func(string) *telemetry.Client { return telemetryClient })
+}
+
+// newRootCmd builds the command tree. resolveClient is called exactly once, from
+// the root PersistentPreRunE, with the validated --telemetry-endpoint value (""
+// when the flag is absent), and returns the client the tree injects into every
+// subcommand's context.
+func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
@@ -419,6 +448,18 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 			if err := setupLogger(cmd); err != nil {
 				return err
 			}
+			// Validate --telemetry-endpoint before the client exists, so a rejected
+			// value stops the run before anything can transmit or be disclosed. The
+			// flag is the operator's explicit opt-in; there is deliberately no env
+			// var or config key that can choose the destination.
+			usageOverride := ""
+			if f := cmd.Flags().Lookup("telemetry-endpoint"); f != nil && f.Changed {
+				usageOverride = strings.TrimSpace(f.Value.String())
+				if err := ValidateTelemetryEndpoint(usageOverride); err != nil {
+					return usageError(err)
+				}
+			}
+			telemetryClient := resolveClient(usageOverride)
 			// Disclose the default-on usage ping once per repository, before any
 			// subcommand work and on this synchronous path — never from the async
 			// send path. Silent and non-fatal by construction; see
@@ -483,6 +524,10 @@ func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
 	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
+	// --telemetry-endpoint redirects the anonymous usage ping (never the quality
+	// signal) to an operator's collector without a rebuild. Validated in the root
+	// PersistentPreRunE by ValidateTelemetryEndpoint.
+	root.PersistentFlags().String("telemetry-endpoint", "", "send the anonymous usage ping to this URL instead of the built-in one (https://, or http:// on a loopback host)")
 
 	// --axi is a LOCAL flag on the root command (not persistent): it is reachable
 	// only on the bare `atcr` invocation, so `atcr --axi` renders the home view as

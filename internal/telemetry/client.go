@@ -3,7 +3,7 @@
 // or `atcr config set telemetry false` disables it) and fails open: a network
 // failure, a hung endpoint, a non-2xx response, or an internal panic never
 // blocks, crashes, or changes the exit code of the CLI command that emitted the
-// ping. An empty (or non-HTTPS) endpoint makes every Send a no-op — the seam the
+// ping. An empty (or non-HTTPS, non-loopback) endpoint makes every Send a no-op — the seam the
 // opt-out gate (Story 2) reuses. (The community quality signal is the inverse:
 // opt-in and off by default — see cli/telemetry.go.)
 package telemetry
@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,8 +85,8 @@ func SetDoRequestForTest(fn func(*http.Client, *http.Request) (*http.Response, e
 
 // Client sends anonymous usage events to a configured HTTPS endpoint. Construct
 // one per process via NewWithQualitySignal (or NewSingleDestination in tests) and inject it (it is
-// deliberately not a package-level singleton); a nil Client or an empty/non-HTTPS
-// endpoint makes the corresponding Send a no-op.
+// deliberately not a package-level singleton); a nil Client or an empty or
+// unsendable endpoint (see isSendableEndpoint) makes the corresponding Send a no-op.
 //
 // The two payload surfaces carry SEPARATE, independently configurable
 // destinations, and each is a no-op when empty — which is what lets them be
@@ -119,8 +120,9 @@ type Client struct {
 // that trap without costing the tests anything.
 //
 // An empty endpoint yields a no-op client (Send never spawns a goroutine or touches
-// the network). A configured endpoint MUST be an https:// URL; plaintext http is
-// refused (no-op).
+// the network). A configured endpoint MUST be an https:// URL (or loopback
+// http://, see isSendableEndpoint); plaintext http to any other host is refused
+// (no-op).
 func NewSingleDestination(endpoint string) *Client {
 	return NewWithQualitySignal(endpoint, endpoint)
 }
@@ -129,7 +131,8 @@ func NewSingleDestination(endpoint string) *Client {
 // quality signal to quality. The two are independent: either may be empty, and an
 // empty one makes only its own surface a no-op — the property that allows the two
 // compiled-in endpoint constants to be activated on separate schedules. Both must
-// be https:// to send at all; plaintext http is refused on each path alike.
+// be https:// to send at all (or loopback http://, see isSendableEndpoint);
+// plaintext http to any other host is refused on each path alike.
 func NewWithQualitySignal(usage, quality string) *Client {
 	// A dedicated client instance (not http.DefaultClient); its nil Transport
 	// reuses the shared http.DefaultTransport connection pool (same as
@@ -173,6 +176,29 @@ func isHTTPS(endpoint string) bool {
 	return err == nil && strings.EqualFold(u.Scheme, "https") && u.Host != ""
 }
 
+// isSendableEndpoint reports whether endpoint may be the INITIAL destination of a
+// send: any well-formed https URL, or a plaintext http URL whose host is loopback
+// (127.0.0.0/8, ::1, localhost). The loopback exception exists so an operator's
+// --telemetry-endpoint can point at a collector on the same machine, the same
+// rule scorecard.ValidateCloudEndpoint applies to --cloud-endpoint; traffic to a
+// loopback host never leaves the machine. Redirect hops are still vetted by the
+// strict isHTTPS, so no response can steer a payload onto plaintext http.
+func isSendableEndpoint(endpoint string) bool {
+	if isHTTPS(endpoint) {
+		return true
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // Send fires ev to the endpoint on a detached goroutine and returns immediately.
 // It is a no-op when the client is nil, the endpoint is empty, or the endpoint is
 // not HTTPS. Every failure mode — non-2xx, network error, marshal error, or an
@@ -204,8 +230,8 @@ func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal)
 	c.dispatch(ctx, c.qualityEndpoint, func() ([]byte, error) { return json.MarshalIndent(payload, "", "  ") })
 }
 
-// dispatch is the shared fail-open send core: it no-ops on a nil client or a
-// non-HTTPS/empty endpoint, bounds concurrent goroutines via the in-flight
+// dispatch is the shared fail-open send core: it no-ops on a nil client or an
+// empty or unsendable endpoint (see isSendableEndpoint), bounds concurrent goroutines via the in-flight
 // semaphore, and hands the marshal closure to the detached send goroutine. Both
 // Send and SendQualitySignal funnel through it so the goroutine/timeout/recover
 // contract has a single implementation; only the destination and the marshaling
@@ -215,7 +241,7 @@ func (c *Client) SendQualitySignal(ctx context.Context, payload []QualitySignal)
 // destination: an empty or non-HTTPS endpoint silences only the payload aimed at
 // it, never the sibling surface.
 func (c *Client) dispatch(ctx context.Context, endpoint string, marshal func() ([]byte, error)) {
-	if c == nil || !isHTTPS(endpoint) {
+	if c == nil || !isSendableEndpoint(endpoint) {
 		return
 	}
 	// Bound per destination: a semaphore is keyed on the destination, not the
@@ -301,7 +327,7 @@ func (c *Client) send(ctx context.Context, endpoint string, sem chan struct{}, m
 // would otherwise be shown a banner announcing transmission that can never happen.
 // Nil-safe, matching the rest of the fail-open contract.
 func (c *Client) HasUsageDestination() bool {
-	return c != nil && isHTTPS(c.endpoint)
+	return c != nil && isSendableEndpoint(c.endpoint)
 }
 
 // Go runs fn on a detached goroutine that is registered with the client's
