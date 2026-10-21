@@ -37,6 +37,11 @@ func newDebtDashboardCmd() *cobra.Command {
 	return cmd
 }
 
+// dashboardHydrateFn is the dashboard's pass-2 read. It is a variable only so a
+// test can count what the production command materializes (epic 35.21 AC2);
+// nothing reassigns it outside tests.
+var dashboardHydrateFn = hydrateDebtIDs
+
 func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	out := mustFlag(cmd, "output")
 	check, _ := cmd.Flags().GetBool("check")
@@ -72,11 +77,30 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("invalid --top %d: expected a non-negative number", top))
 	}
 
-	recs, err := loadLocalDebt(cmd)
+	// Select, then hydrate — the two-pass read `debt list` and `debt resolve`
+	// already use. Every rollup is aggregated from folded SUMMARIES, and full
+	// records are read back only for the at-most --top ids the Top Priority list
+	// renders, so the dashboard no longer materializes the whole store to print a
+	// fixed number of rows. Unlike `debt list`, there is no unfiltered shortcut to
+	// a direct record read: the dashboard never renders every record, so the
+	// selection always narrows.
+	//
+	// The hydrate re-asserts liveness through debtIsLive, the record wrapper over
+	// the same debtIsLiveStatus core the summaries were ranked with: a concurrent
+	// `debt resolve <id>` landing between the passes drops the row rather than
+	// listing settled work as top priority (hydrateDebtIDs notes the shortfall).
+	dir := debtStoreDir(cmd)
+	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
+	sums, err := localdebt.ReadSummaries(dir, opts)
 	if err != nil {
-		return err
+		return fmt.Errorf("read local debt store: %w", err)
 	}
-	content := renderDebtDashboard(recs, top)
+	content, err := renderDebtDashboard(localdebt.FoldSummaries(sums), top, func(ids []string) ([]localdebt.Record, error) {
+		return dashboardHydrateFn(dir, ids, opts, debtIsLive)
+	})
+	if err != nil {
+		return fmt.Errorf("read local debt store: %w", err)
+	}
 
 	// Human-facing text uses `out` — what the user typed — while `outputPath` is
 	// for I/O only. Printing the resolved path leaked a username-bearing absolute

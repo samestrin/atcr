@@ -709,9 +709,8 @@ guarantee above:
 
 - The **anonymous usage ping** — a background, fail-open `{event, lang, lines,
   status}` event wired to emit on `review`/`reconcile` completion, on by default
-  and disabled from either of two OR'd opt-out surfaces (the ingestion endpoint
-  is currently empty, so the ping is an inactive no-op; see telemetry.md).
-- The **`--sync-cloud` push** — an explicit, opt-in upload of an anonymized
+  and disabled from either of two OR'd opt-out surfaces (see telemetry.md).
+- The **`--sync-cloud` push** — an explicit, opt-in upload of a pseudonymous
   scorecard payload (a hashed Persona ID plus raw run metrics), authenticated
   with `ATCR_API_KEY`, that you request per run.
 

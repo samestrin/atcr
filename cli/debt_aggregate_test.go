@@ -27,6 +27,49 @@ func mkDebtRecord(status, sev, file string, line int, ts string) localdebt.Recor
 	return r
 }
 
+// summariesOf projects recs onto the localdebt.Summary values the store's summary
+// pass yields for them (localdebt's decodeSummary, field for field), then folds
+// them the way runDebtDashboard does — so the aggregation tests keep their record
+// fixtures while exercising the summary path the dashboard actually runs. The
+// store-backed goldens (debt_dashboard_golden_test.go) cover the real projection.
+func summariesOf(recs []localdebt.Record) []localdebt.Summary {
+	sums := make([]localdebt.Summary, 0, len(recs))
+	for _, r := range recs {
+		sums = append(sums, localdebt.Summary{
+			ID: r.ID, Status: r.Status, Severity: r.Severity, Timestamp: r.Timestamp,
+			HasFile: r.File != "", File: r.File, Line: r.Line,
+			Category: r.Category, EstMinutes: r.EstMinutes, Origin: r.Origin,
+		})
+	}
+	return localdebt.FoldSummaries(sums)
+}
+
+// debtRecordsByID indexes recs by id, folded, so a test can read the record
+// behind each of debtSummary.Top's ids.
+func debtRecordsByID(recs []localdebt.Record) map[string]localdebt.Record {
+	byID := map[string]localdebt.Record{}
+	for _, r := range localdebt.FoldRecords(recs) {
+		byID[r.ID] = r
+	}
+	return byID
+}
+
+// renderDashboardOf renders recs through the summary path, hydrating the Top
+// Priority rows from recs themselves in place of the store's pass-2 read.
+func renderDashboardOf(t *testing.T, recs []localdebt.Record, topN int) string {
+	t.Helper()
+	byID := debtRecordsByID(recs)
+	out, err := renderDebtDashboard(summariesOf(recs), topN, func(ids []string) ([]localdebt.Record, error) {
+		hydrated := make([]localdebt.Record, 0, len(ids))
+		for _, id := range ids {
+			hydrated = append(hydrated, byID[id])
+		}
+		return hydrated, nil
+	})
+	require.NoError(t, err)
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // debtComponent — ported from internal/debt's Component. The :line strip is
 // gone (localdebt.Record carries Line separately, so File never has a line
@@ -69,7 +112,7 @@ func TestDebtComponent_NormalizesPathSpellings(t *testing.T) {
 }
 
 func TestSummarizeDebt_SeverityCounts(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
 
 	require.Len(t, s.BySeverity, 4)
 	// Ordered most-severe first, regardless of corpus order.
@@ -88,7 +131,7 @@ func TestSummarizeDebt_SeverityCounts(t *testing.T) {
 }
 
 func TestSummarizeDebt_Totals(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
 	assert.Equal(t, 4, s.Total)
 	assert.Equal(t, 2, s.Open)     // HIGH + CRITICAL, both empty-status
 	assert.Equal(t, 1, s.Deferred) // MEDIUM
@@ -104,7 +147,7 @@ func TestSummarizeDebt_WontfixIsItsOwnTerminalBucket(t *testing.T) {
 	recs := append(debtSampleRecords(),
 		mkDebtRecord("wontfix", "CRITICAL", "internal/x/y.go", 3, "2026-06-20T09:00:00Z"))
 
-	s := summarizeDebt(recs, debtRefNow, 10)
+	s := summarizeDebt(summariesOf(recs), debtRefNow, 10)
 	assert.Equal(t, 5, s.Total)
 	assert.Equal(t, 2, s.Open, "a wontfix record is not open")
 	assert.Equal(t, 1, s.Resolved, "a wontfix record is not resolved")
@@ -118,13 +161,14 @@ func TestSummarizeDebt_WontfixIsItsOwnTerminalBucket(t *testing.T) {
 	}
 	assert.Equal(t, 1, bySev.Wontfix)
 
-	for _, r := range s.Top {
-		assert.NotEqual(t, "wontfix", r.Status, "a dismissed finding is not top-priority work")
+	byID := debtRecordsByID(recs)
+	for _, id := range s.Top {
+		assert.NotEqual(t, "wontfix", byID[id].Status, "a dismissed finding is not top-priority work")
 	}
 }
 
 func TestSummarizeDebt_ByComponent(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
 	byComp := map[string]int{}
 	for _, c := range s.ByComponent {
 		byComp[c.Component] = c.Total
@@ -156,7 +200,7 @@ func TestSummarizeDebt_ByComponentCountsLiveOnly(t *testing.T) {
 		mkDebtRecord("deferred", "HIGH", "mixed/sub/b.go", 2, "2026-06-01T09:00:00Z"),
 		mkDebtRecord("resolved", "HIGH", "mixed/sub/c.go", 3, "2026-06-01T09:00:00Z"),
 	}
-	s := summarizeDebt(recs, debtRefNow, 5)
+	s := summarizeDebt(summariesOf(recs), debtRefNow, 5)
 
 	byComp := map[string]int{}
 	for _, c := range s.ByComponent {
@@ -170,13 +214,13 @@ func TestSummarizeDebt_ByComponentCountsLiveOnly(t *testing.T) {
 // The rendered column header names the scope so "Unresolved" cannot be misread
 // as an all-statuses count.
 func TestRenderDebtDashboard_ByComponentHeaderNamesTheScope(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 10)
+	out := renderDashboardOf(t, debtSampleRecords(), 10)
 	assert.Contains(t, out, "| Component | Unresolved |")
 	assert.NotContains(t, out, "| Component | Items |")
 }
 
 func TestSummarizeDebt_ByAge_UnresolvedOnly(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
 	total := 0
 	for _, b := range s.ByAge {
 		total += b.Count
@@ -192,7 +236,7 @@ func TestSummarizeDebt_ByAge_UnresolvedOnly(t *testing.T) {
 // caller reading ByAge off that call path would get a silently wrong profile.
 // With no clock there is no age profile: ByAge is nil and no record is bucketed.
 func TestSummarizeDebt_ZeroNowYieldsNoAgeProfile(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), time.Time{}, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), time.Time{}, 5)
 
 	assert.Nil(t, s.ByAge, "an age profile computed against a zero clock is garbage, not data")
 	// The clock-independent halves are unaffected.
@@ -213,7 +257,7 @@ func TestSummarizeDebt_OffEnumSeverityIsCountedInAnUnknownRow(t *testing.T) {
 		mkDebtRecord("", "", "b.go", 2, "2026-06-13T09:00:00Z"),
 	)
 
-	s := summarizeDebt(recs, debtRefNow, 5)
+	s := summarizeDebt(summariesOf(recs), debtRefNow, 5)
 
 	var summed int
 	for _, c := range s.BySeverity {
@@ -231,7 +275,7 @@ func TestSummarizeDebt_OffEnumSeverityIsCountedInAnUnknownRow(t *testing.T) {
 	assert.Equal(t, 2, unknown.Total)
 	assert.Equal(t, "(unknown)", s.BySeverity[len(s.BySeverity)-1].Severity, "the unknown row is appended last")
 
-	out := renderDebtDashboard(recs, 5)
+	out := renderDashboardOf(t, recs, 5)
 	assert.Contains(t, out, "| (unknown) |", "and it is rendered, so the table reconciles on screen too")
 }
 
@@ -245,7 +289,7 @@ func TestRenderDebtDashboard_RedactsEveryFreeTextCell(t *testing.T) {
 	rec.Problem = "leaked sk-live0000SECRET222 in the header"
 	rec.StampID()
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 5)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 5)
 
 	assert.NotContains(t, out, "sk-live0000SECRET111",
 		"the location cell (and the component rollup derived from it) is scrubbed")
@@ -264,7 +308,7 @@ func TestRenderDebtDashboard_StripsControlSequencesAndNeutralizesHTML(t *testing
 	rec.Problem = "erase\x1b[1Athis\x9bK and <img src=x onerror=alert(1)>"
 	rec.StampID()
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 5)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 5)
 
 	assert.NotContains(t, out, "\x1b", "no ESC byte reaches the terminal")
 	assert.NotContains(t, out, "\u009b", "no C1 control byte either")
@@ -276,34 +320,35 @@ func TestRenderDebtDashboard_StripsControlSequencesAndNeutralizesHTML(t *testing
 // The unknown row is emitted only when it is non-zero: a clean store's dashboard
 // must not grow a permanent empty row.
 func TestSummarizeDebt_NoUnknownRowWhenEverySeverityIsOnEnum(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
 
 	for _, c := range s.BySeverity {
 		assert.NotEqual(t, "(unknown)", c.Severity)
 	}
-	assert.NotContains(t, renderDebtDashboard(debtSampleRecords(), 5), "(unknown)")
+	assert.NotContains(t, renderDashboardOf(t, debtSampleRecords(), 5), "(unknown)")
 }
 
 func TestSummarizeDebt_TopPriority_SeverityThenAge(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 5)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 5)
+	byID := debtRecordsByID(debtSampleRecords())
 	require.NotEmpty(t, s.Top)
 	// Only unresolved items are candidates; most-severe first.
-	assert.Equal(t, "CRITICAL", s.Top[0].Severity)
-	for _, r := range s.Top {
-		assert.NotEqual(t, "resolved", r.Status)
+	assert.Equal(t, "CRITICAL", byID[s.Top[0]].Severity)
+	for _, id := range s.Top {
+		assert.NotEqual(t, "resolved", byID[id].Status)
 	}
 	assert.LessOrEqual(t, len(s.Top), 3)
 }
 
 func TestSummarizeDebt_TopPriority_RespectsLimit(t *testing.T) {
-	s := summarizeDebt(debtSampleRecords(), debtRefNow, 1)
-	assert.Len(t, s.Top, 1)
-	assert.Equal(t, "CRITICAL", s.Top[0].Severity)
+	s := summarizeDebt(summariesOf(debtSampleRecords()), debtRefNow, 1)
+	require.Len(t, s.Top, 1)
+	assert.Equal(t, "CRITICAL", debtRecordsByID(debtSampleRecords())[s.Top[0]].Severity)
 }
 
 func TestSummarizeDebt_UnparseableTimestampIsUnknownBucket(t *testing.T) {
 	recs := []localdebt.Record{mkDebtRecord("", "HIGH", "x.go", 1, "not-a-timestamp")}
-	s := summarizeDebt(recs, debtRefNow, 5)
+	s := summarizeDebt(summariesOf(recs), debtRefNow, 5)
 	var unknown int
 	for _, b := range s.ByAge {
 		if b.Label == "unknown" {
@@ -319,13 +364,13 @@ func TestSummarizeDebt_UnparseableTimestampIsUnknownBucket(t *testing.T) {
 
 func TestRenderDebtDashboard_Deterministic(t *testing.T) {
 	recs := debtSampleRecords()
-	a := renderDebtDashboard(recs, 10)
-	b := renderDebtDashboard(recs, 10)
+	a := renderDashboardOf(t, recs, 10)
+	b := renderDashboardOf(t, recs, 10)
 	assert.Equal(t, a, b, "dashboard render must be byte-identical across runs (no timestamp)")
 }
 
 func TestRenderDebtDashboard_HasSections(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 10)
+	out := renderDashboardOf(t, debtSampleRecords(), 10)
 	assert.Contains(t, out, "# Technical Debt Dashboard")
 	assert.Contains(t, out, "## By Severity")
 	assert.Contains(t, out, "## By Component")
@@ -337,7 +382,7 @@ func TestRenderDebtDashboard_HasSections(t *testing.T) {
 }
 
 func TestRenderDebtDashboard_TotalsRow(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 10)
+	out := renderDashboardOf(t, debtSampleRecords(), 10)
 	// 4 total, 2 open, 1 deferred, 1 resolved.
 	assert.Contains(t, out, "**Total:** 4")
 	assert.Contains(t, out, "**Open:** 2")
@@ -348,7 +393,7 @@ func TestRenderDebtDashboard_ScrubsSecretTokens(t *testing.T) {
 	rec.Problem = "leaked key sk-ABCDEF0123456789 in the log line"
 	rec.StampID()
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 10)
 	assert.NotContains(t, out, "sk-ABCDEF0123456789")
 	assert.Contains(t, out, "[redacted]")
 }
@@ -358,7 +403,7 @@ func TestRenderDebtDashboard_SanitizesFileAndComponent(t *testing.T) {
 	rec.Problem = "pipe in file"
 	rec.StampID()
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 10)
 	// A literal pipe in the File cell would break the Markdown table column count.
 	assert.NotContains(t, out, "| internal/x | y.go:1 |")
 	assert.Contains(t, out, "| internal/x / y.go:1 |")
@@ -367,7 +412,7 @@ func TestRenderDebtDashboard_SanitizesFileAndComponent(t *testing.T) {
 }
 
 func TestRenderDebtDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 1)
+	out := renderDashboardOf(t, debtSampleRecords(), 1)
 	// Only the single highest-priority (CRITICAL) item is listed in Top Priority.
 	top := out[strings.Index(out, "## Top Priority"):]
 	assert.Contains(t, top, "cmd/atcr/autofix.go:248")          // CRITICAL open
@@ -375,7 +420,7 @@ func TestRenderDebtDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 }
 
 func TestRenderDebtDashboard_TopZeroShowsSuppressed(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 0)
+	out := renderDashboardOf(t, debtSampleRecords(), 0)
 	// A zero cap hides the list but should not pretend the backlog is empty.
 	top := out[strings.Index(out, "## Top Priority"):]
 	assert.Contains(t, top, "(top list suppressed)")
@@ -386,7 +431,7 @@ func TestRenderDebtDashboard_TopZeroShowsSuppressed(t *testing.T) {
 // scans for what to fix next is also the view they copy the resolve argument from.
 func TestRenderDebtDashboard_TopPriorityCarriesIDColumn(t *testing.T) {
 	recs := debtSampleRecords()
-	out := renderDebtDashboard(recs, 10)
+	out := renderDashboardOf(t, recs, 10)
 	top := out[strings.Index(out, "## Top Priority"):]
 
 	assert.Contains(t, top, "| ID | Severity | File | Est | Problem |")
@@ -402,7 +447,7 @@ func TestRenderDebtDashboard_TopPriorityCarriesIDColumn(t *testing.T) {
 // clock component, but pin it rather than reasoning about it.
 func TestRenderDebtDashboard_IDColumnStaysDeterministic(t *testing.T) {
 	recs := debtSampleRecords()
-	assert.Equal(t, renderDebtDashboard(recs, 10), renderDebtDashboard(recs, 10))
+	assert.Equal(t, renderDashboardOf(t, recs, 10), renderDashboardOf(t, recs, 10))
 }
 
 // The id is a content hash, not free text: redacting it would break the join
@@ -413,7 +458,7 @@ func TestRenderDebtDashboard_IDIsNotRedacted(t *testing.T) {
 	rec.Problem = "leaked key sk-ABCDEF0123456789 in the log line"
 	rec.StampID()
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 10)
 	assert.NotContains(t, out, "sk-ABCDEF0123456789")
 	assert.Contains(t, out, rec.ID, "the id passes through the redactor untouched")
 }
@@ -425,27 +470,27 @@ func TestRenderDebtDashboard_EmptyIDRendersDash(t *testing.T) {
 	rec.Problem = "no id on this one"
 	rec.ID = "" // only a hand-edited store can produce this
 
-	out := renderDebtDashboard([]localdebt.Record{rec}, 10)
+	out := renderDashboardOf(t, []localdebt.Record{rec}, 10)
 	top := out[strings.Index(out, "## Top Priority"):]
 	assert.Contains(t, top, "| - | CRITICAL |")
 }
 
 // A zero cap still suppresses the list rather than emitting a bare header row.
 func TestRenderDebtDashboard_TopZeroEmitsNoHeaderRow(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 0)
+	out := renderDashboardOf(t, debtSampleRecords(), 0)
 	top := out[strings.Index(out, "## Top Priority"):]
 	assert.NotContains(t, top, "| ID | Severity |")
 }
 
 func TestRenderDebtDashboard_AgeByMonthIsTimeInvariant(t *testing.T) {
-	out := renderDebtDashboard(debtSampleRecords(), 10)
+	out := renderDashboardOf(t, debtSampleRecords(), 10)
 	age := out[strings.Index(out, "## By Age"):]
 	// Unresolved items are timestamped 2026-06 (HIGH, CRITICAL, MEDIUM).
 	require.Contains(t, age, "2026-06")
 }
 
 func TestDebtMonthHistogram_MalformedTimestampGoesToUnknown(t *testing.T) {
-	got := debtMonthHistogram([]localdebt.Record{mkDebtRecord("", "HIGH", "x.go", 1, "2026-7x")})
+	got := debtMonthHistogram(summariesOf([]localdebt.Record{mkDebtRecord("", "HIGH", "x.go", 1, "2026-7x")}))
 	require.Len(t, got, 1)
 	assert.Equal(t, "unknown", got[0].month)
 }
@@ -495,7 +540,7 @@ func debtAllStatusRecords() []localdebt.Record {
 // list, so a fix pass that stops at the first match leaves the per-severity
 // breakdown under-counting — this asserts both.
 func TestSummarizeDebt_CountsNewStatusesInBothTallies(t *testing.T) {
-	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 10)
+	s := summarizeDebt(summariesOf(debtAllStatusRecords()), debtRefNow, 10)
 
 	assert.Equal(t, 1, s.Open)
 	assert.Equal(t, 1, s.Deferred)
@@ -518,7 +563,7 @@ func TestSummarizeDebt_CountsNewStatusesInBothTallies(t *testing.T) {
 // TestSummarizeDebt_TotalIsAnExactSumWithNewCounters locks AC 01-04 Edge Case 3:
 // no record is double-counted or dropped once the two counters exist.
 func TestSummarizeDebt_TotalIsAnExactSumWithNewCounters(t *testing.T) {
-	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 10)
+	s := summarizeDebt(summariesOf(debtAllStatusRecords()), debtRefNow, 10)
 	sum := s.Open + s.Deferred + s.Resolved + s.Wontfix + s.Unreproducible + s.AttemptsExhausted
 	assert.Equal(t, s.Total, sum, "Total must equal the sum across every status counter")
 
@@ -554,7 +599,7 @@ func TestDebtIsLive_NewStatusesSplitOnSettledness(t *testing.T) {
 // zero — a table that does not add up to its own header, with nothing on screen
 // to explain the gap.
 func TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses(t *testing.T) {
-	out := renderDebtDashboard([]localdebt.Record{
+	out := renderDashboardOf(t, []localdebt.Record{
 		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
 		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
 	}, 5)
@@ -575,7 +620,7 @@ func TestRenderDebtDashboard_HeaderAndBySeverityCountNewStatuses(t *testing.T) {
 // re-derived Open+Deferred sum and printed "no unresolved items" on the same
 // page — omitting real backlog from the one list an operator works from.
 func TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog(t *testing.T) {
-	out := renderDebtDashboard([]localdebt.Record{
+	out := renderDashboardOf(t, []localdebt.Record{
 		mkDebtRecord(localdebt.StatusAttemptsExhausted, "HIGH", "internal/x/b.go", 2, "2026-07-01"),
 	}, 5)
 
@@ -588,7 +633,7 @@ func TestRenderDebtDashboard_AttemptsExhaustedIsRealBacklog(t *testing.T) {
 // direction: unreproducible IS settled, so a store of only settled records must
 // still say there is nothing to work on.
 func TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog(t *testing.T) {
-	out := renderDebtDashboard([]localdebt.Record{
+	out := renderDashboardOf(t, []localdebt.Record{
 		mkDebtRecord(localdebt.StatusUnreproducible, "HIGH", "internal/x/a.go", 1, "2026-07-01"),
 		mkDebtRecord(localdebt.StatusResolved, "HIGH", "internal/x/c.go", 3, "2026-07-01"),
 	}, 5)
@@ -600,7 +645,7 @@ func TestRenderDebtDashboard_SettledOnlyStoreStillReportsNoBacklog(t *testing.T)
 // status, so a future status cannot drift the two apart again.
 func TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate(t *testing.T) {
 	recs := debtAllStatusRecords()
-	s := summarizeDebt(recs, debtRefNow, 10)
+	s := summarizeDebt(summariesOf(recs), debtRefNow, 10)
 
 	var want int
 	for _, r := range recs {
@@ -618,11 +663,11 @@ func TestSummarizeDebt_LiveIsCountedThroughTheOnePredicate(t *testing.T) {
 // capped at topN and is empty when topN is 0, which means "suppressed", not
 // "nothing to show". Live must be independent of the cap.
 func TestSummarizeDebt_LiveIsNotLenTop(t *testing.T) {
-	s := summarizeDebt(debtAllStatusRecords(), debtRefNow, 0)
+	s := summarizeDebt(summariesOf(debtAllStatusRecords()), debtRefNow, 0)
 	assert.Empty(t, s.Top, "topN 0 suppresses the list")
 	assert.Equal(t, 3, s.Live, "...but the backlog is still there")
 
-	out := renderDebtDashboard(debtAllStatusRecords(), 0)
+	out := renderDashboardOf(t, debtAllStatusRecords(), 0)
 	assert.Contains(t, out, "_(top list suppressed)_",
 		"a suppressed list must not be reported as an empty backlog")
 }

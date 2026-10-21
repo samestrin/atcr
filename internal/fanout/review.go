@@ -277,8 +277,13 @@ type PreparedReview struct {
 	// slot resolves, while other personas may still run (Epic 35.16.14.1 T1).
 	// idx lists the persona's slot indices in order and results[k] is slot
 	// idx[k]'s final Result, unmerged. It runs on an engine worker, after the
-	// ledger's hook for that slot, and concurrently for different personas.
+	// ledger's hook for that slot and the persona's early artifact write, and
+	// concurrently for different personas.
 	onPersonaDone func(agent string, idx []int, results []Result)
+	// resuming is set by ExecuteResume, so runEngine's per-persona early write
+	// follows writeResumedAgents' rules rather than WritePool's (Epic
+	// 35.16.14.1 T2).
+	resuming bool
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -1275,10 +1280,18 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		// window (Epic 35.16.14 fix AC1b), which no retry can make fit.
 		opts = append(opts, WithUnitRetry(ledger.retryable, ledger.slotRequeue))
 	}
-	var personaDone func(int, Result)
-	if p.onPersonaDone != nil {
-		personaDone = newPersonaTracker(p.Slots, p.onPersonaDone).slotDone
+	// Each persona's files are written the moment its last slot resolves (Epic
+	// 35.16.14.1 T2), so a live status read sees it finished while slower
+	// personas still run. p.onPersonaDone, a test hook, runs after that write.
+	early := earlyAgentWriter(ctx, p, poolDir)
+	onPersona := early
+	if test := p.onPersonaDone; test != nil {
+		onPersona = func(agent string, idx []int, results []Result) {
+			early(agent, idx, results)
+			test(agent, idx, results)
+		}
 	}
+	personaDone := newPersonaTracker(p.Slots, onPersona).slotDone
 	if hook := composeSlotDone(ledgerDone, personaDone); hook != nil {
 		opts = append(opts, WithSlotDone(hook))
 	}
@@ -1298,9 +1311,28 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	if p.baseline != nil {
 		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
-	// Per-persona file gap (Epic 35.16.13 T6), read from the same raw results for
-	// the same reason; stamped onto the merged records below.
-	gaps := unreviewedFileCounts(ctx, p.Slots, results)
+	results = mergeResults(ctx, p.Slots, results)
+
+	// Classify the run into the manifest's review-stage entry and stamp the
+	// snapshot provenance (nil when no agent ran with tools).
+	stage := reviewStageFor(results)
+	if stage != nil {
+		stage.SnapshotMode = snapMode
+		stage.HeadSHA = snapHeadSHA
+		stage.SnapshotWorktreePath = snapWorktreePath
+	}
+	return results, stage
+}
+
+// mergeResults turns the engine's raw per-slot results into one result per
+// persona, the form every artifact writer takes. runEngine runs it over the
+// whole run after the join and, per persona, the moment that persona's last
+// slot resolves (earlyAgentWriter), so the two writes of a persona's files come
+// from the same merge. slots[i] is results[i]'s slot.
+func mergeResults(ctx context.Context, slots []Slot, results []Result) []Result {
+	// Per-persona file gap (Epic 35.16.13 T6), read from the raw results because
+	// the merge below discards chunk identity; stamped onto the merged records.
+	gaps := unreviewedFileCounts(ctx, slots, results)
 
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
 	// back as N results under the same Agent name; collapse them into one result
@@ -1312,8 +1344,8 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// Serial-lane personas run their chunk-slots sequentially, so their true
 	// wall-clock duration is the sum of chunk durations; parallel-lane personas
 	// take the maximum. Pass the serial set so mergeChunkResults can distinguish.
-	serialAgents := make(map[string]bool, len(p.Slots))
-	for _, s := range p.Slots {
+	serialAgents := make(map[string]bool, len(slots))
+	for _, s := range slots {
 		if s.Serial {
 			serialAgents[s.Primary.Name] = true
 		}
@@ -1324,16 +1356,52 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 			results[i].UnreviewedFiles, results[i].DeferredFiles = g.unreviewed, g.deferred
 		}
 	}
+	return results
+}
 
-	// Classify the run into the manifest's review-stage entry and stamp the
-	// snapshot provenance (nil when no agent ran with tools).
-	stage := reviewStageFor(results)
-	if stage != nil {
-		stage.SnapshotMode = snapMode
-		stage.HeadSHA = snapHeadSHA
-		stage.SnapshotWorktreePath = snapWorktreePath
+// earlyAgentWriter is the per-persona completion hook runEngine hands the
+// tracker (Epic 35.16.14.1 T2). It merges the persona's slots exactly as the
+// post-join merge will and writes its review.md, findings and status.json, each
+// atomically and status.json last: a resume reads an ok status.json as a
+// finished persona (CompletedAgents), so a run killed between the writes must
+// never leave one without its findings. The writers after the join (WritePool,
+// writeResumedAgents) rewrite the same files from the same merge. A failed
+// write is logged and left to them; it never fails the run.
+func earlyAgentWriter(ctx context.Context, p *PreparedReview, poolDir string) func(agent string, idx []int, results []Result) {
+	return func(agent string, idx []int, results []Result) {
+		own := make([]Slot, len(idx))
+		for k, i := range idx {
+			own[k] = p.Slots[i]
+		}
+		for _, r := range mergeResults(ctx, own, results) {
+			if err := writeEarlyAgent(poolDir, r, p.Changed, p.chunks, p.resuming); err != nil {
+				log.FromContext(ctx).Warn("early persona artifact write failed; the final pool write retries it", "agent", agent, "err", err)
+			}
+		}
 	}
-	return results, stage
+}
+
+// writeEarlyAgent writes one merged persona the way the post-join writer for
+// this run will: writeResumedAgents' rules on a resume (a synthesized
+// cancellation keeps the prior record, a persona with replayed bins is merged
+// with them), writeAgentArtifacts otherwise. A replayed persona is marked in
+// the ledger so writeResumedAgents does not merge it a second time.
+func writeEarlyAgent(poolDir string, r Result, changed payload.ChangedLines, chunks *chunkLedger, resuming bool) error {
+	if resuming && synthesizedCancel(r) {
+		return nil
+	}
+	dir, err := agentDirName(r.Agent)
+	if err != nil {
+		return err
+	}
+	if carried := chunks.carriedFiles(dir); carried != nil {
+		if err := writeMergedAgent(poolDir, dir, r, changed, chunks, carried); err != nil {
+			return err
+		}
+		chunks.markMergedEarly(dir)
+		return nil
+	}
+	return writeAgentArtifacts(poolDir, dir, r, findingsFor(r, changed))
 }
 
 // composeSlotDone folds the non-nil per-slot hooks into the engine's single
@@ -3371,6 +3439,20 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// payload unchanged for a diff-wide review. Because the constraint becomes part
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
+	//
+	// Payload-egress secret guard (Epic 35.20): scan the text bound for the
+	// provider BEFORE it is rendered, so a redaction reaches the prompt, the
+	// diff-cache key and the invocation alike, and every span derived from the
+	// prompt below (payloadStart, the response_format swap) describes the text
+	// actually sent. The claim ledger is part of payloadText (rangebuilder
+	// prepends it as an entry), so commit messages are covered too.
+	guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+		guardSegment{text: scopeConstraint, file: secretScopeLabel},
+		guardSegment{text: payloadText, file: "payload", mode: mode})
+	if err != nil {
+		return Agent{}, err
+	}
+	scopeConstraint, payloadText = guarded[0], guarded[1]
 	pctx := payload.PayloadContext{
 		AgentName:   name,
 		BaseRef:     rng.Base,
@@ -3474,6 +3556,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		chunkMaxLines:          sz.maxLines,
 		swap:                   formatSwap,
 		payloadStart:           payloadStart,
+		secretGuarded:          true,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3883,6 +3966,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// declaration just before return. A hand-built Agent (no renderAgent) carries
 	// a zero span, so the rebuild IS its Prompt.
 	fbPrompt, fbPayloadStart := primary.swap.rebuildUnswapped(primary.Prompt), primary.payloadStart
+	fbGuarded := primary.secretGuarded
 	fbTrunc := primary.Truncation
 	fbCodeContext := primary.CodeContext
 	// The coverage tag follows the payload, so it is copied from the primary here
@@ -3944,6 +4028,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// Unswapped: the re-render ran under refit.primaryConfig, so its
 				// Prompt is swapped on the PRIMARY's flag, not this fallback's.
 				fbPrompt, fbPayloadStart = rp.agent.swap.rebuildUnswapped(rp.agent.Prompt), rp.agent.payloadStart
+				fbGuarded = rp.agent.secretGuarded
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
 				// Compose with the primary's shed record rather than replacing it:
@@ -4047,6 +4132,20 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			fbDegradation = degradationOverflow
 		}
 	}
+	// Payload-egress secret guard (Epic 35.20), before the swap, the cache key and
+	// the invocation. A prompt rendered by renderAgent (the primary's, or the
+	// re-fit's) already passed it, so scanning it again would only repeat the
+	// primary's warning. An unguarded inherited prompt is scanned whole, split at
+	// fbPayloadStart so a redaction keeps that offset pointing at the payload.
+	if !fbGuarded {
+		guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+			guardSegment{text: fbPrompt[:fbPayloadStart], file: "prompt"},
+			guardSegment{text: fbPrompt[fbPayloadStart:], file: "payload", mode: primary.PayloadMode})
+		if err != nil {
+			return Agent{}, false, err
+		}
+		fbPrompt, fbPayloadStart = guarded[0]+guarded[1], len(guarded[0])
+	}
 	// response_format swap (Sprint 35.16.11.2.1), keyed on the fallback's OWN
 	// declaration on both arms — never the primary's, like SupportsFC.
 	fbPrompt, fbSwap := promptForResponseFormatWithSpan(fbPrompt, fbPayloadStart, ac.ResponseFormat)
@@ -4116,6 +4215,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		chunkMaxLines:          fbMaxLines,
 		swap:                   fbSwap,
 		payloadStart:           fbPayloadStart,
+		secretGuarded:          true,
 		rePacked:               refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,

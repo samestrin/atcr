@@ -470,7 +470,8 @@ func collectDebtIDRecords(dir string, ids []string, opts localdebt.ReadOpts) ([]
 }
 
 // hydrateDebtIDs is the shared pass 2 for every two-pass debt read: the resolve
-// worklist (hydrateOpenDebt) and `debt list` (selectDebtForList).
+// worklist (hydrateOpenDebt), `debt list` (selectDebtForList) and the
+// dashboard's Top Priority rows (runDebtDashboard).
 //
 // keep re-asserts the caller's pass-1 predicate against pass 2's fold; nil keeps
 // every hydrated id, which is what `debt list` needs — it renders closed and
