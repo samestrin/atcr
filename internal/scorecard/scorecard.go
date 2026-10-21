@@ -234,8 +234,9 @@ type Record struct {
 	// Three streams feed it, and the third is not obvious: the surviving
 	// findings, the Tier-4-routed ones, and EmitInput.AmbiguousFindings — the
 	// clusters reconcile set aside. See that field's comment for the starvation
-	// loop the third one breaks. The ambiguous stream contributes categories
-	// only; it touches no count.
+	// loop the third one breaks, and for the charge rule: its one-finding
+	// clusters are charged to FindingsRaised, so every word on this set comes
+	// from a charged finding (the CHARGE MIRROR, TD-034).
 	//
 	// Each value is a category THIS reviewer attached to its own finding. On
 	// the surviving and Tier-4-routed streams it is read from
@@ -460,6 +461,12 @@ type Finding struct {
 	// the reviewer's own word, or a caller that built the Finding by hand), and
 	// Category is used as before.
 	SourceCategories []reconcile.SourceCategory
+	// AmbiguousSingleton is set only on records in EmitInput.AmbiguousFindings,
+	// and only when the finding was the whole of its reconcile.AmbiguousCluster.
+	// Those are the findings Emit charges from that stream; see
+	// EmitInput.AmbiguousFindings. EmitForReconcile sets it because the cluster
+	// structure is gone once the stream is flattened.
+	AmbiguousSingleton bool
 	// Severity and Disagreement carry reconcile.Finding's own values verbatim,
 	// threaded at the EmitForReconcile construction sites exactly as Category
 	// was. This struct is never persisted, so both are free: no schema change,
@@ -593,10 +600,30 @@ type EmitInput struct {
 	// through a narrower door.
 	UnresolvedFindings []Finding
 	// AmbiguousFindings holds reconcile.Result.Ambiguous flattened to its member
-	// findings. It feeds Record.CategoriesRaised and NOTHING ELSE — never
-	// FindingsRaised, never FindingsCorroborated, and it never mints a reviewer
-	// record for a name that has none. It is evidence about the CASE, not a count
-	// against a lens.
+	// findings. Every member feeds Record.CategoriesRaised. It never feeds
+	// FindingsCorroborated, WeightedCredit or PairSignals, and it never mints a
+	// reviewer record for a name that has none.
+	//
+	// THE CHARGE RULE (Epic 35.16.11.3.1 T2, rule B, decided by Sam on the
+	// EST-2052 probe): a member flagged AmbiguousSingleton adds 1 to its
+	// reviewer's FindingsRaised and FindingsSolo, and is counted again in
+	// FindingsAmbiguous — charged exactly the way a chargeable routed finding
+	// is. A singleton is a consensus-filtered solo or a DBSCAN-isolated noise
+	// finding; both are absent from res.Findings, so before this rule they were
+	// charged nowhere. Gray-zone pair members are NOT charged here: they also
+	// reach res.Findings and are charged there, and on the pair surface through
+	// GrayZonePairs. The test is the CLUSTER's size, not its distinct-reviewer
+	// count, because a gray pair can be two findings by one reviewer.
+	//
+	// Why it is charged. Under strict consensus a lens without trustExempt had
+	// its uncorroborated findings filtered here, so they never reached the
+	// denominator and its rate read close to 1.0 by construction (kai 12/13 on
+	// the probe, with nine more solos uncharged). Once it crossed
+	// trustHighThreshold its solos were spared, landed in res.Findings and were
+	// charged, and the rate fell back. What FindingsRaised meant for a lens
+	// depended on that lens's own prior. Charging the stream makes the count the
+	// same at every consensus level: under lenient or off those findings stay in
+	// res.Findings as solos anyway.
 	//
 	// IT CLOSES A FEEDBACK LOOP, which is why it is worth a field. Under strict
 	// consensus, reconcile routes an uncorroborated singleton into Ambiguous
@@ -620,8 +647,8 @@ type EmitInput struct {
 	// half of AC 05-01 Scenario 1): each entry contributes ONE disagreement
 	// evidence item to that pair, ON THE PAIR SURFACE ONLY — it moves
 	// PairSignals.Disagreed and nothing else, never FindingsRaised,
-	// FindingsCorroborated or CategoriesRaised, so TD-034's asymmetry (an
-	// ambiguous finding moves no count) is preserved in the new stream.
+	// FindingsCorroborated or CategoriesRaised, because a gray pair's findings
+	// are already counted through Findings (see AmbiguousFindings).
 	// Duplicate keys are legitimate: two distinct gray-zone clusters between the
 	// same pair are two disagreements, not one.
 	GrayZonePairs    []string
@@ -699,6 +726,13 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		}
 		chargeableUnresolved = append(chargeableUnresolved, u)
 	}
+	// The ambiguous stream's charged split. See AmbiguousFindings for the rule.
+	chargeableAmbiguous := make([]Finding, 0, len(in.AmbiguousFindings))
+	for _, a := range in.AmbiguousFindings {
+		if a.AmbiguousSingleton {
+			chargeableAmbiguous = append(chargeableAmbiguous, a)
+		}
+	}
 
 	for _, name := range names {
 		meta := in.Reviewers[name]
@@ -711,6 +745,10 @@ func Emit(in EmitInput, opts EmitOpts) error {
 		// Routed phantoms add to the denominator only — see UnresolvedFindings.
 		routedRaised, _, _ := reviewerCounts(name, chargeableUnresolved)
 		raised += routedRaised
+		// Filtered singletons too, and never as corroboration: a singleton
+		// cluster has no second reviewer. See AmbiguousFindings.
+		ambiguousRaised, _, _ := reviewerCounts(name, chargeableAmbiguous)
+		raised += ambiguousRaised
 		shielded, _, _ := reviewerCounts(name, docShielded)
 		rec := Record{
 			SchemaVersion: SchemaVersion,
@@ -742,15 +780,16 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// unknown is excluded from trust scoring, a garbage value would be
 			// uninterpretable for the whole 180-day window.
 			Outcome: validatedOutcome(meta.Outcome),
-			// in.AmbiguousFindings is a category stream ONLY — it is absent from
-			// every reviewerCounts call above, so it moves no numerator and no
-			// denominator. See the field's comment for the loop it breaks.
+			// Every in.AmbiguousFindings member lends its category, the gray-pair
+			// ones included. That keeps the set a CHARGE MIRROR (TD-034,
+			// f81fc9a3): a singleton is charged just above, and a gray member is
+			// charged through in.Findings. See the field's comment for the loop
+			// the category read breaks.
 			CategoriesRaised: reviewerCategories(name, in.Findings, chargeableUnresolved, in.AmbiguousFindings),
 			// Pair signals come from in.Findings ONLY. A routed phantom has no
 			// co-reviewer to relate to (routing is what removed it from the
-			// merged set), and the ambiguous stream is documented as
-			// category-only — feeding it here would move a count it is
-			// deliberately kept out of.
+			// merged set), and an ambiguous singleton has no co-reviewer
+			// either. A gray pair's disagreement arrives through GrayZonePairs.
 			PairSignals: reviewerPairSignals(name, in.Findings, in.GrayZonePairs),
 			// Stamped unconditionally, including on a run with no pairs at all:
 			// the marker, not the slice, is what records that this run was
@@ -764,6 +803,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 			// read-time ceiling is computed from it, and a record carrying the
 			// era without it would be bounded too loosely. See FindingsRouted.
 			FindingsRouted:    routedRaised,
+			FindingsAmbiguous: ambiguousRaised,
 			CreditEra:         CreditEraCurrent,
 			CorroborationRate: ratio(corroborated, raised),
 			CostUSD:           llmclient.ComputeCostUSD(meta.Model, meta.TokensIn, meta.TokensOut),
