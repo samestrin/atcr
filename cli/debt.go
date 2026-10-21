@@ -207,6 +207,11 @@ func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
 	return localdebt.FoldRecords(recs), nil
 }
 
+// hydrateDebtListIDs is the pass-2 hydration selectDebtForList calls. It is a
+// var only so a test can count how many records a capped list materializes
+// (AC10); production code never reassigns it.
+var hydrateDebtListIDs = hydrateDebtIDs
+
 // selectDebtForList is `debt list`'s two-pass read, the one `debt resolve`
 // already uses (cli/debt_resolve.go's selectOpenDebt) and the one
 // cli/debt_resolve.go:174-179 tells callers not to collapse back into a single
@@ -280,7 +285,7 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]loca
 	sums, selected = nil, nil
 	_, _ = sums, selected
 
-	recs, err := hydrateDebtIDs(dir, ids, opts, nil)
+	recs, err := hydrateDebtListIDs(dir, ids, opts, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
 	}

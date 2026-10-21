@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1073,4 +1074,133 @@ func TestDebtList_RendersOriginColumn(t *testing.T) {
 	assert.Contains(t, header, "ORIGIN", "the header carries an ORIGIN column")
 	assert.Contains(t, out, "manual", "a hand-filed item renders its manual origin")
 	assert.Contains(t, out, "review", "origin-less records render their effective review origin")
+}
+
+// --- Epic 35.21 T3: debt list --max (AC9, AC10) ------------------------------
+
+// debtListGolden is `atcr debt list` over debtSampleRecords, captured on main
+// before --max existed. An unflagged list must keep rendering exactly this: a
+// default cap would silently truncate every scripted call.
+const debtListGolden = "" +
+	"ID                SEVERITY  STATUS    ORIGIN  EST  FILE                           CATEGORY     PROBLEM\n" +
+	"2d4f569f7330b0c4  CRITICAL  open      review  15   cmd/atcr/autofix.go:248        docs         remote leftover\n" +
+	"717007b4c94d8aae  HIGH      open      review  60   internal/autofix/apply.go:108  correctness  clobber on create\n" +
+	"af0a76e18d72409d  MEDIUM    deferred  review  0    cmd/atcr/review.go             docs         exit gate surprise\n" +
+	"d4a3549fc2abbb6b  LOW       resolved  review  30   internal/autofix/revert.go:41  correctness  perm loss\n"
+
+// AC9: the default is 0 (no cap), so an unflagged list and an explicit
+// --max 0 are both byte-identical to the pre-flag output.
+func TestDebtList_UnflaggedOutputIsByteIdentical(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	sub := debtSubcommand(t, newDebtCmd(), "list")
+	require.NotNil(t, sub.Flags().Lookup("max"), "--max is registered")
+	assert.Equal(t, "0", sub.Flags().Lookup("max").DefValue, "--max defaults to 0, not resolve's 10")
+
+	out, err := runDebt(t, "list", "--dir", dir)
+	require.NoError(t, err)
+	assert.Equal(t, debtListGolden, out)
+
+	out, err = runDebt(t, "list", "--dir", dir, "--max", "0")
+	require.NoError(t, err)
+	assert.Equal(t, debtListGolden, out, "--max 0 is no cap")
+}
+
+// AC9: a negative --max is a usage error (exit 2), the way resolve --max and
+// dashboard --top reject one, rather than falling through as a silent no-cap.
+func TestDebtList_NegativeMaxIsUsageError(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	_, err := runDebt(t, "list", "--dir", dir, "--max", "-1")
+
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--max")
+}
+
+// AC9: --max N caps the rendered rows to the first N of the sorted selection,
+// in the table and in --json alike.
+func TestDebtList_MaxCapsRenderedRows(t *testing.T) {
+	dir := writeLocalDebt(t)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--max", "2")
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimSuffix(debtListGolden, "\n"), "\n")
+	assert.Equal(t, strings.Join(lines[:3], "\n")+"\n", out, "header plus the first two sorted rows")
+
+	out, err = runDebt(t, "list", "--dir", dir, "--max", "1", "--severity", "LOW", "--json")
+	require.NoError(t, err)
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &items))
+	require.Len(t, items, 1)
+	assert.Equal(t, "LOW", items[0]["severity"])
+
+	out, err = runDebt(t, "list", "--dir", dir, "--max", "99")
+	require.NoError(t, err)
+	assert.Equal(t, debtListGolden, out, "a cap above the selection size truncates nothing")
+}
+
+// AC10: the cap is applied at the SUMMARY stage, so at most N records are
+// hydrated — counted at the hydration seam, not inferred from rendered rows.
+// An unfiltered list with a cap must take the two-pass path too: the direct
+// read would materialize the whole store to render N rows.
+func TestDebtList_MaxCapsHydrationAtSummaryStage(t *testing.T) {
+	sev := []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+	var recs []localdebt.Record
+	for i := 0; i < 60; i++ {
+		r := localdebt.Record{
+			SchemaVersion: localdebt.SchemaVersion, RunID: "run", Timestamp: "2026-06-13T09:00:00Z",
+			Severity: sev[i%len(sev)], File: "internal/pkg/f.go", Line: i + 1,
+			Problem: "p", Fix: "f", Category: "correctness", EstMinutes: i,
+		}
+		r.StampID()
+		recs = append(recs, r)
+	}
+	dir := writeLocalDebt(t, recs...)
+
+	var calls, requested, hydrated int
+	orig := hydrateDebtListIDs
+	t.Cleanup(func() { hydrateDebtListIDs = orig })
+	hydrateDebtListIDs = func(d string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+		calls++
+		requested += len(ids)
+		got, err := orig(d, ids, opts, keep)
+		hydrated += len(got)
+		return got, err
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		max  int
+	}{
+		{"unfiltered", nil, 5},
+		{"filtered", []string{"--severity", "HIGH"}, 3},
+		{"sorted by est", []string{"--sort", "est"}, 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, requested, hydrated = 0, 0, 0
+			args := append([]string{"list", "--dir", dir, "--json", "--max", strconv.Itoa(tc.max)}, tc.args...)
+			out, err := runDebt(t, args...)
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, calls, "a capped list takes the two-pass path")
+			assert.Equal(t, tc.max, requested, "only the capped ids are sent to hydration")
+			assert.Equal(t, tc.max, hydrated, "at most N records are hydrated")
+
+			var items []localdebt.Record
+			require.NoError(t, json.Unmarshal([]byte(out), &items))
+			require.Len(t, items, tc.max)
+
+			// The capped rows are the head of the uncapped selection, in order.
+			full, err := runDebt(t, append([]string{"list", "--dir", dir, "--json"}, tc.args...)...)
+			require.NoError(t, err)
+			var all []localdebt.Record
+			require.NoError(t, json.Unmarshal([]byte(full), &all))
+			require.Greater(t, len(all), tc.max)
+			for i := range items {
+				assert.Equal(t, all[i].ID, items[i].ID, "row %d", i)
+			}
+		})
+	}
 }
