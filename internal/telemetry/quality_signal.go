@@ -32,8 +32,9 @@ func canonicalPersonaID(raw string) string {
 //
 // PersonaIDHash is pseudonymous, not anonymous: HashPersonaID is an UNSALTED
 // SHA-256 over a small, enumerable persona-name set, so it does not defend against
-// a dictionary attack (see internal/scorecard/telemetry.go and TD-007). It
-// pseudonymizes for aggregation; it is not a secret.
+// a dictionary attack. It pseudonymizes for aggregation; it is not a secret. The
+// keyed step runs at ingestion (atcr.dev peppers the digest on arrival), not here —
+// see internal/scorecard.HashPersonaID for the contract.
 type QualitySignal struct {
 	PersonaIDHash  string `json:"persona_id_hash"`
 	Model          string `json:"model"`
@@ -55,8 +56,8 @@ type QualitySignal struct {
 // dependency direction the boundaries test enforces. TestQualitySignal_PersonaHashedNotRaw
 // (a test-only cross-boundary import, which the boundary check permits) locks byte
 // equivalence to scorecard.HashPersonaID, so the two schemes cannot silently drift
-// — e.g. hardening HashPersonaID to a keyed HMAC (TD-007) fails that test until
-// this is updated in lockstep. It takes primitives rather than a localdebt.QualityRow
+// — any change to HashPersonaID's scheme fails that test until this is updated in
+// lockstep. It takes primitives rather than a localdebt.QualityRow
 // so telemetry never imports localdebt either.
 //
 // CANONICALIZATION (epic 35.16.1): the persona is reduced to

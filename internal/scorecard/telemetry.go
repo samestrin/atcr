@@ -44,14 +44,27 @@ import (
 // string, including the empty string, returns no error, and cannot panic. No
 // validation is performed.
 //
-// Guarantee and its bound: SHA-256 is a one-way (preimage-resistant) hash, so a
-// digest is not directly reversible. But Persona IDs are a small, enumerable,
-// often publicly-known set (community-registry persona names), so this UNSALTED
-// digest does not defend against a dictionary/rainbow attack that pre-hashes known
-// persona names — it pseudonymizes identities for aggregation, it is not a secret.
-// Hardening to a keyed HMAC-SHA256 with an application pepper is deferred (see the
-// sprint's tech-debt-captured.md TD-007): it needs a provisioned secret and would
-// change the AC-pinned digest values, so it is scoped with the real-endpoint decision.
+// PSEUDONYM CONTRACT (epic 35.17). The digest is a pseudonym: it is not anonymous
+// and not a secret. SHA-256 is one-way, but Persona IDs are a small, enumerable,
+// often publicly-known set (community-registry persona names), so anyone can
+// pre-hash the known names and reverse this UNSALTED digest with a dictionary. It
+// exists so one persona aggregates under one stable identifier while the raw name
+// stays on the user's machine; that is all it promises.
+//
+// The keyed step runs at INGESTION, not here. Each backend stores
+// HMAC-SHA256(pepper, received_digest) and never writes the received digest to a
+// table or a log: atcr.dev Epic 2.1 does this for quality signals and
+// atcr-enterprise Epic 15.0 for --sync-cloud scorecards, each under its own pepper
+// in its own database, so one breach cannot correlate the two populations. What
+// remains exposed is the digest in transit, which TLS covers.
+//
+// A client-side key cannot work, which is why this stays unkeyed. This function
+// runs in a public open-source binary: a key compiled into it ships to the attacker
+// with the code, so the dictionary is just as rebuildable. Fetching the key at run
+// time has no credential to authorize it, because the usage ping is deliberately
+// unauthenticated. A per-user key would break determinism, the one property the
+// hash exists for. Keying the digest here would also change every digest value
+// and split each persona's aggregate at the backend.
 func HashPersonaID(raw string) string {
 	sum := sha256.Sum256([]byte(canonicalPersonaID(raw)))
 	return hex.EncodeToString(sum[:])
@@ -75,8 +88,8 @@ func canonicalPersonaID(raw string) string {
 // allowlist of its own: the one-way-hashed persona id plus the model (non-PII,
 // already public elsewhere in the codebase). It never carries the raw Reviewer,
 // RunID, cost, or token fields. Consumed by the Story 4 --sync-cloud payload.
-// Note: PersonaIDHash is pseudonymous (not anonymous) and requires HMAC hardening
-// before production endpoint activation to prevent dictionary reversing of hashes.
+// Note: PersonaIDHash is pseudonymous, not anonymous; the keyed step that stops a
+// stored digest from being reversed runs at ingestion (see HashPersonaID).
 type TelemetryPersonaRecord struct {
 	PersonaIDHash string `json:"persona_id_hash"`
 	// Model is the bound provider+model slug that answered this review, carried
