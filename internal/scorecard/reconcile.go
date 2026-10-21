@@ -107,8 +107,8 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// reads in.Findings and nothing else, so these two values are dead
 			// weight on the other two streams: a Tier-4-routed phantom has no
 			// co-reviewer to relate to (routing is what took it out of the
-			// merged set), and the ambiguous stream is documented as
-			// category-only precisely so it moves no count.
+			// merged set), and an ambiguous singleton has no co-reviewer either
+			// (its cluster is one finding).
 			//
 			// Both carry reconcile.Merge's CLUSTER values, same as Category.
 			// Severity is the cluster MAX; Disagreement is Merge's record that
@@ -212,10 +212,11 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// would stamp one reviewer with the other's word.
 	//
 	// Reviewers are NOT registered from this stream, deliberately. A reviewer
-	// reachable only through a filtered cluster gets no record: that would be a
-	// new record minted by a change whose remit is categories, and the record
-	// would carry a zero denominator. The stream widens what an EXISTING record
-	// knows about its case; it never creates one.
+	// reachable only through a filtered cluster gets no record, so its singletons
+	// are charged to nobody. The stream widens what an EXISTING record knows and
+	// charges; it never creates one. That boundary cost nothing on the EST-2052
+	// probe (26 runs): every singleton's reviewer already had a record, because
+	// the pool summary registers every lens that ran.
 	//
 	// THE SINGULAR SHAPE IS THE PRODUCTION ONE. singletonAmbiguousCluster
 	// (reconcile/dedupe.go) normalises a one-reviewer finding BACK to the raw
@@ -244,6 +245,10 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 				Problem:   f.Problem,
 				Reviewers: names,
 				Category:  f.Category,
+				// A one-finding cluster is a consensus-filtered solo or DBSCAN
+				// noise: absent from res.Findings, so Emit charges it. A gray
+				// pair is two findings, both also in res.Findings.
+				AmbiguousSingleton: len(c.Findings) == 1,
 			})
 		}
 		members := make(map[string]struct{}, 2)
