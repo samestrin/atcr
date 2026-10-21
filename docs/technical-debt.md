@@ -156,12 +156,21 @@ atcr debt list --severity HIGH                  # only HIGH items
 atcr debt list --status open --component cli
 atcr debt list --category correctness --sort age   # oldest correctness debt first
 atcr debt list --json                           # the same selection, as JSON
+atcr debt list --max 20                         # the 20 highest-severity items
 ```
 
 Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
 `open|deferred|resolved|wontfix|unreproducible|attempts-exhausted`),
 `--category` (substring), `--component` (path prefix, e.g. `internal/autofix`),
-`--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`.
+`--origin` (exact: `review|manual`), `--sort` (`severity|age|est|file`), `--json`,
+`--max` (cap on rows listed, applied after the filters and the sort; default
+`0` = no cap; a negative value is a usage error, exit 2).
+
+`--max` keeps the first N items of the sorted selection, in the table and in
+`--json` alike. It is a cap, not a pager: there is no offset. Unlike
+`debt resolve --max`, which defaults to `10`, `list` defaults to no cap, so an
+unflagged list is unchanged. On a large store a capped list reads only the N
+records it prints in full, so `--max` is also the way to keep a list cheap.
 
 `--status` has no default, so a bare `list` shows every item including closed
 ones, each with its effective status — a resolved item stays visible (as

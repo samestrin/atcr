@@ -207,6 +207,11 @@ func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
 	return localdebt.FoldRecords(recs), nil
 }
 
+// hydrateDebtListIDs is the pass-2 hydration selectDebtForList calls. It is a
+// var only so a test can count how many records a capped list materializes
+// (AC10); production code never reassigns it.
+var hydrateDebtListIDs = hydrateDebtIDs
+
 // selectDebtForList is `debt list`'s two-pass read, the one `debt resolve`
 // already uses (cli/debt_resolve.go's selectOpenDebt) and the one
 // cli/debt_resolve.go:174-179 tells callers not to collapse back into a single
@@ -225,7 +230,11 @@ func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
 //
 // Unlike the resolve worklist this keeps every selected id: `debt list` renders
 // closed and location-less records too (that is what --status resolved is for).
-func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]localdebt.Record, error) {
+//
+// limit is --max: when positive, the sorted selection is truncated to its first
+// limit ids BEFORE pass 2, so at most limit records are hydrated — the same
+// place selectOpenIDs applies `debt resolve --max`. 0 is no cap.
+func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit int) ([]localdebt.Record, error) {
 	dir := debtStoreDir(cmd)
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
 
@@ -237,7 +246,11 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]loca
 	//
 	// This is the same comparator either way (debtLess), so the two branches cannot
 	// order differently.
-	if f == (debtFilter{}) {
+	//
+	// A --max cap narrows even an unfiltered list, so a capped list always takes
+	// the two-pass path: hydrating N ids beats materializing the whole store to
+	// render N rows.
+	if f == (debtFilter{}) && limit == 0 {
 		recs, err := loadLocalDebt(cmd)
 		if err != nil {
 			return nil, err
@@ -267,6 +280,9 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]loca
 	if err := sortDebtSummaries(selected, sortKey); err != nil {
 		return nil, usageError(err) // a bad --sort value is a usage error (exit 2)
 	}
+	if limit > 0 && len(selected) > limit {
+		selected = selected[:limit]
+	}
 
 	ids := make([]string, 0, len(selected))
 	for _, s := range selected {
@@ -280,7 +296,7 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string) ([]loca
 	sums, selected = nil, nil
 	_, _ = sums, selected
 
-	recs, err := hydrateDebtIDs(dir, ids, opts, nil)
+	recs, err := hydrateDebtListIDs(dir, ids, opts, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
 	}
@@ -304,6 +320,10 @@ func newDebtListCmd() *cobra.Command {
 	// Same flag name, type, and help string as `debt resolve --json`, so the two
 	// machine-readable surfaces read identically to a caller.
 	cmd.Flags().Bool("json", false, "emit the selected items as a JSON array")
+	// Same name and value semantics as `debt resolve --max` (0 = no cap), but a
+	// default of 0, not resolve's 10: list is a query surface, and any other
+	// default would silently truncate every existing scripted call.
+	cmd.Flags().Int("max", 0, "cap on how many items are listed, applied after the sort (0 = no cap)")
 	return cmd
 }
 
@@ -379,6 +399,12 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 	if err := validateDebtListFilters(cmd); err != nil {
 		return err
 	}
+	limit, _ := cmd.Flags().GetInt("max")
+	// As in `debt resolve`: a negative value would otherwise fall through the
+	// `limit > 0` cap check as a silent no-cap.
+	if limit < 0 {
+		return usageError(fmt.Errorf("invalid --max %d: expected a non-negative number", limit))
+	}
 
 	recs, err := selectDebtForList(cmd, debtFilter{
 		Severity:  mustFlag(cmd, "severity"),
@@ -386,7 +412,7 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		Category:  mustFlag(cmd, "category"),
 		Component: mustFlag(cmd, "component"),
 		Origin:    mustFlag(cmd, "origin"),
-	}, mustFlag(cmd, "sort"))
+	}, mustFlag(cmd, "sort"), limit)
 	if err != nil {
 		return err
 	}
