@@ -101,7 +101,11 @@ type Settings struct {
 	// OnOverflow is the resolved F4 degradation policy (plan 19.10) —
 	// chunk/truncate/fallback/fail — dispatched by internal/fanout when a payload
 	// exceeds budget (see Task 04). Resolved once here, like ReviewStrategy.
-	OnOverflow  string
+	OnOverflow string
+	// SecretGuard is the resolved payload-egress secret-guard policy (Epic
+	// 35.20) — off/warn/redact/block — applied by internal/fanout to each review
+	// prompt before dispatch. Resolved once here, like OnOverflow.
+	SecretGuard string
 	TimeoutSecs int
 	// PayloadByteBudget is the per-payload byte budget fed to
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
@@ -185,6 +189,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		PayloadMode:        DefaultPayloadMode,
 		ReviewStrategy:     DefaultReviewStrategy,
 		OnOverflow:         DefaultOnOverflow,
+		SecretGuard:        DefaultSecretGuard,
 		TimeoutSecs:        DefaultTimeoutSecs,
 		PayloadByteBudget:  DefaultPayloadByteBudget,
 		MaxParallel:        DefaultMaxParallel,
@@ -253,6 +258,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		if v := strings.TrimSpace(reg.OnOverflow); v != "" {
 			s.OnOverflow = v
 		}
+		// SecretGuard (Epic 35.20) lives at the registry and project tiers only,
+		// like OnOverflow. Empty/whitespace is "unset" and falls through.
+		if v := strings.TrimSpace(reg.SecretGuard); v != "" {
+			s.SecretGuard = v
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
@@ -277,6 +287,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		if v := strings.TrimSpace(proj.OnOverflow); v != "" {
 			s.OnOverflow = v
+		}
+		if v := strings.TrimSpace(proj.SecretGuard); v != "" {
+			s.SecretGuard = v
 		}
 	}
 
@@ -392,6 +405,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// value so internal/fanout never receives an unknown policy.
 	if !onOverflowValid(s.OnOverflow) {
 		return Settings{}, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", s.OnOverflow)
+	}
+	// SecretGuard (Epic 35.20): same post-resolution re-check, so a
+	// directly-constructed proj/reg never hands internal/fanout an unknown policy.
+	if !secretGuardValid(s.SecretGuard) {
+		return Settings{}, fmt.Errorf("invalid secret_guard '%s': must be one of %s", s.SecretGuard, secretGuardAllowed)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never
