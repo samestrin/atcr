@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // mf builds a per-source finding with the merge-relevant fields.
 func mf(sev, file string, line int, problem, fix, category string, est int, evidence, reviewer string) Finding {
@@ -194,4 +197,53 @@ func TestMerge_VerificationNotPropagated(t *testing.T) {
 	if merged.Verification != nil {
 		t.Errorf("Merge must not propagate Verification (TD-005: stamped post-reconcile by caller), got %+v", merged.Verification)
 	}
+}
+
+func TestMerge_SourceCategoriesKeepEachSourcesOwnWord(t *testing.T) {
+	// A mixed-category cluster: the modal Category is the cluster's vote, and
+	// SourceCategories keeps what each source finding itself said, in group
+	// order, so a consumer that needs a lens's own word can still read it.
+	m := Merge([]Finding{
+		mf("HIGH", "a.go", 1, "p", "f", " Security ", 10, "e1", "bruce"),
+		mf("HIGH", "a.go", 1, "p", "f", "performance", 10, "e2", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "performance", 10, "e3", "kai"),
+	})
+	eq(t, m.Category, "performance", "modal category is unchanged")
+	deepEq(t, m.SourceCategories, []SourceCategory{
+		{Reviewer: "bruce", Category: "security"},
+		{Reviewer: "greta", Category: "performance"},
+		{Reviewer: "kai", Category: "performance"},
+	}, "each source keeps its own canonicalized category")
+}
+
+func TestMerge_SourceCategoriesNormalizeReviewerLikeReviewers(t *testing.T) {
+	// The reviewer on a SourceCategory is normalized exactly as Reviewers is (the
+	// no-comma invariant), so the two can be matched by string equality.
+	m := Merge([]Finding{
+		mf("HIGH", "a.go", 1, "p", "f", CategoryOutOfScope, 10, "e1", "br,uce"),
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e2", "greta"),
+	})
+	eq(t, m.Category, "security", "fail-closed modal still drops out-of-scope")
+	deepEq(t, m.SourceCategories, []SourceCategory{
+		{Reviewer: "bruce", Category: CategoryOutOfScope},
+		{Reviewer: "greta", Category: "security"},
+	}, "a source's out-of-scope word survives beside the modal value")
+}
+
+func TestMerged_SourceCategoriesNotOnTheWire(t *testing.T) {
+	// SourceCategories is in-process provenance: a reconciled finding must
+	// serialize exactly as it did before the field existed.
+	m := Merge([]Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e1", "bruce"),
+		mf("HIGH", "a.go", 1, "p", "f", "performance", 10, "e2", "greta"),
+	})
+	got, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(m.Finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, string(got), string(want), "Merged marshals as its Finding alone")
 }
