@@ -257,7 +257,7 @@ func TestConsensusSingletonAt_Bar(t *testing.T) {
 		{ConfidenceVerified, ConfMedium, false},
 	}
 	for _, c := range cases {
-		got := consensusSingletonAt(Merged{Finding{Confidence: c.confidence}}, c.floor)
+		got := consensusSingletonAt(Merged{Finding: Finding{Confidence: c.confidence}}, c.floor)
 		eq(t, got, c.wantSingleton, c.confidence+" at floor "+c.floor)
 	}
 }
@@ -271,7 +271,7 @@ func TestConsensusSingletonAt_Bar(t *testing.T) {
 func TestConsensusSingletonAt_UnrecognizedFloorKeeps(t *testing.T) {
 	for _, floor := range []string{"", "bogus"} {
 		for _, conf := range []string{ConfLow, ConfMedium, ConfHigh, ConfidenceVerified} {
-			isTrue(t, !consensusSingletonAt(Merged{Finding{Confidence: conf}}, floor),
+			isTrue(t, !consensusSingletonAt(Merged{Finding: Finding{Confidence: conf}}, floor),
 				conf+" at unrecognized floor must not be a drop candidate")
 		}
 	}
