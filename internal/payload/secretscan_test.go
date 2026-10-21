@@ -44,7 +44,8 @@ func plantedPayload() string {
 
 // fakeGitleaksScript stands in for the gitleaks binary. It records its argv
 // and stdin, then behaves per FAKE_GITLEAKS_MODE: print the canned report
-// (default), exit non-zero, print non-JSON, or hang past the timeout.
+// (default), exit non-zero, print non-JSON, hang past the timeout, or hang
+// in a forked child that keeps stdout open after the shell is killed.
 const fakeGitleaksScript = `#!/bin/sh
 printf '%s\n' "$*" > "$FAKE_GITLEAKS_DIR/args"
 cat > "$FAKE_GITLEAKS_DIR/stdin"
@@ -52,6 +53,7 @@ case "$FAKE_GITLEAKS_MODE" in
   fail) echo "boom" >&2; exit 2 ;;
   badjson) echo "not json"; exit 0 ;;
   hang) exec sleep 30 ;;
+  hangchild) sleep 30 & wait ;;
 esac
 cat "$FAKE_GITLEAKS_DIR/report.json"
 `
@@ -307,17 +309,29 @@ func TestScanPayload_GitleaksFailureFallsBackToBuiltin(t *testing.T) {
 		name   string
 		mode   string
 		report []fakeFinding
+		// script, when set, replaces the fake binary's contents.
+		script string
 	}{
 		{name: "non-zero exit", mode: "fail"},
 		{name: "bad json", mode: "badjson"},
 		{name: "timeout", mode: "hang"},
+		// Killing the shell leaves the sleep child holding stdout; only
+		// WaitDelay stops Wait from blocking for the child's full 30s.
+		{name: "timeout with child holding stdout", mode: "hangchild"},
+		// Run fails without an ExitError: the kernel cannot start it.
+		{name: "cannot start", script: "#!/nonexistent/interpreter\n"},
 		// A finding whose Secret is nowhere in the payload cannot be
 		// redacted, so the result is not trustworthy either.
 		{name: "unlocatable secret", report: []fakeFinding{{RuleID: "fake", Secret: "not-in-the-payload"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			installFakeGitleaks(t, tc.mode, tc.report)
+			dir := installFakeGitleaks(t, tc.mode, tc.report)
+			if tc.script != "" {
+				if err := os.WriteFile(filepath.Join(dir, "gitleaks"), []byte(tc.script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			prev := gitleaksTimeout
 			gitleaksTimeout = 300 * time.Millisecond
 			t.Cleanup(func() { gitleaksTimeout = prev })
@@ -366,6 +380,40 @@ func TestRedactSecrets_ReplacesEachSpanWithPlaceholder(t *testing.T) {
 	for _, keep := range []string{"const port = 8080", "port=8080", "fmt.Println(user.email)", "awsKey := \""} {
 		if !strings.Contains(out, keep) {
 			t.Errorf("redaction removed surrounding code %q: %q", keep, out)
+		}
+	}
+}
+
+func TestBuiltinRules_PEMBodyAtEndOfTextWithoutNewline(t *testing.T) {
+	// The last key-material line has no trailing newline: the span must
+	// still run to the end of the text.
+	text := "+" + pemBegin + "\n+" + pemBody
+	hits := scanBuiltin(text)
+	if len(hits) != 1 || hits[0].End != len(text) {
+		t.Fatalf("hits = %+v, want one private-key span ending at %d", hits, len(text))
+	}
+}
+
+func TestDedupeHits_OrdersBySpanThenKindAndDropsDuplicates(t *testing.T) {
+	got := dedupeHits([]SecretHit{
+		{Kind: "b", Start: 2, End: 9},
+		{Kind: "a", Start: 2, End: 5},
+		{Kind: "b", Start: 2, End: 5},
+		{Kind: "a", Start: 2, End: 5},
+		{Kind: "a", Start: 0, End: 1},
+	})
+	want := []SecretHit{
+		{Kind: "a", Start: 0, End: 1},
+		{Kind: "a", Start: 2, End: 5},
+		{Kind: "b", Start: 2, End: 5},
+		{Kind: "b", Start: 2, End: 9},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("dedupeHits = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("dedupeHits = %+v, want %+v", got, want)
 		}
 	}
 }
