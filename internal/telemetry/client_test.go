@@ -788,3 +788,17 @@ func TestClient_Send_ReachesLoopbackHTTPEndpoint(t *testing.T) {
 		t.Fatalf("loopback http endpoint hits = %d, want 1", n)
 	}
 }
+
+// TestClient_UsageEndpoint pins the accessor the startup audit log and the
+// first-run disclosure read: it reports the usage-ping destination the client
+// was built with (never the quality-signal one), and is nil-safe.
+func TestClient_UsageEndpoint(t *testing.T) {
+	c := NewWithQualitySignal("https://collector.internal/usage", "https://quality.test/ingest")
+	if got := c.UsageEndpoint(); got != "https://collector.internal/usage" {
+		t.Errorf("UsageEndpoint() = %q, want the usage destination", got)
+	}
+	var nilClient *Client
+	if got := nilClient.UsageEndpoint(); got != "" {
+		t.Errorf("nil UsageEndpoint() = %q, want empty", got)
+	}
+}
