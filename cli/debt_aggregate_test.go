@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -624,4 +625,37 @@ func TestSummarizeDebt_LiveIsNotLenTop(t *testing.T) {
 	out := renderDebtDashboard(debtAllStatusRecords(), 0)
 	assert.Contains(t, out, "_(top list suppressed)_",
 		"a suppressed list must not be reported as an empty backlog")
+}
+
+// TestDebtIsLiveStatus_AgreesWithDebtIsLiveOnEveryStatus pins Design Decision 3
+// of epic 35.21: the summary path decides liveness through debtIsLiveStatus and
+// the record path through debtIsLive, so the two must never disagree. The table
+// names every status localdebt declares plus the spellings the store actually
+// carries (the empty canonical open, case and whitespace variants) and garbage,
+// and states the expected answer outright so the pair cannot agree on a wrong one.
+func TestDebtIsLiveStatus_AgreesWithDebtIsLiveOnEveryStatus(t *testing.T) {
+	cases := []struct {
+		status string
+		live   bool
+	}{
+		{"", true},
+		{statusOpen, true},
+		{localdebt.StatusResolved, false},
+		{localdebt.StatusDeferred, true},
+		{localdebt.StatusWontfix, false},
+		{localdebt.StatusUnreproducible, false},
+		{localdebt.StatusAttemptsExhausted, true},
+		{"  RESOLVED ", false},
+		{"Wontfix", false},
+		{"Attempts-Exhausted", true},
+		{"attempts_exhausted", true}, // not rescued by normalization: off-enum, so live
+		{"garbage", true},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%q", tc.status), func(t *testing.T) {
+			r := mkDebtRecord(tc.status, "HIGH", "a/b.go", 1, "2026-07-01")
+			assert.Equal(t, tc.live, debtIsLiveStatus(tc.status), "core")
+			assert.Equal(t, debtIsLiveStatus(tc.status), debtIsLive(r), "record wrapper must agree with the core")
+		})
+	}
 }
