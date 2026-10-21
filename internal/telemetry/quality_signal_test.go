@@ -213,3 +213,21 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 		t.Errorf("non-persona fields must pass through unchanged, got %+v", qs)
 	}
 }
+
+// TestNewQualitySignal_UnsafeModelSentEmpty locks epic 35.17 AC6 for the quality
+// signal: the unhashed model is validated at the payload boundary, so a slug that
+// is not a plain catalog identifier is sent as an empty model.
+func TestNewQualitySignal_UnsafeModelSentEmpty(t *testing.T) {
+	for _, m := range []string{"claude sonnet", "a\nb", strings.Repeat("a", 129), "a,b", "clàude"} {
+		got := NewQualitySignal("bruce", m, 2, 1)
+		if got.Model != "" {
+			t.Errorf("model %q must be sent empty, got %q", m, got.Model)
+		}
+		if got.PersonaIDHash == "" || got.DismissedCount != 2 || got.ConfirmedCount != 1 {
+			t.Errorf("model validation must not touch the other fields: %+v", got)
+		}
+	}
+	if got := NewQualitySignal("bruce", "openai/gpt-4o", 0, 0); got.Model != "openai/gpt-4o" {
+		t.Errorf("valid slug must pass through, got %q", got.Model)
+	}
+}
