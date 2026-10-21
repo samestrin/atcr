@@ -91,29 +91,17 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// durable (see reviewerCategories' vocabulary gate), so the two
 			// entry points cannot disagree about it.
 			//
-			// READ THE MEANING, it is not the obvious one. m is a
-			// reconcile.Merged, whose Category is ModalCategory(group) — the
-			// CLUSTER's modal value, not this reviewer's own word. In a cluster
-			// where one lens said `security` and two said `performance`, the
-			// merged category is `performance` and the first lens's own term is
-			// unrecoverable from res.Findings. This threading therefore adopts
-			// the cluster-modal meaning EXPLICITLY, which is sound for the only
-			// consumer: opportunity-set membership unions the categories across
-			// every reviewer on the case and asks "was this topic in play",
-			// which the modal value answers faithfully. It would NOT be sound
-			// for a per-reviewer claim about what that lens personally raised,
-			// and nothing may read it as one.
+			// m.Category is Merge's CLUSTER-modal value; SourceCategories is
+			// what each source finding itself said. reviewerCategories reads a
+			// reviewer's own SourceCategories entries, so a lens whose word lost
+			// the cluster vote still records that word, and Category is only the
+			// fallback for a Merged built without provenance.
 			//
-			// DEFERRED (2026-09-22 clarification): carrying the per-source
-			// category alongside the modal one is NOT fixable here. Option (a)
-			// threads it through reconcile.Merged — a published-module change
-			// (tag-cut + pin-bump) reserved for TD-039's sprint per C22/D3.
-			// Option (b), passing the pre-merge group to this bridge, is
-			// impossible as stated: reconcile.Merged is struct{Finding} only
-			// (reconcile/merge.go), so the pre-merge group is not retained. No
-			// consumer needs per-source category today; this annotation is the
-			// record of that deferral.
-			Category: m.Category,
+			// Normalising to the modal value instead was considered and
+			// REJECTED: it is a no-op on the production singleton shape, and on
+			// a gray-pair tie it stamps a reviewer with a word it never said.
+			Category:         m.Category,
+			SourceCategories: m.SourceCategories,
 			// Threaded at THIS site ONLY, and the asymmetry with Category just
 			// above is deliberate rather than an oversight. reviewerPairSignals
 			// reads in.Findings and nothing else, so these two values are dead
@@ -179,8 +167,11 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 			// nowhere else, so skipping it here would give exactly the lenses
 			// that produced nothing but phantoms an empty category set — and an
 			// empty set reads as out-of-remit, quietly excusing them from the
-			// denominator this store exists to charge.
-			Category: u.Category,
+			// denominator this store exists to charge. SourceCategories rides
+			// along for the same reason as on the primary stream: a routed
+			// cluster's lenses keep their own words.
+			Category:         u.Category,
+			SourceCategories: u.SourceCategories,
 		})
 		for _, name := range names {
 			if _, ok := reviewers[name]; !ok {
@@ -213,10 +204,12 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	// gray-zone PAIRS. Gray-pair members are guarded out of the noise exclusion,
 	// so they also reach res.Findings — meaning one finding can contribute a
 	// category here AND there. That is harmless to the value (CategoriesRaised is
-	// a deduped set) but not to its meaning: the res.Findings copy carries
-	// Merge's cluster-MODAL category while this copy carries the reviewer's own
-	// raw word, so the set can gain both. The field's documented meaning is
-	// modal; this mixed provenance is filed as TD-035.
+	// a deduped set), and since Epic 35.16.11.3.1 not to its meaning either:
+	// the res.Findings copy reads the reviewer's own word from
+	// Merged.SourceCategories, the same raw word this copy carries (TD-035).
+	// These entries are NOT normalised to the cluster's modal value: that is a
+	// no-op on a singleton, and on a gray-pair tie the alphabetical tiebreak
+	// would stamp one reviewer with the other's word.
 	//
 	// Reviewers are NOT registered from this stream, deliberately. A reviewer
 	// reachable only through a filtered cluster gets no record: that would be a
