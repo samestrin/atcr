@@ -247,3 +247,115 @@ func TestMerged_SourceCategoriesNotOnTheWire(t *testing.T) {
 	}
 	eq(t, string(got), string(want), "Merged marshals as its Finding alone")
 }
+
+// Epic 35.16.17 T2: Merge discounts the panel-wide-instruction class. Reviewer
+// count alone does not make the class HIGH; the discounted finding lands at
+// MEDIUM and is kept.
+
+func fivePredicateFindings() []Finding {
+	var g []Finding
+	for _, r := range []string{"bruce", "greta", "kai", "mira", "otto"} {
+		g = append(g, predicateFinding(r, CategoryInvariant, "key.go", siblingQuote))
+	}
+	return g
+}
+
+func TestMerge_PanelWideClassIsDiscountedToMedium(t *testing.T) {
+	m := Merge(fivePredicateFindings())
+	if m.Confidence != ConfMedium {
+		t.Fatalf("five reviewers filing one predicate finding: confidence = %q, want %q", m.Confidence, ConfMedium)
+	}
+	if len(m.Reviewers) != 5 {
+		t.Fatalf("reviewers = %v, want all five kept", m.Reviewers)
+	}
+}
+
+func TestMerge_IndependentInvariantCorroborationStaysHigh(t *testing.T) {
+	cases := map[string][]Finding{
+		"distinct files": {
+			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
+			predicateFinding("kai", CategoryInvariant, "hash.go", siblingQuote),
+		},
+		"distinct evidence": {
+			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
+			predicateFinding("kai", CategoryInvariant, "key.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }"),
+		},
+	}
+	for name, g := range cases {
+		if got := Merge(g).Confidence; got != ConfHigh {
+			t.Errorf("%s: confidence = %q, want %q", name, got, ConfHigh)
+		}
+	}
+}
+
+func TestMerge_NonInvariantAgreementStaysHigh(t *testing.T) {
+	g := []Finding{
+		predicateFinding("bruce", CategoryCorrectness, "key.go", siblingQuote),
+		predicateFinding("kai", CategoryCorrectness, "key.go", siblingQuote),
+	}
+	if got := Merge(g).Confidence; got != ConfHigh {
+		t.Fatalf("confidence = %q, want %q", got, ConfHigh)
+	}
+}
+
+func TestConfidenceForCategory(t *testing.T) {
+	cases := []struct {
+		name        string
+		count       int
+		category    string
+		independent bool
+		want        string
+	}{
+		{"single reviewer", 1, CategoryInvariant, false, ConfMedium},
+		{"zero reviewers", 0, CategoryInvariant, true, ConfMedium},
+		{"correlated invariant agreement", 5, CategoryInvariant, false, ConfMedium},
+		{"category matched case-insensitively", 2, " Invariant ", false, ConfMedium},
+		{"independent invariant agreement", 2, CategoryInvariant, true, ConfHigh},
+		{"correlated agreement outside the class", 3, CategoryCorrectness, false, ConfHigh},
+		{"independent agreement outside the class", 2, CategoryCorrectness, true, ConfHigh},
+	}
+	for _, c := range cases {
+		if got := ConfidenceForCategory(c.count, c.category, c.independent); got != c.want {
+			t.Errorf("%s: ConfidenceForCategory(%d, %q, %v) = %q, want %q",
+				c.name, c.count, c.category, c.independent, got, c.want)
+		}
+		if c.independent || c.category != CategoryInvariant {
+			if got, want := ConfidenceForCategory(c.count, c.category, c.independent), ConfidenceFor(c.count); got != want {
+				t.Errorf("%s: outside the class must equal ConfidenceFor: got %q, want %q", c.name, got, want)
+			}
+		}
+	}
+}
+
+// The consensus filter sidecars a finding below HIGH on a 3+ reviewer panel. A
+// discounted finding is MEDIUM but corroborated by 2+ reviewers, so it is not an
+// uncorroborated singleton and must reach Findings, never the sidecar.
+func TestReconcile_PanelWideFindingIsKeptAtMedium(t *testing.T) {
+	var sources []Source
+	for _, f := range fivePredicateFindings() {
+		sources = append(sources, Source{Name: f.Reviewer, Findings: []Finding{f}})
+	}
+	for _, level := range []string{"", ConsensusStrict, ConsensusLenient, ConsensusOff} {
+		res := Reconcile(sources, Options{Consensus: level})
+		if len(res.Findings) != 1 {
+			t.Fatalf("consensus %q: findings = %d, want 1 (ambiguous: %d)", level, len(res.Findings), len(res.Ambiguous))
+		}
+		got := res.Findings[0]
+		if got.Confidence != ConfMedium || len(got.Reviewers) != 5 {
+			t.Fatalf("consensus %q: confidence = %q reviewers = %v, want MEDIUM with all five", level, got.Confidence, got.Reviewers)
+		}
+		if res.Summary.ConsensusFiltered != 0 {
+			t.Fatalf("consensus %q: ConsensusFiltered = %d, want 0", level, res.Summary.ConsensusFiltered)
+		}
+	}
+}
+
+// A singleton is never in the class, so ConfidenceForCategory leaves it at
+// MEDIUM and promoteByAuthority may still lift it to HIGH.
+func TestPromoteByAuthority_InvariantSingletonStillPromoted(t *testing.T) {
+	base := Merge([]Finding{predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote)})
+	m := promoteByAuthority(base, map[string]float64{"bruce": 0.6, "kai": 0.4}, 0.5)
+	if m.Confidence != ConfHigh {
+		t.Fatalf("authority-promoted invariant singleton: confidence = %q, want %q", m.Confidence, ConfHigh)
+	}
+}
