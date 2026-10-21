@@ -299,6 +299,43 @@ func TestMerge_NonInvariantAgreementStaysHigh(t *testing.T) {
 	}
 }
 
+// Epic 35.16.17 T3: Merge records why it discounted, so an embedder can carry
+// the reason onto its own wire record; a finding it did not discount has none.
+func TestMerge_ConfidenceDiscountRecordsTheReason(t *testing.T) {
+	if got := Merge(fivePredicateFindings()).ConfidenceDiscount; got != PanelWideReason {
+		t.Fatalf("discounted group: ConfidenceDiscount = %q, want PanelWideReason", got)
+	}
+	undiscounted := map[string][]Finding{
+		"independent invariant": {
+			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
+			predicateFinding("kai", CategoryInvariant, "hash.go", siblingQuote),
+		},
+		"non-invariant": {
+			predicateFinding("bruce", CategoryCorrectness, "key.go", siblingQuote),
+			predicateFinding("kai", CategoryCorrectness, "key.go", siblingQuote),
+		},
+		"singleton": {predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote)},
+	}
+	for name, g := range undiscounted {
+		if got := Merge(g).ConfidenceDiscount; got != "" {
+			t.Errorf("%s: ConfidenceDiscount = %q, want empty", name, got)
+		}
+	}
+}
+
+func TestMerged_ConfidenceDiscountNotOnTheWire(t *testing.T) {
+	m := Merge(fivePredicateFindings())
+	got, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(m.Finding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eq(t, string(got), string(want), "a discounted Merged marshals as its Finding alone")
+}
+
 func TestConfidenceForCategory(t *testing.T) {
 	cases := []struct {
 		name        string

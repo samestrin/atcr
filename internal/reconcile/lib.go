@@ -96,6 +96,29 @@ func HashBytes(data []byte) string { return reclib.HashBytes(data) }
 
 func ConfidenceFor(reviewerCount int) string { return reclib.ConfidenceFor(reviewerCount) }
 
+func ConfidenceForCategory(reviewerCount int, category string, independent bool) string {
+	return reclib.ConfidenceForCategory(reviewerCount, category, independent)
+}
+
+func IsPanelWide(group []Finding) bool { return reclib.IsPanelWide(group) }
+
+// PanelWideReason is the JSONFinding.ConfidenceDiscount value for the
+// panel-wide-instruction discount (Epic 35.16.17), re-exported from the library.
+const PanelWideReason = reclib.PanelWideReason
+
+// discountedConfidence is ConfidenceForCategory plus the reason to record on
+// JSONFinding.ConfidenceDiscount: PanelWideReason when the category rule lowered
+// the confidence below ConfidenceFor(reviewerCount), else empty. It is the rule
+// reclib.Merge applies to Merged.ConfidenceDiscount, so the cluster merge and the
+// fallback recompute record a discount exactly when the library would.
+func discountedConfidence(reviewerCount int, category string, independent bool) (confidence, discount string) {
+	confidence = ConfidenceForCategory(reviewerCount, category, independent)
+	if confidence != ConfidenceFor(reviewerCount) {
+		discount = PanelWideReason
+	}
+	return confidence, discount
+}
+
 // Result is ATCR's reconcile result. It mirrors reclib.Result (its fields are the
 // library types via the aliases above) but is a distinct internal type so the
 // findings.json-producing JSONFindings method can live in this package

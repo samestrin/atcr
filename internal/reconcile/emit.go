@@ -203,6 +203,19 @@ type JSONFinding struct {
 	// Problem is the "(symbol) "-anchored text. omitempty keeps a findings.json
 	// written before this epic byte-identical when re-marshaled.
 	ID string `json:"id,omitempty"`
+	// ConfidenceDiscount is the reason reconcile lowered CONFIDENCE below what the
+	// reviewer count alone earns (Epic 35.16.17): today only the panel-wide-
+	// instruction reason (reclib.PanelWideReason), set when every reviewer filed one
+	// invariant finding in one file with near-identical evidence, so their
+	// agreement was the shared instruction speaking rather than independent
+	// corroboration. It is copied from reclib.Merged.ConfidenceDiscount on the
+	// derived path, recomputed by the cluster merge (MergeJSONFindings) and kept
+	// consistent by the fallback recompute (recomputeFallbackConfidence). It records
+	// the reconcile-time decision: a later verify verdict may restate CONFIDENCE
+	// and leaves this as provenance. Like FixWarning it is ATCR-internal (not a
+	// field on the extracted library Finding). omitempty keeps every undiscounted
+	// finding byte-identical to pre-35.16.17 findings.json.
+	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
 }
 
 // stampFindingIDs sets each record's ID to history.FindingID of its current
@@ -280,6 +293,9 @@ func (r Result) JSONFindings() []JSONFinding {
 			Verification: m.Verification,
 			// Shared, not deep-copied: nothing mutates the provenance after Merge.
 			SourceCategories: m.SourceCategories,
+			// Merge is the only place that can decide the discount (it reads each
+			// member's file and evidence), so the reason is carried, not recomputed.
+			ConfidenceDiscount: m.ConfidenceDiscount,
 			// FixWarning and FixReview intentionally not copied: both are set by the
 			// verify fix phase (executor.go generateFixes) after reconcile, so the
 			// reconcile path owns only the pre-fix merged state.
