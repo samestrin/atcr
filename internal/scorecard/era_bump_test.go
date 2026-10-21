@@ -237,3 +237,33 @@ func TestAggregate_SumsFindingsAmbiguous(t *testing.T) {
 	assert.Equal(t, 2, rows[0].FindingsAmbiguous)
 	assert.Equal(t, 6, rows[0].FindingsRaised)
 }
+
+func TestMergeRoutedEras_FoldsTheShieldIntoEraFourWithoutRelabelling(t *testing.T) {
+	// Era 4 keeps the doc-shield carve-out, so a lens that switched to era 4
+	// must still carry its shielded routings in the trust denominator.
+	r := eraRec("r", "sasha", raisedDenominatorAmbiguousCharged, 2, 2, 1)
+	r.FindingsDocShielded = 2
+	got := mergeRoutedEras([]Record{r})
+	assert.Equal(t, raisedDenominatorAmbiguousCharged, got[0].RaisedDenominator,
+		"era 4 is not era 2, so the prefer-newest pass must still see it as 4")
+	assert.Equal(t, 5, got[0].FindingsRaised, "3 raised (one ambiguous) plus 2 shielded")
+	assert.Equal(t, 0, got[0].FindingsDocShielded)
+	assert.Equal(t, 3, got[0].FindingsSolo)
+	assert.InDelta(t, 0.4, got[0].CorroborationRate, 1e-9)
+}
+
+func TestTrustPriors_FoldedEraFourKeepsTheShieldInTheDenominator(t *testing.T) {
+	// Below the floor the era-4 record is read as era 3 and then folded on to
+	// era 2, shield included.
+	dir := t.TempDir()
+	appendEra(t, dir, 30, "old", "gamer", raisedDenominatorRoutedExShield, 2, 2, 0)
+	r := eraRec("2026-08-09T00:00:00Z-new", "gamer", raisedDenominatorAmbiguousCharged, 2, 2, 3)
+	r.FindingsDocShielded = 2
+	require.NoError(t, Append(dir, r))
+
+	priors, err := TrustPriors(dir, DefaultTrustMinRuns)
+	require.NoError(t, err)
+	require.Contains(t, priors, "gamer")
+	assert.InDelta(t, 62.0/64.0, priors["gamer"], 1e-9,
+		"31 runs of 2 corroborated; the era-4 run's 2 shielded join the denominator and its 3 charges do not yet")
+}

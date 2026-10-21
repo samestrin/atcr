@@ -104,6 +104,11 @@ const DefaultTrustMinRuns = 20
 // two eras arithmetically equivalent for THIS denominator?) has to be answered
 // again before extending mergeRoutedEras to it.
 //
+// The 3-to-4 bump (charge rule B) was that bump. The two eras are NOT
+// equivalent, so mergeRoutedEras was not extended to it: foldAmbiguousChargeEra
+// reads a lens's era-4 records as era 3 until the lens holds DefaultTrustMinRuns
+// of them, which keeps every lens's window across the bump.
+//
 // Narrowing this value requires redoing the min-runs measurement above
 // (TestDefaultTrustWindow_NotNarrowedWithoutRemeasurement pins the constant
 // against its own literal, so it can only catch a deliberate narrowing — it
@@ -256,11 +261,13 @@ type GroundTruthLookup func(since time.Duration, now time.Time) (map[string]Conf
 //     opportunity-shrunk record set.
 //   - scrubForgedCredit before mergeRoutedEras: the last point at which the
 //     honest ceiling is computable.
+//   - foldAmbiguousChargeEra before mergeRoutedEras, so an era-4 record it
+//     maps onto era 3 is folded on to era 2 with the rest of the window.
 //
 // The input slice is never mutated.
 func keptForTrust(records []Record) []Record {
 	unions := opportunityUnions(records)
-	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(scrubForgedCredit(eligibleOutcomeRuns(strictRuns(records))))), unions)
+	return opportunitySetRuns(unresolvedEraRuns(mergeRoutedEras(foldAmbiguousChargeEra(scrubForgedCredit(eligibleOutcomeRuns(strictRuns(records)))))), unions)
 }
 
 // maxPerFindingCredit is the largest credit any single finding can contribute,
@@ -852,6 +859,13 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // The laundering route is narrower than before this fold existed, not closed.
 // Filed as TD-036.
 //
+// ERA 4 gets the shield half of the fold and NOT the relabel. It keeps era 3's
+// carve-out, so the anti-laundering argument above holds for it unchanged; but
+// it also charges the ambiguous singletons, so it is not era 2 and must stay
+// distinguishable to the prefer-newest pass. Only a lens that has switched to
+// era 4 reaches this arm with one: below the floor foldAmbiguousChargeEra has
+// already mapped its era-4 records onto era 3.
+//
 // Era 1 is deliberately NOT merged. It EXCLUDES routed findings from
 // FindingsRaised rather than partitioning them, so its denominator covers a
 // smaller finding set and blending it in would compare two different quantities —
@@ -893,23 +907,124 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // TestMergeRoutedEras_PinsEveryElementOfItsGuard kills a mutation of each element
 // below; TestTrustPriors_AboveCurrentRecordsNeverReachThePrior pins the
 // consequence of the era arm on the prior itself.
+// foldAmbiguousChargeEra keeps the era-4 bump (charge rule B) from blacking
+// out a lens's trust window, and it does it by holding the lens on era 3 until
+// era 4 can carry the floor on its own.
+//
+// THE BLACKOUT IT PREVENTS. unresolvedEraRuns keeps only a reviewer's newest
+// era, so the day a lens writes its first era-4 record every era-3 record it
+// holds is superseded: a lens with a hundred runs is left with one, falls under
+// DefaultTrustMinRuns, and leaves the priors map, which silently disables
+// trustExempt and demoteByTrust for it (see defaultTrustWindow). For the 2-to-3
+// bump mergeRoutedEras removed that step for good, because the two eras
+// partition one finding set. This pair does not.
+//
+// WHY THE FOLD IS ONE-WAY AND TRANSITIONAL. An era-4 record minus its
+// FindingsAmbiguous is exactly the era-3 record the same run would have
+// written: rule B adds each charged singleton to FindingsRaised and
+// FindingsSolo and nowhere else, earns it no corroboration and no credit, and
+// the ambiguous stream fed CategoriesRaised under both rules. So 4-to-3 is
+// lossless. 3-to-4 is not computable: era 3 never counted the stream, so the
+// charge an old run would have carried is not on its record. Folding 4 into 3
+// for good would make the trust prior blind to rule B, which is the reason
+// rule B exists (TD-048). Leaving 4 unfolded is the blackout. So a reviewer's
+// era-4 records are read as era 3 while it holds fewer than
+// DefaultTrustMinRuns of them on this input, and are left as era 4 once it
+// holds that many; the prefer-newest pass then drops its era-3 records, and
+// its window is already at the floor. Its prior is read under ONE definition
+// throughout, never a blend: era 3 before the switch, era 4 after.
+//
+// The cost, stated plainly: until a lens has DefaultTrustMinRuns era-4 runs
+// in the window, its prior does not see rule B's charge. That is the prior it
+// had before the bump, not a new error, and it is the price of keeping the
+// lens in the map. The switch is a one-time step for each lens, the same
+// honest cost unresolvedEraRuns describes for every era change.
+//
+// THE COUNT is taken on this function's input, after strictRuns and the
+// outcome gate, and per normalized reviewer, matching the run tally the floor
+// is applied to. It is DefaultTrustMinRuns and not the caller's minRuns because
+// the chain does not receive minRuns and every production caller passes the
+// default. Two links after the chain can still shrink the era-4 set below the
+// count: opportunitySetRuns, and the per-persona model filter in
+// ratesFromRecords. A lens whose era-4 runs are split across models can
+// switch on twenty and then keep fewer. Both filters drop records under either
+// era, so this is a narrowing of the window, not a blend.
+//
+// A rule-B record that a build between T2 and T3 stamped era 3 (a non-zero
+// FindingsAmbiguous, see raisedDenominatorOf) is counted as era 4 and folded
+// or relabelled with the rest, so mergeRoutedEras never sees a charged record
+// under an era-3 stamp.
+//
+// Records above the current era, and non-reviewer records, are left alone,
+// for the reasons mergeRoutedEras gives. The input slice is never mutated.
 func foldAmbiguousChargeEra(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
+	chargedRuns := map[string]int{}
+	for _, r := range out {
+		if ambiguousChargedEra(r) {
+			chargedRuns[normalizeReviewerName(r.Reviewer)]++
+		}
+	}
+	for i := range out {
+		if !ambiguousChargedEra(out[i]) {
+			continue
+		}
+		if chargedRuns[normalizeReviewerName(out[i].Reviewer)] >= DefaultTrustMinRuns {
+			out[i].RaisedDenominator = raisedDenominatorAmbiguousCharged
+			continue
+		}
+		// clampNonNeg: a hand-edited record can claim more charges than raises.
+		out[i].FindingsRaised = clampNonNeg(out[i].FindingsRaised - out[i].FindingsAmbiguous)
+		out[i].FindingsSolo = clampNonNeg(out[i].FindingsSolo - out[i].FindingsAmbiguous)
+		out[i].FindingsAmbiguous = 0
+		out[i].RaisedDenominator = raisedDenominatorRoutedExShield
+		out[i].CorroborationRate = ratio(out[i].FindingsCorroborated, out[i].FindingsRaised)
+	}
 	return out
+}
+
+// ambiguousChargedEra reports whether r is a reviewer record written under
+// charge rule B, by its raw stamp or by an era-3 stamp over a charged count.
+// The raw field, not raisedDenominatorOf, so an above-current record is never
+// clamped into era 4.
+func ambiguousChargedEra(r Record) bool {
+	if r.RecordType != RecordTypeReviewer {
+		return false
+	}
+	return r.RaisedDenominator == raisedDenominatorAmbiguousCharged ||
+		(r.RaisedDenominator == raisedDenominatorRoutedExShield && r.FindingsAmbiguous > 0)
 }
 
 func mergeRoutedEras(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)
 	for i := range out {
-		if out[i].RecordType != RecordTypeReviewer || out[i].RaisedDenominator != raisedDenominatorRoutedExShield {
+		if out[i].RecordType != RecordTypeReviewer {
+			continue
+		}
+		switch {
+		case out[i].RaisedDenominator == raisedDenominatorAmbiguousCharged:
+			// Era 4 keeps era 3's doc-shield carve-out, so the anti-laundering
+			// half of this fold applies to it too: without it a lens that
+			// switched to era 4 (see foldAmbiguousChargeEra) would launder
+			// phantoms out of its prior through the shield again. The label
+			// stays 4 — era 4 is NOT equivalent to era 2, and the prefer-newest
+			// pass must still tell them apart. Inside the trust chain an era-4
+			// record therefore reads "era 4 with the shield folded in".
+		case out[i].RaisedDenominator == raisedDenominatorRoutedExShield && out[i].FindingsAmbiguous == 0:
+			// A charged ambiguous count under an era-3 stamp is a rule-B record
+			// (see raisedDenominatorOf). The 3-to-2 proof is about records that
+			// charged no singleton, so that one is not folded here;
+			// foldAmbiguousChargeEra runs first on the trust chain and never
+			// hands one over.
+			out[i].RaisedDenominator = raisedDenominatorAllRouted
+			out[i].RaisedIncludesUnresolved = true
+		default:
 			continue
 		}
 		out[i].FindingsRaised += out[i].FindingsDocShielded
 		out[i].FindingsDocShielded = 0
-		out[i].RaisedDenominator = raisedDenominatorAllRouted
-		out[i].RaisedIncludesUnresolved = true
 		// The two fields DERIVED from FindingsRaised move with it, or the record
 		// contradicts itself. A doc-shielded finding was routed, so it is
 		// uncorroborated by construction and belongs in solo — which makes these
@@ -1305,8 +1420,10 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// member through res.Findings — and a doc-shielded finding stays out of both
 	// the count and the set, as before.
 	//
-	// This changes what FindingsRaised counts, so RaisedDenominator has to move
-	// with it; that bump is T3 of the same epic, not this change.
+	// This changes what FindingsRaised counts, so RaisedDenominator moved with
+	// it: rule-B records are era 4 (T3 of the same epic). foldAmbiguousChargeEra
+	// reads them as era 3 until a lens has DefaultTrustMinRuns of them, so the
+	// charge reaches a lens's prior once era 4 can carry the floor alone.
 	//
 	// WHAT THIS REPEALS, stated plainly rather than left for a reader to infer.
 	// original-requirements.md defines the opportunity set as "a case is in a
