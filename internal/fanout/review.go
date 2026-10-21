@@ -3439,6 +3439,20 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// payload unchanged for a diff-wide review. Because the constraint becomes part
 	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
 	// invalidates correctly when the plan changes (AC5).
+	//
+	// Payload-egress secret guard (Epic 35.20): scan the text bound for the
+	// provider BEFORE it is rendered, so a redaction reaches the prompt, the
+	// diff-cache key and the invocation alike, and every span derived from the
+	// prompt below (payloadStart, the response_format swap) describes the text
+	// actually sent. The claim ledger is part of payloadText (rangebuilder
+	// prepends it as an entry), so commit messages are covered too.
+	guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+		guardSegment{text: scopeConstraint, file: secretScopeLabel},
+		guardSegment{text: payloadText, file: "payload", mode: mode})
+	if err != nil {
+		return Agent{}, err
+	}
+	scopeConstraint, payloadText = guarded[0], guarded[1]
 	pctx := payload.PayloadContext{
 		AgentName:   name,
 		BaseRef:     rng.Base,
@@ -3542,6 +3556,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		chunkMaxLines:          sz.maxLines,
 		swap:                   formatSwap,
 		payloadStart:           payloadStart,
+		secretGuarded:          true,
 		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
 		// + temperature + the per-agent sizing token (Epic 19.10 F7, see
 		// diffCacheKey). Tool agents carry a key too but the engine never caches them
@@ -3951,6 +3966,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// declaration just before return. A hand-built Agent (no renderAgent) carries
 	// a zero span, so the rebuild IS its Prompt.
 	fbPrompt, fbPayloadStart := primary.swap.rebuildUnswapped(primary.Prompt), primary.payloadStart
+	fbGuarded := primary.secretGuarded
 	fbTrunc := primary.Truncation
 	fbCodeContext := primary.CodeContext
 	// The coverage tag follows the payload, so it is copied from the primary here
@@ -4012,6 +4028,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// Unswapped: the re-render ran under refit.primaryConfig, so its
 				// Prompt is swapped on the PRIMARY's flag, not this fallback's.
 				fbPrompt, fbPayloadStart = rp.agent.swap.rebuildUnswapped(rp.agent.Prompt), rp.agent.payloadStart
+				fbGuarded = rp.agent.secretGuarded
 				fbCodeContext = rp.agent.CodeContext
 				fbTrunc = rp.trunc
 				// Compose with the primary's shed record rather than replacing it:
@@ -4115,6 +4132,20 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 			fbDegradation = degradationOverflow
 		}
 	}
+	// Payload-egress secret guard (Epic 35.20), before the swap, the cache key and
+	// the invocation. A prompt rendered by renderAgent (the primary's, or the
+	// re-fit's) already passed it, so scanning it again would only repeat the
+	// primary's warning. An unguarded inherited prompt is scanned whole, split at
+	// fbPayloadStart so a redaction keeps that offset pointing at the payload.
+	if !fbGuarded {
+		guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+			guardSegment{text: fbPrompt[:fbPayloadStart], file: "prompt"},
+			guardSegment{text: fbPrompt[fbPayloadStart:], file: "payload", mode: primary.PayloadMode})
+		if err != nil {
+			return Agent{}, false, err
+		}
+		fbPrompt, fbPayloadStart = guarded[0]+guarded[1], len(guarded[0])
+	}
 	// response_format swap (Sprint 35.16.11.2.1), keyed on the fallback's OWN
 	// declaration on both arms — never the primary's, like SupportsFC.
 	fbPrompt, fbSwap := promptForResponseFormatWithSpan(fbPrompt, fbPayloadStart, ac.ResponseFormat)
@@ -4184,6 +4215,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		chunkMaxLines:          fbMaxLines,
 		swap:                   fbSwap,
 		payloadStart:           fbPayloadStart,
+		secretGuarded:          true,
 		rePacked:               refitted,
 		// The coverage tag of the payload this agent actually reviews (Epic
 		// 35.16.5.4 T3): the primary's chunk when it ships the inherited payload,
