@@ -79,18 +79,18 @@ func TestTrustExempt_Direct(t *testing.T) {
 func TestDemoteByTrust_Direct(t *testing.T) {
 	low := map[string]float64{"flaky": trustLowThreshold}
 
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, low).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, low).Confidence,
 		ConfLow, "a low-trust ConfMedium singleton demotes to ConfLow")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, nil).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: []string{"flaky"}}}, nil).Confidence,
 		ConfMedium, "nil priors is a no-op")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"reliable"}}},
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: []string{"reliable"}}},
 		map[string]float64{"reliable": trustHighThreshold}).Confidence,
 		ConfMedium, "a rate above trustLowThreshold is not demoted")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfHigh, Reviewers: []string{"flaky"}}}, low).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfHigh, Reviewers: []string{"flaky"}}}, low).Confidence,
 		ConfHigh, "a non-ConfMedium finding (already HIGH) is never demoted")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"flaky", "other"}}}, low).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: []string{"flaky", "other"}}}, low).Confidence,
 		ConfMedium, "a 2-reviewer finding is never demoted")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: nil}}, low).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: nil}}, low).Confidence,
 		ConfMedium, "an empty Reviewers slice is guarded before the index access")
 }
 
@@ -106,7 +106,7 @@ func TestTrust_MidRangeRateIsCompleteNoOp(t *testing.T) {
 
 	eq(t, trustExempt(Finding{Confidence: ConfMedium, Reviewers: []string{"mid"}}, mid),
 		false, "a mid-range rate never exempts from the consensus filter")
-	eq(t, demoteByTrust(Merged{Finding{Confidence: ConfMedium, Reviewers: []string{"mid"}}}, mid).Confidence,
+	eq(t, demoteByTrust(Merged{Finding: Finding{Confidence: ConfMedium, Reviewers: []string{"mid"}}}, mid).Confidence,
 		ConfMedium, "a mid-range rate never demotes to ConfLow")
 }
 

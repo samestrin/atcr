@@ -109,9 +109,9 @@ func TestConsensusSingleton_And_PanelReviewers(t *testing.T) {
 	// (MEDIUM or LOW — the latter reachable via epic 35.9's demoteByTrust),
 	// so an authority/verify-promoted HIGH is kept and a ConfLow untrusted singleton
 	// is dropped.
-	isTrue(t, consensusSingletonAt(Merged{Finding{Confidence: ConfMedium}}, ConfHigh), "medium is a singleton")
-	isTrue(t, consensusSingletonAt(Merged{Finding{Confidence: ConfLow}}, ConfHigh), "low is a singleton")
-	isTrue(t, !consensusSingletonAt(Merged{Finding{Confidence: ConfHigh}}, ConfHigh), "high is corroborated, not a singleton")
+	isTrue(t, consensusSingletonAt(Merged{Finding: Finding{Confidence: ConfMedium}}, ConfHigh), "medium is a singleton")
+	isTrue(t, consensusSingletonAt(Merged{Finding: Finding{Confidence: ConfLow}}, ConfHigh), "low is a singleton")
+	isTrue(t, !consensusSingletonAt(Merged{Finding: Finding{Confidence: ConfHigh}}, ConfHigh), "high is corroborated, not a singleton")
 
 	// panelReviewers counts distinct non-empty reviewers across all sources, not
 	// source directories, and ignores unattributed findings.
