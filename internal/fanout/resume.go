@@ -775,6 +775,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	// Read the interrupted run's chunks.json before the engine's ledger
 	// rewrites it, so the reviewed bins it records survive the resume.
 	p.priorChunks = readPriorChunkRecords(poolDir, p.Slots)
+	p.resuming = true
 	results, resumedStage := runEngine(ctx, completer, p, poolDir)
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
@@ -882,7 +883,7 @@ func writeResumedAgents(poolDir string, results []Result, changed payload.Change
 		// (no content produced) and the error is a pure context cancellation
 		// or deadline. These results exist only to satisfy the per-slot Result
 		// contract; writing them would clobber a prior real failure's status.
-		if r.Content == "" && (errors.Is(r.Err, context.Canceled) || errors.Is(r.Err, context.DeadlineExceeded)) {
+		if synthesizedCancel(r) {
 			continue
 		}
 		dir, err := agentDirName(r.Agent)
@@ -890,6 +891,11 @@ func writeResumedAgents(poolDir string, results []Result, changed payload.Change
 			return err
 		}
 		if carried := chunks.carriedFiles(dir); carried != nil {
+			// writeMergedAgent appends to the review.md on disk, so a persona the
+			// early write already merged (Epic 35.16.14.1 T2) is not merged again.
+			if chunks.mergedEarly(dir) {
+				continue
+			}
 			if err := writeMergedAgent(poolDir, dir, r, changed, chunks, carried); err != nil {
 				return err
 			}
@@ -901,6 +907,13 @@ func writeResumedAgents(poolDir string, results []Result, changed payload.Change
 		}
 	}
 	return nil
+}
+
+// synthesizedCancel reports a result the engine stamped for a slot it never
+// invoked because the run was cancelled first: no content, and a pure context
+// cancellation or deadline as its error.
+func synthesizedCancel(r Result) bool {
+	return r.Content == "" && (errors.Is(r.Err, context.Canceled) || errors.Is(r.Err, context.DeadlineExceeded))
 }
 
 // maxAgentFileBytes caps a single per-agent findings file read during pool

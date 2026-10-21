@@ -226,6 +226,27 @@ func (l *chunkLedger) carriedFiles(dir string) map[string]bool {
 	return l.carried[dir]
 }
 
+// markMergedEarly records that runEngine's per-persona hook already merged
+// dir's replayed bins with its resumed ones (Epic 35.16.14.1 T2).
+func (l *chunkLedger) markMergedEarly(dir string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.mergedEarlyDirs == nil {
+		l.mergedEarlyDirs = make(map[string]bool)
+	}
+	l.mergedEarlyDirs[dir] = true
+}
+
+// mergedEarly reports whether markMergedEarly recorded dir.
+func (l *chunkLedger) mergedEarly(dir string) bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.mergedEarlyDirs[dir]
+}
+
 // carriedGapFor returns the never-reviewed gap of one persona's carried bins.
 func (l *chunkLedger) carriedGapFor(dir string) fileGap {
 	l.mu.Lock()

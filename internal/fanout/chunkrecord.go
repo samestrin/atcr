@@ -172,6 +172,9 @@ type chunkLedger struct {
 	// were never reviewed (carriedGap), which the resumed slots' own gap cannot
 	// see because the resume dispatches none of them.
 	carriedGaps map[string]fileGap
+	// mergedEarlyDirs holds the persona dirs whose replayed bins the per-persona
+	// early write already merged (markMergedEarly), under mu.
+	mergedEarlyDirs map[string]bool
 	// failed is the first write failure (writeErr). A failed write may leave no
 	// record at all, which a coverage reader would take for "binned nothing", so
 	// it is kept for the review result instead of only being logged.

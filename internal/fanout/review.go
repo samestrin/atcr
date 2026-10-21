@@ -277,8 +277,13 @@ type PreparedReview struct {
 	// slot resolves, while other personas may still run (Epic 35.16.14.1 T1).
 	// idx lists the persona's slot indices in order and results[k] is slot
 	// idx[k]'s final Result, unmerged. It runs on an engine worker, after the
-	// ledger's hook for that slot, and concurrently for different personas.
+	// ledger's hook for that slot and the persona's early artifact write, and
+	// concurrently for different personas.
 	onPersonaDone func(agent string, idx []int, results []Result)
+	// resuming is set by ExecuteResume, so runEngine's per-persona early write
+	// follows writeResumedAgents' rules rather than WritePool's (Epic
+	// 35.16.14.1 T2).
+	resuming bool
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -1275,10 +1280,18 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		// window (Epic 35.16.14 fix AC1b), which no retry can make fit.
 		opts = append(opts, WithUnitRetry(ledger.retryable, ledger.slotRequeue))
 	}
-	var personaDone func(int, Result)
-	if p.onPersonaDone != nil {
-		personaDone = newPersonaTracker(p.Slots, p.onPersonaDone).slotDone
+	// Each persona's files are written the moment its last slot resolves (Epic
+	// 35.16.14.1 T2), so a live status read sees it finished while slower
+	// personas still run. p.onPersonaDone, a test hook, runs after that write.
+	early := earlyAgentWriter(ctx, p, poolDir)
+	onPersona := early
+	if test := p.onPersonaDone; test != nil {
+		onPersona = func(agent string, idx []int, results []Result) {
+			early(agent, idx, results)
+			test(agent, idx, results)
+		}
 	}
+	personaDone := newPersonaTracker(p.Slots, onPersona).slotDone
 	if hook := composeSlotDone(ledgerDone, personaDone); hook != nil {
 		opts = append(opts, WithSlotDone(hook))
 	}
@@ -1298,9 +1311,28 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	if p.baseline != nil {
 		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
-	// Per-persona file gap (Epic 35.16.13 T6), read from the same raw results for
-	// the same reason; stamped onto the merged records below.
-	gaps := unreviewedFileCounts(ctx, p.Slots, results)
+	results = mergeResults(ctx, p.Slots, results)
+
+	// Classify the run into the manifest's review-stage entry and stamp the
+	// snapshot provenance (nil when no agent ran with tools).
+	stage := reviewStageFor(results)
+	if stage != nil {
+		stage.SnapshotMode = snapMode
+		stage.HeadSHA = snapHeadSHA
+		stage.SnapshotWorktreePath = snapWorktreePath
+	}
+	return results, stage
+}
+
+// mergeResults turns the engine's raw per-slot results into one result per
+// persona, the form every artifact writer takes. runEngine runs it over the
+// whole run after the join and, per persona, the moment that persona's last
+// slot resolves (earlyAgentWriter), so the two writes of a persona's files come
+// from the same merge. slots[i] is results[i]'s slot.
+func mergeResults(ctx context.Context, slots []Slot, results []Result) []Result {
+	// Per-persona file gap (Epic 35.16.13 T6), read from the raw results because
+	// the merge below discards chunk identity; stamped onto the merged records.
+	gaps := unreviewedFileCounts(ctx, slots, results)
 
 	// Chunked strategy (Epic 14.3): a persona fanned out into N chunk-slots comes
 	// back as N results under the same Agent name; collapse them into one result
@@ -1312,8 +1344,8 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// Serial-lane personas run their chunk-slots sequentially, so their true
 	// wall-clock duration is the sum of chunk durations; parallel-lane personas
 	// take the maximum. Pass the serial set so mergeChunkResults can distinguish.
-	serialAgents := make(map[string]bool, len(p.Slots))
-	for _, s := range p.Slots {
+	serialAgents := make(map[string]bool, len(slots))
+	for _, s := range slots {
 		if s.Serial {
 			serialAgents[s.Primary.Name] = true
 		}
@@ -1324,16 +1356,52 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 			results[i].UnreviewedFiles, results[i].DeferredFiles = g.unreviewed, g.deferred
 		}
 	}
+	return results
+}
 
-	// Classify the run into the manifest's review-stage entry and stamp the
-	// snapshot provenance (nil when no agent ran with tools).
-	stage := reviewStageFor(results)
-	if stage != nil {
-		stage.SnapshotMode = snapMode
-		stage.HeadSHA = snapHeadSHA
-		stage.SnapshotWorktreePath = snapWorktreePath
+// earlyAgentWriter is the per-persona completion hook runEngine hands the
+// tracker (Epic 35.16.14.1 T2). It merges the persona's slots exactly as the
+// post-join merge will and writes its review.md, findings and status.json, each
+// atomically and status.json last: a resume reads an ok status.json as a
+// finished persona (CompletedAgents), so a run killed between the writes must
+// never leave one without its findings. The writers after the join (WritePool,
+// writeResumedAgents) rewrite the same files from the same merge. A failed
+// write is logged and left to them; it never fails the run.
+func earlyAgentWriter(ctx context.Context, p *PreparedReview, poolDir string) func(agent string, idx []int, results []Result) {
+	return func(agent string, idx []int, results []Result) {
+		own := make([]Slot, len(idx))
+		for k, i := range idx {
+			own[k] = p.Slots[i]
+		}
+		for _, r := range mergeResults(ctx, own, results) {
+			if err := writeEarlyAgent(poolDir, r, p.Changed, p.chunks, p.resuming); err != nil {
+				log.FromContext(ctx).Warn("early persona artifact write failed; the final pool write retries it", "agent", agent, "err", err)
+			}
+		}
 	}
-	return results, stage
+}
+
+// writeEarlyAgent writes one merged persona the way the post-join writer for
+// this run will: writeResumedAgents' rules on a resume (a synthesized
+// cancellation keeps the prior record, a persona with replayed bins is merged
+// with them), writeAgentArtifacts otherwise. A replayed persona is marked in
+// the ledger so writeResumedAgents does not merge it a second time.
+func writeEarlyAgent(poolDir string, r Result, changed payload.ChangedLines, chunks *chunkLedger, resuming bool) error {
+	if resuming && synthesizedCancel(r) {
+		return nil
+	}
+	dir, err := agentDirName(r.Agent)
+	if err != nil {
+		return err
+	}
+	if carried := chunks.carriedFiles(dir); carried != nil {
+		if err := writeMergedAgent(poolDir, dir, r, changed, chunks, carried); err != nil {
+			return err
+		}
+		chunks.markMergedEarly(dir)
+		return nil
+	}
+	return writeAgentArtifacts(poolDir, dir, r, findingsFor(r, changed))
 }
 
 // composeSlotDone folds the non-nil per-slot hooks into the engine's single
