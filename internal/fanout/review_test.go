@@ -850,18 +850,20 @@ func TestRunEngine_NoHeadToolAgentWarnsUnwired(t *testing.T) {
 // model (the chunked greta bins) answers at once with one finding per file.
 type personaSpeedCompleter struct{ release chan struct{} }
 
+const speedFinding = "HIGH|x.go:1|problem|fix|security|10|evidence"
+
 func (c personaSpeedCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	switch inv.Model {
 	case "m-slow":
 		select {
 		case <-c.release:
-			return "", nil
+			return speedFinding, nil
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
 	case "m-mid":
 		time.Sleep(20 * time.Millisecond)
-		return "", nil
+		return speedFinding, nil
 	}
 	return baselineChunkFindingCompleter{}.Complete(ctx, inv)
 }
