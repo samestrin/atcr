@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -104,11 +105,11 @@ var nowFunc = time.Now
 // shared shape returned to the `atcr status` CLI command and the atcr_status MCP
 // tool so both report identical state.
 //
-// AgentsDone/AgentsPending are completion-granular, not live progress: WritePool
-// persists every per-agent status and summary.json only after the whole fan-out
-// returns, so while a run is in_progress AgentsDone reads 0 and AgentsPending
-// reads the full roster size, then both jump to their final values when
-// summary.json lands.
+// AgentsDone/AgentsPending are live while the fan-out runs (Epic 35.16.14.1
+// T3): each persona writes its status.json the moment its last slot resolves,
+// so with no summary.json yet AgentsDone counts the roster personas with a
+// valid status.json. Once summary.json lands both take its final tally, as
+// before. CurrentStage, CompletedAgents and Agents are additive and omitempty.
 type ReviewStatus struct {
 	ReviewID      string `json:"review_id"`
 	Status        string `json:"status"`
@@ -116,6 +117,41 @@ type ReviewStatus struct {
 	AgentsDone    int    `json:"agents_done"`
 	AgentsPending int    `json:"agents_pending"`
 	Partial       bool   `json:"partial"`
+	// CurrentStage is the latest stage that has finished, never a claim that one
+	// is running: StageFanout while summary.json is absent.
+	CurrentStage string `json:"current_stage,omitempty"`
+	// CompletedAgents is the sorted roster personas with a valid status.json,
+	// whatever outcome it records.
+	CompletedAgents []string `json:"completed_agents,omitempty"`
+	// Agents is one row per roster persona, in roster order.
+	Agents []AgentProgress `json:"agents,omitempty"`
+}
+
+// StageFanout is ReviewStatus.CurrentStage while the fan-out has not written
+// summary.json.
+const StageFanout = "fanout"
+
+// Per-persona states in AgentProgress.State. There is no running state: a lease
+// lives only in memory, so a pending persona may already be mid-run.
+const (
+	AgentPending = "pending"
+	AgentDone    = "done"
+	AgentFailed  = "failed"
+	AgentTimeout = "timeout"
+)
+
+// AgentProgress is one roster persona's row in ReviewStatus.Agents. ChunksTotal
+// and ChunksDone come from the persona's chunks.json; a persona without a
+// trusted one reads as a single chunk, done once its status.json is. A bin
+// counts as done once it resolved (ok, failed or timeout). LastActivityAt is the
+// newest write time of the persona's status.json or chunks.json (RFC 3339, UTC),
+// absent while neither exists.
+type AgentProgress struct {
+	Name           string `json:"name"`
+	State          string `json:"state"`
+	ChunksDone     int    `json:"chunks_done"`
+	ChunksTotal    int    `json:"chunks_total"`
+	LastActivityAt string `json:"last_activity_at,omitempty"`
 }
 
 // ReadReviewStatus reports a review's progress without guessing. A missing
@@ -135,13 +171,17 @@ type ReviewStatus struct {
 //   - manifest.json exists from PrepareReview (scaffold time) through every
 //     finalization rewrite; a genuinely absent manifest is os.ErrNotExist, never
 //     a false in_progress.
-//   - status, partial, and the agent counts derive solely from summary.json. The
-//     only fields taken from the manifest (roster size, StartedAt, timeout_secs)
-//     are written once at scaffold and are stable across the finalizing rewrite
-//     (which mutates Partial and stamps CompletedAt — neither is read here), so
-//     whichever manifest version a reader observes yields the same result. Therefore
-//     no manifest/summary interleaving can produce a torn-pair misreport: every
-//     concurrent read returns a valid state.
+//   - Once summary.json is present, status, partial, and the agent counts derive
+//     solely from it. The only fields taken from the manifest (roster,
+//     StartedAt, timeout_secs) are written once at scaffold and are stable across
+//     the finalizing rewrite (which mutates Partial and stamps CompletedAt —
+//     neither is read here), so whichever manifest version a reader observes
+//     yields the same result. Therefore no manifest/summary interleaving can
+//     produce a torn-pair misreport: every concurrent read returns a valid state.
+//   - The per-persona status.json and chunks.json behind the live counts and the
+//     Agents rows are atomic writes too, and each is read on its own: one that
+//     is corrupt, unreadable or outside the review tree is skipped, never an
+//     error for the whole read.
 func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
 	if err != nil {
@@ -158,6 +198,7 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		AgentCount:    len(m.Roster),
 		AgentsPending: len(m.Roster),
 	}
+	st.Agents, st.CompletedAgents = readAgentProgress(reviewDir, m.Roster)
 
 	// Cap the summary read to prevent an unexpectedly large file from allocating
 	// an unbounded heap slice (item TD: reviewdir.go:340). Any read problem
@@ -187,8 +228,15 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		// file, permission denied, I/O error) is treated the same way: past the
 		// deadline the review is presumed dead regardless of why the completion
 		// signal is unreadable; within the window it stays in_progress.
+		st.AgentsDone = len(st.CompletedAgents)
+		st.AgentsPending = st.AgentCount - st.AgentsDone
+		if st.AgentsPending < 0 {
+			st.AgentsPending = 0
+		}
 		if staleByDeadline(m) {
 			st.Status = RunStale
+		} else {
+			st.CurrentStage = StageFanout
 		}
 		return st, nil
 	}
@@ -242,6 +290,101 @@ func staleByDeadline(m payload.Manifest) bool {
 	}
 	deadline := m.StartedAt.Add(d)
 	return nowFunc().After(deadline)
+}
+
+// readAgentProgress builds one AgentProgress row per roster persona and the
+// sorted names of those with a valid status.json. It visits only roster
+// personas, each at its agentDirName, so a stray directory under raw/agent is
+// never read; a name agentDirName rejects, or a repeat, is left out. Each file
+// must stay inside the review tree once symlinks resolve (pathWithin, the guard
+// resume applies), so a symlinked file, persona dir or raw/agent dir that
+// leaves it is refused; an escaping, unreadable, oversized or corrupt file is
+// skipped and its persona reads as if the file were absent.
+func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []string) {
+	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
+	rows := make([]AgentProgress, 0, len(roster))
+	var completed []string
+	seen := make(map[string]bool, len(roster))
+	for _, name := range roster {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		dir, err := agentDirName(name)
+		if err != nil {
+			continue
+		}
+		row := AgentProgress{Name: name, State: AgentPending, ChunksTotal: 1}
+		var last time.Time
+
+		if data, mod, ok := readContained(reviewDir, filepath.Join(rawDir, dir, statusFile), maxAgentFileBytes); ok {
+			var s AgentStatus
+			if json.Unmarshal(data, &s) == nil && s.Agent == name {
+				if state, known := agentStateFor(s.Status); known {
+					row.State = state
+					row.ChunksDone = 1
+					completed = append(completed, name)
+					last = mod
+				}
+			}
+		}
+
+		if data, mod, ok := readContained(reviewDir, filepath.Join(rawDir, dir, chunksFile), maxChunksBytes); ok {
+			var rec chunkRecord
+			if json.Unmarshal(data, &rec) == nil && rec.SchemaVersion == chunksSchemaVersion && rec.Agent == name && len(rec.Bins) > 0 {
+				row.ChunksTotal = len(rec.Bins)
+				row.ChunksDone = 0
+				for _, b := range rec.Bins {
+					if _, resolved := agentStateFor(b.Outcome); resolved {
+						row.ChunksDone++
+					}
+				}
+				if mod.After(last) {
+					last = mod
+				}
+			}
+		}
+
+		if !last.IsZero() {
+			row.LastActivityAt = last.UTC().Format(time.RFC3339)
+		}
+		rows = append(rows, row)
+	}
+	sort.Strings(completed)
+	return rows, completed
+}
+
+// agentStateFor maps a status.json (or chunks.json bin) outcome to its
+// AgentProgress state; known is false for any other value, which reads as not
+// yet finished.
+func agentStateFor(outcome string) (state string, known bool) {
+	switch outcome {
+	case StatusOK:
+		return AgentDone, true
+	case StatusFailed:
+		return AgentFailed, true
+	case StatusTimeout:
+		return AgentTimeout, true
+	}
+	return "", false
+}
+
+// readContained reads path and its modification time when it resolves inside
+// root and holds at most limit bytes; ok is false otherwise or on any read
+// error.
+func readContained(root, path string, limit int64) ([]byte, time.Time, bool) {
+	if !pathWithin(root, path) {
+		return nil, time.Time{}, false
+	}
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > limit {
+		return nil, time.Time{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, time.Time{}, false
+	}
+	return data, fi.ModTime(), true
 }
 
 // ErrReviewInProgress reports a reconcile/report attempt against a review whose

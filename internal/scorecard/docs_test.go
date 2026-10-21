@@ -471,17 +471,20 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 	assert.Contains(t, flat, "`CASES` column",
 		"the doc names the column an operator reads this on")
 
-	// THE LIMIT OF THE FIX MUST STAY DOCUMENTED. A gate round found that the
-	// 1.00 escape is NOT closed on the production strict path — the phantom is
-	// routed to the ambiguous stream, which carries a category and no count, so
-	// it never reaches the gate with anything to charge. An earlier version of
-	// this doc and of opportunityDisposition's comment both read as though the
-	// escape itself had been closed. That overclaim is the thing most likely to
-	// be restored by a well-meaning edit, so it is pinned.
-	assert.Contains(t, flat, "What the change did NOT close",
-		"the doc must state the limit of the fix, not only the fix")
-	assert.Contains(t, flat, "never reaches this gate with a raised count at all",
-		"the doc must name the ambiguous-stream mechanism that bypasses the charging rule")
+	// WHAT CLOSED THE ESCAPE MUST STAY DOCUMENTED. A gate round found the 1.00
+	// escape was NOT closed by the narrowing alone: on the production strict
+	// path the phantom was routed to the ambiguous stream, which carried a
+	// category and no count. An earlier version of this doc overclaimed the
+	// narrowing, so the mechanism was pinned. Epic 35.16.11.3.1 T2 then closed
+	// it with the ambiguous-stream charge rule, and the doc must name that rule
+	// rather than credit the narrowing — and still record why keeping the
+	// zero-raised record was reverted.
+	assert.Contains(t, flat, "What closed the 1.00 escape on the production path",
+		"the doc must say what closed the escape, not credit the narrowing with it")
+	assert.Contains(t, flat, "reached this gate with a raised count of zero",
+		"the doc must name the ambiguous-stream mechanism that bypassed the charging rule")
+	assert.Contains(t, flat, "was tried first and reverted",
+		"the doc must keep the reverted zero-raised-keep attempt on record")
 
 	// And the code comment must agree with the doc, since a reader of one rarely
 	// reads the other.
@@ -492,6 +495,8 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 	require.Positive(t, cut, "opportunityDisposition not found")
 	end := strings.Index(fn[cut:], "\n}\n")
 	require.Positive(t, end, "opportunityDisposition has no closing brace")
-	assert.Contains(t, fn[cut:cut+end], "WHAT THIS DID NOT CLOSE",
-		"opportunityDisposition must carry the same limit the doc does; a reader of one rarely reads the other")
+	assert.Contains(t, fn[cut:cut+end], "WHAT CLOSED THE ESCAPE ON THE STRICT PATH",
+		"opportunityDisposition must say what closed the escape, as the doc does; a reader of one rarely reads the other")
+	assert.Contains(t, fn[cut:cut+end], "THE CHARGE RULE ANSWERS THAT RECORD",
+		"opportunityDisposition must answer the reverted zero-raised-keep attempt, not only record it")
 }

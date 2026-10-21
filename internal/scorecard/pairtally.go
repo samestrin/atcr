@@ -490,8 +490,8 @@ func pairTallies(records []Record) map[string]PairTally {
 // per TWO-reviewer ambiguous cluster (the bridge derives it from res.Ambiguous,
 // where the cluster structure survives), and reviewerPairSignals charges each
 // key ONE disagreement item. Pair surface only — it never touches a finding
-// count, so TD-034's asymmetry (an ambiguous finding moves no count) holds in
-// the new stream too. Singleton and 3+-reviewer clusters contribute nothing,
+// count, because a gray pair's findings are already counted through
+// res.Findings and counting them here would count them twice. Singleton and 3+-reviewer clusters contribute nothing,
 // the same unattributable rule the severity-split fold applies below.
 //
 // Peer names are TRIMMED, LOWER-CASED AND DEDUPED per finding, matching

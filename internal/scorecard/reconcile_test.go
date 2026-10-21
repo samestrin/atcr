@@ -419,7 +419,9 @@ func TestEmitForReconcile_CategoryThreadedFromUnresolvedStream(t *testing.T) {
 // finding is never earned. The lens is starved by its own missing prior.
 //
 // sasha below is exactly that lens: its only finding was filtered. The category
-// must land; the COUNTS must not move.
+// must land. Since the ambiguous-stream charge rule (Epic 35.16.11.3.1 T2) the
+// filtered finding is also CHARGED as an uncorroborated raise; it must still
+// never count as corroboration.
 func TestEmitForReconcile_ConsensusFilteredSingletonStillRecordsItsCategory(t *testing.T) {
 	reviewDir := t.TempDir()
 	home := t.TempDir()
@@ -450,8 +452,8 @@ func TestEmitForReconcile_ConsensusFilteredSingletonStillRecordsItsCategory(t *t
 	require.NotNil(t, sasha)
 	assert.Equal(t, []string{"correctness", "security"}, sasha.CategoriesRaised,
 		"the filtered singleton's category is still evidence sasha's remit was in play")
-	assert.Equal(t, 1, sasha.FindingsRaised,
-		"a filtered finding must earn NO scoring credit — only the surviving one counts")
+	assert.Equal(t, 2, sasha.FindingsRaised,
+		"a filtered finding WAS raised, so it charges the denominator (rule B)")
 	assert.Equal(t, 0, sasha.FindingsCorroborated,
 		"and it must never be read as corroboration")
 }
@@ -498,7 +500,9 @@ func TestEmitForReconcile_AmbiguousSingularReviewerShapeIsTheProductionOne(t *te
 	require.NotNil(t, sasha)
 	assert.Equal(t, []string{"correctness", "security"}, sasha.CategoriesRaised,
 		"the singular-Reviewer shape is what the consensus filter emits; reading only Reviewers attributes it to nobody")
-	assert.Equal(t, 1, sasha.FindingsRaised, "still no scoring credit for a filtered finding")
+	assert.Equal(t, 2, sasha.FindingsRaised,
+		"the singular shape is charged too; reading only Reviewers would charge nobody")
+	assert.Equal(t, 1, sasha.FindingsAmbiguous)
 }
 
 // TestEmitForReconcile_AmbiguousNeverMintsAReviewerRecord is the boundary on the
