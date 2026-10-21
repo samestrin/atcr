@@ -35,7 +35,7 @@ import (
 // terminal status here, and folding any of them into Open or Resolved would
 // misreport the backlog, so each gets its own counter and its own column.
 //
-// They do NOT all leave the live backlog. Liveness is decided by debtIsLive,
+// They do NOT all leave the live backlog. Liveness is decided by debtIsLiveStatus,
 // which delegates to localdebt.IsSettledStatus — wontfix and unreproducible are
 // settled and excluded; attempts-exhausted is unfinished work and stays. Never
 // re-derive the live set as a sum of statuses believed to be live: that is
@@ -227,13 +227,21 @@ func debtStatusBucket(status string) string {
 	}
 }
 
-// debtIsLive reports whether an item is still work to do. It delegates to
-// localdebt.IsSettledStatus so the aggregation, the rendered views, and
-// markDebtResolved's closability guard all answer this question the same way — a
-// disagreement here is what would let the dashboard rank an item as top-priority
-// work that `debt resolve` refuses to touch.
+// debtIsLiveStatus reports whether an item carrying status is still work to do.
+// It is the one liveness predicate: it delegates to localdebt.IsSettledStatus so
+// the aggregation, the rendered views, and markDebtResolved's closability guard
+// all answer this question the same way — a disagreement here is what would let
+// the dashboard rank an item as top-priority work that `debt resolve` refuses to
+// touch. It takes the bare status so a localdebt.Summary, which carries Status
+// but no full record, is judged by the same test; every wrapper calls this
+// rather than re-testing the status inline.
+func debtIsLiveStatus(status string) bool {
+	return !localdebt.IsSettledStatus(status)
+}
+
+// debtIsLive is the record-path wrapper over debtIsLiveStatus.
 func debtIsLive(r localdebt.Record) bool {
-	return !localdebt.IsSettledStatus(r.Status)
+	return debtIsLiveStatus(r.Status)
 }
 
 // debtAgeDays returns the item's age in whole days relative to now, and whether
