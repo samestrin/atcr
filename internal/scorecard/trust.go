@@ -300,8 +300,11 @@ func maxPerFindingCredit(weight float64) float64 {
 // the emitter could have written for it, and it runs BEFORE mergeRoutedEras
 // because that is the last point at which the question can be asked.
 //
-// THE BOUND IS (FindingsRaised - FindingsRouted) * maxPerFindingCredit(), and
-// each of those three parts is there because the obvious alternative is wrong.
+// THE BOUND IS (FindingsRaised - FindingsRouted - FindingsAmbiguous) *
+// maxPerFindingCredit(), and each part is there because the obvious alternative
+// is wrong. FindingsAmbiguous is subtracted for the reason FindingsRouted is,
+// below: Emit charges the ambiguous singletons into FindingsRaised and pays them
+// no credit (Epic 35.16.11.3.1 T2).
 //
 // NOT MINUS FindingsDocShielded. That subtraction is the obvious reading and it
 // is wrong HERE, because "here" is pre-merge: a doc-shielded finding is counted
@@ -383,7 +386,7 @@ func scrubForgedCredit(records []Record) []Record {
 		if out[i].RecordType != RecordTypeReviewer || out[i].CreditEra < 1 || out[i].CreditEra > CreditEraCurrent {
 			continue
 		}
-		bound := float64(out[i].FindingsRaised-out[i].FindingsRouted) * maxPerFindingCredit(isolatedFindingWeight)
+		bound := float64(out[i].FindingsRaised-out[i].FindingsRouted-out[i].FindingsAmbiguous) * maxPerFindingCredit(isolatedFindingWeight)
 		if out[i].WeightedCredit < 0 || out[i].WeightedCredit > bound {
 			out[i].WeightedCredit = 0
 			out[i].CreditEra = 0
@@ -1264,18 +1267,40 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// backwards, and 1.00 clears reconcile's trustHighThreshold for blanket
 	// trustExempt.
 	//
-	// WHAT THIS DID NOT CLOSE, and the distinction is the whole of the honest
-	// claim. It closed the LABELLING ASYMMETRY: a phantom under a recognised
-	// out-of-remit word and one under gibberish now score identically. It did
-	// NOT close the 1.00 escape itself on the production strict path, because
-	// the phantom never reaches this function with a raised count at all — it is
-	// routed to res.Ambiguous, which contributes its CATEGORY and no count (see
-	// the contributesToUnion block above and EmitInput.AmbiguousFindings). The
-	// record is dropped, and a later attempt to keep it was reverted for the
-	// reason given at the raised-count test below. Charging the ambiguous stream
-	// is a scoring-semantics change
-	// that also has to answer TD-034's mirror case, and it is filed as TD-048.
-	// Do not read the paragraph above as "the escape is closed".
+	// WHAT CLOSED THE ESCAPE ON THE STRICT PATH, because the narrowing above did
+	// not do it alone. The narrowing closed the LABELLING ASYMMETRY: a phantom
+	// under a recognised out-of-remit word and one under gibberish score
+	// identically. But on the production strict path the phantom never reached
+	// this function with a raised count: the consensus filter routed it to
+	// res.Ambiguous, which then contributed its category and no count, and the
+	// record was dropped here (TD-048).
+	//
+	// THE AMBIGUOUS-STREAM CHARGE RULE closes it (Epic 35.16.11.3.1 T2, rule B,
+	// decided by Sam on the EST-2052 probe; the rule itself is stated on
+	// EmitInput.AmbiguousFindings). Emit charges every one-finding ambiguous
+	// cluster to its reviewer as an uncorroborated raise, recorded in
+	// FindingsAmbiguous, so that phantom now arrives here with
+	// FindingsRaised > 0 and is counted by the raiser branch below.
+	// TestTrustPriors_AmbiguousOutOfLanePhantomsNoLongerPublishAtOne pins it end
+	// to end through EmitForReconcile: twenty honest runs and a hundred filtered
+	// out-of-lane phantoms publish dax at 20/120, where they published 1.00.
+	//
+	// The data behind the rule, from the probe (26 strict runs on this host
+	// replayed through EmitForReconcile and this fold): the stream held 156
+	// singletons and 1 gray cluster, every singleton's reviewer already had a
+	// record, and leaving the singletons uncharged put kai at 12/13 = 0.92 and
+	// mira at 13/14 = 0.93, both exempt, against 12/22 and 13/20 charged. The
+	// rate of a lens without trustExempt was close to 1.0 by construction,
+	// because its uncorroborated findings never reached the denominator.
+	//
+	// TD-034'S MIRROR CASE, answered in the same step: the category set stays a
+	// CHARGE MIRROR (f81fc9a3) and now holds on all three streams. Every
+	// ambiguous word comes from a charged finding — a singleton here, a gray
+	// member through res.Findings — and a doc-shielded finding stays out of both
+	// the count and the set, as before.
+	//
+	// This changes what FindingsRaised counts, so RaisedDenominator has to move
+	// with it; that bump is T3 of the same epic, not this change.
 	//
 	// WHAT THIS REPEALS, stated plainly rather than left for a reader to infer.
 	// original-requirements.md defines the opportunity set as "a case is in a
@@ -1318,6 +1343,16 @@ func opportunityDisposition(r Record, union map[string]struct{}) disposition {
 	// Losing it loses no evidence. Whoever re-argues this has to answer the floor,
 	// not the ratio — TestOpportunityDisposition_ZeroRaisedContributorIsDropped
 	// and TestTrustPriors_ZeroRaisedContributionsCannotBuyTheFloor pin both ends.
+	//
+	// THE CHARGE RULE ANSWERS THAT RECORD rather than repeating the attempt.
+	// The drop below is unchanged: a record that truly raised nothing still buys
+	// no run. What changed is that the ambiguous contributor is no longer
+	// zero-raised: each filtered singleton it contributed is charged, so the
+	// record arrives with a denominator and is kept through the raiser branch.
+	// A hundred such records now buy runs AND push the rate toward 0 (5
+	// corroborated of 105 raised), not to 1.0. The complaint the reverted attempt
+	// answered — dropping a lens for a routing decision — is answered too: the
+	// lens is kept, and accountable for what it raised.
 	if r.FindingsRaised > 0 {
 		if !contributesToUnion(r) {
 			// Raised findings the scorer could attribute to no topic. Kept AND
