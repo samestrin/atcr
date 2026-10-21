@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/modelslug"
 )
 
 // HashPersonaID returns the lowercase hex SHA-256 digest of raw, pseudonymizing a
@@ -96,13 +98,17 @@ type TelemetryPersonaRecord struct {
 	// unhashed. Per the project's model-binding contract (see internal/registry
 	// and internal/personas), a model identifier is a non-PII, publicly-known
 	// catalog slug (e.g. "claude-sonnet-4-6"), never user-supplied free text, so it
-	// carries no personal data to protect and is intentionally not hashed.
+	// carries no personal data to protect and is intentionally not hashed. Because
+	// it is not hashed, NewTelemetryPersonaRecord validates it (modelslug.Sanitize):
+	// anything that is not a plain catalog slug is sent as "".
 	Model string `json:"model"`
 }
 
 // NewTelemetryPersonaRecord builds a TelemetryPersonaRecord from a scorecard
 // Record: it hashes Record.Reviewer (the raw Persona ID — the same field
-// AnonymizeRecord reads) via HashPersonaID and copies Model through unhashed. It
+// AnonymizeRecord reads) via HashPersonaID and copies Model through unhashed after
+// validating it with modelslug.Sanitize, so a slug that is not a plain catalog
+// identifier is sent as an empty model (epic 35.17 AC6). It
 // accepts any Record without validation (mirroring AnonymizeRecord's permissive
 // style) and never copies the raw Reviewer value in unhashed form; a zero-value
 // Record yields the hash of the empty string.
@@ -116,6 +122,6 @@ func NewTelemetryPersonaRecord(r Record) TelemetryPersonaRecord {
 	}
 	return TelemetryPersonaRecord{
 		PersonaIDHash: HashPersonaID(r.Reviewer),
-		Model:         r.Model,
+		Model:         modelslug.Sanitize(r.Model),
 	}
 }

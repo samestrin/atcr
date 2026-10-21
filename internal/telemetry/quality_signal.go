@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/modelslug"
 )
 
 // canonicalPersonaID is a deliberate BYTE-FOR-BYTE MIRROR of
@@ -46,8 +48,10 @@ type QualitySignal struct {
 // row's primitive fields, hashing the raw persona name at the payload-construction
 // boundary so the raw name never reaches the wire — mirroring
 // NewTelemetryPersonaRecord's split between internal aggregation (raw persona) and
-// outbound payload (hashed). The model and counts pass through unchanged; a model
-// slug is a non-PII catalog identifier.
+// outbound payload (hashed). The counts pass through unchanged. The model is not
+// hashed, so it is validated with modelslug.Sanitize, the validator
+// NewTelemetryPersonaRecord shares: a slug that is not a plain catalog identifier
+// is sent as an empty model (epic 35.17 AC6).
 //
 // The persona is hashed with the SAME unsalted SHA-256 hex scheme as
 // internal/scorecard.HashPersonaID, but inlined rather than imported: telemetry is
@@ -87,7 +91,7 @@ func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySi
 	sum := sha256.Sum256([]byte(canonical))
 	return QualitySignal{
 		PersonaIDHash:  hex.EncodeToString(sum[:]),
-		Model:          model,
+		Model:          modelslug.Sanitize(model),
 		DismissedCount: dismissed,
 		ConfirmedCount: confirmed,
 	}
