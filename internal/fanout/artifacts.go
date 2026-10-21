@@ -714,8 +714,8 @@ func agentDirName(agent string) (string, error) {
 	return base, nil
 }
 
-// writeAgentArtifacts creates the agent's raw dir and writes review.md,
-// findings.txt, and status.json. dir is the pre-sanitized single-segment name.
+// writeAgentArtifacts creates the agent's raw dir and writes findings.txt,
+// review.md, and status.json. dir is the pre-sanitized single-segment name.
 func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error {
 	st := statusFor(r, fr)
 	return writeAgentFiles(poolDir, dir, r.Agent, agentReviewContent(r), fr.Findings, &st)
@@ -737,18 +737,21 @@ func agentReviewContent(r Result) string {
 	return content
 }
 
-// writeAgentFiles creates the agent's raw dir and writes the given review.md
-// body, findings and status record.
+// writeAgentFiles creates the agent's raw dir and writes the given findings,
+// review.md body and status record, in that order.
 func writeAgentFiles(poolDir, dir, agent, content string, findings []stream.Finding, st *AgentStatus) error {
 	agentDir := filepath.Join(poolDir, poolRawAgentDir, dir)
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		return fmt.Errorf("creating agent dir for '%s': %w", agent, err)
 	}
-	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(content)); err != nil {
-		return fmt.Errorf("writing review.md for '%s': %w", agent, err)
-	}
+	// status.json goes last: a resume reads an ok status.json as a finished
+	// persona (CompletedAgents), so it must never land before the files it
+	// vouches for (Epic 35.16.14.1 T2).
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), findings); err != nil {
 		return fmt.Errorf("writing findings for '%s': %w", agent, err)
+	}
+	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(content)); err != nil {
+		return fmt.Errorf("writing review.md for '%s': %w", agent, err)
 	}
 	return writeStatusFn(filepath.Join(agentDir, statusFile), st)
 }
