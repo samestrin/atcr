@@ -42,9 +42,18 @@ const CategoryOutOfScope = "out-of-scope"
 // unrecoverable from the merged record. It is in-process provenance and is
 // never serialized (json:"-"), so a reconciled finding's wire shape is
 // unchanged.
+//
+// ConfidenceDiscount is the reason Merge lowered Confidence below what
+// ConfidenceFor gives the reviewer count, and is empty when it did not: today
+// only PanelWideReason, set when the group is in the panel-wide-instruction
+// class (IsPanelWide, ConfidenceForCategory). Only Merge can decide it, because
+// the test reads each member's file and evidence and the merged record keeps
+// neither, so an embedder that wants to record the discount copies it from here.
+// Like SourceCategories it is in-process and never serialized.
 type Merged struct {
 	Finding
-	SourceCategories []SourceCategory `json:"-"`
+	SourceCategories   []SourceCategory `json:"-"`
+	ConfidenceDiscount string           `json:"-"`
 }
 
 // SourceCategory is one source finding's own category in a merged cluster.
@@ -63,7 +72,8 @@ type SourceCategory struct {
 // longest; CATEGORY = modal (alpha tiebreak); EST_MINUTES = max; EVIDENCE =
 // reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count,
 // discounted to MEDIUM when the group is in the panel-wide-instruction class
-// (ConfidenceForCategory, IsPanelWide).
+// (ConfidenceForCategory, IsPanelWide), in which case ConfidenceDiscount
+// records PanelWideReason.
 // The location is the first finding's file/line (the group is co-located within
 // the cluster window). SourceCategories records each finding's own category in
 // group order.
@@ -78,6 +88,11 @@ func Merge(group []Finding) Merged {
 	maxSev, disagreement := MergeSeverity(group)
 
 	category := ModalCategory(group)
+	confidence := ConfidenceForCategory(len(reviewers), category, !IsPanelWide(group))
+	discount := ""
+	if confidence != ConfidenceFor(len(reviewers)) {
+		discount = PanelWideReason
+	}
 
 	m := Finding{
 		Severity:     maxSev,
@@ -89,10 +104,10 @@ func Merge(group []Finding) Merged {
 		EstMinutes:   MaxEstMinutes(group),
 		Evidence:     mergeEvidence(group),
 		Reviewers:    reviewers,
-		Confidence:   ConfidenceForCategory(len(reviewers), category, !IsPanelWide(group)),
+		Confidence:   confidence,
 		Disagreement: disagreement,
 	}
-	return Merged{Finding: m, SourceCategories: sourceCategories(group)}
+	return Merged{Finding: m, SourceCategories: sourceCategories(group), ConfidenceDiscount: discount}
 }
 
 // sourceCategories returns each finding's own category, in group order, with
