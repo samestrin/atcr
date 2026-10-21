@@ -90,7 +90,7 @@ const defaultCloudEndpoint = ""
 // range-flag validation those commands register; reconcile registers no range
 // flags, so there prev is nil and this helper's hook is the only one.
 func addSyncCloudFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool("sync-cloud", false, "after the run, push the anonymized scorecard to the cloud dashboard (requires --cloud-endpoint and ATCR_API_KEY)")
+	cmd.Flags().Bool("sync-cloud", false, "after the run, push the pseudonymized scorecard to the configured cloud endpoint (requires --cloud-endpoint and ATCR_API_KEY)")
 	cmd.Flags().String("cloud-endpoint", defaultCloudEndpoint, "the --sync-cloud destination (required — this build ships no default; https://, or loopback http:// for local testing)")
 	prev := cmd.PreRunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {

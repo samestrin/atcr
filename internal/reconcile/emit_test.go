@@ -392,6 +392,7 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 			Disagreement: "LOW vs HIGH",
 			Verification: &Verification{Verdict: "confirmed"},
 		},
+		SourceCategories: []SourceCategory{{Reviewer: "r", Category: "c"}},
 	}
 	got := Result{Findings: []Merged{m}}.JSONFindings()
 	require.Len(t, got, 1)
