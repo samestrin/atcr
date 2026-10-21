@@ -174,7 +174,8 @@ result safely.
   **maximum severity** across its group; when lower severities are present the
   conflict is annotated inline as `<lo> vs <hi>` (e.g. `MEDIUM vs HIGH`) rather
   than dropped. Reviewers are unioned and sorted; problem/fix take the longest
-  text; category is modal; estimated minutes is the max; evidence is
+  text; category is modal (each source's own category is kept in
+  `SourceCategories`); estimated minutes is the max; evidence is
   reviewer-prefixed and concatenated.
 - **Confidence — v2 tiers `VERIFIED > HIGH > MEDIUM > LOW`.** Confidence is
   derived from the count of distinct reviewers who agree, and is promoted to
