@@ -358,7 +358,7 @@ func TestDebtList_SummarySelectionMatchesRecordSelection(t *testing.T) {
 
 			cmd := newDebtListCmd()
 			require.NoError(t, cmd.Flags().Parse([]string{"--dir", dir}))
-			got, err := selectDebtForList(cmd, tc.filter, tc.sort)
+			got, err := selectDebtForList(cmd, tc.filter, tc.sort, 0)
 			require.NoError(t, err)
 
 			require.Len(t, got, len(want), "the two stages select the same rows")
@@ -1123,10 +1123,14 @@ func TestDebtList_NegativeMaxIsUsageError(t *testing.T) {
 func TestDebtList_MaxCapsRenderedRows(t *testing.T) {
 	dir := writeLocalDebt(t)
 
+	// Column widths are computed over the rendered block, so compare row ids
+	// rather than bytes: a capped table is narrower than the full one.
 	out, err := runDebt(t, "list", "--dir", dir, "--max", "2")
 	require.NoError(t, err)
-	lines := strings.Split(strings.TrimSuffix(debtListGolden, "\n"), "\n")
-	assert.Equal(t, strings.Join(lines[:3], "\n")+"\n", out, "header plus the first two sorted rows")
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	require.Len(t, lines, 3, "header plus two rows")
+	assert.True(t, strings.HasPrefix(lines[1], "2d4f569f7330b0c4  CRITICAL"), lines[1])
+	assert.True(t, strings.HasPrefix(lines[2], "717007b4c94d8aae  HIGH"), lines[2])
 
 	out, err = runDebt(t, "list", "--dir", dir, "--max", "1", "--severity", "LOW", "--json")
 	require.NoError(t, err)
@@ -1149,7 +1153,7 @@ func TestDebtList_MaxCapsHydrationAtSummaryStage(t *testing.T) {
 	var recs []localdebt.Record
 	for i := 0; i < 60; i++ {
 		r := localdebt.Record{
-			SchemaVersion: localdebt.SchemaVersion, RunID: "run", Timestamp: "2026-06-13T09:00:00Z",
+			SchemaVersion: localdebt.SchemaVersion, RunID: "2026-06-run", Timestamp: "2026-06-13T09:00:00Z",
 			Severity: sev[i%len(sev)], File: "internal/pkg/f.go", Line: i + 1,
 			Problem: "p", Fix: "f", Category: "correctness", EstMinutes: i,
 		}
