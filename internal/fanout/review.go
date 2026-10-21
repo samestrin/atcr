@@ -4671,3 +4671,7 @@ func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
 	s := rb.PrefetchStatus()
 	return &s
 }
+
+func writeEarlyAgent(poolDir string, r Result, changed payload.ChangedLines, chunks *chunkLedger, resuming bool) error {
+	return nil
+}

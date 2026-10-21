@@ -5,13 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -562,4 +567,252 @@ func TestTruncatedZeroRemedy_MatchesDocThinkingLever(t *testing.T) {
 	for _, token := range []string{"same context window", "4096", "context_window_tokens"} {
 		require.Contains(t, remedy, token, "truncatedZeroRemedy must keep its context-window tradeoff text (%s)", token)
 	}
+}
+
+// earlyWriteCompleter is personaSpeedCompleter plus m-fail, which always errors,
+// and any bin carrying failFile, which errors too.
+type earlyWriteCompleter struct {
+	personaSpeedCompleter
+	failFile string
+}
+
+func (c earlyWriteCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	if inv.Model == "m-fail" {
+		return "", errors.New("simulated provider failure")
+	}
+	if c.failFile != "" && strings.Contains(inv.Prompt, "// FILE:"+c.failFile+"\n") {
+		return "", fmt.Errorf("simulated bin failure for %s", c.failFile)
+	}
+	return c.personaSpeedCompleter.Complete(ctx, inv)
+}
+
+// earlyWriteSlots is greta chunked over a.go/b.go/c.go plus single-slot personas
+// with the given name -> model pairs, in order.
+func earlyWriteSlots(t *testing.T, single ...string) []Slot {
+	t.Helper()
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 100
+	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100), baselineEntry("c.go", 100)}
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	require.NoError(t, err)
+	require.Len(t, slots, 3, "greta plans one bin per file")
+	for i := 0; i+1 < len(single); i += 2 {
+		slots = append(slots, Slot{Primary: Agent{Name: single[i], Invocation: llmclient.Invocation{Model: single[i+1]}}})
+	}
+	return slots
+}
+
+func agentFile(poolDir, agent, name string) string {
+	return filepath.Join(poolDir, poolRawAgentDir, agent, name)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Epic 35.16.14.1 T2 success criterion: a persona's status.json is on disk, with
+// its findings already present, while a slower persona still runs; a failed
+// persona's status.json says failed at once; and status.json is always the last
+// of the persona's files to land.
+func TestRunEngine_EarlyWrite_PersonaOnDiskWhileSlowerRuns(t *testing.T) {
+	slots := earlyWriteSlots(t, "slow", "m-slow", "mid", "m-mid", "bad", "m-fail")
+	poolDir := t.TempDir()
+
+	orig := writeStatusFn
+	t.Cleanup(func() { writeStatusFn = orig })
+	var statusOrderErrs []string
+	var smu sync.Mutex
+	writeStatusFn = func(path string, s *AgentStatus) error {
+		dir := filepath.Dir(path)
+		for _, f := range []string{reviewFile, findingsToonFile, findingsFile} {
+			if !fileExists(filepath.Join(dir, f)) {
+				smu.Lock()
+				statusOrderErrs = append(statusOrderErrs, s.Agent+": status.json before "+f)
+				smu.Unlock()
+			}
+		}
+		return orig(path, s)
+	}
+
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	type onDisk struct {
+		status, findings, slowStatus bool
+		st                           AgentStatus
+	}
+	got := map[string]onDisk{}
+	p := &PreparedReview{Slots: slots}
+	p.onPersonaDone = func(agent string, _ []int, _ []Result) {
+		d := onDisk{
+			status:     fileExists(agentFile(poolDir, agent, statusFile)),
+			findings:   fileExists(agentFile(poolDir, agent, findingsFile)),
+			slowStatus: fileExists(agentFile(poolDir, "slow", statusFile)),
+		}
+		if data, err := os.ReadFile(agentFile(poolDir, agent, statusFile)); err == nil {
+			_ = json.Unmarshal(data, &d.st)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		got[agent] = d
+		seen[agent] = true
+		if seen["greta"] && seen["mid"] && seen["bad"] && !seen["slow"] {
+			close(release)
+		}
+	}
+
+	ret := make(chan struct{})
+	go func() {
+		defer close(ret)
+		runEngine(context.Background(), earlyWriteCompleter{personaSpeedCompleter: personaSpeedCompleter{release: release}}, p, poolDir)
+	}()
+	select {
+	case <-ret:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run hung: the fast personas did not report done while the slow persona ran")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, agent := range []string{"greta", "mid", "bad"} {
+		d := got[agent]
+		assert.True(t, d.status, "%s: status.json on disk the moment it finished", agent)
+		assert.True(t, d.findings, "%s: findings.txt on disk beside its status.json", agent)
+		assert.False(t, d.slowStatus, "%s finished while the slow persona still ran, with no status.json for it", agent)
+	}
+	assert.Equal(t, StatusOK, got["greta"].st.Status)
+	assert.Equal(t, 3, got["greta"].st.FindingsCount, "greta's status.json is the merge of all three bins")
+	assert.Equal(t, StatusOK, got["mid"].st.Status)
+	assert.Equal(t, StatusFailed, got["bad"].st.Status, "a failed persona's status.json says failed at once")
+	assert.Contains(t, got["bad"].st.Error, "simulated provider failure")
+	assert.True(t, got["slow"].status, "the slow persona is written when it finishes too")
+	smu.Lock()
+	assert.Empty(t, statusOrderErrs, "status.json is written last")
+	smu.Unlock()
+}
+
+// A run killed between a persona's writes leaves no status.json without its
+// findings: whichever write the kill lands on, the persona has either both or
+// no status.json, and a resume (CompletedAgents) never takes it for finished.
+func TestRunEngine_EarlyWrite_KillBetweenWritesLeavesNoStatusWithoutFindings(t *testing.T) {
+	for _, kill := range []string{findingsToonFile, findingsFile, statusFile} {
+		t.Run("killed at "+kill, func(t *testing.T) {
+			origF, origS := writeFindingsFileFn, writeStatusFn
+			t.Cleanup(func() { writeFindingsFileFn, writeStatusFn = origF, origS })
+			killed := errors.New("killed")
+			die := func(path string) bool {
+				return filepath.Base(filepath.Dir(path)) == "mid" && filepath.Base(path) == kill
+			}
+			writeFindingsFileFn = func(path string, data []byte) error {
+				if die(path) {
+					return killed
+				}
+				return origF(path, data)
+			}
+			writeStatusFn = func(path string, s *AgentStatus) error {
+				if die(path) {
+					return killed
+				}
+				return origS(path, s)
+			}
+
+			reviewDir := t.TempDir()
+			poolDir := filepath.Join(reviewDir, "sources", "pool")
+			p := &PreparedReview{Slots: earlyWriteSlots(t, "mid", "m-mid", "kai", "m-mid")}
+			// No WritePool after: the process died before the join.
+			runEngine(context.Background(), earlyWriteCompleter{}, p, poolDir)
+
+			entries, err := os.ReadDir(filepath.Join(poolDir, poolRawAgentDir))
+			require.NoError(t, err)
+			for _, e := range entries {
+				if fileExists(agentFile(poolDir, e.Name(), statusFile)) {
+					assert.True(t, fileExists(agentFile(poolDir, e.Name(), findingsFile)), "%s: status.json without findings.txt", e.Name())
+				}
+			}
+			assert.False(t, fileExists(agentFile(poolDir, "mid", statusFile)), "the killed persona has no status.json")
+			for _, agent := range []string{"greta", "kai"} {
+				assert.True(t, fileExists(agentFile(poolDir, agent, statusFile)), "%s, untouched by the kill, is written", agent)
+			}
+			done, err := CompletedAgents(reviewDir)
+			require.NoError(t, err)
+			assert.NotContains(t, done, "mid", "a resume reruns the killed persona")
+		})
+	}
+}
+
+// The early per-persona files are the same merge WritePool writes after the
+// join, and the final pool is byte for byte what WritePool alone writes from
+// the same results, including a chunked persona's file gap.
+func TestRunEngine_EarlyWrite_FinalPoolByteIdentical(t *testing.T) {
+	poolDir := t.TempDir()
+	p := &PreparedReview{Slots: earlyWriteSlots(t, "kai", "m-mid", "bad", "m-fail")}
+	results, _ := runEngine(context.Background(), earlyWriteCompleter{failFile: "b.go"}, p, poolDir)
+
+	agentFiles := []string{reviewFile, findingsFile, findingsToonFile, statusFile}
+	early := map[string]string{}
+	for _, agent := range []string{"greta", "kai", "bad"} {
+		for _, f := range agentFiles {
+			data, err := os.ReadFile(agentFile(poolDir, agent, f))
+			require.NoError(t, err, "%s/%s written early", agent, f)
+			early[agent+"/"+f] = string(data)
+		}
+	}
+	assert.Equal(t, 1, readAgentStatus(t, poolDir, "greta").UnreviewedFiles, "the early status carries greta's file gap")
+
+	_, err := WritePool(poolDir, results, nil)
+	require.NoError(t, err, "WritePool rewrites the files the hook already wrote")
+	todayPool := t.TempDir()
+	_, err = WritePool(todayPool, results, nil)
+	require.NoError(t, err)
+
+	for k, want := range early {
+		data, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, k))
+		require.NoError(t, err)
+		assert.Equal(t, want, string(data), "%s: the early write is the final file", k)
+	}
+	require.NoError(t, filepath.WalkDir(todayPool, func(path string, d os.DirEntry, err error) error {
+		require.NoError(t, err)
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(todayPool, path)
+		want, _ := os.ReadFile(path)
+		got, rerr := os.ReadFile(filepath.Join(poolDir, rel))
+		require.NoError(t, rerr, rel)
+		assert.Equal(t, string(want), string(got), "%s matches today's pool byte for byte", rel)
+		return nil
+	}))
+}
+
+// On a resume that replays a persona's reviewed bins, the hook merges the
+// persona once and the final writeResumedAgents does not merge it again, so
+// review.md and findings hold every bin exactly once.
+func TestExecuteResume_EarlyWrite_CarriedPersonaMergedOnce(t *testing.T) {
+	entries := sixtyFourFiles()
+	dir := originalRun(t, entries, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	resumeGreta(t, dir, gretaBaselineSlots(t, entries[4:]), baselineChunkFindingCompleter{})
+
+	review, err := os.ReadFile(agentFile(poolDir, "greta", reviewFile))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.Equal(t, 1, strings.Count(string(review), "problem "+e.Path+"|"), "%s once in review.md", e.Path)
+	}
+	assert.Len(t, agentFindingFiles(t, poolDir, "greta"), 64)
+}
+
+// The resume hook keeps writeResumedAgents' rule: a slot the engine never ran
+// (a synthesized cancellation) does not overwrite the prior run's record, while
+// a fresh review writes it at once.
+func TestWriteEarlyAgent_SynthesizedCancelOnlySkippedOnResume(t *testing.T) {
+	synth := Result{Agent: "greta", Status: StatusTimeout, Err: context.Canceled}
+
+	poolDir := t.TempDir()
+	require.NoError(t, writeEarlyAgent(poolDir, synth, nil, nil, true))
+	assert.False(t, fileExists(agentFile(poolDir, "greta", statusFile)), "a resume keeps the prior record")
+
+	require.NoError(t, writeEarlyAgent(poolDir, synth, nil, nil, false))
+	assert.Equal(t, StatusTimeout, readAgentStatus(t, poolDir, "greta").Status, "a fresh review records the timeout at once")
 }

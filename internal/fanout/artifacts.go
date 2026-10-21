@@ -750,7 +750,7 @@ func writeAgentFiles(poolDir, dir, agent, content string, findings []stream.Find
 	if err := writeFindings(filepath.Join(agentDir, findingsFile), findings); err != nil {
 		return fmt.Errorf("writing findings for '%s': %w", agent, err)
 	}
-	return WriteStatus(filepath.Join(agentDir, statusFile), st)
+	return writeStatusFn(filepath.Join(agentDir, statusFile), st)
 }
 
 // statusFor builds the per-agent status.json record from a result.
@@ -845,11 +845,12 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 	return st
 }
 
-// writeFindingsFileFn and encodeFindingsV2Fn are seams so tests can fail one
-// write or the v2 encode and check what reaches disk.
+// writeFindingsFileFn, encodeFindingsV2Fn and writeStatusFn are seams so tests
+// can fail one write or the v2 encode and check what reaches disk.
 var (
 	writeFindingsFileFn = atomicWriteFile
 	encodeFindingsV2Fn  = stream.WriteSourceV2
+	writeStatusFn       = WriteStatus
 )
 
 // writeFindings writes findings twice beside each other: path (findings.txt,
