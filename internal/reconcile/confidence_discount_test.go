@@ -109,19 +109,26 @@ func TestMergeJSONFindings_IndependentInvariantAgreementStaysHigh(t *testing.T) 
 
 // A member reconcile already discounted is read through its first quote, so
 // unioning it with another reviewer's matching quote stays discounted, and a
-// quote that itself holds " / " is not cut at the separator.
+// quote that itself holds " / " is not cut at the separator. The short quote is
+// the case that needs the first-quote reading: "[bruce] x == y / [greta] x == y"
+// shares only half its words with "x == y", below the near-identical threshold,
+// so read whole it would make the union look independent and HIGH.
 func TestMergeJSONFindings_DiscountedMemberIsReadThroughItsFirstQuote(t *testing.T) {
-	quote := "return a.Size / b.Size == 1 && a.ID == b.ID"
-	pair := Reconcile(predicateSources("key.go", quote, "bruce", "greta"), Options{}).JSONFindings()
-	require.Len(t, pair, 1)
-	require.Equal(t, PanelWideReason, pair[0].ConfidenceDiscount)
+	for name, quote := range map[string]string{
+		"short quote":                 "x == y",
+		"quote holding the separator": "return a.Size / b.Size == 1 && a.ID == b.ID",
+	} {
+		pair := Reconcile(predicateSources("key.go", quote, "bruce", "greta"), Options{}).JSONFindings()
+		require.Len(t, pair, 1, name)
+		require.Equal(t, PanelWideReason, pair[0].ConfidenceDiscount, name)
 
-	m := MergeJSONFindings([]JSONFinding{pair[0], predicateRecord("kai", "key.go", quote)})
-	assert.Equal(t, ConfMedium, m.Confidence)
-	assert.Equal(t, PanelWideReason, m.ConfidenceDiscount)
+		m := MergeJSONFindings([]JSONFinding{pair[0], predicateRecord("kai", "key.go", quote)})
+		assert.Equal(t, ConfMedium, m.Confidence, name)
+		assert.Equal(t, PanelWideReason, m.ConfidenceDiscount, name)
 
-	assert.Equal(t, quote, firstQuote(pair[0].Evidence, pair[0].Reviewers))
-	assert.Equal(t, quote, firstQuote(quote, []string{"kai"}), "an unprefixed quote passes through whole")
+		assert.Equal(t, quote, firstQuote(pair[0].Evidence, pair[0].Reviewers), name)
+		assert.Equal(t, quote, firstQuote(quote, []string{"kai"}), "%s: an unprefixed quote passes through whole", name)
+	}
 }
 
 func TestRecomputeFallbackConfidence_KeepsTheDiscountWhileTwoVoicesRemain(t *testing.T) {
