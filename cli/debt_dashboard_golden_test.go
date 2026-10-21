@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,54 @@ func TestDebtDashboard_GoldenRenderIsByteIdentical(t *testing.T) {
 			want, err := os.ReadFile(path)
 			require.NoError(t, err)
 			require.Equal(t, string(want), got, "the dashboard render drifted from the pre-35.21 golden")
+		})
+	}
+}
+
+// TestDebtDashboard_HydratesOnlyTheRenderedTopRows is epic 35.21 AC2: on a store
+// far larger than --top, the production command materializes full records for
+// exactly the Top Priority rows it renders — none at all when --top 0 suppresses
+// the list — and every other section is aggregated from summaries.
+func TestDebtDashboard_HydratesOnlyTheRenderedTopRows(t *testing.T) {
+	const live = 400
+	recs := make([]localdebt.Record, 0, live+100)
+	for i := 0; i < live; i++ {
+		recs = append(recs, mkDebtRecord("", []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}[i%4],
+			fmt.Sprintf("internal/pkg%03d/f.go", i%37), i+1, "2026-06-13T09:00:00Z"))
+	}
+	for i := 0; i < 100; i++ {
+		recs = append(recs, mkDebtRecord(localdebt.StatusResolved, "CRITICAL",
+			fmt.Sprintf("closed/pkg/f%03d.go", i), i+1, "2026-06-13T09:00:00Z"))
+	}
+	dir := writeLocalDebt(t, recs...)
+
+	for _, top := range []int{0, 1, 10, live + 50} {
+		t.Run(fmt.Sprintf("top=%d", top), func(t *testing.T) {
+			var calls, requested, hydrated int
+			orig := dashboardHydrateFn
+			t.Cleanup(func() { dashboardHydrateFn = orig })
+			dashboardHydrateFn = func(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+				calls++
+				requested += len(ids)
+				got, err := orig(dir, ids, opts, keep)
+				hydrated += len(got)
+				return got, err
+			}
+
+			out, err := runDebt(t, "dashboard", "--dir", dir, "--top", fmt.Sprint(top))
+			require.NoError(t, err)
+
+			topSection := out[strings.Index(out, "## Top Priority"):]
+			rows := strings.Count(topSection, "\n| ") - 1 // minus the separator row
+			if top == 0 {
+				rows = 0
+				require.Contains(t, topSection, "_(top list suppressed)_")
+				require.Zero(t, calls, "a suppressed list hydrates nothing")
+			}
+			require.Equal(t, min(top, live), rows, "rendered Top Priority rows")
+			require.Equal(t, rows, hydrated, "hydrated records equal the rendered Top Priority rows")
+			require.Equal(t, rows, requested, "only the rendered ids are requested")
+			require.LessOrEqual(t, requested, top, "never more than --top records are materialized")
 		})
 	}
 }
