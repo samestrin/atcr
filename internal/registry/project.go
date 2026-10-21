@@ -103,7 +103,11 @@ type ProjectConfig struct {
 	// OnOverflow selects the F4 degradation policy (plan 19.10) when a payload
 	// exceeds budget: chunk (default), truncate, fallback, or fail. Empty inherits
 	// the registry tier or the embedded default.
-	OnOverflow  string `yaml:"on_overflow,omitempty"`
+	OnOverflow string `yaml:"on_overflow,omitempty"`
+	// SecretGuard selects the payload-egress secret-guard policy (Epic 35.20)
+	// applied to each review prompt before dispatch: off, warn (default), redact,
+	// or block. Empty inherits the registry tier or the embedded default.
+	SecretGuard string `yaml:"secret_guard,omitempty"`
 	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
 	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
 	// default application.
@@ -141,6 +145,11 @@ type ProjectConfig struct {
 	// outside the diff) survives default application; unset inherits the registry
 	// tier or the embedded DefaultMaxPrefetchBytes.
 	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
+	// ContextPrefetch is the optional `context_prefetch` block (Epic 35.16.12).
+	// Its `semantic` member opts into similarity retrieval against an external
+	// index; nil, blank, or anything short of `enabled: true` means OFF. Each set
+	// field overrides the registry tier's.
+	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -246,6 +255,12 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   it sheds is gone before on_overflow is ever consulted, so no setting\n")
 	b.WriteString("#   here can recover it.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
+	b.WriteString("# secret_guard: what to do when a credential is found in a review prompt\n")
+	b.WriteString("#   before it is sent to a provider. One of: off (no scan), warn (default —\n")
+	b.WriteString("#   log the count and kinds, send unchanged), redact (replace each secret\n")
+	b.WriteString("#   with a placeholder before sending), or block (fail the run, naming the\n")
+	b.WriteString("#   agent, kind and file; the secret value is never logged).\n")
+	fmt.Fprintf(&b, "secret_guard: %s\n", DefaultSecretGuard)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	b.WriteString("# consensus: corroboration bar for the reconcile consensus filter, applied\n")
 	b.WriteString("#   only once a panel has 3+ distinct reviewers. One of:\n")
@@ -335,6 +350,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if cfg.MaxPrefetchBytes != nil && *cfg.MaxPrefetchBytes < 0 {
 		return nil, fmt.Errorf("%s: max_prefetch_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxPrefetchBytes)
 	}
+	if err := cfg.ContextPrefetch.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
 	}
@@ -343,6 +361,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if !onOverflowValid(cfg.OnOverflow) {
 		return nil, fmt.Errorf("%s: invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", base, strings.TrimSpace(cfg.OnOverflow))
+	}
+	if !secretGuardValid(cfg.SecretGuard) {
+		return nil, fmt.Errorf("%s: invalid secret_guard '%s': must be one of %s", base, strings.TrimSpace(cfg.SecretGuard), secretGuardAllowed)
 	}
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)

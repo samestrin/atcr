@@ -38,6 +38,7 @@ var sharedSettingsKeys = []string{
 	"payload_mode",
 	"review_strategy",
 	"on_overflow",
+	"secret_guard",
 	"timeout_secs",
 	"payload_byte_budget",
 	"max_parallel",
@@ -45,6 +46,7 @@ var sharedSettingsKeys = []string{
 	"max_sprint_plan_bytes",
 	"max_claim_bytes",
 	"max_prefetch_bytes",
+	"context_prefetch",
 	"fail_on",
 	"consensus",
 }

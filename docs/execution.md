@@ -96,7 +96,10 @@ delivers a genuinely narrower set:
 - **Wall-clock timeout and a concurrency cap**, as with the container backend.
 
 It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
-`--security-opt no-new-privileges`, a non-root user, or memory/CPU/PID caps. On
+`--security-opt no-new-privileges`, a non-root user, memory/CPU/PID caps, or a
+seccomp syscall filter (Docker applies its default seccomp profile to every
+container; the `bwrap` command line carries no `--seccomp` filter, and macOS
+`sandbox-exec` has no equivalent). On
 macOS the container backend additionally runs inside a virtual machine, which this
 backend does not. The per-platform caveats an operator accepts by opting in are
 listed in full under

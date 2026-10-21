@@ -854,6 +854,11 @@ type Registry struct {
 	// (ProjectConfig.OnOverflow) overrides it; unset falls through to the embedded
 	// DefaultOnOverflow. Resolved once in ResolveSettings, like ReviewStrategy.
 	OnOverflow string `yaml:"on_overflow,omitempty"`
+	// SecretGuard is the registry (global) tier of the payload-egress secret
+	// guard (Epic 35.20): off, warn (default), redact, or block. The project tier
+	// (ProjectConfig.SecretGuard) overrides it; unset falls through to the
+	// embedded DefaultSecretGuard. Resolved once in ResolveSettings.
+	SecretGuard string `yaml:"secret_guard,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -878,6 +883,10 @@ type Registry struct {
 	// tier or the embedded DefaultMaxPrefetchBytes; 0 means DISABLED, negative is
 	// rejected.
 	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
+	// ContextPrefetch is the user-level (global) tier of the `context_prefetch`
+	// block (Epic 35.16.12), the same block ProjectConfig.ContextPrefetch carries
+	// at the project tier, which overrides it field by field. Absent means OFF.
+	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -1005,6 +1014,9 @@ func (r *Registry) validate() error {
 	if r.MaxSprintPlanBytes != nil && *r.MaxSprintPlanBytes <= 0 {
 		errs = append(errs, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", *r.MaxSprintPlanBytes))
 	}
+	if err := r.ContextPrefetch.Validate(); err != nil {
+		errs = append(errs, err)
+	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive so the exponential schedule has a starting point.
 	for _, m := range validateRetryBounds(r.MaxRetries, r.InitialBackoffMs) {
@@ -1018,6 +1030,9 @@ func (r *Registry) validate() error {
 	}
 	if !onOverflowValid(r.OnOverflow) {
 		errs = append(errs, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", r.OnOverflow))
+	}
+	if !secretGuardValid(r.SecretGuard) {
+		errs = append(errs, fmt.Errorf("invalid secret_guard '%s': must be one of %s", r.SecretGuard, secretGuardAllowed))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists

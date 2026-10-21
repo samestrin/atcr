@@ -1226,6 +1226,16 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	cmd.Stderr = capture
 
 	runErr := cmd.Run()
+	// Reap what is left of the group on every exit path, before the deferred
+	// os.RemoveAll(scratchDir) runs. The cancel above fires only on timeout or
+	// cancellation, so a descendant that detached from the output pipes would
+	// otherwise survive a clean exit and recreate the scratch tree after its
+	// removal. A failed reap is logged, not fatal: the workload's own result is
+	// still what it is.
+	if reapErr := reapSandboxProcessGroup(cmd); reapErr != nil {
+		logger.Warn("sandbox exec process-group reap returned unexpected error",
+			"backend", osLevelBackendName, "command", logCmd, "error", reapErr)
+	}
 	res = RunResult{
 		Command: cmdStr,
 		Output:  truncate(buf.String(), maxOut),
