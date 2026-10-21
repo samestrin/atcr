@@ -153,3 +153,45 @@ func TestDebtDashboard_HydratesOnlyTheRenderedTopRows(t *testing.T) {
 		})
 	}
 }
+
+// syntheticGoldenRecords sizes the store the synthetic golden is rendered from:
+// large enough that every component, severity and month bucket fills and the Top
+// Priority list is a narrow cut of a much larger backlog, small enough to build
+// in well under a second.
+const syntheticGoldenRecords = 2000
+
+// TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender is the old-vs-new
+// comparison of epic 35.21 T4. The golden was rendered by the PRE-35.21 binary
+// (26d4f0d, the full-record ReadAll + FoldRecords read) over the store
+// localdebt.GenerateSynthetic builds, so it is not a snapshot of the code under
+// test: it is what the old read printed for this exact store. It is deliberately
+// NOT rewritten by -update-dashboard-golden; to regenerate it, build
+// `go run ./cmd/gen-debt-store -n 2000` and render it with an atcr built from
+// 26d4f0d.
+//
+// The same file then pins AC4 from the caller's side: a dashboard committed by
+// the old binary is still current under the new one's --check (exit 0), and a
+// store change is still drift (exit 4), not an error of some other kind.
+func TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".atcr", "debt")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, localdebt.GenerateSynthetic(dir, syntheticGoldenRecords))
+
+	want, err := os.ReadFile(filepath.Join("testdata", "debt_dashboard_synthetic.golden.md"))
+	require.NoError(t, err)
+	got, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	require.Equal(t, string(want), got, "the summary-path render drifted from the pre-35.21 render of the same store")
+
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	require.NoError(t, os.WriteFile(out, want, 0o644))
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.NoError(t, err, "a dashboard the pre-35.21 binary committed is current under --check")
+
+	// Resolve the top-ranked item: the totals and the Top Priority list both move.
+	_, err = runDebt(t, "resolve", localdebt.SyntheticRecord(0).ID, "--dir", dir)
+	require.NoError(t, err)
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.Error(t, err)
+	require.Equal(t, exitDrift, exitCode(err), "a store change is drift, exit 4")
+}
