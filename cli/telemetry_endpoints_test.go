@@ -172,7 +172,7 @@ func TestProcessTelemetryClient_HonorsOverriddenEndpoints(t *testing.T) {
 
 	_, hits := recordingTransport(t)
 
-	client := newProcessTelemetryClient()
+	client := newProcessTelemetryClient("")
 	root := NewRootCmdWithClient(client)
 	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
 	root.SetOut(io.Discard)

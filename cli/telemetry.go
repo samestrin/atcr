@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -51,6 +54,38 @@ var (
 	defaultTelemetryEndpoint     = "https://atcr.dev/api/v1/telemetry"
 	defaultQualitySignalEndpoint = "https://atcr.dev/api/v1/quality-signal"
 )
+
+// ValidateTelemetryEndpoint vets a --telemetry-endpoint value with the same rule
+// scorecard.ValidateCloudEndpoint applies to --cloud-endpoint: https:// is always
+// accepted, http:// only when the host is loopback (127.0.0.0/8, ::1, localhost),
+// and anything else — empty, malformed, hostless, another scheme, or plaintext to
+// a remote host — is rejected. The errors never echo the value, so a URL carrying
+// userinfo cannot leak a password to stderr.
+func ValidateTelemetryEndpoint(endpoint string) error {
+	e := strings.TrimSpace(endpoint)
+	if e == "" {
+		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+	}
+	u, err := url.Parse(e)
+	if err != nil || u.Host == "" {
+		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if strings.EqualFold(host, "localhost") {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return errors.New("--telemetry-endpoint must use https:// (plaintext http:// is allowed only for a loopback host)")
+	default:
+		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+	}
+}
 
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
 // anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env
