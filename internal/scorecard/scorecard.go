@@ -321,6 +321,21 @@ type Record struct {
 	// LATER binary that stamps the era without this count would have to bump
 	// CreditEraCurrent rather than rely on the same argument.
 	FindingsRouted int `json:"findings_routed,omitempty"`
+	// FindingsAmbiguous counts the one-finding ambiguous clusters charged inside
+	// FindingsRaised (Epic 35.16.11.3.1 T2): the consensus-filtered solos and
+	// DBSCAN-isolated noise findings that reconcile set aside, which are absent
+	// from res.Findings and so would otherwise be charged nowhere. See
+	// EmitInput.AmbiguousFindings for the rule.
+	//
+	// It sits beside FindingsRouted for the same reason: like a routed phantom,
+	// a charged ambiguous finding charges the denominator and never earns
+	// credit, so scrubForgedCredit's ceiling must exclude it. It also lets a
+	// reader tell how much of a lens's denominator came from this stream.
+	//
+	// omitempty: absent means zero, and every record carrying CreditEra 1 from
+	// this binary on carries the true count. An older era-3 record never charged
+	// the stream, so its zero is also true for the rule it was written under.
+	FindingsAmbiguous int `json:"findings_ambiguous,omitempty"`
 	// CreditEra is the weighted-credit measurement era marker (D8), stamped
 	// unconditionally on every reviewer record this emitter writes for exactly
 	// the reason PairEra is: a pre-weighting record and a genuinely-zero one
