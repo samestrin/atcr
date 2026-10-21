@@ -20,6 +20,12 @@ import (
 // isolate. Only the //go:build integration tests (AC 02-03/02-04), which drive
 // the real binary and attempt a forbidden write and an outbound connection,
 // prove enforcement.
+//
+// SECCOMP IS A DOCKER PARITY GAP: Docker runs every container under its default
+// seccomp profile, but neither generator here installs a syscall filter (the
+// bwrap argv carries no --seccomp), so syscalls Docker's profile blocks stay
+// reachable inside this backend. docs/execution.md lists it under "It does not
+// provide"; implementing --seccomp is out of scope (epic 35.23).
 
 // sandbox-exec profile clauses that are not path-scoped.
 //
