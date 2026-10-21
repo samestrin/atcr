@@ -56,10 +56,17 @@ func debtLocation(r localdebt.Record) string {
 // Timestamp prefix. An empty string means the timestamp was too short to carry
 // one, which callers route to an "unknown" bucket rather than treating as epoch.
 func debtRecordDate(r localdebt.Record) string {
-	if len(r.Timestamp) < 10 {
+	return debtTimestampDate(r.Timestamp)
+}
+
+// debtTimestampDate is debtRecordDate over a bare RFC3339 timestamp, so the
+// summary path — which carries Timestamp but no full record — dates an item by
+// the same rule.
+func debtTimestampDate(ts string) string {
+	if len(ts) < 10 {
 		return ""
 	}
-	return r.Timestamp[:10]
+	return ts[:10]
 }
 
 // debtComponent derives a stable, coarse component label from a record's File
@@ -126,7 +133,7 @@ type debtSeverityCount struct {
 }
 
 // debtComponentCount is the live item count for one component — live meaning
-// exactly what debtIsLive admits, never a re-derived sum of statuses believed to
+// exactly what debtIsLiveStatus admits, never a re-derived sum of statuses believed to
 // be live. Settled items are excluded: By Component is the dashboard's
 // prioritization rollup, so it shares the live-backlog scope of By Age and Top
 // Priority.
@@ -144,6 +151,12 @@ type debtAgeBucket struct {
 // debtSummary is the aggregated view a dashboard renders: totals, per-severity
 // and per-component breakdowns, a live-backlog age profile, and the
 // top-priority live items.
+//
+// It is aggregated from localdebt.Summary values, never full records: every
+// rollup needs only the projected fields, so the dashboard holds the store's
+// summaries rather than its records (epic 35.21). The one record-shaped need —
+// the Top Priority row's Problem text — is why Top carries ids, which the
+// renderer hydrates for at most topN items.
 type debtSummary struct {
 	Total                             int
 	Open, Deferred, Resolved, Wontfix int
@@ -151,7 +164,7 @@ type debtSummary struct {
 	// together: a fix pass that stops at the first match leaves the other
 	// under-counting, with Total silently failing to equal its parts.
 	Unreproducible, AttemptsExhausted int
-	// Live is the count of items debtIsLive admits — i.e. still work to do.
+	// Live is the count of items debtIsLiveStatus admits — i.e. still work to do.
 	// It is counted through that one predicate rather than re-derived as a sum
 	// of the statuses believed to be live, because a re-derived sum drifts the
 	// moment a status is added: `attempts-exhausted` is unsettled and therefore
@@ -163,7 +176,8 @@ type debtSummary struct {
 	BySeverity  []debtSeverityCount
 	ByComponent []debtComponentCount
 	ByAge       []debtAgeBucket
-	Top         []localdebt.Record
+	// Top is the ids of the top-priority live items, in display order.
+	Top []string
 }
 
 // debtSeverityOrder is the canonical most-severe-first ordering for presentation.
@@ -244,11 +258,12 @@ func debtIsLive(r localdebt.Record) bool {
 	return debtIsLiveStatus(r.Status)
 }
 
-// debtAgeDays returns the item's age in whole days relative to now, and whether
-// its date parsed. An unparseable timestamp yields ok=false so callers can route
-// it to an "unknown" bucket instead of silently treating it as age 0.
-func debtAgeDays(r localdebt.Record, now time.Time) (int, bool) {
-	d, err := time.Parse("2006-01-02", debtRecordDate(r))
+// debtAgeDays returns the age, in whole days relative to now, of an item carrying
+// timestamp ts, and whether its date parsed. An unparseable timestamp yields
+// ok=false so callers can route it to an "unknown" bucket instead of silently
+// treating it as age 0.
+func debtAgeDays(ts string, now time.Time) (int, bool) {
+	d, err := time.Parse("2006-01-02", debtTimestampDate(ts))
 	if err != nil {
 		return 0, false
 	}
@@ -268,20 +283,23 @@ func debtBandLabel(days int) string {
 	return debtAgeBands[len(debtAgeBands)-1].label
 }
 
-// summarizeDebt aggregates recs into a debtSummary. ByComponent, age buckets,
-// and Top cover only items debtIsLive admits — settled debt is not part of the
+// summarizeDebt aggregates sums — the store's FOLDED summaries, one per id — into
+// a debtSummary. ByComponent, age buckets, and Top cover only items
+// debtIsLiveStatus admits — settled debt is not part of the
 // backlog. That set is open, deferred and attempts-exhausted today; do not
 // re-derive it as a status sum here or at any consumer, which is the drift the
 // Live counter exists to end. Top is ordered most-severe first, then oldest
-// first, capped at topN.
+// first, capped at topN, and holds ids: sortDebtSummaries orders summaries with
+// the same comparator and stable sort sortDebt applies to records, over the same
+// fold order, so the ids come out in exactly the order the records would.
 //
 // A ZERO `now` means "no clock supplied" and yields a nil ByAge rather than a
 // profile measured against year zero. Every other field is clock-independent, so
 // the dashboard — which passes a zero time deliberately, to keep `--check` from
 // failing on the passage of time — is unaffected.
-func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary {
+func summarizeDebt(sums []localdebt.Summary, now time.Time, topN int) debtSummary {
 	var s debtSummary
-	s.Total = len(recs)
+	s.Total = len(sums)
 
 	sevIdx := map[string]*debtSeverityCount{}
 	sevCounts := make([]debtSeverityCount, len(debtSeverityOrder), len(debtSeverityOrder)+1)
@@ -294,9 +312,9 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 
 	compCount := map[string]int{}
 	ageCount := map[string]int{}
-	var top []localdebt.Record
+	var top []localdebt.Summary
 
-	for _, r := range recs {
+	for _, r := range sums {
 		bucket := debtStatusBucket(r.Status)
 		switch bucket {
 		case localdebt.StatusResolved:
@@ -348,7 +366,7 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 			sc.Open++
 		}
 
-		if debtIsLive(r) {
+		if debtIsLiveStatus(r.Status) {
 			s.Live++
 			compCount[debtComponent(r.File)]++
 			// No clock, no age profile. The only production caller passes a zero
@@ -356,7 +374,7 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 			// bands were computed for nobody and would have handed a future caller
 			// a profile claiming the whole backlog is 0-7 days old.
 			if !now.IsZero() {
-				if days, ok := debtAgeDays(r, now); ok {
+				if days, ok := debtAgeDays(r.Timestamp, now); ok {
 					ageCount[debtBandLabel(days)]++
 				} else {
 					ageCount["unknown"]++
@@ -392,11 +410,14 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 	// Top priority: severity then age (oldest first), deterministic on ties. The
 	// cap is unconditional: the CLI rejects a negative topN as a usage error
 	// before renderDebtDashboard — the only caller — can pass one here.
-	_ = sortDebt(top, sortKeySeverity) // severity rank, then date asc, then file
+	_ = sortDebtSummaries(top, sortKeySeverity) // severity rank, then date asc, then file
 	if len(top) > topN {
 		top = top[:topN]
 	}
-	s.Top = top
+	s.Top = make([]string, 0, len(top))
+	for _, r := range top {
+		s.Top = append(s.Top, r.ID)
+	}
 
 	return s
 }
@@ -408,17 +429,26 @@ func summarizeDebt(recs []localdebt.Record, now time.Time, topN int) debtSummary
 // destroy a file the dashboard never wrote.
 const dashboardGeneratedMarker = "_Generated by `atcr debt dashboard` — do not edit by hand; regenerate to update._"
 
-// renderDebtDashboard renders a deterministic Markdown dashboard from recs:
-// totals, a per-severity breakdown, a per-component rollup, an age profile
-// grouped by calendar month (so the render never drifts merely because time
-// passed), and a top-priority list of the topN highest live items.
+// renderDebtDashboard renders a deterministic Markdown dashboard from sums, the
+// store's folded summaries: totals, a per-severity breakdown, a per-component
+// rollup, an age profile grouped by calendar month (so the render never drifts
+// merely because time passed), and a top-priority list of the topN highest live
+// items.
+//
+// Every section but the top list is aggregated from the summaries alone. The top
+// list needs each row's Problem text, which the summary projection deliberately
+// does not carry (it is the record's bulk), so hydrate is called ONCE with the
+// selected ids — at most topN of them, and not at all when the list is suppressed
+// or the backlog is empty — and its records render the rows. runDebtDashboard
+// passes the store's pass-2 read (hydrateDebtIDs); an error from it is returned
+// unrendered.
 //
 // The output contains NO generation timestamp: a stable render is what lets
 // `atcr debt dashboard --check` detect real content drift rather than clock
 // movement. Free-text problem statements in the top list are passed through the
 // secret-token redactor so a key accidentally pasted into a finding never lands
 // in a published dashboard.
-func renderDebtDashboard(recs []localdebt.Record, topN int) string {
+func renderDebtDashboard(sums []localdebt.Summary, topN int, hydrate func(ids []string) ([]localdebt.Record, error)) (string, error) {
 	red := log.NewRedactor("") // empty root: token scrub only, no path relativization
 
 	// Severity/component/top are all independent of the wall clock. summarizeDebt
@@ -426,7 +456,7 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	// not use (it renders a time-invariant by-month view below), so a zero time
 	// is passed — which summarizeDebt reads as "no clock" and leaves ByAge nil
 	// instead of bucketing every record against year zero.
-	sum := summarizeDebt(recs, time.Time{}, topN)
+	sum := summarizeDebt(sums, time.Time{}, topN)
 
 	var b strings.Builder
 	b.WriteString("# Technical Debt Dashboard\n\n")
@@ -465,7 +495,7 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 
 	// By age — live items grouped by month (YYYY-MM), oldest first.
 	b.WriteString("## By Age (unresolved, by month)\n\n")
-	months := debtMonthHistogram(recs)
+	months := debtMonthHistogram(sums)
 	if len(months) == 0 {
 		b.WriteString("_No unresolved items._\n\n")
 	} else {
@@ -479,7 +509,7 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 	// Top priority — most-severe, then oldest, live items.
 	b.WriteString("## Top Priority\n\n")
 	// Ask the one predicate, not a hand-maintained sum of the statuses believed
-	// to be live. summarizeDebt counts Live through debtIsLive, which delegates
+	// to be live. summarizeDebt counts Live through debtIsLiveStatus, which delegates
 	// to localdebt.IsSettledStatus — the same gate that built ByComponent, the
 	// month histogram and Top — so the four can never disagree, and a seventh
 	// live status is included the moment the predicate says so.
@@ -506,15 +536,19 @@ func renderDebtDashboard(recs []localdebt.Record, topN int) string {
 		// routinely written to a published docs path, so scrubbing only Problem
 		// left the --help promise ("secret-shaped tokens in finding text are
 		// scrubbed") true of one column out of three.
+		top, err := hydrate(sum.Top)
+		if err != nil {
+			return "", err
+		}
 		b.WriteString("| ID | Severity | File | Est | Problem |\n|----|----------|------|-----|---------|\n")
-		for _, r := range sum.Top {
+		for _, r := range top {
 			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s |\n",
 				debtMarkdownCell(debtIDCell(r.ID)), r.Severity, debtMarkdownCell(red.Redact(debtLocation(r))),
 				r.EstMinutes, debtMarkdownCell(red.Redact(r.Problem)))
 		}
 	}
 
-	return b.String()
+	return b.String(), nil
 }
 
 type debtMonthCount struct {
@@ -523,13 +557,13 @@ type debtMonthCount struct {
 }
 
 // debtMonthHistogram counts live items per calendar month (the YYYY-MM prefix of
-// the record's timestamp), sorted oldest month first. A timestamp too short or
+// the summary's timestamp), sorted oldest month first. A timestamp too short or
 // malformed to carry a valid month prefix is bucketed under "unknown", sorted
 // last.
-func debtMonthHistogram(recs []localdebt.Record) []debtMonthCount {
+func debtMonthHistogram(sums []localdebt.Summary) []debtMonthCount {
 	counts := map[string]int{}
-	for _, r := range recs {
-		if !debtIsLive(r) {
+	for _, r := range sums {
+		if !debtIsLiveStatus(r.Status) {
 			continue
 		}
 		m := "unknown"

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -86,6 +87,23 @@ func TestDebtDashboard_GoldenRenderIsByteIdentical(t *testing.T) {
 			require.Equal(t, string(want), got, "the dashboard render drifted from the pre-35.21 golden")
 		})
 	}
+}
+
+// A failed pass-2 read must fail the command, not render a dashboard whose Top
+// Priority table silently lost its rows — under --check that would be reported
+// as drift (or worse, written by --output) with the cause hidden.
+func TestDebtDashboard_HydrateFailureFailsTheCommand(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	orig := dashboardHydrateFn
+	t.Cleanup(func() { dashboardHydrateFn = orig })
+	dashboardHydrateFn = func(string, []string, localdebt.ReadOpts, func(localdebt.Record) bool) ([]localdebt.Record, error) {
+		return nil, errors.New("shard went away")
+	}
+
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
+	require.ErrorContains(t, err, "read local debt store: shard went away")
+	require.NoFileExists(t, out, "nothing is written when the render failed")
 }
 
 // TestDebtDashboard_HydratesOnlyTheRenderedTopRows is epic 35.21 AC2: on a store
