@@ -345,7 +345,7 @@ allowlisted fields and nothing else:
 | Field              | Type   | Example                                                              | Meaning                                                      |
 |--------------------|--------|---------------------------------------------------------------------|-------------------------------------------------------------|
 | `persona_id_hash`  | string | `a1b2c3…` (SHA-256 hex)                                              | The one-way hash of the reviewer/persona name (see below).  |
-| `model`            | string | `claude-sonnet-4-6`                                                  | The model slug that ran under that persona.                 |
+| `model`            | string | `claude-sonnet-4-6`                                                  | The model slug that ran under that persona. Sent as `""` unless it is at most 128 characters of `[A-Za-z0-9._:/~@+-]`. |
 | `dismissed_count`  | int    | `3`                                                                  | How many of that pair's findings were dismissed (`wontfix`).|
 | `confirmed_count`  | int    | `1`                                                                  | How many were confirmed/kept (`resolved`).                  |
 

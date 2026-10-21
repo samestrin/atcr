@@ -241,3 +241,16 @@ func TestNewTelemetryPersonaRecord_GuardsWhitespaceOnlyPersona(t *testing.T) {
 	tr := NewTelemetryPersonaRecord(Record{Reviewer: "   ", Model: "claude-sonnet-4-6"})
 	assert.Equal(t, TelemetryPersonaRecord{}, tr, "whitespace-only reviewer must return the zero sentinel")
 }
+
+// TestNewTelemetryPersonaRecord_UnsafeModelSentEmpty locks epic 35.17 AC6: the
+// unhashed Model is validated at the payload boundary, so a slug that is not a
+// plain catalog identifier is sent as an empty model rather than copied through.
+func TestNewTelemetryPersonaRecord_UnsafeModelSentEmpty(t *testing.T) {
+	for _, m := range []string{"claude sonnet", "a\nb", strings.Repeat("a", 129), "a,b", "clàude"} {
+		got := NewTelemetryPersonaRecord(Record{Reviewer: "bruce", Model: m})
+		assert.Equal(t, "", got.Model, "model %q must be sent empty", m)
+		assert.Equal(t, HashPersonaID("bruce"), got.PersonaIDHash, "persona hash is unaffected by model validation")
+	}
+	got := NewTelemetryPersonaRecord(Record{Reviewer: "bruce", Model: "openai/gpt-4o"})
+	assert.Equal(t, "openai/gpt-4o", got.Model)
+}
