@@ -52,10 +52,10 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 
 // CloudSyncPersona is one per-reviewer identity+metrics entry in a cloud-sync
 // push. PersonaIDHash is a one-way HashPersonaID digest (pseudonymous, not
-// anonymous; it must be hardened to a keyed HMAC-SHA256 before production
-// endpoint activation to prevent dictionary attacks reversing enumerable persona names).
+// anonymous; the ingestion backend keys it with its own pepper on arrival — see
+// HashPersonaID for why the key cannot live in this binary).
 // Model is non-PII. The metrics are the real raw scorecard facts — the
-// atcr.dev backend derives any "time/credits saved" figure from these (the CLI
+// ingestion backend derives any "time/credits saved" figure from these (the CLI
 // ships facts, not a fabricated ROI number).
 type CloudSyncPersona struct {
 	PersonaIDHash string  `json:"persona_id_hash"`

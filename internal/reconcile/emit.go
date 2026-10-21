@@ -100,6 +100,12 @@ type JSONFinding struct {
 	// An empty value on a routed record means the ordinary no-match: the anchors
 	// appear nowhere in the tracked tree. See reclib.UnresolvedReasonDocShield.
 	UnresolvedReason string `json:"unresolved_reason,omitempty"`
+	// SourceCategories carries reclib.Merged.SourceCategories — each source
+	// finding's own category beside the cluster-modal Category — so a record
+	// routed into Result.Unresolved keeps it for the scorecard bridge. It is
+	// in-process only (json:"-"): findings.json and unresolved.json are
+	// byte-identical, and a record read back from disk has none.
+	SourceCategories []SourceCategory `json:"-"`
 	// PathSuggestion is the candidate-index correction for a hallucinated path
 	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
 	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
@@ -272,6 +278,8 @@ func (r Result) JSONFindings() []JSONFinding {
 			// because gate.go IsFailing and debate cross-examination mutate the same
 			// block referenced by the merged finding.
 			Verification: m.Verification,
+			// Shared, not deep-copied: nothing mutates the provenance after Merge.
+			SourceCategories: m.SourceCategories,
 			// FixWarning and FixReview intentionally not copied: both are set by the
 			// verify fix phase (executor.go generateFixes) after reconcile, so the
 			// reconcile path owns only the pre-fix merged state.

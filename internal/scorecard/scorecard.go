@@ -237,17 +237,16 @@ type Record struct {
 	// loop the third one breaks. The ambiguous stream contributes categories
 	// only; it touches no count.
 	//
-	// READ THE WORDING CAREFULLY, because the obvious reading is wrong and the
-	// Phase 2 gate caught it: these are NOT per-reviewer categories. The only
-	// Category reachable where the record is built is reconcile.Merged.Category,
-	// which Merge sets to ModalCategory(group) — the cluster's modal value. In a
-	// cluster where one lens raised `security` and two raised `performance`, the
-	// merged category is `performance` and the first lens's own category is
-	// unrecoverable from res.Findings. The cluster-modal meaning is therefore
-	// ADOPTED EXPLICITLY, which is sound for the only consumer — opportunity-set
-	// membership asks "was this topic in play on the case", which the modal value
-	// answers faithfully. Nothing may read it as a per-reviewer claim. Filed as
-	// TD-022.
+	// Each value is a category THIS reviewer attached to its own finding. On
+	// the surviving and Tier-4-routed streams it is read from
+	// reconcile.Merged.SourceCategories, not from Merged.Category: Merge sets
+	// Category to the cluster's modal value, so in a cluster where one lens
+	// raised `security` and two raised `performance` that lens's record carries
+	// `security`, not `performance`. The ambiguous stream already carries each
+	// reviewer's raw word. All three streams therefore mean the same thing
+	// (Epic 35.16.11.3.1; this closes TD-022 and TD-035). The modal value is
+	// always one member's own word, so the run's union across reviewers — the
+	// question "was this topic in play on the case" — still contains it.
 	//
 	// It is the per-record input to opportunity-set scoping: a lens
 	// will be scored on a case only when some reviewer raised a category inside
@@ -438,6 +437,14 @@ type Finding struct {
 	// reconcile.Categories() vocabulary gate, so the construction sites cannot
 	// disagree with each other about which values are durable.
 	Category string
+	// SourceCategories carries reconcile.Merged.SourceCategories: each source
+	// finding's OWN category, beside Category's cluster-modal value. When it is
+	// set, reviewerCategories reads a reviewer's own entries from it instead of
+	// Category, so a lens whose word lost Merge's vote still records that word.
+	// Empty means no provenance (the ambiguous stream, whose Category is already
+	// the reviewer's own word, or a caller that built the Finding by hand), and
+	// Category is used as before.
+	SourceCategories []reconcile.SourceCategory
 	// Severity and Disagreement carry reconcile.Finding's own values verbatim,
 	// threaded at the EmitForReconcile construction sites exactly as Category
 	// was. This struct is never persisted, so both are free: no schema change,
@@ -816,7 +823,8 @@ func Emit(in EmitInput, opts EmitOpts) error {
 }
 
 // reviewerCategories returns the distinct CATEGORY values the findings name
-// raised, deduped and sorted, across every stream passed in.
+// raised, deduped and sorted, across every stream passed in. Each value is the
+// reviewer's own word (categoriesFor), not the cluster's modal one.
 //
 // It is the durable half of opportunity-set scoping: the per-finding Category
 // lives on Finding, which is never persisted, so this fold is where the value
@@ -886,10 +894,11 @@ func reviewerCategories(name string, streams ...[]Finding) []string {
 			if !participates(f, name) {
 				continue
 			}
-			if !inVocabulary(f.Category) {
-				continue
+			for _, c := range categoriesFor(f, name) {
+				if inVocabulary(c) {
+					seen[c] = struct{}{}
+				}
 			}
-			seen[f.Category] = struct{}{}
 		}
 	}
 	if len(seen) == 0 {
@@ -901,6 +910,25 @@ func reviewerCategories(name string, streams ...[]Finding) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// categoriesFor returns the categories name itself gave finding f: its own
+// SourceCategories entries when f carries provenance, else f.Category. A
+// participating reviewer with no entry of its own (provenance that does not
+// cover every name on Reviewers) also falls back to f.Category, so it is never
+// left with no category at all.
+func categoriesFor(f Finding, name string) []string {
+	n := normalizeReviewerName(name)
+	var own []string
+	for _, sc := range f.SourceCategories {
+		if normalizeReviewerName(sc.Reviewer) == n {
+			own = append(own, sc.Category)
+		}
+	}
+	if len(own) == 0 {
+		return []string{f.Category}
+	}
+	return own
 }
 
 // reviewerCounts returns how many findings name raised and how many of those were
