@@ -409,9 +409,7 @@ func TestRetrieve_ErrorMappingAndCounter(t *testing.T) {
 
 func TestRetrieve_UnreachableHost(t *testing.T) {
 	h := newHarness(t, nil)
-	url := h.f.srv.URL
 	h.f.srv.Close()
-	_ = url
 	_, err := h.c.Retrieve(context.Background(), []string{"q"}, 1)
 	var se *Error
 	require.True(t, errors.As(err, &se))
@@ -536,7 +534,6 @@ func TestVetURL(t *testing.T) {
 }
 
 func TestRetrieve_RefusesPlainHTTPToNonLoopback(t *testing.T) {
-	var hits atomic.Int32
 	reg := metrics.NewRegistry()
 	c, err := New(Config{
 		// Never dialed: the refusal happens before any request leaves.
@@ -551,7 +548,6 @@ func TestRetrieve_RefusesPlainHTTPToNonLoopback(t *testing.T) {
 	var se *Error
 	require.True(t, errors.As(err, &se), "%v", err)
 	assert.Equal(t, ClassInsecureScheme, se.Class)
-	assert.Zero(t, hits.Load())
 	assert.Equal(t, int64(1), reg.Counter(UnreachableMetric).Value())
 }
 
