@@ -355,6 +355,37 @@ func TestOSLevelBackendRun_ScratchDirIsRemovedAfterTheRun(t *testing.T) {
 	assert.NoDirExists(t, seen.ScratchDir, "the ephemeral scratch tree must not outlive the run")
 }
 
+func TestOSLevelBackendRun_SlowDescendantCannotRecreateTheScratchTree(t *testing.T) {
+	// 35.23 AC3: a descendant the workload backgrounds and detaches from its
+	// output pipes (the shape of Go's telemetry writer) outlived a CLEAN exit,
+	// because the group SIGKILL was installed only as the cancel path. It then
+	// wrote under $HOME after `defer os.RemoveAll(scratchDir)` had run,
+	// recreating the scratch tree, and nothing ever deleted it again. Its
+	// redirects matter: a descendant still holding the pipes would take the
+	// WaitDelay path instead, and this test is about the exit-0 path.
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `( sleep 1; mkdir -p "$HOME/recreated"; touch "$HOME/recreated/late" ) </dev/null >/dev/null 2>&1 &
+exit 0`)
+	cfg.MaxConcurrent = 1
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.False(t, res.TimedOut, "the workload exited 0 with its pipes closed; this is the normal-exit path")
+	require.NotEmpty(t, seen.ScratchDir)
+	// If the reap regresses, the recreated tree would otherwise leak into the
+	// host temp dir on every test run.
+	t.Cleanup(func() { _ = os.RemoveAll(seen.ScratchDir) })
+
+	// Outlast the descendant's 1s sleep, so the tree's absence is evidence of
+	// the reap rather than a race the test always wins.
+	time.Sleep(2 * time.Second)
+	assert.NoDirExists(t, seen.ScratchDir,
+		"a descendant left running after a clean exit must be reaped before the scratch tree is removed")
+}
+
 func TestOSLevelBackendRun_WritableSeedsAnEphemeralCopyInsteadOfRefusing(t *testing.T) {
 	// RunSpec.Writable was refused outright while no copy mechanism existed.
 	// ResolveAutoFixSandbox's caller hardcodes Writable:true
