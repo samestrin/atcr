@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -319,7 +320,7 @@ func TestConfidenceForCategory(t *testing.T) {
 			t.Errorf("%s: ConfidenceForCategory(%d, %q, %v) = %q, want %q",
 				c.name, c.count, c.category, c.independent, got, c.want)
 		}
-		if c.independent || c.category != CategoryInvariant {
+		if c.independent || strings.ToLower(strings.TrimSpace(c.category)) != CategoryInvariant {
 			if got, want := ConfidenceForCategory(c.count, c.category, c.independent), ConfidenceFor(c.count); got != want {
 				t.Errorf("%s: outside the class must equal ConfidenceFor: got %q, want %q", c.name, got, want)
 			}
