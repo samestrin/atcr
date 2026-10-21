@@ -854,6 +854,11 @@ type Registry struct {
 	// (ProjectConfig.OnOverflow) overrides it; unset falls through to the embedded
 	// DefaultOnOverflow. Resolved once in ResolveSettings, like ReviewStrategy.
 	OnOverflow string `yaml:"on_overflow,omitempty"`
+	// SecretGuard is the registry (global) tier of the payload-egress secret
+	// guard (Epic 35.20): off, warn (default), redact, or block. The project tier
+	// (ProjectConfig.SecretGuard) overrides it; unset falls through to the
+	// embedded DefaultSecretGuard. Resolved once in ResolveSettings.
+	SecretGuard string `yaml:"secret_guard,omitempty"`
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
@@ -1018,6 +1023,9 @@ func (r *Registry) validate() error {
 	}
 	if !onOverflowValid(r.OnOverflow) {
 		errs = append(errs, fmt.Errorf("invalid on_overflow '%s': must be one of chunk, truncate, fallback, fail", r.OnOverflow))
+	}
+	if !secretGuardValid(r.SecretGuard) {
+		errs = append(errs, fmt.Errorf("invalid secret_guard '%s': must be one of %s", r.SecretGuard, secretGuardAllowed))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
