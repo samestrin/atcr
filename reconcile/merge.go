@@ -33,10 +33,28 @@ const CategoryOutOfScope = "out-of-scope"
 
 // Merged is one reconciled finding: the library Finding (with Reviewers,
 // Confidence, the disagreement annotation, and any Verification block populated)
-// is the whole record. It is a thin wrapper so callers can speak of a "merged
+// is the wire record. It wraps Finding so callers can speak of a "merged
 // finding" distinctly from a per-source input finding while sharing one struct.
+//
+// SourceCategories is the one thing it adds: each source finding's own
+// CATEGORY, beside the cluster-modal Category. Merge collapses a group's
+// categories to one vote, so without it a lens whose word lost the vote is
+// unrecoverable from the merged record. It is in-process provenance and is
+// never serialized (json:"-"), so a reconciled finding's wire shape is
+// unchanged.
 type Merged struct {
 	Finding
+	SourceCategories []SourceCategory `json:"-"`
+}
+
+// SourceCategory is one source finding's own category in a merged cluster.
+// Reviewer is normalized exactly as Merged.Reviewers is (commas stripped), so
+// the two match by string equality; Category is canonicalized (lower-cased,
+// trimmed) exactly as ModalCategory compares it. A reviewer with two findings
+// in one cluster appears twice, once per finding.
+type SourceCategory struct {
+	Reviewer string
+	Category string
 }
 
 // Merge collapses a group of duplicate findings into one reconciled finding per
@@ -45,7 +63,8 @@ type Merged struct {
 // longest; CATEGORY = modal (alpha tiebreak); EST_MINUTES = max; EVIDENCE =
 // reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count.
 // The location is the first finding's file/line (the group is co-located within
-// the cluster window).
+// the cluster window). SourceCategories records each finding's own category in
+// group order.
 //
 // Input Verification blocks are intentionally NOT propagated: Verification is
 // stamped post-reconcile by the caller after the verify stage resolves verdicts.
@@ -69,7 +88,21 @@ func Merge(group []Finding) Merged {
 		Confidence:   ConfidenceFor(len(reviewers)),
 		Disagreement: disagreement,
 	}
-	return Merged{Finding: m}
+	return Merged{Finding: m, SourceCategories: sourceCategories(group)}
+}
+
+// sourceCategories returns each finding's own category, in group order, with
+// the reviewer and category normalized as distinctReviewers and ModalCategory
+// normalize them.
+func sourceCategories(group []Finding) []SourceCategory {
+	out := make([]SourceCategory, 0, len(group))
+	for _, f := range group {
+		out = append(out, SourceCategory{
+			Reviewer: strings.ReplaceAll(f.Reviewer, ",", ""),
+			Category: strings.ToLower(strings.TrimSpace(f.Category)),
+		})
+	}
+	return out
 }
 
 // distinctReviewers returns the sorted, deduplicated reviewer names in a group.

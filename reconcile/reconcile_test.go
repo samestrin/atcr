@@ -183,3 +183,26 @@ func TestReconcile_SummaryCountsAmbiguousAndNoise(t *testing.T) {
 	eq(t, res.Summary.AmbiguousCount, 1, "one noise entry in ambiguous sidecar")
 	eq(t, res.Summary.NoiseCount, 1, "the single entry is noise")
 }
+
+// TestReconcile_MergedCarriesSourceCategories pins SourceCategories through the
+// whole pipeline (Merge, then the authority and trust passes that copy Merged by
+// value): a mixed-category cluster keeps each lens's own word beside the modal
+// Category.
+func TestReconcile_MergedCarriesSourceCategories(t *testing.T) {
+	sources := []Source{
+		{Name: "pool", Findings: []Finding{
+			mf("HIGH", "auth.go", 42, "token never expires here", "fix", "security", 15, "e", "greta"),
+		}},
+		{Name: "host", Findings: []Finding{
+			mf("HIGH", "auth.go", 43, "token never expires here", "fix", "performance", 15, "e", "host"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	length(t, res.Findings, 1, "co-located findings collapse")
+	eq(t, res.Findings[0].Category, "performance", "alphabetical tiebreak picks the modal value")
+	got := map[string]string{}
+	for _, sc := range res.Findings[0].SourceCategories {
+		got[sc.Reviewer] = sc.Category
+	}
+	deepEq(t, got, map[string]string{"greta": "security", "host": "performance"}, "each lens keeps its own word")
+}

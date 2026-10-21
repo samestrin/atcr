@@ -28,6 +28,8 @@ type (
 	Finding = reclib.Finding
 	// Merged is one reconciled finding.
 	Merged = reclib.Merged
+	// SourceCategory is one source finding's own category in a merged cluster.
+	SourceCategory = reclib.SourceCategory
 	// AmbiguousCluster is a gray-zone pair left unmerged.
 	AmbiguousCluster = reclib.AmbiguousCluster
 	// Options parameterizes a reconcile run.
