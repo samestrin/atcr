@@ -893,6 +893,12 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // TestMergeRoutedEras_PinsEveryElementOfItsGuard kills a mutation of each element
 // below; TestTrustPriors_AboveCurrentRecordsNeverReachThePrior pins the
 // consequence of the era arm on the prior itself.
+func foldAmbiguousChargeEra(records []Record) []Record {
+	out := make([]Record, len(records))
+	copy(out, records)
+	return out
+}
+
 func mergeRoutedEras(records []Record) []Record {
 	out := make([]Record, len(records))
 	copy(out, records)

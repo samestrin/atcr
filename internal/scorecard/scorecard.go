@@ -372,7 +372,8 @@ const (
 	// era 3 into era 2 on a proof that holds for THAT PAIR ONLY, so it keys on
 	// this name. Keyed on RaisedDenominatorCurrent instead, a bump to 4 would
 	// silently re-point the fold at an era whose equivalence nobody proved.
-	raisedDenominatorRoutedExShield = 3
+	raisedDenominatorRoutedExShield   = 3
+	raisedDenominatorAmbiguousCharged = 4
 	// RaisedDenominatorCurrent is the definition every record this package writes
 	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
 	// the era filters separate the old records from the new ones automatically.

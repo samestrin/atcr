@@ -40,6 +40,7 @@ type LeaderboardRow struct {
 	// double-count; deleting the fold would silently drop the anti-gaming
 	// property.
 	FindingsDocShielded    int
+	FindingsAmbiguous      int
 	CorroborationRate      float64
 	TotalCostUSD           float64
 	CostPerCorroborated    float64
