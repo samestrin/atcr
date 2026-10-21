@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -842,4 +843,181 @@ func TestRunEngine_NoHeadToolAgentWarnsUnwired(t *testing.T) {
 		"a tool agent with no range head must log its single-shot degradation, not skip the harness silently")
 	assert.Contains(t, got, "WARN",
 		"the degradation notice must log at Warn level so it rides LOG_LEVEL filtering")
+}
+
+// personaSpeedCompleter answers by model: m-slow parks until release closes (or
+// the run is cancelled), m-mid answers after a short delay, and every other
+// model (the chunked greta bins) answers at once with one finding per file.
+type personaSpeedCompleter struct{ release chan struct{} }
+
+const speedFinding = "HIGH|x.go:1|problem|fix|security|10|evidence"
+
+func (c personaSpeedCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	switch inv.Model {
+	case "m-slow":
+		select {
+		case <-c.release:
+			return speedFinding, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	case "m-mid":
+		time.Sleep(20 * time.Millisecond)
+		return speedFinding, nil
+	}
+	return baselineChunkFindingCompleter{}.Complete(ctx, inv)
+}
+
+// personaDoneCall is one onPersonaDone callback as a test saw it.
+type personaDoneCall struct {
+	agent   string
+	idx     []int
+	results []Result
+}
+
+// Epic 35.16.14.1 T1 success criterion: three personas of different speeds, one
+// of them chunked over three bins, each report done once, before the run
+// returns, while the ledger's chunks.json still follows every bin. The slow
+// persona only answers once the other two have reported done, so a callback that
+// waited for the join would hang the run instead of passing.
+func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
+	cfg.Settings.PayloadByteBudget = 100
+	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100), baselineEntry("c.go", 100)}
+	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	require.NoError(t, err)
+	require.Len(t, slots, 3, "greta plans one bin per file")
+	slots = append(slots,
+		Slot{Primary: Agent{Name: "slow", Invocation: llmclient.Invocation{Model: "m-slow"}}},
+		Slot{Primary: Agent{Name: "mid", Invocation: llmclient.Invocation{Model: "m-mid"}}},
+	)
+
+	poolDir := t.TempDir()
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var calls []personaDoneCall
+	var gretaBins []string
+	p := &PreparedReview{Slots: slots}
+	p.onPersonaDone = func(agent string, idx []int, results []Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, personaDoneCall{agent: agent, idx: idx, results: results})
+		if agent == "greta" {
+			// The ledger hook runs first for the last bin, so chunks.json already
+			// holds every bin's outcome when the persona reports done.
+			for _, b := range readChunkRecord(t, poolDir, "greta").Bins {
+				gretaBins = append(gretaBins, b.Outcome)
+			}
+		}
+		seen := map[string]bool{}
+		for _, c := range calls {
+			seen[c.agent] = true
+		}
+		if seen["greta"] && seen["mid"] && !seen["slow"] {
+			close(release)
+		}
+	}
+
+	ret := make(chan []Result, 1)
+	go func() {
+		results, _ := runEngine(context.Background(), personaSpeedCompleter{release: release}, p, poolDir)
+		ret <- results
+	}()
+	var results []Result
+	select {
+	case results = <-ret:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run hung: the fast personas' callbacks did not fire while the slow persona ran")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, calls, 3, "one callback per persona, all before the run returned")
+	got := map[string]personaDoneCall{}
+	for _, c := range calls {
+		_, dup := got[c.agent]
+		assert.False(t, dup, "persona %s reported done twice", c.agent)
+		got[c.agent] = c
+	}
+	assert.Equal(t, "slow", calls[2].agent, "the slow persona reports last")
+	assert.Equal(t, []int{0, 1, 2}, got["greta"].idx, "greta reports once its last bin resolves, with every bin")
+	assert.Equal(t, []int{3}, got["slow"].idx)
+	assert.Equal(t, []int{4}, got["mid"].idx)
+	for _, c := range calls {
+		require.Len(t, c.results, len(c.idx))
+		for k, r := range c.results {
+			assert.Equal(t, c.agent, r.Agent)
+			assert.Equal(t, StatusOK, r.Status, "%s slot %d", c.agent, c.idx[k])
+		}
+	}
+	assert.Equal(t, []string{StatusOK, StatusOK, StatusOK}, gretaBins, "the ledger hook still fires per bin")
+	require.Len(t, results, 3, "the merged results are unchanged: one per persona")
+}
+
+// A bulk run and a chunked diff run have no ledger (newChunkLedger is nil), and
+// their personas still report done once each when their last slot resolves.
+func TestRunEngine_PersonaDone_NoLedgerRuns(t *testing.T) {
+	slots := []Slot{
+		{Primary: Agent{Name: "kai", Invocation: llmclient.Invocation{Model: "m-mid"}, ChunkTotal: 2}},
+		{Primary: Agent{Name: "kai", Invocation: llmclient.Invocation{Model: "m-mid"}, ChunkTotal: 2}},
+		{Primary: Agent{Name: "greta", Invocation: llmclient.Invocation{Model: "m-fast"}}},
+	}
+	poolDir := t.TempDir()
+	var mu sync.Mutex
+	got := map[string][]int{}
+	n := 0
+	p := &PreparedReview{Slots: slots}
+	p.onPersonaDone = func(agent string, idx []int, _ []Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		got[agent] = idx
+	}
+	runEngine(context.Background(), personaSpeedCompleter{}, p, poolDir)
+	require.Nil(t, p.chunks, "no ledger for a bulk or chunked diff run")
+	assert.Equal(t, 2, n, "one callback per persona")
+	assert.Equal(t, map[string][]int{"kai": {0, 1}, "greta": {2}}, got)
+}
+
+// The tracker fires once per persona under concurrent completions, and a slot
+// that resolves twice is counted once.
+func TestPersonaTracker_ConcurrentOncePerPersona(t *testing.T) {
+	var slots []Slot
+	for a := 0; a < 5; a++ {
+		for c := 0; c < 20; c++ {
+			slots = append(slots, Slot{Primary: Agent{Name: fmt.Sprintf("p%d", a)}})
+		}
+	}
+	var mu sync.Mutex
+	fired := map[string]int{}
+	tr := newPersonaTracker(slots, func(agent string, idx []int, results []Result) {
+		mu.Lock()
+		defer mu.Unlock()
+		fired[agent]++
+		assert.Len(t, idx, 20)
+		assert.Len(t, results, 20)
+	})
+	var wg sync.WaitGroup
+	for i := range slots {
+		for rep := 0; rep < 2; rep++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				tr.slotDone(i, Result{Agent: slots[i].Primary.Name, Status: StatusOK})
+			}(i)
+		}
+	}
+	wg.Wait()
+	assert.Equal(t, map[string]int{"p0": 1, "p1": 1, "p2": 1, "p3": 1, "p4": 1}, fired)
+}
+
+// composeSlotDone runs every non-nil hook in order and is nil when none is set,
+// so the engine keeps its no-hook path.
+func TestComposeSlotDone(t *testing.T) {
+	assert.Nil(t, composeSlotDone(nil, nil))
+	var order []string
+	f := composeSlotDone(func(int, Result) { order = append(order, "ledger") }, nil, func(int, Result) { order = append(order, "persona") })
+	f(0, Result{})
+	assert.Equal(t, []string{"ledger", "persona"}, order)
 }

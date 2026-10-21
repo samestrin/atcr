@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
@@ -272,6 +273,12 @@ type PreparedReview struct {
 	// of a baseline multi-chunk run.
 	priorChunks map[string]*chunkRecord
 	chunks      *chunkLedger
+	// onPersonaDone, when set, is called once per persona the moment its last
+	// slot resolves, while other personas may still run (Epic 35.16.14.1 T1).
+	// idx lists the persona's slot indices in order and results[k] is slot
+	// idx[k]'s final Result, unmerged. It runs on an engine worker, after the
+	// ledger's hook for that slot, and concurrently for different personas.
+	onPersonaDone func(agent string, idx []int, results []Result)
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -1248,18 +1255,32 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// A resumed bin starts from the attempts its prior record counted
 	// (inheritAttempts, Epic 35.16.14 T6), so the ledger's count is the unit's
 	// whole history rather than this run's share.
+	//
+	// The engine holds one completion hook, so the ledger's per-bin hook and the
+	// per-persona tracker (Epic 35.16.14.1 T1) are composed into it, ledger first:
+	// a persona reports done only once its last bin is on disk. The tracker runs
+	// for every run kind, including the bulk and diff runs that have no ledger.
+	var ledgerDone func(int, Result)
 	if ledger := newChunkLedger(log.FromContext(ctx), poolDir, p.Slots); ledger != nil {
 		ledger.inheritAttempts(p.priorChunks)
 		ledger.carryReviewed(p.priorChunks)
 		p.chunks = ledger
 		ledger.writePlan()
-		opts = append(opts, WithSlotStart(ledger.slotStart), WithSlotDone(ledger.slotDone))
+		ledgerDone = ledger.slotDone
+		opts = append(opts, WithSlotStart(ledger.slotStart))
 		// Outer per-unit retry (Epic 35.16.14 T3): a recorded bin that fails with a
 		// 429, a 5xx, a transport error or a timeout goes back to pending in the
 		// ledger and is leased again after a backoff. Only on the ledger's units, so
 		// a bulk or diff run is unchanged, and never on a bin over its reviewer's
 		// window (Epic 35.16.14 fix AC1b), which no retry can make fit.
 		opts = append(opts, WithUnitRetry(ledger.retryable, ledger.slotRequeue))
+	}
+	var personaDone func(int, Result)
+	if p.onPersonaDone != nil {
+		personaDone = newPersonaTracker(p.Slots, p.onPersonaDone).slotDone
+	}
+	if hook := composeSlotDone(ledgerDone, personaDone); hook != nil {
+		opts = append(opts, WithSlotDone(hook))
 	}
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
@@ -1313,6 +1334,88 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		stage.SnapshotWorktreePath = snapWorktreePath
 	}
 	return results, stage
+}
+
+// composeSlotDone folds the non-nil per-slot hooks into the engine's single
+// WithSlotDone hook, run in order; a second WithSlotDone would replace the
+// first. nil when every hook is nil, so the engine keeps its no-hook path.
+func composeSlotDone(hooks ...func(int, Result)) func(int, Result) {
+	var set []func(int, Result)
+	for _, h := range hooks {
+		if h != nil {
+			set = append(set, h)
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return func(i int, r Result) {
+		for _, h := range set {
+			h(i, r)
+		}
+	}
+}
+
+// personaTracker turns the engine's per-slot completions into one call per
+// persona, made when the persona's last slot resolves (Epic 35.16.14.1 T1). A
+// chunked persona's slots share its Primary.Name. Safe for concurrent slotDone
+// calls; a slot resolving a second time is ignored, so no persona fires twice.
+type personaTracker struct {
+	onDone func(agent string, idx []int, results []Result)
+	agent  []string         // slot index -> persona name
+	slots  map[string][]int // persona -> its slot indices, in order
+	mu     sync.Mutex
+	// pending counts each persona's unresolved slots; resolved and results
+	// hold each slot's state. All under mu.
+	pending  map[string]int
+	resolved []bool
+	results  []Result
+}
+
+func newPersonaTracker(slots []Slot, onDone func(agent string, idx []int, results []Result)) *personaTracker {
+	t := &personaTracker{
+		onDone:   onDone,
+		agent:    make([]string, len(slots)),
+		slots:    make(map[string][]int),
+		pending:  make(map[string]int),
+		resolved: make([]bool, len(slots)),
+		results:  make([]Result, len(slots)),
+	}
+	for i, s := range slots {
+		name := s.Primary.Name
+		t.agent[i] = name
+		t.slots[name] = append(t.slots[name], i)
+		t.pending[name]++
+	}
+	return t
+}
+
+// slotDone records slot i's final Result and, when it was the persona's last
+// unresolved slot, calls onDone outside the lock with that persona's results.
+func (t *personaTracker) slotDone(i int, r Result) {
+	if i < 0 || i >= len(t.agent) {
+		return
+	}
+	name := t.agent[i]
+	t.mu.Lock()
+	if t.resolved[i] {
+		t.mu.Unlock()
+		return
+	}
+	t.resolved[i] = true
+	t.results[i] = r
+	t.pending[name]--
+	if t.pending[name] > 0 {
+		t.mu.Unlock()
+		return
+	}
+	idx := append([]int(nil), t.slots[name]...)
+	results := make([]Result, len(idx))
+	for k, j := range idx {
+		results[k] = t.results[j]
+	}
+	t.mu.Unlock()
+	t.onDone(name, idx, results)
 }
 
 // ExecuteReview runs phase two: fan out the prepared roster under the global
