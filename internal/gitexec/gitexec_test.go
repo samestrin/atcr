@@ -109,12 +109,14 @@ const execWrapperFile = "internal/gitexec/gitexec.go"
 
 // indirectNonGitExecFiles are the module-root-relative production files permitted to
 // construct a subprocess through a NON-literal command name (an identifier/selector
-// rather than a string literal). Both provably run a non-git binary:
+// rather than a string literal). Each provably runs a non-git binary:
 //
 //   - internal/verify/localvalidate.go execs the user's validate command via argv[0].
 //   - internal/sandbox/docker.go execs the docker binary via b.cfg.DockerPath.
 //   - internal/sandbox/oslevel.go execs the platform sandboxing binary
 //     (sandbox-exec on macOS, bwrap on Linux) via the path toolPath() resolves.
+//   - internal/payload/secretscan.go execs the gitleaks binary via the path
+//     exec.LookPath("gitleaks") resolves.
 //
 // The AC4 scan flags every indirected exec (a `git`-via-variable call is exactly the
 // snapshot.go form found and migrated in the Phase 1 gate), so these must be
@@ -136,6 +138,7 @@ var indirectNonGitExecFiles = map[string]int{
 	"internal/verify/localvalidate.go": 1, // argv[0] — the user's validate command
 	"internal/sandbox/docker.go":       4, // b.cfg.DockerPath: run, kill, and two dockerCmd helpers
 	"internal/sandbox/oslevel.go":      1, // toolPath() — sandbox-exec / bwrap
+	"internal/payload/secretscan.go":   1, // bin from exec.LookPath("gitleaks") — the secret scanner
 }
 
 // checkIndirectGrants compares the indirected-exec sites actually found in each
