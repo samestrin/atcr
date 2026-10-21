@@ -145,6 +145,27 @@ applied entry is flagged, `--auto-fix` appends a `## Review Warnings` section to
 the generated PR body naming the flagged path(s) and reason. A patch with no
 flagged paths leaves the PR body byte-identical to today.
 
+## Payload egress: the `secret_guard` scan
+
+A separate surface from the host-integrity controls above: what a review sends
+*out*. Before a review prompt leaves for a provider, atcr scans it for
+credentials and applies the `secret_guard` policy (`off`, `warn`, `redact` or
+`block`; default `warn`, settable in the registry or per project). `block`
+aborts the run rather than send a prompt holding a credential — and fails
+closed when the scan itself could not be trusted. Warnings and block errors
+name the agent, the secret kinds and the files, never the value.
+
+The guard covers the **review prompt only** — the payload and persona text sent
+to a review agent or its fallback. It does not scan tool-loop results, debate,
+verify or doctor traffic.
+
+It is one layer of three, and the docs describe them together in
+[docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
+**pre-commit** secret scanner keeps credentials out of the diff at commit time,
+atcr's **egress guard** is the last checkpoint before a prompt leaves the
+machine, and **presidio** at the proxy masks residual PII that is not a
+credential.
+
 ## Summary
 
 | Control | Layer | Default | Bypass |
