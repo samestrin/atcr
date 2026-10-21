@@ -253,6 +253,11 @@ type Agent struct {
 	// a hand-built Agent, so a declared fallback of one appends the shared block
 	// rather than search.
 	payloadStart int
+	// secretGuarded marks a prompt whose payload already passed the secret
+	// guard (Epic 35.20) in renderAgent. A fallback that inherits it ships the
+	// same payload, so it does not scan (and warn) a second time. False on a
+	// hand-built Agent, whose fallback therefore scans its inherited prompt.
+	secretGuarded bool
 
 	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
 	// delay (ms), resolved by renderAgent from the per-agent override layered over
