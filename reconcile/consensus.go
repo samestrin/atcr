@@ -197,8 +197,17 @@ func panelReviewers(sources []Source) int {
 // fails closed on such a floor and the negation would otherwise make EVERY
 // finding droppable, so the guard keeps a missed enabled check degrading to
 // strict instead of delete-everything.
+//
+// A finding with 2+ distinct reviewers is never a drop candidate, whatever its
+// confidence: it is corroborated, not a singleton. Before epic 35.16.17 such a
+// finding was always HIGH at reconcile time, so the guard changed nothing; since
+// ConfidenceForCategory discounts the panel-wide-instruction class to MEDIUM, it
+// is what keeps a discounted finding in Findings instead of the sidecar.
 func consensusSingletonAt(m Merged, floor string) bool {
 	if confidenceRank[strings.ToUpper(strings.TrimSpace(floor))] == 0 {
+		return false
+	}
+	if len(m.Reviewers) >= 2 {
 		return false
 	}
 	return !ConfidenceAtOrAbove(m.Confidence, floor)
