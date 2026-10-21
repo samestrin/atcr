@@ -315,6 +315,95 @@ func TestReview_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 		"review telemetry status must reflect the --fail-on gate outcome, not the pre-gate fanout result")
 }
 
+// TestTelemetryGateFromConfig proves the config-threaded gate composes the env
+// var with the CALLER's value and never reads disk: a .atcr/config.yaml that says
+// the opposite of the passed value is ignored in both directions.
+func TestTelemetryGateFromConfig(t *testing.T) {
+	t.Run("nil cfg, env unset -> enabled even with telemetry:false on disk", func(t *testing.T) {
+		isolate(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
+		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
+		assert.True(t, telemetryGateFromConfig(io.Discard, nil), "the gate must not fall back to the on-disk setting")
+	})
+	t.Run("cfg false disables even with telemetry:true on disk", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("ATCR_TELEMETRY", "1")
+		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: true\n")
+		assert.False(t, telemetryGateFromConfig(io.Discard, boolPtr(false)))
+	})
+	t.Run("env=0 beats cfg true", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("ATCR_TELEMETRY", "0")
+		assert.False(t, telemetryGateFromConfig(io.Discard, boolPtr(true)))
+	})
+	t.Run("never calls the disk loader", func(t *testing.T) {
+		isolate(t)
+		unsetEnvForTest(t, "ATCR_TELEMETRY")
+		reads := countTelemetrySettingReads(t)
+		_ = telemetryGateFromConfig(io.Discard, nil)
+		_ = telemetryGateFromConfig(io.Discard, boolPtr(true))
+		assert.Equal(t, int32(0), atomic.LoadInt32(reads))
+	})
+}
+
+// countTelemetrySettingReads wraps the loadTelemetrySetting seam with a counter of
+// on-disk telemetry-setting reads, restoring the real loader on cleanup.
+func countTelemetrySettingReads(t *testing.T) *int32 {
+	t.Helper()
+	var n int32
+	orig := loadTelemetrySetting
+	loadTelemetrySetting = func(root string) (*bool, error) {
+		atomic.AddInt32(&n, 1)
+		return orig(root)
+	}
+	t.Cleanup(func() { loadTelemetrySetting = orig })
+	return &n
+}
+
+// TestReview_TelemetryGate_UsesLoadedConfig proves the review defer gates on the
+// telemetry value the strict roster load already parsed: a roster-valid config
+// with telemetry:false sends zero usage pings, and the review path never reads
+// .atcr/config.yaml a second time for the telemetry setting. ATCR_TELEMETRY=1 so
+// the config value is the only thing that can disable the ping.
+func TestReview_TelemetryGate_UsesLoadedConfig(t *testing.T) {
+	run := func(t *testing.T, config string) (hits, reads int32) {
+		t.Helper()
+		isolate(t)
+		t.Setenv("ATCR_TELEMETRY", "1")
+		t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+		initGitRepoWithChange(t)
+		srv := mockFindingsServer(t)
+		writeBackendContractConfig(t, srv.URL)
+		writeAtcrConfig(t, config)
+
+		n := countingDoRequest(t)
+		r := countTelemetrySettingReads(t)
+		client := telemetry.NewSingleDestination("https://telemetry.test/ingest")
+		logger, err := log.New("info", "text", io.Discard)
+		require.NoError(t, err)
+		cmd := newReviewCmd()
+		cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(new(bytes.Buffer))
+		require.NoError(t, cmd.ParseFlags([]string{"--base", "HEAD^", "--head", "HEAD"}))
+		_ = runReview(cmd, cmd.Flags().Args())
+		waitQualitySignalInFlight()
+		client.Wait()
+		return atomic.LoadInt32(n), atomic.LoadInt32(r)
+	}
+
+	t.Run("telemetry:false -> zero requests, no second config read", func(t *testing.T) {
+		hits, reads := run(t, "agents: [bruce]\ntelemetry: false\n")
+		assert.Equal(t, int32(0), hits, "the loaded telemetry:false must suppress the review ping")
+		assert.Equal(t, int32(0), reads, "the review gate must not re-read .atcr/config.yaml for the telemetry setting")
+	})
+	t.Run("telemetry unset -> exactly one request, no second config read", func(t *testing.T) {
+		hits, reads := run(t, "agents: [bruce]\n")
+		assert.Equal(t, int32(1), hits, "an unset telemetry value leaves the env-enabled ping on")
+		assert.Equal(t, int32(0), reads, "the review gate must not re-read .atcr/config.yaml for the telemetry setting")
+	})
+}
+
 // TestDominantLang_TieBreakIsDeterministic covers the map-iteration tie-break
 // fix: when two files have the same changed-line count, the winner must be the
 // lexicographically smallest path, not whichever map slot Go happens to visit

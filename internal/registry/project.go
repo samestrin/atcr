@@ -145,6 +145,11 @@ type ProjectConfig struct {
 	// outside the diff) survives default application; unset inherits the registry
 	// tier or the embedded DefaultMaxPrefetchBytes.
 	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
+	// ContextPrefetch is the optional `context_prefetch` block (Epic 35.16.12).
+	// Its `semantic` member opts into similarity retrieval against an external
+	// index; nil, blank, or anything short of `enabled: true` means OFF. Each set
+	// field overrides the registry tier's.
+	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
@@ -344,6 +349,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.MaxPrefetchBytes != nil && *cfg.MaxPrefetchBytes < 0 {
 		return nil, fmt.Errorf("%s: max_prefetch_bytes must be >= 0 (0 = disabled), got %d", base, *cfg.MaxPrefetchBytes)
+	}
+	if err := cfg.ContextPrefetch.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))

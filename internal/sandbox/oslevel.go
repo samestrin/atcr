@@ -90,6 +90,13 @@ type OSLevelConfig struct {
 	// across this backend, mirroring DockerConfig.MaxConcurrent: a review
 	// verifies findings concurrently and each skeptic may run many tools, so
 	// without this cap a large finding set could exhaust the host.
+	//
+	// It also multiplies the per-run copy bound: each concurrent Writable run
+	// seeds its own copy of up to osLevelMaxWritableCopyBytes (2 GiB) into an
+	// os.MkdirTemp("") scratch dir, so the worst-case footprint is
+	// MaxConcurrent x 2 GiB — 8 GiB at the default of 4. That scratch dir lands
+	// in $TMPDIR (else /tmp), which is tmpfs on many Linux and CI hosts, so on
+	// those hosts the 8 GiB worst case is RAM, not disk.
 	MaxConcurrent int
 	// ModuleCacheDir is a persistent, atcr-owned dependency cache mounted
 	// READ-ONLY into every run, and the one carve-out that deliberately outlives
@@ -498,6 +505,12 @@ const (
 // previous run (or a repository containing a large fixture) decides its size.
 // The Docker backend gets this bound for free from the container's own storage
 // limits; here it has to be stated.
+//
+// The bound is per run, and it is not necessarily disk. The scratch dir comes
+// from os.MkdirTemp(""), i.e. $TMPDIR (else /tmp), which is tmpfs on many Linux
+// and CI hosts — there the copy is held in RAM (and swap). And each concurrent
+// Writable run seeds its own copy, so the real worst case is
+// OSLevelConfig.MaxConcurrent x 2 GiB: 8 GiB at the default MaxConcurrent of 4.
 //
 // The numbers are sized against a real working tree rather than picked round:
 // atcr's own checkout measured 486 MiB / 16.9k entries excluding .git, and a
@@ -1226,6 +1239,16 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	cmd.Stderr = capture
 
 	runErr := cmd.Run()
+	// Reap what is left of the group on every exit path, before the deferred
+	// os.RemoveAll(scratchDir) runs. The cancel above fires only on timeout or
+	// cancellation, so a descendant that detached from the output pipes would
+	// otherwise survive a clean exit and recreate the scratch tree after its
+	// removal. A failed reap is logged, not fatal: the workload's own result is
+	// still what it is.
+	if reapErr := reapSandboxProcessGroup(cmd); reapErr != nil {
+		logger.Warn("sandbox exec process-group reap returned unexpected error",
+			"backend", osLevelBackendName, "command", logCmd, "error", reapErr)
+	}
 	res = RunResult{
 		Command: cmdStr,
 		Output:  truncate(buf.String(), maxOut),
