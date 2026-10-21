@@ -127,9 +127,18 @@ type ReviewStatus struct {
 	Agents []AgentProgress `json:"agents,omitempty"`
 }
 
-// StageFanout is ReviewStatus.CurrentStage while the fan-out has not written
-// summary.json.
-const StageFanout = "fanout"
+// ReviewStatus.CurrentStage values. StageFanout holds while the fan-out has not
+// written summary.json; the rest name the latest stage that finished after it
+// (Epic 35.16.14.1 T4). reconcile, verify and debate are separate commands and
+// nothing records that one started, so no value means a stage is running. A
+// failed, interrupted or stale run reports its terminal Status instead.
+const (
+	StageFanout     = "fanout"
+	StageReviewed   = "reviewed"
+	StageReconciled = "reconciled"
+	StageVerified   = "verified"
+	StageDebated    = "debated"
+)
 
 // Per-persona states in AgentProgress.State. There is no running state: a lease
 // lives only in memory, so a pending persona may already be mid-run.

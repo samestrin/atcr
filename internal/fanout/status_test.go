@@ -840,3 +840,135 @@ func TestReadReviewStatus_DuplicateRosterNameCountedOnce(t *testing.T) {
 	assert.Equal(t, []string{"greta"}, st.CompletedAgents)
 	assert.Equal(t, 1, st.AgentsDone)
 }
+
+// --- Epic 35.16.14.1 T4: stage after the fan-out ---
+
+func writeSummary(t *testing.T, dir string, ps PoolSummary) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, writeJSON(filepath.Join(dir, "sources", "pool", summaryFile), ps))
+}
+
+func writeMarker(t *testing.T, dir, name string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", name), []byte("{}\n"), 0o644))
+}
+
+func setManifestStages(t *testing.T, dir string, stages ...string) {
+	t.Helper()
+	m, err := ReadManifest(dir)
+	require.NoError(t, err)
+	m.Stages = stages
+	require.NoError(t, WriteManifest(dir, m))
+}
+
+func stageOf(t *testing.T, dir string) string {
+	t.Helper()
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	return st.CurrentStage
+}
+
+// The stage is the latest one that finished, walking forward as each marker
+// file lands; manifest.stages names verify and debate as well.
+func TestReadReviewStatus_StageInference(t *testing.T) {
+	t.Run("marker files", func(t *testing.T) {
+		dir, raw := liveReview(t, "greta")
+		assert.Equal(t, StageFanout, stageOf(t, dir))
+
+		writeAgentStatus(t, raw, "greta", StatusOK)
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1})
+		assert.Equal(t, StageReviewed, stageOf(t, dir))
+
+		writeMarker(t, dir, "findings.json")
+		assert.Equal(t, StageReconciled, stageOf(t, dir))
+
+		writeMarker(t, dir, "verification.json")
+		assert.Equal(t, StageVerified, stageOf(t, dir))
+
+		writeMarker(t, dir, "debate.json")
+		assert.Equal(t, StageDebated, stageOf(t, dir))
+	})
+
+	t.Run("manifest stages", func(t *testing.T) {
+		dir, _ := liveReview(t, "greta")
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1})
+		setManifestStages(t, dir, "review")
+		assert.Equal(t, StageReviewed, stageOf(t, dir))
+
+		setManifestStages(t, dir, "review", "verify")
+		assert.Equal(t, StageVerified, stageOf(t, dir))
+
+		setManifestStages(t, dir, "review", "verify", "debate")
+		assert.Equal(t, StageDebated, stageOf(t, dir))
+	})
+
+	t.Run("highest wins", func(t *testing.T) {
+		// debate.json with no verification.json, and a manifest that lists only
+		// verify: the highest stage found is reported, never a lower one.
+		dir, _ := liveReview(t, "greta")
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1})
+		writeMarker(t, dir, "findings.json")
+		writeMarker(t, dir, "debate.json")
+		setManifestStages(t, dir, "review", "verify")
+		assert.Equal(t, StageDebated, stageOf(t, dir))
+
+		dir2, _ := liveReview(t, "greta")
+		writeSummary(t, dir2, PoolSummary{Total: 1, Succeeded: 1})
+		writeMarker(t, dir2, "findings.json")
+		setManifestStages(t, dir2, "review", "debate")
+		assert.Equal(t, StageDebated, stageOf(t, dir2))
+	})
+
+	t.Run("marker that is not a file", func(t *testing.T) {
+		// A directory named like a marker is not a finished stage.
+		dir, _ := liveReview(t, "greta")
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1})
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled", "findings.json"), 0o755))
+		assert.Equal(t, StageReviewed, stageOf(t, dir))
+	})
+
+	t.Run("marker symlinked outside the review", func(t *testing.T) {
+		dir, _ := liveReview(t, "greta")
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1})
+		outside := filepath.Join(t.TempDir(), "findings.json")
+		require.NoError(t, os.WriteFile(outside, []byte("{}"), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+		require.NoError(t, os.Symlink(outside, filepath.Join(dir, "reconciled", "findings.json")))
+		assert.Equal(t, StageReviewed, stageOf(t, dir))
+	})
+
+	t.Run("failed run", func(t *testing.T) {
+		dir, _ := liveReview(t, "greta")
+		writeSummary(t, dir, PoolSummary{Total: 1, Failed: 1})
+		writeMarker(t, dir, "findings.json")
+		st, err := ReadReviewStatus(dir, "x")
+		require.NoError(t, err)
+		assert.Equal(t, RunFailed, st.Status)
+		assert.Equal(t, RunFailed, st.CurrentStage)
+	})
+
+	t.Run("interrupted run", func(t *testing.T) {
+		dir, _ := liveReview(t, "greta")
+		m, err := ReadManifest(dir)
+		require.NoError(t, err)
+		m.Interrupted = true
+		require.NoError(t, WriteManifest(dir, m))
+		writeSummary(t, dir, PoolSummary{Total: 1, Succeeded: 1, Partial: true})
+		writeMarker(t, dir, "verification.json")
+		st, err := ReadReviewStatus(dir, "x")
+		require.NoError(t, err)
+		assert.Equal(t, RunInterrupted, st.Status)
+		assert.Equal(t, RunInterrupted, st.CurrentStage)
+	})
+
+	t.Run("stale run", func(t *testing.T) {
+		dir := t.TempDir()
+		writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+		st, err := ReadReviewStatus(dir, "x")
+		require.NoError(t, err)
+		assert.Equal(t, RunStale, st.Status)
+		assert.Equal(t, RunStale, st.CurrentStage)
+	})
+}
