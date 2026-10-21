@@ -243,7 +243,10 @@ Concretely, opting in accepts all of the following:
   full host-side copy of the snapshot before executing. That copy is bounded at
   **2 GiB and 500,000 entries**; a tree exceeding either ceiling fails the run
   rather than validating a partial copy. Entries the copy cannot read are skipped
-  with a warning, so an unreadable file does not abort the run.
+  with a warning, so an unreadable file does not abort the run. The copy is made
+  under `$TMPDIR` (or `/tmp` when it is unset), which is `tmpfs` on many Linux and
+  CI hosts, so there it consumes RAM rather than disk. The 2 GiB bound is per run,
+  and up to four runs execute at once, so the worst case is 4 × 2 GiB = **8 GiB**.
 
 `sandbox.fallback` and `--no-sandbox` are **separate, non-overlapping** escape
 hatches, and neither implies the other: the flag accepts fully unsandboxed host
