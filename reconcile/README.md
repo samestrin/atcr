@@ -179,7 +179,11 @@ result safely.
   reviewer-prefixed and concatenated.
 - **Confidence — v2 tiers `VERIFIED > HIGH > MEDIUM > LOW`.** Confidence is
   derived from the count of distinct reviewers who agree, and is promoted to
-  `VERIFIED` when an adversarial verdict confirms the finding.
+  `VERIFIED` when an adversarial verdict confirms the finding. Agreement on an
+  `invariant` finding counts only when it is independent: reviewers who all
+  file it in one file with near-identical evidence (`IsPanelWide`, the mark of
+  a panel-wide instruction) get `MEDIUM`, not `HIGH`. The finding is kept, and
+  is not routed to the consensus sidecar (`ConfidenceForCategory`).
 - **Ambiguity sidecar.** Three kinds of cluster surface in `Result.Ambiguous` as
   `AmbiguousCluster` values, neither silently merged nor dropped: **gray-zone
   pairs** (0.4–0.7) a host can adjudicate (and force a merge via

@@ -61,7 +61,9 @@ type SourceCategory struct {
 // the merge rules: REVIEWERS comma-joined+deduped+sorted; SEVERITY = max with a
 // "<lo> vs <hi>" disagreement when lower severities are present; PROBLEM/FIX =
 // longest; CATEGORY = modal (alpha tiebreak); EST_MINUTES = max; EVIDENCE =
-// reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count.
+// reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count,
+// discounted to MEDIUM when the group is in the panel-wide-instruction class
+// (ConfidenceForCategory, IsPanelWide).
 // The location is the first finding's file/line (the group is co-located within
 // the cluster window). SourceCategories records each finding's own category in
 // group order.
@@ -75,17 +77,19 @@ func Merge(group []Finding) Merged {
 	reviewers := distinctReviewers(group)
 	maxSev, disagreement := MergeSeverity(group)
 
+	category := ModalCategory(group)
+
 	m := Finding{
 		Severity:     maxSev,
 		File:         group[0].File,
 		Line:         group[0].Line,
 		Problem:      LongestField(group, func(f Finding) string { return f.Problem }),
 		Fix:          LongestField(group, func(f Finding) string { return f.Fix }),
-		Category:     ModalCategory(group),
+		Category:     category,
 		EstMinutes:   MaxEstMinutes(group),
 		Evidence:     mergeEvidence(group),
 		Reviewers:    reviewers,
-		Confidence:   ConfidenceFor(len(reviewers)),
+		Confidence:   ConfidenceForCategory(len(reviewers), category, !IsPanelWide(group)),
 		Disagreement: disagreement,
 	}
 	return Merged{Finding: m, SourceCategories: sourceCategories(group)}
@@ -264,4 +268,24 @@ func ConfidenceFor(reviewerCount int) string {
 		return ConfHigh
 	}
 	return ConfMedium
+}
+
+// ConfidenceForCategory is ConfidenceFor with the panel-wide-instruction
+// discount (epic 35.16.17): agreement among 2+ reviewers on a CategoryInvariant
+// finding counts as corroboration only when it is independent. When it is not
+// (independent is false; Merge passes !IsPanelWide(group)) the reviewers were all
+// told to look there, so the finding is MEDIUM instead of HIGH. It is discounted,
+// never dropped. Any other category, and any independent agreement, gets exactly
+// ConfidenceFor(reviewerCount). The category is matched the way ModalCategory
+// canonicalizes it.
+//
+// A singleton is never discounted, so a single-reviewer finding in the class that
+// promoteByAuthority lifts to HIGH stays HIGH: its reviewer's run authority was
+// earned by agreeing with other models elsewhere in the run, which is independent
+// signal, not the panel-wide instruction.
+func ConfidenceForCategory(reviewerCount int, category string, independent bool) string {
+	if reviewerCount >= 2 && !independent && strings.ToLower(strings.TrimSpace(category)) == CategoryInvariant {
+		return ConfMedium
+	}
+	return ConfidenceFor(reviewerCount)
 }
