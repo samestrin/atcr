@@ -736,3 +736,55 @@ func TestSend_SetsVersionedUserAgent(t *testing.T) {
 		t.Fatalf("User-Agent version %q must track the build version %q", ua, version.Version)
 	}
 }
+
+// --- Epic 35.19: loopback http for an operator's local collector -------------
+
+// TestIsSendableEndpoint_LoopbackHTTPOnly pins the initial-URL rule the
+// --telemetry-endpoint validator mirrors: https always, plaintext http only when
+// the host is loopback. A validated loopback value that the client then refused
+// would send nothing while the operator believes it is redirected.
+func TestIsSendableEndpoint_LoopbackHTTPOnly(t *testing.T) {
+	cases := []struct {
+		endpoint string
+		want     bool
+	}{
+		{"https://collector.internal/usage", true},
+		{"http://127.0.0.1:8080/usage", true},
+		{"http://[::1]:8080/usage", true},
+		{"http://localhost/usage", true},
+		{"HTTP://LOCALHOST/usage", true},
+		{"http://collector.internal/usage", false},
+		{"http://10.0.0.5/usage", false},
+		{"http://localhost.evil.example/usage", false},
+		{"http://", false},
+		{"ftp://127.0.0.1/usage", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isSendableEndpoint(tc.endpoint); got != tc.want {
+			t.Errorf("isSendableEndpoint(%q) = %v, want %v", tc.endpoint, got, tc.want)
+		}
+	}
+}
+
+// TestClient_Send_ReachesLoopbackHTTPEndpoint proves the exception is real end to
+// end: a plaintext httptest server on loopback receives the usage ping.
+func TestClient_Send_ReachesLoopbackHTTPEndpoint(t *testing.T) {
+	var hits int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer plain.Close()
+
+	c := NewWithQualitySignal(plain.URL, "")
+	if !c.HasUsageDestination() {
+		t.Fatal("a loopback http usage endpoint must count as a usage destination")
+	}
+	c.Send(context.Background(), Event{Event: "review_run", Status: "success"})
+	c.Wait()
+
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("loopback http endpoint hits = %d, want 1", n)
+	}
+}
