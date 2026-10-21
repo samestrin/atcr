@@ -878,6 +878,10 @@ type Registry struct {
 	// tier or the embedded DefaultMaxPrefetchBytes; 0 means DISABLED, negative is
 	// rejected.
 	MaxPrefetchBytes *int64 `yaml:"max_prefetch_bytes,omitempty"`
+	// ContextPrefetch is the user-level (global) tier of the `context_prefetch`
+	// block (Epic 35.16.12), the same block ProjectConfig.ContextPrefetch carries
+	// at the project tier, which overrides it field by field. Absent means OFF.
+	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -1004,6 +1008,9 @@ func (r *Registry) validate() error {
 	}
 	if r.MaxSprintPlanBytes != nil && *r.MaxSprintPlanBytes <= 0 {
 		errs = append(errs, fmt.Errorf("max_sprint_plan_bytes must be > 0, got %d", *r.MaxSprintPlanBytes))
+	}
+	if err := r.ContextPrefetch.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive so the exponential schedule has a starting point.

@@ -40,7 +40,7 @@ func TestSemanticPrefetch_AbsentBlockResolvesToDisabled(t *testing.T) {
 
 func TestSemanticPrefetch_BlankBlockResolvesToDisabled(t *testing.T) {
 	for name, block := range map[string]string{
-		"null context_prefetch": "context_prefetch:\n",
+		"null context_prefetch":  "context_prefetch:\n",
 		"empty context_prefetch": "context_prefetch: {}\n",
 		"null semantic":          "context_prefetch:\n  semantic:\n",
 		"empty semantic":         "context_prefetch:\n  semantic: {}\n",
@@ -215,4 +215,13 @@ func TestLoadProjectRegistry_ContextPrefetchKeyHint(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "context_prefetch")
 	require.Contains(t, err.Error(), "config.yaml", "the error must point at the file the key belongs in")
+}
+
+func TestSettings_ResolvedSemanticPrefetchBoundsTopKOnHandBuiltSettings(t *testing.T) {
+	// A hand-built Settings{} never passes through the resolver's check, so the
+	// accessor itself keeps top_k inside 1..MaxSemanticTopK.
+	sp := SemanticPrefetch{Enabled: true, Endpoint: "https://q.example.com", Collection: "c"}
+	require.Equal(t, DefaultSemanticTopK, Settings{SemanticPrefetch: sp}.ResolvedSemanticPrefetch().TopK)
+	sp.TopK = MaxSemanticTopK + 50
+	require.Equal(t, MaxSemanticTopK, Settings{SemanticPrefetch: sp}.ResolvedSemanticPrefetch().TopK)
 }
