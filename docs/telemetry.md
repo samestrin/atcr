@@ -472,9 +472,11 @@ SHA-256** of the canonicalized persona/reviewer name (`strings.ToLower(strings.T
 - **Pseudonymous, not anonymous:** because persona names are a small, enumerable,
   often publicly-known set, someone who pre-hashes a list of known persona names
   could match a digest back to a name. Treat `persona_id_hash` as a stable
-  pseudonym, not a secret. Hardening the hash to a keyed HMAC is tracked as
-  **TD-007**, where the keyed step happens at ingestion; the quality-signal
-  path shares that same unsalted scheme and would be hardened in lockstep.
+  pseudonym, not a secret. The keyed hardening step happens at ingestion: the
+  server re-keys the digest with HMAC-SHA256 under a server-side pepper and
+  never stores the raw digest. It cannot happen in the CLI — a key compiled
+  into an open-source binary ships with the binary. The quality-signal path
+  uses the same scheme.
 
 ---
 
