@@ -413,8 +413,15 @@ func TestValidateTelemetryEndpoint(t *testing.T) {
 		{"http://127.0.0.1:9000/usage", true},
 		{"http://[::1]:9000/usage", true},
 		{"http://localhost:9000/usage", true},
+		{"http://LOCALHOST:9000/usage", true},
+		{"http://127.0.0.2:9000/usage", true}, // all of 127.0.0.0/8 is loopback
+		{"https://op:s3cret@collector.internal/usage", true},
 		{"http://collector.internal/usage", false},
 		{"http://10.0.0.5/usage", false},
+		{"http://0.0.0.0:9000/usage", false},
+		{"http://localhost.evil.test/usage", false},
+		{"http://127.0.0.1.evil.test/usage", false},
+		{"http://op:s3cret@collector.internal/usage", false},
 		{"ftp://collector.internal/usage", false},
 		{"collector.internal/usage", false},
 		{"https://", false},
@@ -430,8 +437,63 @@ func TestValidateTelemetryEndpoint(t *testing.T) {
 		}
 		if assert.Error(t, err, "ValidateTelemetryEndpoint(%q)", tc.endpoint) {
 			assert.Contains(t, err.Error(), "--telemetry-endpoint")
+			assert.NotContains(t, err.Error(), "s3cret", "the error must never echo the rejected value")
 		}
 	}
+}
+
+// TestProcessTelemetryClient_NonOverridePathUsesCompiledInDefaults is AC4: with
+// no --telemetry-endpoint, the shipping client still sends the usage ping and the
+// quality signal to the two compiled-in destinations.
+//
+// It compares against LITERALS, not the vars, and does not retarget them: every
+// other routing test here swaps in .test hosts first, so it holds whatever the
+// defaults are. This one fails if either default constant changes, or if the
+// override plumbing starts leaking into the no-flag path. The transport is
+// stubbed and the client drained with Wait() before cleanup restores it, so
+// nothing reaches the real host.
+func TestProcessTelemetryClient_NonOverridePathUsesCompiledInDefaults(t *testing.T) {
+	const (
+		wantUsage   = "https://atcr.dev/api/v1/telemetry"
+		wantQuality = "https://atcr.dev/api/v1/quality-signal"
+	)
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	t.Setenv("ATCR_TELEMETRY", "1")
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	_, hits := recordingTransport(t)
+
+	client := newProcessTelemetryClient("")
+	require.Equal(t, wantUsage, client.UsageEndpoint(),
+		"with no override the usage destination must be the compiled-in default")
+
+	root := NewRootCmdWithClient(client)
+	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	_ = root.ExecuteContext(context.Background())
+	waitQualitySignalInFlight()
+	client.Wait()
+
+	var sawPing, sawQuality int
+	for _, h := range hits() {
+		if strings.HasPrefix(strings.TrimSpace(h.Body), "[") {
+			if h.URL == wantQuality {
+				sawQuality++
+			}
+			continue
+		}
+		if h.URL == wantUsage {
+			sawPing++
+		}
+	}
+	assert.Equal(t, 1, sawPing, "the usage ping must reach the compiled-in usage destination")
+	assert.Equal(t, 1, sawQuality, "the quality signal must reach the compiled-in quality-signal destination")
 }
 
 // TestRunMain_TelemetryEndpointFlagRoutesUsagePingOnly is the T1 success
