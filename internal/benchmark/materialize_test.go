@@ -228,18 +228,20 @@ func TestMaterializeCase_InheritedGitDirLeavesTheOuterRepoUntouched(t *testing.T
 		require.NoError(t, err, "outer git %v: %s", args, out)
 	}
 	before := gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)")
+	index := filepath.Join(outer, ".git", "index")
+	indexBefore, _ := os.ReadFile(index)
 
 	c := materializableCase(t)
 	t.Setenv("GIT_DIR", filepath.Join(outer, ".git"))
-	t.Setenv("GIT_INDEX_FILE", filepath.Join(outer, ".git", "index"))
+	t.Setenv("GIT_INDEX_FILE", index)
 	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
 	require.NoError(t, err)
 
 	assert.Equal(t, before, gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)"),
 		"the inherited GIT_DIR's refs moved")
 	assert.Equal(t, "false\n", gitOut(t, outer, "config", "core.bare"))
-	_, err = os.Stat(filepath.Join(outer, ".git", "index"))
-	assert.True(t, os.IsNotExist(err), "the inherited GIT_INDEX_FILE was written")
+	indexAfter, _ := os.ReadFile(index)
+	assert.Equal(t, indexBefore, indexAfter, "the inherited GIT_INDEX_FILE was written")
 	assert.Equal(t, mc.HeadSHA, strings.TrimSpace(gitOut(t, mc.Root, "rev-parse", "HEAD")),
 		"the case repository holds its own commits")
 }

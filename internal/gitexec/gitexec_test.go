@@ -180,8 +180,9 @@ func TestFixtureCommandContext_InheritedGitDirCannotRetarget(t *testing.T) {
 		{"init", "-q", "-b", "main"},
 		{"-c", "user.name=v", "-c", "user.email=v@v.invalid", "commit", "-q", "--allow-empty", "-m", "victim"},
 	} {
-		cmd := CommandFn(append([]string{"-C", victim}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		// Pinned, not `-C victim`: a GIT_DIR inherited from whoever runs the
+		// suite would beat -C and land the victim commit in that repository.
+		if out, err := FixtureCommandContext(ctx, victim, args...).CombinedOutput(); err != nil {
 			t.Fatalf("victim git %v: %v\n%s", args, err, out)
 		}
 	}
