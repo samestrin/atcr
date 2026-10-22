@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // reclibModulePath is the import path of the extracted reconcile library. The
@@ -28,10 +31,9 @@ const reclibModulePath = "github.com/samestrin/atcr/reconcile"
 const repoRootFromHere = "../.."
 
 // docShieldConstName is the name the reconcile module declares the doc-shield
-// routing reason under. UnresolvedReasonDocShield (lib.go) is a local copy
-// held while the pin lags behind the in-tree declaration, and the copy is only
-// safe while the two agree — that is what TestDocShieldLocalCopy_MatchesInTree
-// enforces.
+// routing reason under. UnresolvedReasonDocShield (lib.go) aliases the pinned
+// module's constant, and TestDocShieldLocalCopy_MatchesInTree pins that alias to
+// the in-tree declaration and the wire value.
 const docShieldConstName = "UnresolvedReasonDocShield"
 
 // TestReleasedReconcileModule_ProvidesEverySymbolTheRootModuleReferences is the
@@ -76,19 +78,55 @@ func TestReleasedReconcileModule_ProvidesEverySymbolTheRootModuleReferences(t *t
 		len(missing), strings.Join(missing, "; "))
 }
 
-// TestDocShieldLocalCopy_MatchesInTree keeps the local stand-in honest.
+// TestDocShieldLocalCopy_MatchesInTree keeps the doc-shield reason single-sourced.
 //
-// UnresolvedReasonDocShield exists only because the pin lags; it is a duplicate
-// of a value the published module owns, and "doc_shield" is a WIRE value — it is
-// written into reconciled/unresolved.json and documented as a public artifact
-// field. A silent divergence between the copy and the declaration would emit a
-// reason no consumer recognizes, which is worse than the build break the copy
-// was introduced to fix.
+// The name predates the alias: lib.go once held a local copy of the constant
+// while the go.mod pin lagged. It now aliases reclib.UnresolvedReasonDocShield,
+// and this test guards three things. lib.go must declare the alias, not a
+// literal, so a second copy cannot creep back. The pinned value must equal the
+// in-tree declaration, so a release cannot change it unseen. And it must be
+// "doc_shield": that is a WIRE value, written into reconciled/unresolved.json and
+// documented as a public artifact field, so a change emits a reason no consumer
+// recognizes.
 func TestDocShieldLocalCopy_MatchesInTree(t *testing.T) {
+	assert.Equal(t, "reclib."+docShieldConstName, constValueExpr(t, "lib.go", docShieldConstName),
+		"lib.go must alias reclib.%s rather than declare its own copy", docShieldConstName)
+
 	inTree := stringConstValue(t, filepath.Join(repoRootFromHere, "reconcile"), docShieldConstName)
-	assert.Equal(t, inTree, UnresolvedReasonDocShield,
-		"UnresolvedReasonDocShield must equal reconcile.%s. When the go.mod pin catches up, delete the local copy and use reclib.%s directly.",
-		docShieldConstName, docShieldConstName)
+	assert.Equal(t, inTree, reclib.UnresolvedReasonDocShield,
+		"the pinned reclib.%s must equal the in-tree declaration in reconcile/reconcile.go", docShieldConstName)
+	assert.Equal(t, "doc_shield", reclib.UnresolvedReasonDocShield,
+		"reclib.%s is a wire value in reconciled/unresolved.json", docShieldConstName)
+}
+
+// constValueExpr returns the source text of the expression a top-level constant
+// in file is declared with.
+func constValueExpr(t *testing.T, file, name string) string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, nil, parser.SkipObjectResolution)
+	require.NoError(t, err, "parsing %s", file)
+
+	for _, decl := range f.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, id := range vs.Names {
+				if id.Name == name && i < len(vs.Values) {
+					return types.ExprString(vs.Values[i])
+				}
+			}
+		}
+	}
+	t.Fatalf("no top-level constant %s declared in %s", name, file)
+	return ""
 }
 
 // releasedReconcileDir resolves the source directory of the reconcile version
