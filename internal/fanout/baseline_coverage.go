@@ -278,6 +278,18 @@ func contributedNothing(r Result) bool {
 // UnparseableChunks. Only the fields the predicates consult are populated; the rest
 // of AgentStatus is irrelevant to the question "did this persona contribute
 // anything".
+//
+// It serves exactly two predicates (revieweroutcome.go), both called from
+// contributedNothing, and every populated field is read by at least one of them:
+//
+//   - WholePersonaSalvaged reads Salvaged, SalvagedChunks, SalvagedOnStop,
+//     SalvagedOnStopChunks (through its helper abandonedSalvagedChunks) and
+//     ChunkCount.
+//   - WholePersonaThinkSuppressed reads ThinkSuppressed, UnparseableChunks and
+//     ChunkCount.
+//
+// A field either predicate starts reading must be populated here too, or this
+// projection silently answers with its zero value.
 func resultStatus(r Result) AgentStatus {
 	onStop, onStopChunks := salvagedOnStop(r)
 	return AgentStatus{
