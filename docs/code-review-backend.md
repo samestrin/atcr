@@ -125,8 +125,10 @@ nothing writes that reason to disk, so it cannot be recovered from
   was computed over an opportunity-scoped denominator (`true`: only the runs
   where that reviewer had something in its remit to find) or the full one
   (`false`). Both kinds of rate are compared against the same trust
-  thresholds; this says which definition produced each. Absent when the caller
-  attached no flags. It is a record only: it changes no finding.
+  thresholds; this says which definition produced each. `atcr` writes one
+  entry per reviewer that has a trust prior: `true` for the nine personas with
+  an in-repo remit, `false` for the five registry-only lenses. Absent when no
+  reviewer has a prior. It is a record only: it changes no finding.
 
 ## Discounted confidence
 
