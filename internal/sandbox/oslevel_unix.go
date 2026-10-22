@@ -95,7 +95,22 @@ func killSandboxProcessGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}
-	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	return sandboxKill(-cmd.Process.Pid, syscall.SIGKILL)
+}
+
+// sandboxKill is syscall.Kill; tests replace it to observe which pids the
+// cancel path signals, and in what order.
+var sandboxKill = syscall.Kill
+
+// sandboxProcessTable reads the host's pid -> ppid table, from /proc where
+// there is one and from ps(1) otherwise. Tests replace it to present a table
+// the host cannot be made to produce on demand, such as a recycled pid.
+var sandboxProcessTable = func() (map[int]int, error) {
+	parents, err := procParents()
+	if err != nil {
+		parents, err = psParents()
+	}
+	return parents, err
 }
 
 // sandboxDescendants returns the PIDs of every live descendant of the
@@ -110,10 +125,7 @@ func sandboxDescendants(cmd *exec.Cmd) []int {
 	if cmd.Process == nil {
 		return nil
 	}
-	parents, err := procParents()
-	if err != nil {
-		parents, err = psParents()
-	}
+	parents, err := sandboxProcessTable()
 	if err != nil {
 		return nil
 	}
@@ -129,7 +141,7 @@ func sandboxDescendants(cmd *exec.Cmd) []int {
 // to it at once.
 func killSandboxDescendants(pids []int) {
 	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+		_ = sandboxKill(pid, syscall.SIGKILL)
 	}
 }
 
