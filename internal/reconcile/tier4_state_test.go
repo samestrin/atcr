@@ -5,12 +5,12 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/metrics"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -163,8 +163,7 @@ func TestUnresolvedState_SubmoduleIsNotASearchHole(t *testing.T) {
 	})
 	gitIn := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
+		cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 		out, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}

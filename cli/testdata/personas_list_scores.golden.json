@@ -1,0 +1,102 @@
+[
+  {
+    "name": "sasha",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": {
+      "corroboration": 0.72,
+      "raised": 25,
+      "counted": 20,
+      "excluded": 5,
+      "reasons": {
+        "outcome-ineligible": 5
+      }
+    },
+    "in_use_by_reconcile": true
+  },
+  {
+    "name": "registryonly",
+    "version": "-",
+    "source": "registry",
+    "language": [],
+    "score": {
+      "corroboration": 0.5,
+      "raised": 12,
+      "counted": 12,
+      "excluded": 0,
+      "reasons": {}
+    },
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "bruce",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": {
+      "corroboration": null,
+      "raised": 0,
+      "counted": 3,
+      "excluded": 0,
+      "reasons": {}
+    },
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "dax",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "greta",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "ingrid",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "kai",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "mira",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "otto",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  },
+  {
+    "name": "penny",
+    "version": "built-in",
+    "source": "built-in",
+    "language": [],
+    "score": null,
+    "in_use_by_reconcile": false
+  }
+]

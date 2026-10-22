@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -240,10 +241,14 @@ func newPersonasListCmd() *cobra.Command {
 				// Degrade gracefully: warn but still render the built-ins.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 			}
+			if boolFlag(cmd, "json") {
+				return renderPersonaListJSON(cmd.OutOrStdout(), metas)
+			}
 			return renderPersonaList(cmd.OutOrStdout(), metas)
 		},
 	}
 	cmd.Flags().Bool("scores", false, "show each persona's corroboration rate from past review runs (n/a when no run history)")
+	addJSONFlag(cmd)
 	return cmd
 }
 
@@ -267,6 +272,12 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	scored, listErr := commpersonas.ListTiersWithScores(projectDir, dir, data.rates, toPersonaDetails(data.details))
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
+	}
+	// The JSON carries the rows only. The footers below explain an empty or
+	// fully excluded store in prose, which a consumer reads from the rows
+	// instead (every score null); the in-use footer becomes a per-row field.
+	if boolFlag(cmd, "json") {
+		return renderScoredListJSON(cmd.OutOrStdout(), scored, data.inUse)
 	}
 	if err := renderScoredList(cmd.OutOrStdout(), scored); err != nil {
 		return err
@@ -626,6 +637,88 @@ func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 			formatRaised(s.Detail), formatScoreDetail(s.Detail))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tRAISED\tCASES", rows)
+}
+
+// personaJSON is one row of `personas list --json`: the table's columns, with
+// Language as a list ([] rather than the table's "-").
+type personaJSON struct {
+	Name     string   `json:"name"`
+	Version  string   `json:"version"`
+	Source   string   `json:"source"`
+	Language []string `json:"language"`
+}
+
+func toPersonaJSON(m commpersonas.PersonaMeta) personaJSON {
+	langs := m.Language
+	if langs == nil {
+		langs = []string{}
+	}
+	return personaJSON{Name: m.Name, Version: m.Version, Source: m.Source, Language: langs}
+}
+
+// scoredPersonaJSON is one row of `personas list --scores --json`. Score is null
+// where the table prints n/a (no usable history), and InUseByReconcile carries
+// the footer's "In use by reconcile" list per row.
+type scoredPersonaJSON struct {
+	personaJSON
+	Score            *personaScoreJSON `json:"score"`
+	InUseByReconcile bool              `json:"in_use_by_reconcile"`
+}
+
+// personaScoreJSON is the CORROBORATION, RAISED and CASES columns as numbers.
+// Corroboration is null for a lens that raised nothing — the table's
+// "n/a (raised 0)" — so a zero denominator never reads as a measured 0%.
+// Reasons holds every reason count, the counted ones (unlabelled,
+// not opportunity-scoped) as well as the excluding ones.
+type personaScoreJSON struct {
+	Corroboration *float64       `json:"corroboration"`
+	Raised        int            `json:"raised"`
+	Counted       int            `json:"counted"`
+	Excluded      int            `json:"excluded"`
+	Reasons       map[string]int `json:"reasons"`
+}
+
+// renderPersonaListJSON writes the rows renderPersonaList prints as a JSON
+// array, [] rather than null when there are none.
+func renderPersonaListJSON(w io.Writer, metas []commpersonas.PersonaMeta) error {
+	rows := make([]personaJSON, 0, len(metas))
+	for _, m := range metas {
+		rows = append(rows, toPersonaJSON(m))
+	}
+	return encodePersonasJSON(w, rows)
+}
+
+// renderScoredListJSON writes the rows renderScoredList prints as a JSON array.
+// inUse is the priors map renderScoresScope names in the footer, keyed by
+// lowercase persona name the same way the rates are.
+func renderScoredListJSON(w io.Writer, scored []commpersonas.ScoredPersona, inUse map[string]float64) error {
+	rows := make([]scoredPersonaJSON, 0, len(scored))
+	for _, s := range scored {
+		row := scoredPersonaJSON{personaJSON: toPersonaJSON(s.PersonaMeta)}
+		_, row.InUseByReconcile = inUse[strings.ToLower(s.Name)]
+		if s.Detail != nil {
+			score := &personaScoreJSON{
+				Raised: s.Detail.Raised, Counted: s.Detail.Counted, Excluded: s.Detail.Excluded,
+				Reasons: s.Detail.Reasons,
+			}
+			if score.Reasons == nil {
+				score.Reasons = map[string]int{}
+			}
+			if s.Rate != nil && s.Detail.Raised > 0 {
+				score.Corroboration = s.Rate
+			}
+			row.Score = score
+		}
+		rows = append(rows, row)
+	}
+	return encodePersonasJSON(w, rows)
+}
+
+// encodePersonasJSON encodes v as indented JSON followed by a newline.
+func encodePersonasJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 // formatCorroboration renders the rate, except for a lens that raised nothing.

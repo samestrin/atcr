@@ -456,14 +456,17 @@ func loadIgnoreMatcher(root string) (*IgnoreMatcher, error) {
 	return m, nil
 }
 
-// ignoredIndexes returns the indexes into jf that m matches, ascending.
+// ignoredIndexes returns the indexes into jf that m matches, ascending, and
+// stamps each matched record's SuppressedBy with its rule, so suppressed.json
+// and the report.md footer can name the rule after the splice.
 func ignoredIndexes(m *IgnoreMatcher, jf []JSONFinding) []int {
 	if m == nil {
 		return nil
 	}
 	var idx []int
 	for i, f := range jf {
-		if _, ok := m.Match(f); ok {
+		if rule, ok := m.Match(f); ok {
+			jf[i].SuppressedBy = &rule
 			idx = append(idx, i)
 		}
 	}
