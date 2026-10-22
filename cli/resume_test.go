@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -122,7 +121,7 @@ func TestResolveResumeDir_UnknownIDErrors(t *testing.T) {
 // isolated, chdir'd repo).
 func gitRevParse(t *testing.T, ref string) string {
 	t.Helper()
-	out, err := exec.Command("git", "rev-parse", ref).Output()
+	out, err := fixtureGit(requireTempWorkdir(t), "rev-parse", ref).Output()
 	require.NoError(t, err)
 	return strings.TrimSpace(string(out))
 }
