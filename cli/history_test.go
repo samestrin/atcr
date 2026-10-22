@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -658,4 +660,124 @@ func TestHistoryCmd_PruneEverythingDoesNotSuggestFirstRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "pruned")
 	assert.NotContains(t, out, "run 'atcr review' first")
+}
+
+// updateJSONGolden rewrites the --json golden files (history and scorecard) from
+// the current output. Run it only against output known to be correct.
+var updateJSONGolden = flag.Bool("update-json-golden", false, "rewrite cli/testdata/*_json.golden.json")
+
+// assertJSONGolden compares got with testdata/<name>, rewriting it under
+// -update-json-golden.
+func assertJSONGolden(t *testing.T, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *updateJSONGolden {
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "missing golden %s: run with -update-json-golden", path)
+	assert.Equal(t, string(want), got)
+}
+
+// runHistoryStdout runs `atcr history` in root and returns stdout alone, so a
+// --json document is checked without any stderr notice mixed in.
+func runHistoryStdout(t *testing.T, root string, args ...string) (string, string, error) {
+	t.Helper()
+	t.Chdir(root)
+	cmd := newHistoryCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// historyJSONCorpus lays down a ledger covering every table shape: several
+// packages, all four canonical severities, an off-enum severity (an extra
+// column), a blank severity (UNKNOWN) and a mixed-case one that counts as its
+// canonical form. Fixed timestamps plus --since all keep the output stable.
+func historyJSONCorpus(t *testing.T, root string) {
+	t.Helper()
+	rec := func(ts, pkg, sev, id string) map[string]any {
+		return map[string]any{"ts": ts, "package": pkg, "severity": sev, "id": id, "file": pkg + "/x.go", "category": "C"}
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	writeHistoryLedger(t, root,
+		rec("2025-01-10T00:00:00Z", "internal/registry", "CRITICAL", "1"),
+		rec("2025-01-10T00:00:00Z", "internal/registry", "high", "2"),
+		rec("2025-01-10T00:00:00Z", "internal/registry", "HIGH", "3"),
+		rec("2025-01-11T00:00:00Z", "internal/fanout", "MEDIUM", "4"),
+		rec("2025-01-11T00:00:00Z", "internal/fanout", "LOW", "5"),
+		rec("2025-01-12T00:00:00Z", "cli", "BLOCKER", "6"),
+		rec("2025-01-12T00:00:00Z", "cli", "", "7"),
+	)
+}
+
+// tableBodyRows counts the per-package rows of a history markdown table: every
+// table line except the header, the alignment row and the grand-total row.
+func tableBodyRows(table string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(table), "\n") {
+		if strings.HasPrefix(line, "| Package |") || strings.HasPrefix(line, "|---") || strings.HasPrefix(line, "| **Total** |") {
+			continue
+		}
+		if strings.HasPrefix(line, "| ") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestHistoryCmd_JSONGolden is Epic 35.22 T2 for history: --json prints the
+// table's own struct, the output parses, and it carries the same row count as
+// the markdown table rendered from the same records.
+func TestHistoryCmd_JSONGolden(t *testing.T) {
+	root := t.TempDir()
+	historyJSONCorpus(t, root)
+
+	table, _, err := runHistoryStdout(t, root, "--since", "all")
+	require.NoError(t, err)
+	got, stderr, err := runHistoryStdout(t, root, "--since", "all", "--json")
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+
+	assertJSONGolden(t, "history_json.golden.json", got)
+
+	var doc history.Table
+	require.NoError(t, json.Unmarshal([]byte(got), &doc), "history --json must parse")
+	require.Equal(t, 3, tableBodyRows(table), "fixture sanity: three packages in the table")
+	assert.Len(t, doc.Rows, tableBodyRows(table), "JSON rows must match the table's package rows")
+	assert.Equal(t, 7, doc.Total)
+	assert.Equal(t, []string{"CRITICAL", "HIGH", "MEDIUM", "LOW", "BLOCKER", "UNKNOWN"}, doc.Columns)
+}
+
+// An empty result under --json is still a JSON document (an empty table) on
+// stdout, so a script can parse it; the human notice moves to stderr.
+func TestHistoryCmd_JSONEmptyIsAnEmptyTable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(t *testing.T, root string)
+		args   []string
+		notice string
+	}{
+		{"no history at all", func(t *testing.T, root string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+		}, nil, "no history recorded yet"},
+		{"filtered to nothing", historyJSONCorpus, []string{"--since", "all", "--package", "nope"}, "no history for package"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.setup(t, root)
+			got, stderr, err := runHistoryStdout(t, root, append(tc.args, "--json")...)
+			require.NoError(t, err)
+			assert.Contains(t, stderr, tc.notice)
+			var doc history.Table
+			require.NoError(t, json.Unmarshal([]byte(got), &doc), "stdout must be JSON: %q", got)
+			assert.NotNil(t, doc.Rows)
+			assert.Empty(t, doc.Rows)
+			assert.Zero(t, doc.Total)
+			assert.Contains(t, got, `"rows": []`, "an empty table is [], not null")
+		})
+	}
 }
