@@ -107,4 +107,11 @@ func TestPanelWideReason_IsShortAndNamesTheClass(t *testing.T) {
 	if !strings.Contains(PanelWideReason, CategoryInvariant) {
 		t.Errorf("reason should name the category it keys on: %q", PanelWideReason)
 	}
+	if n := len(PanelWideReason); n >= 80 {
+		t.Errorf("reason is %d characters, want under 80 (the long form belongs in the doc block): %q", n, PanelWideReason)
+	}
+	// internal/localdebt asserts the stored record carries this prefix.
+	if !strings.HasPrefix(PanelWideReason, "panel-wide instruction:") {
+		t.Errorf("reason must start with %q: %q", "panel-wide instruction:", PanelWideReason)
+	}
 }

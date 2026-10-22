@@ -220,5 +220,14 @@ included, so an overwritten sidecar is recoverable from
   review to a specific plan's work items, pass `atcr review --sprint-plan
   <path>`: the plan's markdown content is injected as a `SCOPE CONSTRAINT`
   before the diff so reviewers suppress findings unrelated to those work
-  items. A missing or empty plan is ignored; an unreadable one warns and
-  proceeds.
+  items. The plan is also checked against the diff: for each work item the
+  diff does not implement, a reviewer files one finding whose `problem`
+  starts with `Unmet plan item:` followed by the item, with category
+  `contract`, cited file-level (no line number) on the changed file where the
+  work belongs, so the grounding gate keeps it. Pass the plan for the work
+  this diff is meant to finish: every item in the file is checked, so a whole
+  epic plan reviewed against one task's diff reports the other tasks as
+  unmet. A missing or empty plan is
+  ignored and the review runs diff-wide; an unreadable one warns and
+  proceeds. The plan text is part of the reviewer prompt, so a change to it
+  (or to this contract) misses the diff cache.
