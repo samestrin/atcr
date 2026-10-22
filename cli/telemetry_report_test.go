@@ -372,3 +372,18 @@ func TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome(t *testing.T) {
 	assert.InDelta(t, 0.25, rows[0].DismissalRate, 0.0001,
 		"the new outcomes must not enter the dismissal-rate denominator")
 }
+
+// TestQualityReportRows_SkipsReconcilerOnlyPairs (Epic 36.1 T3): a pair whose
+// only signal is a reconciler-error count has no outcome in any of this report's
+// columns, so it would render all zeros and read as a flawless reviewer. It is
+// left out, keeping the report's population what it was before the reconciler
+// counts existed; a pair with an outcome beside its reconciler count stays.
+func TestQualityReportRows_SkipsReconcilerOnlyPairs(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "diana", Model: "m1", WrongMergeCount: 2, WrongSplitCount: 1, WrongCategoryCount: 1},
+		{Persona: "bruce", Model: "m1", DismissedCount: 1, WrongMergeCount: 1},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, "bruce", rows[0].Persona)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+}

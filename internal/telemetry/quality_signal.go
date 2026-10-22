@@ -24,13 +24,21 @@ func canonicalPersonaID(raw string) string {
 }
 
 // QualitySignal is the sole allowlisted outbound payload for the community prompt
-// quality signal (Sprint 30.0). Like Event, it has exactly four fields with NO
-// omitempty tags, and deliberately does NOT embed or extend Event, any scorecard
-// struct, or localdebt.Record — so no source code, file path, or finding text can
-// ever leak beyond {persona_id_hash, model, dismissed_count, confirmed_count}.
-// The persona identifier is always the one-way HashPersonaID digest, never a raw
-// persona name. Adding any field here is a privacy regression that
-// TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys guards.
+// quality signal (Sprint 30.0). Like Event, its fields carry NO omitempty tags,
+// and it deliberately does NOT embed or extend Event, any scorecard struct, or
+// localdebt.Record — so no source code, file path, or finding text can ever leak
+// beyond {persona_id_hash, model, dismissed_count, confirmed_count,
+// wrong_merge_count, wrong_split_count, wrong_category_count}. The persona
+// identifier is always the one-way HashPersonaID digest, never a raw persona
+// name. Adding any field here is a privacy regression that
+// TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys guards.
+//
+// The last three keys (Epic 36.1) are reconciler-error counts: how many of the
+// pair's findings a developer flagged as wrongly merged, wrongly split or wrongly
+// categorized by reconcile. They are a verdict on the grouping, not on the
+// reviewer, so they are kept apart from dismissed_count (the reviewer-error
+// count). The atcr.dev backend validates this payload by strict key-set
+// equality, so changing the key set is a coordinated change with the ingest.
 //
 // PersonaIDHash is pseudonymous, not anonymous: HashPersonaID is an UNSALTED
 // SHA-256 over a small, enumerable persona-name set, so it does not defend against
@@ -42,6 +50,19 @@ type QualitySignal struct {
 	Model          string `json:"model"`
 	DismissedCount int    `json:"dismissed_count"`
 	ConfirmedCount int    `json:"confirmed_count"`
+
+	WrongMergeCount    int `json:"wrong_merge_count"`
+	WrongSplitCount    int `json:"wrong_split_count"`
+	WrongCategoryCount int `json:"wrong_category_count"`
+}
+
+// ReconcilerCounts carries a row's reconciler-error counts into NewQualitySignal,
+// one per localdebt reconciler-feedback kind. It exists so the constructor does
+// not take five adjacent ints a caller could transpose.
+type ReconcilerCounts struct {
+	WrongMerge    int
+	WrongSplit    int
+	WrongCategory int
 }
 
 // NewQualitySignal builds a QualitySignal from an aggregated per-(persona, model)
@@ -51,7 +72,8 @@ type QualitySignal struct {
 // outbound payload (hashed). The counts pass through unchanged. The model is not
 // hashed, so it is validated with modelslug.Sanitize, the validator
 // NewTelemetryPersonaRecord shares: a slug that is not a plain catalog identifier
-// is sent as an empty model (epic 35.17 AC6).
+// is sent as an empty model (epic 35.17 AC6). The reconciler-error counts pass
+// through unchanged too, each on its own key.
 //
 // The persona is hashed with the SAME unsalted SHA-256 hex scheme as
 // internal/scorecard.HashPersonaID, but inlined rather than imported: telemetry is
@@ -83,7 +105,7 @@ type QualitySignal struct {
 // persona is empty in every sense that matters here; checking `persona == ""` first
 // would let "   " past the sentinel and hash it to exactly the constant the sentinel
 // exists to keep off the backend.
-func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySignal {
+func NewQualitySignal(persona, model string, dismissed, confirmed int, reconciler ReconcilerCounts) QualitySignal {
 	canonical := canonicalPersonaID(persona)
 	if canonical == "" {
 		return QualitySignal{}
@@ -94,5 +116,9 @@ func NewQualitySignal(persona, model string, dismissed, confirmed int) QualitySi
 		Model:          modelslug.Sanitize(model),
 		DismissedCount: dismissed,
 		ConfirmedCount: confirmed,
+
+		WrongMergeCount:    reconciler.WrongMerge,
+		WrongSplitCount:    reconciler.WrongSplit,
+		WrongCategoryCount: reconciler.WrongCategory,
 	}
 }

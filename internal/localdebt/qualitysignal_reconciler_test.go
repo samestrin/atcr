@@ -134,3 +134,12 @@ func TestAggregateQualitySignal_ReconcilerCountsUseTheOutcomePersonaSet(t *testi
 	assert.Equal(t, 1, rowFor(t, rows, "bruce", "claude-sonnet-4-6").WrongMergeCount)
 	assert.Equal(t, 1, rowFor(t, rows, "diana", "claude-sonnet-4-6").WrongMergeCount, "a persona listed twice is credited once")
 }
+
+// TestAggregateQualitySignal_UnknownFeedbackKindCreatesNoRow: the write gate
+// refuses an off-vocabulary kind, but a hand-edited store can still carry one;
+// it counts nowhere and must not create an all-zero row.
+func TestAggregateQualitySignal_UnknownFeedbackKindCreatesNoRow(t *testing.T) {
+	open := attributed("e000000000000001", "2026-06-01T00:00:00Z", "", "bruce")
+	rows := AggregateQualitySignal([]Record{open, annotated(open, "2026-06-10T00:00:00Z", ReconcilerFeedback{Kind: "split", Reason: "r"})})
+	assert.Empty(t, rows)
+}
