@@ -333,9 +333,11 @@ type Record struct {
 	// credit, so scrubForgedCredit's ceiling must exclude it. It also lets a
 	// reader tell how much of a lens's denominator came from this stream.
 	//
-	// omitempty: absent means zero, and every record carrying CreditEra 1 from
-	// this binary on carries the true count. An older era-3 record never charged
-	// the stream, so its zero is also true for the rule it was written under.
+	// omitempty: absent means zero. Every record stamped RaisedDenominator 4
+	// carries the true count, and an era-3 record never charged the stream, so
+	// its zero is also true for the rule it was written under. The one era-3
+	// record with a non-zero count came from a build between T2 and T3, and
+	// raisedDenominatorOf reads it as era 4.
 	FindingsAmbiguous int `json:"findings_ambiguous,omitempty"`
 	// CreditEra is the weighted-credit measurement era marker (D8), stamped
 	// unconditionally on every reviewer record this emitter writes for exactly
@@ -362,17 +364,43 @@ type Record struct {
 //     RaisedIncludesUnresolved=true, before RaisedDenominator existed.
 //   - 3: routed findings are included EXCEPT those routed by the
 //     documentation-extension heuristic (Epic 35.16.6.8). Those are counted in
-//     FindingsDocShielded instead. This is the current definition.
+//     FindingsDocShielded instead.
+//   - 4: era 3 PLUS each one-finding ambiguous cluster, charged to its reviewer
+//     as an uncorroborated raise and counted again in FindingsAmbiguous (charge
+//     rule B, Epic 35.16.11.3.1 T2; the bump is T3). This is the current
+//     definition. An era-4 record minus its FindingsAmbiguous is exactly the
+//     era-3 record the same run would have written; the reverse is not
+//     computable, because era 3 never counted the stream. See
+//     foldAmbiguousChargeEra for what that asymmetry costs the trust window.
 const (
 	raisedDenominatorPreEpic   = 1
 	raisedDenominatorAllRouted = 2
 	// raisedDenominatorRoutedExShield names era 3 in its own right, so code that
-	// means "era 3" can say so without saying "whatever is current". The two are
-	// equal today and must not be assumed to stay equal: mergeRoutedEras folds
-	// era 3 into era 2 on a proof that holds for THAT PAIR ONLY, so it keys on
-	// this name. Keyed on RaisedDenominatorCurrent instead, a bump to 4 would
-	// silently re-point the fold at an era whose equivalence nobody proved.
+	// means "era 3" can say so without saying "whatever is current". The two
+	// were equal until era 4: mergeRoutedEras folds era 3 into era 2 on a proof
+	// that holds for THAT PAIR ONLY, so it keys on this name, and the bump to 4
+	// left it pointing where the proof is.
 	raisedDenominatorRoutedExShield = 3
+	// raisedDenominatorAmbiguousCharged names era 4 for the same reason:
+	// foldAmbiguousChargeEra maps it onto era 3 on a proof about that pair only.
+	//
+	// THE LIVE-STORE DIFFERENTIAL for this bump (2026-10-21, recorded here as
+	// the plan requires). This host has no ~/.config/atcr/scorecard store; its
+	// live data is the 27 reconciled reviews under the repo's .atcr/reviews,
+	// the corpus the T2 probe read (26 then). Replayed through EmitForReconcile
+	// by era_differential_probe_test.go (-tags probe): 297 reviewer records, 11
+	// lenses, 164 charged singletons. Modelled as the upgrade day — every run
+	// era 3, then each lens's newest kept run era 4 — the bump WITHOUT
+	// foldAmbiguousChargeEra leaves every one of the 11 lenses 1 run in the
+	// trust chain (otto 17 to 1, vera 17 to 1); WITH it every lens keeps its
+	// whole window and its era-3 counts exactly (otto 30/97 over 17 runs,
+	// before and after). Once a lens holds an era-4 window the charge shows:
+	// otto 30/97 to 30/123, kai 12/13 to 12/22, mira 13/14 to 13/20, archer
+	// 10/13 to 10/24. No lens here reaches DefaultTrustMinRuns under either era
+	// (most runs: 17), so on this store the fold keeps the floor rather than
+	// the prior; the owner's store, measured at 113-120 runs per lens on
+	// 2026-07-31 (see defaultTrustWindow), is the one the blackout would hit.
+	raisedDenominatorAmbiguousCharged = 4
 	// RaisedDenominatorCurrent is the definition every record this package writes
 	// is computed under. Bump it whenever the rule for FindingsRaised changes, and
 	// the era filters separate the old records from the new ones automatically.
@@ -382,7 +410,7 @@ const (
 	// future era bump must check the gap rather than assume it — an era that
 	// reached 100 would be indistinguishable from a benchmark-suite row on the
 	// board.
-	RaisedDenominatorCurrent = raisedDenominatorRoutedExShield
+	RaisedDenominatorCurrent = raisedDenominatorAmbiguousCharged
 )
 
 // RaisedDenominatorBenchmarkSuite marks a public row scored by the BENCHMARK
@@ -420,6 +448,14 @@ func raisedDenominatorOf(r Record) int {
 	// thing that can fail when the branch is deleted.
 	if r.RaisedDenominator > RaisedDenominatorCurrent {
 		return RaisedDenominatorCurrent
+	}
+	// An era-3 stamp over a charged ambiguous count is a rule-B record from a
+	// build between T2 and T3, which charged the stream before the era moved.
+	// findings_ambiguous did not exist before rule B, so nothing else writes
+	// that combination. An era-3 record that charged nothing reads the same
+	// under both rules, so it stays era 3.
+	if r.RaisedDenominator == raisedDenominatorRoutedExShield && r.FindingsAmbiguous > 0 {
+		return raisedDenominatorAmbiguousCharged
 	}
 	if r.RaisedDenominator > 0 {
 		return r.RaisedDenominator

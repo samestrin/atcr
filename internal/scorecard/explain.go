@@ -206,7 +206,8 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	// per record against the SAME input the era link sees: mergeRoutedEras and
 	// scrubForgedCredit rewrite in place and never drop, so postScrub is the
 	// exact population unresolvedEraRuns made its keep/drop decision over.
-	postScrub := mergeRoutedEras(scrubForgedCredit(afterOutcome))
+	// foldAmbiguousChargeEra rewrites and never drops too.
+	postScrub := mergeRoutedEras(foldAmbiguousChargeEra(scrubForgedCredit(afterOutcome)))
 	afterEra := unresolvedEraRuns(postScrub)
 	newestEra := newestEraByReviewer(postScrub)
 

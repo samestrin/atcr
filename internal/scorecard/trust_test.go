@@ -1005,7 +1005,7 @@ func TestTrustPriors_RoutedErasAreOneWindow(t *testing.T) {
 		Reviewer: "bruce", Model: "m",
 		ConsensusLevel:           reclib.ConsensusStrict,
 		RaisedIncludesUnresolved: true,
-		RaisedDenominator:        RaisedDenominatorCurrent,
+		RaisedDenominator:        raisedDenominatorRoutedExShield,
 		FindingsRaised:           3,
 		FindingsCorroborated:     2,
 		FindingsDocShielded:      1,
@@ -1074,11 +1074,11 @@ func TestTrustPriors_PreEpicStillSplitsFromRoutedEras(t *testing.T) {
 // exact smuggling the docstring says must not happen. The consequence is pinned
 // end-to-end in TestTrustPriors_AboveCurrentRecordsNeverReachThePrior below.
 func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
-	t.Run("a current-era reviewer record is rewritten whole", func(t *testing.T) {
+	t.Run("an era-3 reviewer record is rewritten whole", func(t *testing.T) {
 		in := []Record{{
 			RecordType: RecordTypeReviewer,
 			Outcome:    outcomeFindings, Reviewer: "bruce",
-			RaisedDenominator:   RaisedDenominatorCurrent,
+			RaisedDenominator:   raisedDenominatorRoutedExShield,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
 		}}
@@ -1109,7 +1109,7 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 		in := []Record{{
 			RecordType: RecordTypeReviewer,
 			Outcome:    outcomeFindings, Reviewer: "bruce",
-			RaisedDenominator:    RaisedDenominatorCurrent,
+			RaisedDenominator:    raisedDenominatorRoutedExShield,
 			FindingsRaised:       3,
 			FindingsCorroborated: 2,
 			FindingsSolo:         1,
@@ -1165,7 +1165,7 @@ func TestMergeRoutedEras_PinsEveryElementOfItsGuard(t *testing.T) {
 		in := []Record{{
 			RecordType: RecordTypeReviewer,
 			Outcome:    outcomeFindings, Reviewer: "bruce",
-			RaisedDenominator:   RaisedDenominatorCurrent,
+			RaisedDenominator:   raisedDenominatorRoutedExShield,
 			FindingsRaised:      3,
 			FindingsDocShielded: 1,
 		}}
