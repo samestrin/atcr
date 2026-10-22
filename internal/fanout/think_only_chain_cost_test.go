@@ -333,3 +333,62 @@ func TestInvokeSlot_ThinkOnlyThenFindingLogsNoChainWarning(t *testing.T) {
 	assert.NotContains(t, out, "bought zero findings",
 		"the walk bought a finding; a zero-findings warning on it is false")
 }
+
+// Two TRUNCATED think-only replies, then a clean StatusOK reply that parsed ZERO
+// findings. The truncated arm counts both attempts without setting
+// r.ThinkSuppressed, so the final member reaches the StatusOK block with
+// thinkOnlyAttempts == 2, no findings and ThinkSuppressed false. Neither
+// think-only line fits: the walk was not exhausted (a member answered), and the
+// final reply was not a think run. But two attempts were still burned.
+type thinkOnlyThenEmptyCompleter struct{ calls int }
+
+const thinkOnlyThenEmptyReply = "NO FINDINGS"
+
+func (c *thinkOnlyThenEmptyCompleter) reply() llmclient.Completion {
+	c.calls++
+	if c.calls <= 2 {
+		return llmclient.Completion{Content: "\x3cthink\x3ereasoning only, no answer", Truncated: true}
+	}
+	return llmclient.Completion{Content: thinkOnlyThenEmptyReply}
+}
+
+// Complete returns the final reply without calling reply(), so only CompleteWithMeta advances the calls counter.
+func (c *thinkOnlyThenEmptyCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return thinkOnlyThenEmptyReply, nil
+}
+
+func (c *thinkOnlyThenEmptyCompleter) CompleteWithMeta(_ context.Context, _ llmclient.Invocation) (llmclient.Completion, error) {
+	return c.reply(), nil
+}
+
+// The StatusOK-block guard `thinkOnlyAttempts > 1 && r.ThinkSuppressed` was
+// silent for this walk, so the two burned think-only attempts went unlogged
+// (TD internal/fanout/engine.go:1175). It must name them, without the
+// chain-exhausted claim.
+func TestInvokeSlot_ThinkOnlyThenEmptyLogsBurnedAttempts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(&thinkOnlyThenEmptyCompleter{}, WithLogger(logger), WithTruncationFailover())
+
+	slot := Slot{
+		Primary: Agent{Name: "archer", Invocation: llmclient.Invocation{Model: "m"}},
+		Fallbacks: []Agent{
+			{Name: "archer", Invocation: llmclient.Invocation{Model: "b1"}},
+			{Name: "archer", Invocation: llmclient.Invocation{Model: "b2"}},
+		},
+	}
+	ctx := log.NewContext(context.Background(), logger)
+	r := e.invokeSlot(ctx, slot)
+
+	require.Equal(t, StatusOK, r.Status, "precondition: the final member's reply succeeded")
+	require.False(t, r.ThinkSuppressed, "precondition: the final reply was an answer, not a think run")
+	require.Equal(t, 2, r.ThinkOnlyAttempts, "precondition: both truncated attempts were counted")
+	require.Equal(t, 0, r.ParsedFindingCount(), "precondition: the final reply parsed zero findings")
+
+	out := buf.String()
+	assert.Contains(t, out, "think-only attempts burned before a reply with zero findings",
+		"the two burned attempts must be logged")
+	assert.Contains(t, out, "think_only_attempts=2", "the line names the burned count")
+	assert.NotContains(t, out, "exhausted the fallback chain",
+		"a member answered, so no chain was exhausted")
+}
