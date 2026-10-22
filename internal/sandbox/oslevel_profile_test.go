@@ -1623,3 +1623,66 @@ func TestSandboxExecProfile_SysctlReadsAreNarrowedToTheMeasuredSet(t *testing.T)
 			"sysctl names are emitted into the profile DSL verbatim and must stay plain identifiers: %q", name)
 	}
 }
+
+func TestSandboxExecProfile_ExecIsNarrowedToTheMeasuredSubpaths(t *testing.T) {
+	// TD-012 / epic 35.23.1 T2. An unfiltered `(allow process-exec*)` let the
+	// workload start any binary on the host, and an unfiltered
+	// `(allow file-map-executable)` let it map any file as code. Both rules must
+	// now be subpath-scoped to the measured set, plus the run's own trees.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	assert.NotContains(t, profile, "(allow process-exec*)\n", "an unfiltered exec allow lets the workload start any host binary (TD-012)")
+	assert.NotContains(t, profile, "(allow file-map-executable)\n", "an unfiltered map-executable allow lets the workload map any file as code (TD-012)")
+
+	exec := map[string]bool{}
+	for _, dir := range clauseOperands(t, profile, "(allow process-exec*", "subpath") {
+		exec[dir] = true
+	}
+	// The measurement: the shells and coreutils from /bin and /usr/bin, sysctl
+	// from /usr/sbin, the Go and Python toolchains under /opt/homebrew, git and
+	// make under the Command Line Tools, and `go test`'s own test binary under
+	// the per-run scratch tree.
+	for _, dir := range []string{"/bin", "/usr/bin", "/usr/sbin", "/opt/homebrew", "/Library/Developer/CommandLineTools", cfg.ScratchDir} {
+		assert.True(t, exec[dir], "measured exec subpath %q must be granted; got %v", dir, exec)
+	}
+	for _, dir := range vettedToolchainPrefixes {
+		assert.True(t, exec[dir], "vetted toolchain prefix %q must stay executable (node/npm and the CI Go live there); got %v", dir, exec)
+	}
+	assert.True(t, exec[spec.SnapshotDir], "a read-only run executes the same tree a Writable run executes from its scratch copy; got %v", exec)
+
+	// Nothing wider than what was measured: never the root, never a parent of a
+	// measured dir, never the module cache (read-only data, not code), never the
+	// host temp roots or a home tree.
+	for _, dir := range []string{"/", "/usr", "/private", "/private/var", "/private/var/folders", "/opt", "/Library", "/Users", "/Applications", "/tmp", "/private/tmp", cfg.ModuleCacheDir} {
+		assert.False(t, exec[dir], "%q must not be executable; got %v", dir, exec)
+	}
+	assert.Len(t, exec, 5+len(vettedToolchainPrefixes), "exec subpaths: system dirs, toolchain prefixes, snapshot and scratch only; got %v", exec)
+
+	mapExec := map[string]bool{}
+	for _, dir := range clauseOperands(t, profile, "(allow file-map-executable", "subpath") {
+		mapExec[dir] = true
+	}
+	// Measured: file-map-executable fired only for Python.framework under
+	// /opt/homebrew and libxcrun.dylib under the Command Line Tools. System
+	// dylibs come from the shared cache and the main executable is mapped by the
+	// kernel, so neither needs the rule.
+	assert.Equal(t, len(vettedToolchainPrefixes), len(mapExec), "map-executable is the toolchain tier only; got %v", mapExec)
+	for _, dir := range vettedToolchainPrefixes {
+		assert.True(t, mapExec[dir], "toolchain prefix %q must stay mappable; got %v", dir, mapExec)
+	}
+}
+
+func TestSandboxExecProfile_ExecRuleOmitsAnAbsentScratchDir(t *testing.T) {
+	// An empty ScratchDir is valid for a read-only run and must not emit
+	// (subpath ""), which is not a path at all.
+	cfg, spec := profileFixture(t)
+	cfg.ScratchDir = ""
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+	for _, dir := range clauseOperands(t, profile, "(allow process-exec*", "subpath") {
+		assert.NotEmpty(t, dir)
+	}
+	assert.NotContains(t, profile, `(subpath "")`)
+}
