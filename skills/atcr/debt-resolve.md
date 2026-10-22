@@ -75,6 +75,15 @@ that raised it. Write the reason for a reader who was not there. Do not reach fo
 failed investigation teaches the scorer the wrong thing about a reviewer that may
 have been right.
 
+**Ledger-backed rows in a project's own TD table.** If you copy a store finding
+into a project's technical-debt table, put `debt:<id>` in the row's Problem or
+Source cell (the id is the leading column of `atcr debt list`). Closing that
+finding still means running `atcr debt resolve <id>` directly: ticking the row
+alone leaves the store record open. `atcr debt sync-outcomes --td <path>` is the
+catch-up for rows ticked without it. It records `[x]` as `resolved` and `[-]` as
+`unreproducible` for rows that carry the token, and never matches a row any
+other way.
+
 If the store is empty or missing, the command prints a "no items" line and exits 0 —
 report "no items to resolve" and halt cleanly; do **not** enter any resolution stage.
 
