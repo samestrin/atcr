@@ -528,6 +528,19 @@ than growing a third aggregation.
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
+  **Which denominator produced each prior is recorded (epic 35.16.11.3.2).**
+  Beside the priors, `ResolveTrustPriorsForReview` returns a per-reviewer flag
+  that every call site threads into `reconcile.Options.OpportunityScoped`, and
+  reconcile echoes it as `opportunity_scoped` in `reconciled/summary.json`. It
+  has one entry per reviewer in the priors map: `true` for a persona with an
+  in-repo remit (scored over the opportunity-filtered denominator), `false` for
+  one of the five registry-only lenses (scored over the full one). It comes from
+  the same remit lookup as `ReasonNotOpportunityScoped`, so the summary and the
+  `not opportunity-scoped` annotation in `atcr personas list --scores` agree on
+  which lens is which. `true` means the lens is
+  eligible for the filter, not that every one of its runs was filtered; its
+  pre-era and unscopeable runs still count, as the explanation shows. The flag
+  is read off the remit table and never feeds the rate, so no score changes.
   **Trust follows the model, not just the persona.** On this reconcile path a persona's prior is computed only from its runs on the model it ran on in the review being reconciled, read from that review's pool summary (`sources/pool/summary.json`). A persona that switched models is absent from the map, which is the neutral baseline, until `DefaultTrustMinRuns` runs accumulate on the new model; its history on the old model does not carry over. A persona is also neutral when its model cannot be known: the review has no pool summary, the summary lists the persona on two different models, or the summary records no model for it. The summary records the model for every agent that completed, whether or not the provider reported token usage. The unmeasured count on the log line follows the same rule. `atcr personas list --scores` still reports each persona across all its models: it reads `TrustPriors`, not this function, and so does its "In use by reconcile" footer. That list therefore does not reflect the per-model rule, so the footer states the rule on the line beneath it. Two parts of the scoring stay per persona across models: the era decision (a persona's newest `raised_denominator`), which only matters across an era bump, and the ground-truth confirmation half, which is not wired in (TD-039).
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
   > records are computed from the **post-filter** finding set (`res.Findings`)
