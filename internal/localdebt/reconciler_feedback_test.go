@@ -2,6 +2,7 @@ package localdebt
 
 import (
 	"encoding/json"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -264,4 +265,48 @@ func TestIsWellFormedFindingID(t *testing.T) {
 	for _, id := range []string{"", "0123", "0123456789ABCDEF", "0123456789abcdeg", "0123456789abcdef0"} {
 		assert.False(t, IsWellFormedFindingID(id), id)
 	}
+}
+
+// TestSummary_ProjectsReconcilerFeedbackKind: `atcr debt dashboard` aggregates
+// from summaries, never full records (epic 35.21), so the summary pass must carry
+// the annotation's kind for the dashboard to count reconciler corrections
+// (Epic 36.1 T4). The fold keeps it on the effective summary exactly as
+// FoldRecords keeps the annotation on the effective record; an unannotated
+// record projects an empty kind.
+func TestSummary_ProjectsReconcilerFeedbackKind(t *testing.T) {
+	dir := t.TempDir()
+	open := sampleRecord("2026-06-14T10:00:00Z-abc123")
+	other := sampleRecord("2026-06-14T10:00:00Z-def456")
+	other.Problem = "an unannotated finding"
+	other.StampID()
+	note := annotated(open, "2026-06-20T00:00:00Z", ReconcilerFeedback{Kind: FeedbackWrongMerge, Reason: "two races"})
+	require.NoError(t, Append(dir, open))
+	require.NoError(t, Append(dir, other))
+	require.NoError(t, Append(dir, note))
+
+	sums, err := ReadSummaries(dir, ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, sums, 3)
+	assert.Empty(t, sums[0].ReconcilerFeedbackKind, "an unannotated record projects no kind")
+	assert.Equal(t, FeedbackWrongMerge, sums[2].ReconcilerFeedbackKind)
+
+	byID := map[string]Summary{}
+	for _, s := range FoldSummaries(sums) {
+		byID[s.ID] = s
+	}
+	require.Len(t, byID, 2)
+	assert.Equal(t, FeedbackWrongMerge, byID[open.ID].ReconcilerFeedbackKind, "the fold keeps the annotation")
+	assert.Equal(t, open.Status, byID[open.ID].Status, "and leaves the status as it was")
+	assert.Empty(t, byID[other.ID].ReconcilerFeedbackKind)
+}
+
+// TestDecodeSummary_ReconcilerFeedbackTypeParity: reconciler_feedback is an
+// object on Record, so a line carrying it as another JSON type is skipped by
+// both decoders, never accepted by the summary path alone (see summaryLine).
+func TestDecodeSummary_ReconcilerFeedbackTypeParity(t *testing.T) {
+	line := []byte(`{"schema_version":3,"id":"aaaaaaaaaaaaaaaa","run_id":"r","reconciler_feedback":"wrong-merge"}`)
+	_, okSum := decodeSummary(line, "s", io.Discard)
+	_, recOutcome := decodeRecord(line, "s", io.Discard)
+	assert.False(t, okSum)
+	assert.Equal(t, recOutcome == decodeOK, okSum)
 }

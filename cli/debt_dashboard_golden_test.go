@@ -26,8 +26,9 @@ var updateDashboardGolden = flag.Bool("update-dashboard-golden", false, "rewrite
 // secret-shaped tokens in the location and the problem (redaction), control
 // bytes and raw HTML (sanitization), a pipe in the location, an empty and a
 // malformed timestamp (the histogram's unknown bucket), a severity/date tie
-// broken by location, and one id with history across shards — opened, resolved,
-// then re-detected — so the fold, not the first occurrence, decides what renders.
+// broken by location, one id with history across shards — opened, resolved,
+// then re-detected — so the fold, not the first occurrence, decides what renders,
+// and a reconciler-feedback annotation on a wontfix finding (Epic 36.1).
 func debtDashboardGoldenCorpus() []localdebt.Record {
 	mk := func(runID, ts, status, sev, file string, line, est int, problem string) localdebt.Record {
 		r := localdebt.Record{
@@ -64,6 +65,12 @@ func debtDashboardGoldenCorpus() []localdebt.Record {
 	reopened := hist
 	reopened.RunID, reopened.Timestamp, reopened.Problem = "2026-07-run", "2026-07-02T09:00:00Z", "re-detected text"
 	recs = append(recs, hist, resolved, reopened)
+
+	// One wontfix finding a developer also flagged as wrongly merged (Epic 36.1):
+	// the annotated copy keeps the status, so it counts once in Wontfix and once
+	// as a reconciler correction, and the two counts stay apart.
+	merged := mk("2026-07-run", "2026-07-01T00:00:00Z", localdebt.StatusWontfix, "MEDIUM", "a/m.go", 8, 0, "merged two issues")
+	recs = append(recs, merged, reclusteredCopy(merged, "2026-07-03T00:00:00Z", localdebt.FeedbackWrongMerge))
 	return recs
 }
 
@@ -161,17 +168,21 @@ func TestDebtDashboard_HydratesOnlyTheRenderedTopRows(t *testing.T) {
 const syntheticGoldenRecords = 2000
 
 // TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender is the old-vs-new
-// comparison of epic 35.21 T4. The golden was rendered by the PRE-35.21 binary
-// (26d4f0d, the full-record ReadAll + FoldRecords read) over the store
-// localdebt.GenerateSynthetic builds, so it is not a snapshot of the code under
-// test: it is what the old read printed for this exact store. It is deliberately
-// NOT rewritten by -update-dashboard-golden; to regenerate it, build
-// `go run ./cmd/gen-debt-store -n 2000` and render it with an atcr built from
-// 26d4f0d.
+// comparison of epic 35.21 T4. debt_dashboard_synthetic_pre36.1.golden.md was
+// rendered by the PRE-35.21 binary (26d4f0d, the full-record ReadAll +
+// FoldRecords read) over the store localdebt.GenerateSynthetic builds, so it is
+// not a snapshot of the code under test: it is what the old read printed for
+// this exact store. Neither file is rewritten by -update-dashboard-golden.
 //
-// The same file then pins AC4 from the caller's side: a dashboard committed by
-// the old binary is still current under the new one's --check (exit 0), and a
-// store change is still drift (exit 4), not an error of some other kind.
+// debt_dashboard_synthetic.golden.md is that same render with only the Epic 36.1
+// T4 reconciler-correction count added to the totals header and the By Severity
+// table (the synthetic store carries no annotation, so every new cell is 0).
+// Every other byte is still the pre-35.21 binary's.
+//
+// The pair then pins --check from the caller's side: a dashboard committed
+// before the reconciler-correction column is drift (exit 4) — the column is new
+// content, and a stale dashboard must be regenerated, not silently pass — a
+// current one is clean (exit 0), and a store change is drift again.
 func TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".atcr", "debt")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -183,10 +194,19 @@ func TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(want), got, "the summary-path render drifted from the pre-35.21 render of the same store")
 
+	// A dashboard committed before the reconciler-correction column (Epic 36.1 T4).
+	pre, err := os.ReadFile(filepath.Join("testdata", "debt_dashboard_synthetic_pre36.1.golden.md"))
+	require.NoError(t, err)
+	require.NotContains(t, string(pre), "Reconciler corrections", "the fixture predates the column")
 	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	require.NoError(t, os.WriteFile(out, pre, 0o644))
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.Error(t, err, "a dashboard that predates the reconciler-correction column is stale")
+	require.Equal(t, exitDrift, exitCode(err), "and stale is drift, exit 4")
+
 	require.NoError(t, os.WriteFile(out, want, 0o644))
 	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
-	require.NoError(t, err, "a dashboard the pre-35.21 binary committed is current under --check")
+	require.NoError(t, err, "a dashboard carrying the column is current under --check")
 
 	// Resolve the top-ranked item: the totals and the Top Priority list both move.
 	_, err = runDebt(t, "resolve", localdebt.SyntheticRecord(0).ID, "--dir", dir)
@@ -194,4 +214,31 @@ func TestDebtDashboard_SyntheticStoreMatchesThePreSummaryRender(t *testing.T) {
 	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
 	require.Error(t, err)
 	require.Equal(t, exitDrift, exitCode(err), "a store change is drift, exit 4")
+}
+
+// TestDebtDashboard_WrongMergeThroughTheStore is T4's success criteria end to
+// end, through the real store and the production command: a wrong-merge
+// annotation appended for a finding raises the printed reconciler-correction
+// count and not Wontfix, and a dashboard committed before it is drift.
+func TestDebtDashboard_WrongMergeThroughTheStore(t *testing.T) {
+	merged := mkDebtRecord("", "CRITICAL", "internal/x/a.go", 1, "2026-07-01T00:00:00Z")
+	dir := writeLocalDebt(t, merged)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	_, err := runDebt(t, "dashboard", "--dir", dir, "--output", out)
+	require.NoError(t, err)
+	before, err := os.ReadFile(out)
+	require.NoError(t, err)
+	require.Contains(t, string(before), "**Wontfix:** 0  |  **Unreproducible:** 0  |  **Attempts-exhausted:** 0  |  **Reconciler corrections:** 0\n")
+
+	require.NoError(t, localdebt.Append(dir, reclusteredCopy(merged, "2026-07-02T00:00:00Z", localdebt.FeedbackWrongMerge)))
+
+	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
+	require.Error(t, err, "the annotation changed the dashboard")
+	require.Equal(t, exitDrift, exitCode(err))
+
+	got, err := runDebt(t, "dashboard", "--dir", dir)
+	require.NoError(t, err)
+	require.Contains(t, got, "**Open:** 1  |", "the annotated finding is still open")
+	require.Contains(t, got, "**Wontfix:** 0  |  **Unreproducible:** 0  |  **Attempts-exhausted:** 0  |  **Reconciler corrections:** 1\n")
+	require.Contains(t, got, "| CRITICAL | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |\n")
 }
