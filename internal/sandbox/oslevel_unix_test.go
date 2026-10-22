@@ -233,7 +233,7 @@ func TestKillSandboxDescendants_KillsEachListedPid(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
-	killSandboxDescendants([]int{cmd.Process.Pid})
+	killSandboxDescendants(0, []int{cmd.Process.Pid}) // no process group has id 0
 
 	select {
 	case err := <-done:
