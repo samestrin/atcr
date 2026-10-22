@@ -229,7 +229,11 @@ func expectedQualityPayload(t *testing.T) []telemetry.QualitySignal {
 	groups := map[key]*telemetry.QualitySignal{}
 	order := []key{}
 	for _, r := range rows {
-		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount)
+		if r.DismissedCount+r.ConfirmedCount+r.WrongMergeCount+r.WrongSplitCount+r.WrongCategoryCount == 0 {
+			continue
+		}
+		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount,
+			telemetry.ReconcilerCounts{WrongMerge: r.WrongMergeCount, WrongSplit: r.WrongSplitCount, WrongCategory: r.WrongCategoryCount})
 		if qs.PersonaIDHash == "" {
 			continue
 		}
@@ -237,6 +241,9 @@ func expectedQualityPayload(t *testing.T) []telemetry.QualitySignal {
 		if existing, ok := groups[k]; ok {
 			existing.DismissedCount += qs.DismissedCount
 			existing.ConfirmedCount += qs.ConfirmedCount
+			existing.WrongMergeCount += qs.WrongMergeCount
+			existing.WrongSplitCount += qs.WrongSplitCount
+			existing.WrongCategoryCount += qs.WrongCategoryCount
 		} else {
 			qsCopy := qs
 			groups[k] = &qsCopy
@@ -420,8 +427,9 @@ func TestPreview_PayloadHashesPersonaIndependently(t *testing.T) {
 }
 
 // TestPreview_PrintsAllowlistedJSONPayload proves `--preview` prints pretty JSON
-// carrying exactly the four allowlisted quality-signal fields and exits 0 (AC 03-01
-// Scenario 1).
+// carrying exactly the allowlisted quality-signal fields and exits 0 (AC 03-01
+// Scenario 1). Epic 36.1 T3 grew the key set by the three reconciler-error
+// counts, deliberately.
 func TestPreview_PrintsAllowlistedJSONPayload(t *testing.T) {
 	isolate(t)
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
@@ -445,7 +453,8 @@ func TestPreview_PrintsAllowlistedJSONPayload(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	assert.Equal(t, []string{"confirmed_count", "dismissed_count", "model", "persona_id_hash"}, keys,
+	assert.Equal(t, []string{"confirmed_count", "dismissed_count", "model", "persona_id_hash",
+		"wrong_category_count", "wrong_merge_count", "wrong_split_count"}, keys,
 		"preview must print only the allowlisted quality-signal fields")
 }
 
@@ -723,4 +732,91 @@ func TestBuildQualitySignalPayload_MixedPairKeepsItsRealCounts(t *testing.T) {
 	assert.Equal(t, 1, payload[0].DismissedCount)
 	assert.Equal(t, 1, payload[0].ConfirmedCount,
 		"the unreproducible outcome must not inflate or deflate either wire counter")
+}
+
+// --- Epic 36.1 T3: reconciler-error counts on the payload ---
+
+// seedReconcilerAnnotation appends an annotated copy of the record
+// seedQualityRecord(persona, model, "", file) wrote — the shape
+// `atcr debt recluster` appends: the effective record, re-stamped, status
+// untouched.
+func seedReconcilerAnnotation(t *testing.T, persona, model, file, kind string) {
+	t.Helper()
+	seedQualityRecord(t, persona, model, "", file)
+	rec := localdebt.Record{
+		SchemaVersion:      localdebt.SchemaVersion,
+		RunID:              "2026-07-02T10:00:00Z-recluster",
+		Timestamp:          "2026-07-02T10:00:00Z",
+		Severity:           "LOW",
+		File:               file,
+		Line:               1,
+		Problem:            "problem-" + file,
+		Reviewers:          []string{persona},
+		Model:              model,
+		ReconcilerFeedback: &localdebt.ReconcilerFeedback{Kind: kind, Reason: "grouped wrongly"},
+	}
+	rec.StampID()
+	require.NoError(t, localdebt.Append(localdebt.DefaultDir("."), rec))
+}
+
+// TestBuildQualitySignalPayload_ReconcilerCountsApartFromDismissed is T3's
+// success criterion end to end: from a store with annotated findings, a wontfix
+// of a hallucinated finding raises dismissed_count only and a wrong-merge
+// annotation raises wrong_merge_count only, on a row keyed by the hashed persona.
+func TestBuildQualitySignalPayload_ReconcilerCountsApartFromDismissed(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "hallucinated.go")
+	seedReconcilerAnnotation(t, "bruce", "claude-sonnet-4-6", "merged.go", localdebt.FeedbackWrongMerge)
+
+	payload, err := buildQualitySignalPayload(".")
+	require.NoError(t, err)
+	sum := sha256.Sum256([]byte("bruce"))
+	assert.Equal(t, []telemetry.QualitySignal{{
+		PersonaIDHash:   hex.EncodeToString(sum[:]),
+		Model:           "claude-sonnet-4-6",
+		DismissedCount:  1,
+		WrongMergeCount: 1,
+	}}, payload)
+}
+
+// TestBuildQualitySignalPayload_ReconcilerOnlyPairIsOnTheWire: unlike the Story
+// 36.0 outcomes, a reconciler count has a key of its own, so a pair whose only
+// signal is an annotation is reported rather than skipped — and each kind lands
+// on its own key. Case variants of one persona still fold to one entry.
+func TestBuildQualitySignalPayload_ReconcilerOnlyPairIsOnTheWire(t *testing.T) {
+	isolate(t)
+	seedReconcilerAnnotation(t, "diana", "gpt-5", "a.go", localdebt.FeedbackWrongSplit)
+	seedReconcilerAnnotation(t, "Diana", "gpt-5", "b.go", localdebt.FeedbackWrongCategory)
+	seedReconcilerAnnotation(t, "diana", "gpt-5", "c.go", localdebt.FeedbackWrongCategory)
+
+	payload, err := buildQualitySignalPayload(".")
+	require.NoError(t, err)
+	require.Len(t, payload, 1)
+	assert.Zero(t, payload[0].DismissedCount)
+	assert.Zero(t, payload[0].ConfirmedCount)
+	assert.Zero(t, payload[0].WrongMergeCount)
+	assert.Equal(t, 1, payload[0].WrongSplitCount)
+	assert.Equal(t, 2, payload[0].WrongCategoryCount)
+}
+
+// TestPreview_PrintsReconcilerKeysWithoutRawPersona: the preview prints the new
+// keys with their values, equal to the real-send payload, and the raw persona
+// name never appears.
+func TestPreview_PrintsReconcilerKeysWithoutRawPersona(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	seedReconcilerAnnotation(t, "bruce", "claude-sonnet-4-6", "b.go", localdebt.FeedbackWrongMerge)
+
+	out, err := runPreview(t, newReviewCmd(), nil, "--preview")
+	require.NoError(t, err)
+	jsonPart, _ := splitPreview(out)
+	assert.Contains(t, jsonPart, `"wrong_merge_count": 1`)
+	assert.Contains(t, jsonPart, `"wrong_split_count": 0`)
+	assert.Contains(t, jsonPart, `"wrong_category_count": 0`)
+	assert.Contains(t, jsonPart, `"dismissed_count": 1`)
+	assert.NotContains(t, out, "bruce", "the raw persona name must never appear in the payload")
+
+	var got []telemetry.QualitySignal
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonPart)), &got))
+	assert.Equal(t, expectedQualityPayload(t), got)
 }
