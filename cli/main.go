@@ -575,6 +575,7 @@ func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cob
 		newPersonasCmd(),
 		newModelsCmd(),
 		newDebtCmd(),
+		newIgnoreCmd(),
 		newHistoryCmd(),
 		newAuditReportCmd(),
 		newConfigCmd(),
