@@ -138,5 +138,15 @@
     "model": "anthropic/claude-sonnet-5",
     "tasks": ["bloat-review"],
     "tags": ["bloat", "slop", "claude", "frontier-vendor"]
+  },
+  {
+    "name": "nadia",
+    "version": "1.0.0",
+    "description": "Qwen red-team exploit and bypass reviewer (zero-click attacker lens)",
+    "path": "nadia.yaml",
+    "provider": "openrouter",
+    "model": "qwen/qwen3-coder-plus",
+    "tasks": ["redteam-review"],
+    "tags": ["exploit", "bypass", "qwen", "open-model"]
   }
 ]
