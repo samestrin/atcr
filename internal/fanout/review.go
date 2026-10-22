@@ -124,7 +124,9 @@ type ReviewRequest struct {
 	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
 	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
 	// review to the plan's active work items so reviewers suppress findings for
-	// unrelated changes in the diff. A missing or empty file is ignored (the
+	// unrelated changes in the diff, and asks them to report each plan work item
+	// the diff does not implement (Epic 36.2; see payload.UnmetPlanItemPrefix).
+	// A missing or empty file is ignored (the
 	// review proceeds diff-wide); an unreadable file warns on stderr but does not
 	// abort. The constraint becomes part of the rendered prompt, so the diff-cache
 	// key invalidates correctly when the plan changes. Defaulting empty preserves
