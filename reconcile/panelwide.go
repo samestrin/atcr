@@ -39,8 +39,11 @@ import "strings"
 // (promoteByAuthority) is independent signal.
 
 // PanelWideReason is the short reason recorded on a reconciled finding whose
-// confidence was discounted because IsPanelWide held for its group.
-const PanelWideReason = "panel-wide instruction: reviewers filed one invariant finding in one file with near-identical evidence, so their agreement is not independent corroboration"
+// confidence was discounted because IsPanelWide held for its group. In full:
+// reviewers filed one invariant finding in one file with near-identical
+// evidence, so their agreement is not independent corroboration. It is kept
+// under 80 characters because it is appended to the problem text of the TD row.
+const PanelWideReason = "panel-wide instruction: invariant finding, one file, near-identical evidence"
 
 // IsPanelWide reports whether a merge group is in the panel-wide-instruction
 // class: two or more distinct reviewers, a modal category of CategoryInvariant,
