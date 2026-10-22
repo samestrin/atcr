@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,19 +28,8 @@ import (
 // the range-less `atcr review --all` path.
 func initBaselineRepo(t *testing.T) {
 	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	run("init", "-q")
 	require.NoError(t, os.WriteFile("a.txt", []byte("one\n"), 0o644))
 	require.NoError(t, os.WriteFile("b.go", []byte("package b\n"), 0o644))
@@ -323,28 +311,14 @@ func TestReviewAllFresh_BypassesSkipIndex(t *testing.T) {
 // to the isolate() fixture after initBaselineRepo).
 func gitRun(t *testing.T, args ...string) {
 	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-	)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %v: %s", args, out)
+	runFixtureGit(t, requireTempWorkdir(t), args...)
 }
 
 // gitLsFiles returns the repo's tracked-file set (the coverage oracle for the
 // "zero files silently omitted" bar), slash-normalized repo-root-relative paths.
 func gitLsFiles(t *testing.T) []string {
 	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	cmd := exec.Command("git", "ls-files")
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := fixtureGit(requireTempWorkdir(t), "ls-files").Output()
 	require.NoError(t, err)
 	var files []string
 	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -616,19 +590,8 @@ func TestReviewFresh_WithoutBaselineWritesNoIndex(t *testing.T) {
 	t.Setenv(testReviewKeyEnv, "secret")
 	initBaselineRepo(t)
 	// A second commit so --base HEAD^ resolves a real range.
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
 	run("commit", "-aqm", "edit a.txt")
 	srv := liveMockProvider(t)
