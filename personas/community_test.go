@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
@@ -634,4 +635,54 @@ func TestLocalPersonasDocumentOllamaPullTag(t *testing.T) {
 	}
 	require.NotZerof(t, localCount,
 		"expected at least one provider:local persona in the community index")
+}
+
+// styleWordRe matches the words a severity rubric would use to invite a
+// stylistic finding.
+var styleWordRe = regexp.MustCompile(`(?i)\b(style|stylistic|naming|formatting|whitespace|typo)\b`)
+
+// TestAnthony_CritiqueStyleBan covers Epic 36.2 AC1: anthony, the Architectural
+// Drift critique persona, bans style-category findings. It renders the prompt
+// against anthony's fixture patch in both tool states and asserts (1) the
+// Style Ban section reaches the model and names every style class it rules
+// out; (2) the output rule forbids the `style` category; (3) the severity
+// rubric no longer invites a stylistic LOW finding; (4) every finding the
+// rendered prompt teaches, read back through the producing parser, carries the
+// fixture's planted category and none carries `style`. No model is called: this
+// pins the prompt contract a model is held to, not a live model's reply.
+func TestAnthony_CritiqueStyleBan(t *testing.T) {
+	raw, err := os.ReadFile(communityPath("anthony.md"))
+	require.NoError(t, err)
+	diff, err := os.ReadFile(communityPath("testdata", "anthony_fixture.patch"))
+	require.NoError(t, err)
+
+	for _, tools := range []bool{true, false} {
+		ctx := renderContext(string(diff))
+		ctx.ToolsEnabled = tools
+		out, err := payload.RenderPrompt(string(raw), ctx)
+		require.NoErrorf(t, err, "render anthony ToolsEnabled=%v", tools)
+		require.Containsf(t, out, string(diff), "fixture patch must reach the prompt (ToolsEnabled=%v)", tools)
+
+		ban := strings.ToLower(sectionBody(out, "## Style Ban"))
+		require.NotEmptyf(t, ban, "rendered prompt must carry ## Style Ban (ToolsEnabled=%v)", tools)
+		for _, want := range []string{"formatting", "naming", "comment", "lint", "never emit a finding whose category is `style`", "no findings"} {
+			require.Containsf(t, ban, want, "## Style Ban must rule out %q (ToolsEnabled=%v)", want, tools)
+		}
+
+		output := sectionBody(out, "## Output Format")
+		require.Containsf(t, output, "never `style`", "output rule must forbid the style category (ToolsEnabled=%v)", tools)
+		require.NotRegexpf(t, styleWordRe, sectionBody(out, "## Severity Rubric"),
+			"severity rubric must not invite a stylistic finding (ToolsEnabled=%v)", tools)
+
+		got := stream.ParseModelOutput([]byte(output))
+		require.NotEmptyf(t, got, "rendered prompt must teach at least one finding (ToolsEnabled=%v)", tools)
+		var styleFindings int
+		for _, f := range got {
+			if f.Category == "style" {
+				styleFindings++
+			}
+			require.Equalf(t, "coupling", f.Category, "anthony's taught finding must use its fixture category (ToolsEnabled=%v)", tools)
+		}
+		require.Zerof(t, styleFindings, "anthony must teach zero style findings (ToolsEnabled=%v)", tools)
+	}
 }
