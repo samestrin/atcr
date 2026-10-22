@@ -121,6 +121,12 @@ nothing writes that reason to disk, so it cannot be recovered from
   `unresolved_filtered`; see below for why a bare `0` cannot be interpreted. The
   state qualifies a `0`; it does not cap the count. `unavailable` in particular
   is compatible with a nonzero count — see its row below.
+- `opportunity_scoped` — per lowercase reviewer name, whether its trust prior
+  was computed over an opportunity-scoped denominator (`true`: only the runs
+  where that reviewer had something in its remit to find) or the full one
+  (`false`). Both kinds of rate are compared against the same trust
+  thresholds; this says which definition produced each. Absent when the caller
+  attached no flags. It is a record only: it changes no finding.
 
 ## Discounted confidence
 
