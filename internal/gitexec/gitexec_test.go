@@ -80,6 +80,145 @@ func TestCommandFn_Swappable(t *testing.T) {
 	}
 }
 
+// TestFixtureCommandContext_PinsRepoEnv asserts the fixture constructor pins all
+// three repo-locating vars to the fixture, on top of the config hardening, and
+// runs in the fixture directory.
+func TestFixtureCommandContext_PinsRepoEnv(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "repo")
+	cmd := FixtureCommandContext(context.Background(), dir, "status")
+	if got := cmd.Args[0]; got != "git" {
+		t.Errorf("cmd.Args[0] = %q, want %q", got, "git")
+	}
+	if cmd.Dir != dir {
+		t.Errorf("cmd.Dir = %q, want %q", cmd.Dir, dir)
+	}
+	for _, want := range []string{
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_DIR=" + filepath.Join(dir, ".git"),
+		"GIT_WORK_TREE=" + dir,
+		"GIT_CEILING_DIRECTORIES=" + root,
+	} {
+		if !hasEnv(cmd.Env, want) {
+			t.Errorf("cmd.Env missing %q: %v", want, cmd.Env)
+		}
+	}
+}
+
+// TestFixtureCommandContext_RelativeDirIsAbsolutized covers the chdir'd-fixture
+// shape (cli/resume_test.go): a relative dir is resolved against the current
+// directory, so the pinned vars do not depend on the child's cwd.
+func TestFixtureCommandContext_RelativeDirIsAbsolutized(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	cmd := FixtureCommandContext(context.Background(), ".", "status")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if !hasEnv(cmd.Env, "GIT_WORK_TREE="+wd) || !hasEnv(cmd.Env, "GIT_DIR="+filepath.Join(wd, ".git")) {
+		t.Errorf("relative dir not absolutized against %q: %v", wd, cmd.Env)
+	}
+}
+
+// TestFixtureCommandContext_DropsInheritedRepoVars asserts the other repo-locating
+// vars git exports into a hook (pre-push unsets the same list) are not inherited:
+// an inherited GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY would send the fixture's
+// index or objects into the surrounding repository even with GIT_DIR pinned.
+func TestFixtureCommandContext_DropsInheritedRepoVars(t *testing.T) {
+	leaked := []string{"GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"}
+	for _, k := range leaked {
+		t.Setenv(k, "/leaked/"+k)
+	}
+	cmd := FixtureCommandContext(context.Background(), t.TempDir(), "status")
+	for _, kv := range cmd.Env {
+		for _, k := range leaked {
+			if strings.HasPrefix(kv, k+"=") {
+				t.Errorf("inherited %s leaked into fixture env: %q", k, kv)
+			}
+		}
+	}
+}
+
+// victimState is the part of a repository the 45.0 incidents corrupted.
+type victimState struct{ head, refs, bare string }
+
+// readVictim reads repo's HEAD, every ref and core.bare, naming the repository
+// explicitly so the read is correct whatever GIT_DIR the test has exported.
+func readVictim(t *testing.T, repo string) victimState {
+	t.Helper()
+	run := func(arg ...string) string {
+		cmd := CommandFn(arg...)
+		cmd.Dir = repo
+		cmd.Env = append(cmd.Environ(), "GIT_DIR="+filepath.Join(repo, ".git"), "GIT_WORK_TREE="+repo)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in victim: %v\n%s", arg, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	return victimState{
+		head: run("rev-parse", "HEAD"),
+		refs: run("for-each-ref", "--format=%(refname) %(objectname)"),
+		bare: run("config", "--bool", "core.bare"),
+	}
+}
+
+// TestFixtureCommandContext_InheritedGitDirCannotRetarget is the Epic 45.0
+// regression test. Git exports GIT_DIR into a hook's environment and GIT_DIR beats
+// `git -C`, so a fixture built under a hook wrote into the real repository: HEAD
+// moved, stray commits landed, core.bare flipped. Here a throwaway "victim" repo
+// plays the real repository, GIT_DIR is exported at it, and a full fixture
+// lifecycle runs through FixtureCommandContext. The victim must be untouched and
+// the fixture must hold the commit.
+func TestFixtureCommandContext_InheritedGitDirCannotRetarget(t *testing.T) {
+	ctx := context.Background()
+
+	victim := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.name=v", "-c", "user.email=v@v.invalid", "commit", "-q", "--allow-empty", "-m", "victim"},
+	} {
+		cmd := CommandFn(append([]string{"-C", victim}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("victim git %v: %v\n%s", args, err, out)
+		}
+	}
+	before := readVictim(t, victim)
+
+	t.Setenv("GIT_DIR", filepath.Join(victim, ".git"))
+	t.Setenv("GIT_WORK_TREE", victim)
+
+	fixture := filepath.Join(t.TempDir(), "fixture")
+	if err := os.Mkdir(fixture, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture, "a.txt"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "fixture"},
+		{"config", "user.name", "t"},
+		{"config", "user.email", "t@t.invalid"},
+		{"add", "a.txt"},
+		{"commit", "-q", "-m", "init"},
+		{"branch", "-f", "main"},
+	} {
+		if out, err := FixtureCommandContext(ctx, fixture, args...).CombinedOutput(); err != nil {
+			t.Fatalf("fixture git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if after := readVictim(t, victim); after != before {
+		t.Errorf("victim repository modified by fixture run with GIT_DIR exported:\nbefore: %+v\nafter:  %+v", before, after)
+	}
+	out, err := FixtureCommandContext(ctx, fixture, "log", "-1", "--format=%s").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "init" {
+		t.Errorf("fixture repo does not hold its commit: %q, %v", out, err)
+	}
+}
+
 // repoRoot walks up from the test working directory to the directory containing
 // go.mod, so the whole-tree AC4 walk below is anchored at the module root
 // regardless of which package directory `go test` runs from.
