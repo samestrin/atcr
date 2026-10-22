@@ -9,8 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -283,4 +286,209 @@ func TestPrepareReviewFromDiff_ConstraintArtifactMatchesWhatShipped(t *testing.T
 
 	assert.Equal(t, shipped, planBody(string(data)),
 		"the artifact documents what each reviewer received, so it must carry the block that was actually sent — not the uncapped one no reviewer saw")
+}
+
+// The SCOPE CONSTRAINT contract runs both ways (Epic 36.2 AC2): besides
+// suppressing findings unrelated to the plan, it tells the reviewer to report
+// each plan work item the diff does not implement, under the marker and
+// category the contract names, as a file-level finding on a changed file so the
+// grounding gate keeps it.
+func TestResolveScopeConstraint_ReportsUnmetPlanItems(t *testing.T) {
+	planPath := filepath.Join(t.TempDir(), "plan.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Tasks\n- add rate limiting to login\n"), 0o644))
+
+	c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: planPath}, registry.DefaultMaxSprintPlanBytes)
+	require.Empty(t, w)
+	assert.Contains(t, c, "Suppress findings for unrelated changes", "the suppression half of the contract is kept")
+	assert.Contains(t, c, payload.UnmetPlanItemPrefix, "the contract names the unmet-plan-item marker")
+	assert.Contains(t, c, "CATEGORY `"+payload.UnmetPlanItemCategory+"`", "the contract names the unmet-plan-item category")
+	assert.Contains(t, c, "does not implement", "the contract asks for plan items the diff does not implement")
+	assert.Contains(t, c, "file-level", "the contract anchors the finding file-level on a changed file so grounding keeps it")
+}
+
+// A missing or empty sprint-plan file is still ignored (Epic 36.2 AC3): no
+// constraint, no warning, and the review prepares diff-wide with no error and
+// no unmet-plan-item instruction for the reviewer to act on.
+func TestSprintPlan_EmptyOrMissingPlanIgnored(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.md")
+	require.NoError(t, os.WriteFile(empty, nil, 0o644))
+	blank := filepath.Join(dir, "blank.md")
+	require.NoError(t, os.WriteFile(blank, []byte(" \n\t\n"), 0o644))
+	missing := filepath.Join(dir, "missing.md")
+
+	for _, p := range []string{empty, blank, missing} {
+		c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: p}, registry.DefaultMaxSprintPlanBytes)
+		require.Emptyf(t, c, "%s: no constraint", filepath.Base(p))
+		require.Emptyf(t, w, "%s: no warning", filepath.Base(p))
+
+		cfg := twoAgentConfig("http://unused")
+		req := diffReq(t.TempDir(), filepath.Join(t.TempDir(), "ext-review"))
+		req.SprintPlanPath = p
+		prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+		require.NoErrorf(t, err, "%s: the review proceeds", filepath.Base(p))
+		require.NotEmpty(t, prep.Slots)
+		for _, s := range prep.Slots {
+			assert.NotContainsf(t, s.Primary.Prompt, "SCOPE CONSTRAINT", "%s: diff-wide review", filepath.Base(p))
+			assert.NotContainsf(t, s.Primary.Prompt, payload.UnmetPlanItemPrefix, "%s: no unmet-plan-item instruction", filepath.Base(p))
+		}
+	}
+}
+
+// planFollowingCompleter stands in for a reviewer that follows the SCOPE
+// CONSTRAINT contract it is given: when the prompt asks for unmet plan items it
+// reports the one plan item the fixture diff does not implement, exactly as the
+// contract shapes it; otherwise it reports nothing.
+type planFollowingCompleter struct{ item string }
+
+func (c planFollowingCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	if !strings.Contains(inv.Prompt, payload.UnmetPlanItemPrefix) {
+		return "NO FINDINGS", nil
+	}
+	return "MEDIUM|auth.go|" + payload.UnmetPlanItemPrefix + " " + c.item +
+		" — the diff never touches login|Implement the plan item or drop it from the plan|" +
+		payload.UnmetPlanItemCategory + "|30|no rate limiter appears in the change", nil
+}
+
+// `atcr review --sprint-plan <path>` on a diff that does not implement a plan
+// work item produces an unmet-plan-item finding naming the item (Epic 36.2 AC2).
+// The run is a real git-range review, so the finding must also clear the
+// grounding gate to reach the agent's findings file.
+func TestRunReview_SprintPlanReportsUnmetPlanItem(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	resetBreakers(t)
+	repo, base, head := initRepo(t) // the diff wires b() into a() in auth.go
+	const unmet = "Add rate limiting to login"
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Tasks\n- Wire b() into a()\n- "+unmet+"\n"), 0o644))
+	req := reviewReq(repo, repo, base, head)
+	req.SprintPlanPath = planPath
+
+	res, err := RunReview(context.Background(), planFollowingCompleter{item: unmet}, twoAgentConfig("http://unused"), req)
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Summary.Succeeded)
+
+	for _, agent := range []string{"greta", "kai"} {
+		data, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "findings.txt"))
+		require.NoErrorf(t, err, "missing %s findings", agent)
+		parsed, err := stream.ParseSource(data)
+		require.NoError(t, err)
+		require.Lenf(t, parsed.Findings, 1, "%s: the unmet-plan-item finding survives grounding", agent)
+		f := parsed.Findings[0]
+		assert.Contains(t, f.Problem, payload.UnmetPlanItemPrefix)
+		assert.Contains(t, f.Problem, unmet, "the finding names the unmet plan item")
+		assert.Equal(t, payload.UnmetPlanItemCategory, f.Category)
+	}
+}
+
+// intentVerifier stands in for a reviewer doing intent verification against
+// the plan it is handed (Epic 36.2 T3). It acts only when the SCOPE CONSTRAINT
+// asks for unmet plan items, so without that contract it reports nothing. When
+// asked, it reads the plan's `## Tasks` items out of the prompt and holds each
+// to the rest of the prompt: an item whose backticked symbol never appears after
+// the plan is unmet, and is filed as the contract shapes it, file-level on
+// auth.go (the fixture diff's only changed file).
+type intentVerifier struct{}
+
+func (intentVerifier) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	if !strings.Contains(inv.Prompt, payload.UnmetPlanItemPrefix) || !strings.Contains(inv.Prompt, "does not implement") {
+		return "NO FINDINGS", nil
+	}
+	const begin, end = "----- BEGIN SPRINT PLAN -----\n", "\n----- END SPRINT PLAN -----"
+	i, j := strings.Index(inv.Prompt, begin), strings.Index(inv.Prompt, end)
+	if i < 0 || j < i {
+		return "NO FINDINGS", nil
+	}
+	plan, rest := inv.Prompt[i+len(begin):j], inv.Prompt[j+len(end):]
+	var rows []string
+	inTasks := false
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			inTasks = strings.TrimSpace(line) == "## Tasks"
+			continue
+		}
+		item, ok := strings.CutPrefix(line, "- ")
+		if !inTasks || !ok {
+			continue
+		}
+		parts := strings.Split(item, "`")
+		if len(parts) < 3 || strings.Contains(rest, parts[1]) {
+			continue // no symbol to check, or the diff implements it
+		}
+		rows = append(rows, "MEDIUM|auth.go|"+payload.UnmetPlanItemPrefix+" "+item+
+			"|Implement the plan item or drop it from the plan|"+payload.UnmetPlanItemCategory+
+			"|30|"+parts[1]+" appears nowhere in the change")
+	}
+	if len(rows) == 0 {
+		return "NO FINDINGS", nil
+	}
+	return strings.Join(rows, "\n"), nil
+}
+
+// runIntentReview runs a real git-range review of initRepo's diff (it wires b()
+// into a() in auth.go) with every reviewer played by intentVerifier, and returns
+// each agent's grounded findings keyed by agent name. plan is a fixture under
+// testdata/sprintplan, or "" for no --sprint-plan.
+func runIntentReview(t *testing.T, plan string) map[string][]stream.Finding {
+	t.Helper()
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	resetBreakers(t)
+	repo, base, head := initRepo(t)
+	req := reviewReq(repo, repo, base, head)
+	if plan != "" {
+		req.SprintPlanPath = filepath.Join("testdata", "sprintplan", plan)
+		require.FileExists(t, req.SprintPlanPath)
+	}
+
+	res, err := RunReview(context.Background(), intentVerifier{}, twoAgentConfig("http://unused"), req)
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Summary.Succeeded)
+
+	out := map[string][]stream.Finding{}
+	for _, agent := range []string{"greta", "kai"} {
+		data, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "findings.txt"))
+		require.NoErrorf(t, err, "missing %s findings", agent)
+		parsed, err := stream.ParseSource(data)
+		require.NoError(t, err)
+		out[agent] = parsed.Findings
+	}
+	return out
+}
+
+// Epic 36.2 AC2, against a mock plan file: `atcr review --sprint-plan <path>` on
+// a diff that implements one of three plan work items reports the other two as
+// unmet-plan-item findings, each naming the item as the plan words it, and does
+// not report the item the diff implements. Reverting T2's contract text leaves
+// the reviewer unasked, so this test fails without it.
+func TestRunReview_IntentVerification_MockPlanReportsEachUnmetItem(t *testing.T) {
+	findings := runIntentReview(t, "plan-partial.md")
+	for agent, fs := range findings {
+		var problems []string
+		for _, f := range fs {
+			assert.Equalf(t, "auth.go", f.File, "%s: anchored on the changed file", agent)
+			assert.Zerof(t, f.Line, "%s: file-level, the missing work has no line", agent)
+			assert.Equalf(t, payload.UnmetPlanItemCategory, f.Category, "%s: contract category", agent)
+			problems = append(problems, f.Problem)
+		}
+		assert.ElementsMatchf(t, []string{
+			payload.UnmetPlanItemPrefix + " **T2** — Add `rateLimit()` to the login handler",
+			payload.UnmetPlanItemPrefix + " **T3** — Record failed logins with `auditLog()`",
+		}, problems, "%s: exactly the two unmet plan items survive grounding, each named; T1 is implemented", agent)
+	}
+}
+
+// A plan the diff fully implements yields no unmet-plan-item finding: intent
+// verification reports drift, not the plan itself.
+func TestRunReview_IntentVerification_MetPlanReportsNothing(t *testing.T) {
+	for agent, fs := range runIntentReview(t, "plan-met.md") {
+		assert.Emptyf(t, fs, "%s: every plan item is implemented", agent)
+	}
+}
+
+// Without --sprint-plan the same reviewer and diff produce no unmet-plan-item
+// finding: the findings above come from the plan contract, not the mock.
+func TestRunReview_IntentVerification_NoPlanNoUnmetItems(t *testing.T) {
+	for agent, fs := range runIntentReview(t, "") {
+		assert.Emptyf(t, fs, "%s: no plan, no intent drift", agent)
+	}
 }

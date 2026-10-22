@@ -5,7 +5,20 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/reconcile"
 )
+
+// UnmetPlanItemPrefix opens the PROBLEM of every finding a reviewer files for a
+// sprint-plan work item the diff does not implement (Epic 36.2 intent drift), so
+// a reader or a downstream filter can pick those findings out of the report.
+const UnmetPlanItemPrefix = "Unmet plan item:"
+
+// UnmetPlanItemCategory is the CATEGORY the SCOPE CONSTRAINT asks an
+// unmet-plan-item finding to carry: the plan is the contract the change set out
+// to honour. It is a member of the closed reviewer vocabulary, so the finding is
+// scored and promoted like any other rather than segregated as out-of-scope.
+const UnmetPlanItemCategory = reconcile.CategoryContract
 
 // The sprint-plan byte ceiling is caller-supplied (plan 19.10 F9): it is
 // resolved from max_sprint_plan_bytes through internal/registry's precedence
@@ -99,7 +112,10 @@ func ReadSprintPlan(path string, maxBytes int64) (content string, err error) {
 // invalid UTF-8) and wrapped with the constraint instruction. The block is a
 // SOFT scope, mirroring ScopeFocus: it steers reviewers toward in-scope changes
 // but explicitly preserves an escape hatch for genuinely critical out-of-scope
-// issues, so a real security/data-loss bug is never silently lost.
+// issues, so a real security/data-loss bug is never silently lost. The contract
+// runs both ways (Epic 36.2): the block also asks the reviewer to report each
+// plan work item the diff does not implement, as a file-level
+// UnmetPlanItemCategory finding whose PROBLEM opens with UnmetPlanItemPrefix.
 //
 // Cache-invalidation limitation for oversized plans: only the first maxBytes of
 // the plan are reflected in the rendered prompt (and therefore in the diff-cache
@@ -139,7 +155,17 @@ func ScopeConstraint(content string, maxBytes int64) (block string, truncated bo
 	b.WriteString("Suppress findings for unrelated changes that merely happen to appear in the diff — ")
 	b.WriteString("for example dependency bumps, formatter or whitespace-only reformatting, and mechanical ")
 	b.WriteString("refactors not described in the plan. This is a scope hint, not a hard limit: still report ")
-	b.WriteString("any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.\n\n")
+	b.WriteString("any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.\n")
+	// Intent drift (Epic 36.2): the plan is also a checklist the diff is held to.
+	// The finding is anchored file-level on a changed file because the missing
+	// work has no changed line of its own to cite, and a file-level finding on a
+	// changed file is one of the grounding gate's keep arms.
+	b.WriteString("The plan is also what this change set out to do: for each work item in the plan that the diff ")
+	b.WriteString("does not implement, report one finding whose PROBLEM starts with \"" + UnmetPlanItemPrefix + "\" ")
+	b.WriteString("followed by the item as the plan words it, with CATEGORY `" + UnmetPlanItemCategory + "`. ")
+	b.WriteString("Cite it as a file-level finding (the FILE alone, no line number) on the changed file where the ")
+	b.WriteString("item's work belongs, or on any changed file when none fits. Report an item only when nothing ")
+	b.WriteString("in the diff implements it; a partial implementation is reported as the gap it leaves.\n\n")
 	b.WriteString("----- BEGIN SPRINT PLAN -----\n")
 	b.WriteString(plan)
 	b.WriteString("\n----- END SPRINT PLAN -----\n\n")
