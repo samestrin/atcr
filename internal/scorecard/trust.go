@@ -1727,12 +1727,42 @@ func eraSuperseded(r Record, newest map[string]int) bool {
 // summary does not place on one model is neutral. The returned map is still
 // keyed by persona name alone, which is all reconcile's lookup needs: within
 // one review a persona runs on exactly one model.
-func ResolveTrustPriorsForReview(reviewDir string) (map[string]float64, int) {
+//
+// The second return is the opportunity-scoped marker for
+// reclib.Options.OpportunityScoped (epic 35.16.11.3.2): see
+// opportunityScopedFlags.
+func ResolveTrustPriorsForReview(reviewDir string) (map[string]float64, map[string]bool, int) {
 	dir, err := DefaultDir()
 	if err != nil {
-		return nil, 0
+		return nil, nil, 0
 	}
-	return resolveTrustPriorsAndUnmeasured(dir, time.Now(), currentModels(reviewDir))
+	priors, unmeasured := resolveTrustPriorsAndUnmeasured(dir, time.Now(), currentModels(reviewDir))
+	return priors, opportunityScopedFlags(priors), unmeasured
+}
+
+// opportunityScopedFlags says, per reviewer in priors and under the same key,
+// which denominator definition produced its rate: true for a lens with an
+// in-repo remit (the nine mapped personas, scored over opportunitySetRuns'
+// filtered denominator), false for one without (the five registry-only lenses,
+// which keep the full one). It asks remitFor, the same predicate explain.go
+// annotates with ReasonNotOpportunityScoped, so the audit surface and the
+// reconcile wire cannot disagree about which lens is which.
+//
+// True means "eligible for the filter", not "every record was filtered": a
+// mapped lens's pre-era and unscopeable records still count unfiltered, as
+// explain.go's per-record annotation details. The flag is read off the remit
+// table only and never fed back into the rate, so it changes no score. Nil when
+// priors is empty, which reconcile treats exactly like an absent map.
+func opportunityScopedFlags(priors map[string]float64) map[string]bool {
+	if len(priors) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(priors))
+	for name := range priors {
+		_, mapped := remitFor(name)
+		out[name] = mapped
+	}
+	return out
 }
 
 // resolveTrustPriorsAndUnmeasured reads the store once, over ResolveTrustPriors'
