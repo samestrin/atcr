@@ -187,8 +187,8 @@ func TestFixtureCommandContext_InheritedGitDirCannotRetarget(t *testing.T) {
 	}
 	before := readVictim(t, victim)
 
+	// Only GIT_DIR, as git exports it into a hook.
 	t.Setenv("GIT_DIR", filepath.Join(victim, ".git"))
-	t.Setenv("GIT_WORK_TREE", victim)
 
 	fixture := filepath.Join(t.TempDir(), "fixture")
 	if err := os.Mkdir(fixture, 0o755); err != nil {
@@ -205,8 +205,11 @@ func TestFixtureCommandContext_InheritedGitDirCannotRetarget(t *testing.T) {
 		{"commit", "-q", "-m", "init"},
 		{"branch", "-f", "main"},
 	} {
+		// Errorf, not Fatalf: the victim check below must run even when a
+		// retargeted command fails part-way.
 		if out, err := FixtureCommandContext(ctx, fixture, args...).CombinedOutput(); err != nil {
-			t.Fatalf("fixture git %v: %v\n%s", args, err, out)
+			t.Errorf("fixture git %v: %v\n%s", args, err, out)
+			break
 		}
 	}
 
@@ -242,7 +245,7 @@ func repoRoot(t *testing.T) string {
 
 // execWrapperFile is the single module-root-relative file authorized to construct
 // a `git` subprocess directly: internal/gitexec/gitexec.go IS the hardened wrapper,
-// so its two bare exec.Command("git",...)/exec.CommandContext(ctx,"git",...) calls
+// so its bare exec.Command("git",...)/exec.CommandContext(ctx,"git",...) calls
 // are the one legitimate construction point (the whole point of the package).
 const execWrapperFile = "internal/gitexec/gitexec.go"
 
