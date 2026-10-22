@@ -130,6 +130,10 @@ type debtSeverityCount struct {
 	// buckets. Total must stay an exact sum across every counter here.
 	Unreproducible, AttemptsExhausted int
 	Total                             int
+	// ReconcilerCorrections counts this severity's findings carrying a
+	// reconciler-feedback annotation. It is NOT a status bucket: an annotated
+	// finding is also counted in its status counter, so it stays out of Total.
+	ReconcilerCorrections int
 }
 
 // debtComponentCount is the live item count for one component — live meaning
@@ -172,10 +176,18 @@ type debtSummary struct {
 	//
 	// It is NOT len(Top): Top is capped at topN and is empty when topN is 0,
 	// which is "suppressed", not "nothing to show".
-	Live        int
-	BySeverity  []debtSeverityCount
-	ByComponent []debtComponentCount
-	ByAge       []debtAgeBucket
+	Live int
+	// ReconcilerCorrections is the count of findings whose effective record
+	// carries a reconciler-feedback annotation (Epic 36.1) — a developer's verdict
+	// that reconcile merged, split or categorized the finding wrongly. Like Live it
+	// cuts across the status counters rather than joining them: the annotation
+	// never changes a status, so the finding is still counted in its own bucket
+	// (a wrong-merge on an open finding is Open, not Wontfix) and Total is still
+	// their exact sum. debtSeverityCount repeats it per severity.
+	ReconcilerCorrections int
+	BySeverity            []debtSeverityCount
+	ByComponent           []debtComponentCount
+	ByAge                 []debtAgeBucket
 	// Top is the ids of the top-priority live items, in display order.
 	Top []string
 }
@@ -351,6 +363,10 @@ func summarizeDebt(sums []localdebt.Summary, now time.Time, topN int) debtSummar
 			sc = unknownSev
 		}
 		sc.Total++
+		if r.ReconcilerFeedbackKind != "" {
+			s.ReconcilerCorrections++
+			sc.ReconcilerCorrections++
+		}
 		switch bucket {
 		case localdebt.StatusResolved:
 			sc.Resolved++
@@ -462,21 +478,25 @@ func renderDebtDashboard(sums []localdebt.Summary, topN int, hydrate func(ids []
 	b.WriteString("# Technical Debt Dashboard\n\n")
 	b.WriteString(dashboardGeneratedMarker + "\n\n")
 
-	fmt.Fprintf(&b, "**Total:** %d  |  **Open:** %d  |  **Deferred:** %d  |  **Resolved:** %d  |  **Wontfix:** %d  |  **Unreproducible:** %d  |  **Attempts-exhausted:** %d\n\n",
-		sum.Total, sum.Open, sum.Deferred, sum.Resolved, sum.Wontfix, sum.Unreproducible, sum.AttemptsExhausted)
+	// Reconciler corrections come last, after every status counter, because they
+	// are not one of the summands of Total: an annotated finding is also counted
+	// under its status.
+	fmt.Fprintf(&b, "**Total:** %d  |  **Open:** %d  |  **Deferred:** %d  |  **Resolved:** %d  |  **Wontfix:** %d  |  **Unreproducible:** %d  |  **Attempts-exhausted:** %d  |  **Reconciler corrections:** %d\n\n",
+		sum.Total, sum.Open, sum.Deferred, sum.Resolved, sum.Wontfix, sum.Unreproducible, sum.AttemptsExhausted, sum.ReconcilerCorrections)
 
 	// By severity. Every counter on debtSeverityCount gets a column: the header
 	// above is a sum over the same set, so a status counted in the struct but
 	// missing from this table prints a By Severity table that does not add up to
 	// the header — with nothing on screen to explain the gap. That is the same
 	// defect the (unknown) severity row exists to prevent, arriving by status
-	// rather than by severity.
+	// rather than by severity. The reconciler-correction column sits after Total
+	// for the same reason it ends the header: it is not one of Total's summands.
 	b.WriteString("## By Severity\n\n")
-	b.WriteString("| Severity | Open | Deferred | Resolved | Wontfix | Unreproducible | Attempts-exhausted | Total |\n")
-	b.WriteString("|----------|------|----------|----------|---------|----------------|--------------------|-------|\n")
+	b.WriteString("| Severity | Open | Deferred | Resolved | Wontfix | Unreproducible | Attempts-exhausted | Total | Reconciler corrections |\n")
+	b.WriteString("|----------|------|----------|----------|---------|----------------|--------------------|-------|------------------------|\n")
 	for _, c := range sum.BySeverity {
-		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d |\n",
-			c.Severity, c.Open, c.Deferred, c.Resolved, c.Wontfix, c.Unreproducible, c.AttemptsExhausted, c.Total)
+		fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+			c.Severity, c.Open, c.Deferred, c.Resolved, c.Wontfix, c.Unreproducible, c.AttemptsExhausted, c.Total, c.ReconcilerCorrections)
 	}
 	b.WriteString("\n")
 
