@@ -124,7 +124,7 @@ func TestProcParents_FindsAChildOfThisProcess(t *testing.T) {
 		t.Skip("no /proc on this host")
 	}
 	pid := startSleeper(t)
-	parents, err := procParents()
+	parents, err := procParents(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, os.Getpid(), parents[pid])
 }
@@ -136,7 +136,7 @@ func TestPSParents_FindsAChildOfThisProcess(t *testing.T) {
 		t.Skip("/bin/ps is not installed on this host")
 	}
 	pid := startSleeper(t)
-	parents, err := psParents()
+	parents, err := psParents(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, os.Getpid(), parents[pid])
 }
@@ -329,7 +329,7 @@ func TestSandboxCancel_SkipsTheDescendantReapWhenTheLeaderIsAlreadyReaped(t *tes
 
 	walked := false
 	orig := sandboxProcessTable
-	sandboxProcessTable = func() (map[int]int, error) {
+	sandboxProcessTable = func(context.Context) (map[int]int, error) {
 		walked = true
 		return map[int]int{unrelated: cmd.Process.Pid}, nil
 	}
@@ -351,7 +351,7 @@ func TestSandboxCancel_DiscardsASnapshotTakenWhileTheLeaderWasReaped(t *testing.
 	require.NoError(t, cmd.Start())
 
 	orig := sandboxProcessTable
-	sandboxProcessTable = func() (map[int]int, error) {
+	sandboxProcessTable = func(context.Context) (map[int]int, error) {
 		_ = cmd.Wait() // the leader exits and is reaped mid-snapshot
 		return map[int]int{unrelated: cmd.Process.Pid}, nil
 	}
@@ -394,4 +394,128 @@ func TestSandboxCancel_BeforeStartSignalsNothing(t *testing.T) {
 	configureSandboxProcessGroup(cmd)
 	assert.NoError(t, cmd.Cancel())
 	assert.Empty(t, *kills)
+}
+
+// recordSnapshotDegradations replaces the degraded-snapshot hook with one that
+// records each reported error.
+func recordSnapshotDegradations(t *testing.T) *[]error {
+	t.Helper()
+	var got []error
+	orig := sandboxSnapshotDegraded
+	sandboxSnapshotDegraded = func(err error) { got = append(got, err) }
+	t.Cleanup(func() { sandboxSnapshotDegraded = orig })
+	return &got
+}
+
+// startSandboxLeader starts a long-running leader under the sandbox cancel and
+// reaps its group on cleanup.
+func startSandboxLeader(t *testing.T) *exec.Cmd {
+	t.Helper()
+	cmd := exec.CommandContext(context.Background(), "sleep", "30")
+	configureSandboxProcessGroup(cmd)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+	return cmd
+}
+
+func TestSandboxCancel_ReportsAFailedSnapshotAndStillKillsTheGroup(t *testing.T) {
+	// Epic 74 F2: when neither /proc nor ps can be read the cancel falls back
+	// to the group-only kill. That fallback used to be silent; it must be
+	// reported, and must not change what Cancel returns.
+	cmd := startSandboxLeader(t)
+	tableErr := errors.New("process table unreadable")
+	orig := sandboxProcessTable
+	sandboxProcessTable = func(context.Context) (map[int]int, error) { return nil, tableErr }
+	t.Cleanup(func() { sandboxProcessTable = orig })
+	reported := recordSnapshotDegradations(t)
+	kills := recordSandboxKills(t)
+
+	require.NoError(t, cmd.Cancel())
+	assert.Contains(t, *kills, -cmd.Process.Pid, "the group kill must still run")
+	require.Len(t, *reported, 1, "a failed snapshot must be reported")
+	assert.ErrorIs(t, (*reported)[0], tableErr)
+}
+
+func TestSandboxCancel_ReportsAPartialSnapshotAndUsesWhatItRead(t *testing.T) {
+	// A table read that stops early (its budget ran out, or entries could not
+	// be read) is still a real snapshot of the descendants it did see. Those
+	// are killed, and the gap is reported.
+	cmd := startSandboxLeader(t)
+	detached := startSleeper(t) // its own group, so the per-pid kill reaches it
+	partialErr := errors.New("scan stopped early")
+	orig := sandboxProcessTable
+	sandboxProcessTable = func(context.Context) (map[int]int, error) {
+		return map[int]int{detached: cmd.Process.Pid}, partialErr
+	}
+	t.Cleanup(func() { sandboxProcessTable = orig })
+	reported := recordSnapshotDegradations(t)
+	kills := recordSandboxKills(t)
+
+	require.NoError(t, cmd.Cancel())
+	assert.Contains(t, *kills, detached, "a descendant the partial snapshot found must be killed")
+	assert.Contains(t, *kills, -cmd.Process.Pid)
+	require.Len(t, *reported, 1, "a partial snapshot must be reported")
+	assert.ErrorIs(t, (*reported)[0], partialErr)
+}
+
+func TestSandboxCancel_AHungSnapshotDelaysTheGroupKillOnlyByTheBudget(t *testing.T) {
+	// Epic 74 F2: the workload keeps running while the snapshot is taken, so a
+	// slow or hung table read (a ps that never returns) must not hold the group
+	// kill back beyond the scan budget, even if the reader ignores its context.
+	cmd := startSandboxLeader(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	orig := sandboxProcessTable
+	sandboxProcessTable = func(context.Context) (map[int]int, error) {
+		<-release
+		return nil, nil
+	}
+	t.Cleanup(func() { sandboxProcessTable = orig })
+	reported := recordSnapshotDegradations(t)
+	kills := recordSandboxKills(t)
+
+	start := time.Now()
+	require.NoError(t, cmd.Cancel())
+	elapsed := time.Since(start)
+
+	assert.Contains(t, *kills, -cmd.Process.Pid, "the group kill must run once the budget is spent")
+	assert.Less(t, elapsed, sandboxScanBudget+time.Second, "the scan held the kill back for %v", elapsed)
+	require.Len(t, *reported, 1, "an abandoned snapshot must be reported")
+	assert.ErrorIs(t, (*reported)[0], context.DeadlineExceeded)
+}
+
+func TestSandboxScanBudget_IsWellUnderTheOldTwoSecondBound(t *testing.T) {
+	// The finding asked for a bound "well under the current 2s (e.g. 250ms)".
+	assert.LessOrEqual(t, sandboxScanBudget, 250*time.Millisecond)
+	assert.Positive(t, sandboxScanBudget)
+}
+
+func TestSandboxCancel_ACleanSnapshotReportsNothing(t *testing.T) {
+	cmd := startSandboxLeader(t)
+	reported := recordSnapshotDegradations(t)
+	require.NoError(t, cmd.Cancel())
+	assert.Empty(t, *reported)
+}
+
+func TestProcParents_StopsAndReportsWhenItsContextIsDone(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc on this host")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := procParents(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestPSParents_HonoursItsContext(t *testing.T) {
+	if _, err := os.Stat("/bin/ps"); err != nil {
+		t.Skip("/bin/ps is not installed on this host")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := psParents(ctx)
+	assert.Error(t, err)
 }
