@@ -41,8 +41,8 @@ var errEmptyResponse = errors.New("reviewer returned an empty response")
 // silentLaneMaxTokensOut output tokens on more than silentLaneMinTokensIn input
 // tokens most likely skipped its review rather than finished it: ronin-backup
 // replied NO FINDINGS in 10 tokens on about 158k in. Both bounds are strict.
-// Named, not inlined, because Epic 35.16.11.2.2.8 scores its `silent` outcome
-// on the same two numbers.
+// Named, not inlined, because Epic 35.16.11.2.2.8 counts silent chunks
+// (`silent_chunks`) on the same two numbers.
 const (
 	silentLaneMaxTokensOut = 50
 	silentLaneMinTokensIn  = 10000
@@ -50,10 +50,19 @@ const (
 
 // isSilentLane is the one silent-lane predicate (Epic 35.16.11.2.2.8 T1): the
 // 35.16.11.2.2.7 warning and the per-chunk SilentChunks count both call it, so
-// the two cannot drift. answer is the think-stripped reply; tokens are the one
-// attempt's, never a chunked persona's sum.
-func isSilentLane(answer string, tokensIn, tokensOut int, inv llmclient.Invocation) bool {
-	return stream.IsNoFindings(answer) && tokensOut < silentLaneMaxTokensOut &&
+// the two cannot drift. noFindings is stream.IsNoFindings of the think-stripped
+// reply, computed once by the caller, which reuses it for the unparseable
+// check; tokens are the one attempt's, never a chunked persona's sum.
+//
+// An attempt's tokens are still summed across its turns: a tool-loop agent's
+// usage covers every tool round-trip, not just the final answer. So a tool
+// agent whose final turn answered NO FINDINGS in a handful of tokens can read
+// as not silent here, and its chunk is not counted in `silent_chunks` — a
+// false `fit`. The sum only grows the token counts, so it can never make a
+// genuine review read as silent: never a false `unfit`. Documented, not
+// changed (Epic 71): per-turn usage is not recorded.
+func isSilentLane(noFindings bool, tokensIn, tokensOut int, inv llmclient.Invocation) bool {
+	return noFindings && tokensOut < silentLaneMaxTokensOut &&
 		tokensIn > silentLaneMinTokensIn &&
 		registry.ThinkingEnabled(inv.Thinking, inv.ThinkingLevel)
 }
@@ -1494,6 +1503,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				r.UnparseableResponse = true
 			} else {
 				answer, _ := llmclient.SplitThink(r.Content)
+				// Evaluated once: the silent-lane predicate and the unparseable
+				// check below both read it.
+				noFindings := stream.IsNoFindings(answer)
 				// Silent lane (Epic 35.16.11.2.2.7 T1): a clean review this short
 				// on a payload this large is more likely a reasoner that skipped
 				// the review than one that finished it. A warning only — status,
@@ -1505,13 +1517,13 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				//
 				// The same predicate counts the chunk as silent (Epic 35.16.11.2.2.8
 				// T1), so the warning and the fit signal cannot drift.
-				if isSilentLane(answer, r.TokensIn, r.TokensOut, a.Invocation) {
+				if isSilentLane(noFindings, r.TokensIn, r.TokensOut, a.Invocation) {
 					r.SilentChunks = 1
 					log.FromContext(ctx).Warn("reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review",
 						"agent", a.Name, "model", a.Invocation.Model,
 						"tokens_in", r.TokensIn, "tokens_out", r.TokensOut)
 				}
-				if !stream.IsNoFindings(answer) {
+				if !noFindings {
 					r.UnparseableResponse = true
 					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
 					// reply as reasoning — content was entirely a think run, not merely
@@ -1807,6 +1819,11 @@ func thinkSuppressedContent(content string) bool {
 // invokeAgent metrics wrapper (it produced a result), but no provider round-trip
 // is recorded, which is the whole point. On a miss it calls live and stores a
 // successful result; a failed/timed-out review is never cached.
+//
+// Because a hit carries no usage, the silent-lane predicate (isSilentLane)
+// never fires on it: a replayed NO FINDINGS is never counted in
+// `silent_chunks`, whatever the original live call's token counts were.
+// Documented, not changed (Epic 71): the cache entry stores no usage.
 func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	if e.cache == nil || a.CacheKey == "" {
 		return e.invokeSingleShot(ctx, a)

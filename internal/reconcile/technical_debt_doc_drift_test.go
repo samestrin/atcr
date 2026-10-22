@@ -780,3 +780,42 @@ func TestSkillUsageDoc_ReasonGateNamesOnlyWritableStatuses(t *testing.T) {
 	assert.NotContains(t, sentence, "`deferred`",
 		"`deferred` must not be presented as a reason-gated resolve status")
 }
+
+// TestTechnicalDebtDoc_ListMaxBoundAndPolicyArmsAreStated pins two passages that
+// each understated what the code does.
+//
+// `debt list --max`: selectDebtForList (cli/debt.go) truncates the sorted
+// selection to N ids before pass 2, so only N full records are hydrated — but
+// pass 1 still streams every line of the store through ReadSummaries and folds a
+// Summary per distinct id. The passage said only that a capped list "reads only
+// the N records it prints in full", which an operator sizing a large store reads
+// as memory proportional to N. It falls, but it is bounded below by the summary
+// pass, and the doc must say so.
+//
+// `declined by policy`: the passage named two of the four FILE-level refusal
+// arms (symlink, over the size cap) where cli/debt_backfill.go's unresolved-split
+// comment names four. An operator holding a wholly-salvaged reply or a desynced
+// bin list read that restoring the file might help, which is exactly the advice
+// the split exists to withhold.
+//
+// Matched over the doc with its line wrapping collapsed, since both passages are
+// hard-wrapped prose.
+func TestTechnicalDebtDoc_ListMaxBoundAndPolicyArmsAreStated(t *testing.T) {
+	doc := strings.Join(strings.Fields(technicalDebtDoc(t)), " ")
+
+	maxSentence, ok := docSentence(t, doc, "a capped list reads in full only the N records it prints")
+	require.True(t, ok, "the `debt list --max` passage must say a capped list reads in full only the N records it prints")
+	assert.Contains(t, maxSentence, "summary pass",
+		"the --max sentence must name the summary pass, which still streams the whole store")
+	assert.Contains(t, maxSentence, "whole store",
+		"and must say that pass covers the whole store, not N records")
+	assert.Contains(t, maxSentence, "not proportional to N",
+		"and must say peak memory falls but is not proportional to N")
+
+	policySentence, ok := docSentence(t, doc, "`declined by policy` counts")
+	require.True(t, ok, "the backfill passage must define `declined by policy`")
+	for _, arm := range []string{"symlink", "over the size cap", "wholly-salvaged reply", "desynced bin list"} {
+		assert.Contains(t, policySentence, arm,
+			"the `declined by policy` sentence must name the %q refusal arm, as cli/debt_backfill.go does", arm)
+	}
+}
