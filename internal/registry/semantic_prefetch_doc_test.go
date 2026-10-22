@@ -65,7 +65,7 @@ func TestSemanticPrefetch_DocExampleNamesEveryAcceptedKey(t *testing.T) {
 	raw, err := os.ReadFile("../../docs/registry.md")
 	require.NoError(t, err)
 	example := extractSemanticDocExample(t, string(raw))
-	for _, key := range []string{"enabled", "endpoint", "collection", "top_k", "allow_insecure_http"} {
+	for _, key := range []string{"enabled", "endpoint", "embedding_endpoint", "collection", "top_k", "allow_insecure_http"} {
 		require.Contains(t, example, key+":",
 			"the documented example must name accepted key %q (the strict loader accepts it, so the doc must show it)", key)
 	}
