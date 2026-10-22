@@ -192,6 +192,45 @@ func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 		}
 	}
 
+	// Suppressed findings (Epic 40.0): an .atcr/ignore.yaml rule matched them,
+	// so RunReconcile dropped them from res.Findings before this bridge ran. They
+	// were still raised, so they ride the routed stream above: counted in
+	// FindingsRaised and never in FindingsCorroborated or WeightedCredit. A rule
+	// says a finding is not worth reporting; it says nothing about whether two
+	// reviewers agreeing on it were right, so it buys no corroboration. Leaving
+	// them out would let a repo's ignore file lift a lens's rate by deleting its
+	// findings from the denominator.
+	//
+	// Riding this stream also counts them in FindingsRouted. That field exists
+	// only to bound credit at read time (trust.go), and a suppressed finding
+	// earns none, so the bound stays exact.
+	//
+	// UnresolvedReason is deliberately NOT carried. The doc-shield carve-out is
+	// about the Tier 4 routing decision; a suppressed finding was not routed, so
+	// it is always charged.
+	//
+	// Reviewers are registered here as on the routed stream: a reviewer whose
+	// every finding was suppressed is absent from res.Findings and, on a
+	// path-anchored review, from the pool summary too.
+	for _, s := range res.Suppressed {
+		names := normalizedReviewers(s.Reviewers)
+		unresolved = append(unresolved, Finding{
+			File:             s.File,
+			Line:             s.Line,
+			Problem:          s.Problem,
+			Reviewers:        names,
+			Category:         s.Category,
+			SourceCategories: s.SourceCategories,
+		})
+		for _, name := range names {
+			if _, ok := reviewers[name]; !ok {
+				// outcomeFindings: the reviewer raised findings; the ignore
+				// rule is why they are not in res.Findings.
+				reviewers[name] = ReviewerMeta{Outcome: outcomeFindings}
+			}
+		}
+	}
+
 	// Third category stream: res.Ambiguous. The motivating route is the
 	// consensus filter — under strict consensus an uncorroborated singleton is
 	// routed here unless trustExempt spares it, and trustExempt is off for
