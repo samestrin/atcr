@@ -40,7 +40,7 @@ import (
 // Measured minimum for `sandbox-exec -p <profile> /bin/sh -c echo`:
 //
 //	(allow process-exec*) (allow process-fork)  — or nothing can be exec'd at all
-//	(allow sysctl-read)                          — dyld reads kern.* at startup
+//	(allow sysctl-read <darwinSysctlReadNames>)  — dyld reads kern.* at startup
 //	(allow file-map-executable)                  — mapping the shared cache pages
 //	(allow file-read-metadata …)                 — path resolution along the way
 //	(allow file-read* (literal "/"))             — the loader reads the root entry
@@ -53,8 +53,9 @@ import (
 // revision of that guard let ScratchDir="/" through and a review reproduced a
 // full read of ~/.ssh under the resulting profile.
 //
-// Two of these allows are deliberately unscoped, and the comment says so
-// instead of claiming a narrowness the rules do not have:
+// One of these allows is deliberately unscoped and one is narrowed but still
+// grants a fingerprint name; the comment says so instead of claiming a
+// narrowness the rules do not have:
 //
 //   - process-exec*/file-map-executable let the workload exec any binary on the
 //     host, including prefixes with no read allow. That is by design: this
@@ -63,9 +64,10 @@ import (
 //     sandbox-exec is refused (`sandbox_apply: Operation not permitted`),
 //     setuid exec is refused, and the deny-default's mach-lookup denial blocks
 //     `open`/`osascript`/`launchctl`/`security`. Narrowing it is TD-012.
-//   - sysctl-read leaks host fingerprint (`kern.hostname`, `hw.model`) to
-//     model-authored code. dyld needs only a handful of names; narrowing to
-//     them is TD-013.
+//   - sysctl-read is narrowed to the measured darwinSysctlReadNames (TD-013,
+//     epic 35.23.1), so `hw.model`, `kern.uuid` and the serial number are no
+//     longer readable. `kern.hostname` stays granted: sh and bash read it at
+//     start-up (96 reads in the measurement), and dropping it is unmeasured.
 const (
 	profileVersion       = "(version 1)"
 	profileDenyDefault   = "(deny default)"
@@ -76,8 +78,59 @@ const (
 var profileRuntimeAllows = []string{
 	"(allow process-exec*)",
 	"(allow process-fork)",
-	"(allow sysctl-read)",
+	sysctlReadRule(darwinSysctlReadNames, darwinSysctlReadPrefixes),
 	"(allow file-map-executable)",
+}
+
+// darwinSysctlReadNames is every sysctl name the darwin integration suite read
+// inside the sandbox, MEASURED rather than inferred: on macOS 26.2 (arm64) the
+// operator ran the `integration-macos` command under
+// `(allow sysctl-read (with report))` while tailing `log stream` and took the
+// union of the reported names. The plan's deny-with-report pass was not enough
+// on its own: the first denied read stops each workload, so it logged one name
+// and failed 14 of 16 proofs.
+//
+// The readers were bash, sh, touch, cat, go, nc, git, ls and Python. `go test`,
+// make and npm were not in that suite; epic 35.23.1 T2 adds those legs and
+// re-takes this capture, and any name they need is added here, never a wider
+// prefix.
+var darwinSysctlReadNames = []string{
+	"hw.machine",
+	"hw.ncpu",
+	"hw.pagesize_compat",
+	"kern.bootargs",
+	"kern.hostname",
+	"kern.maxfilesperproc",
+	"kern.ngroups",
+	"kern.osrelease",
+	"kern.ostype",
+	"kern.osvariant_status",
+	"kern.secure_kernel",
+	"kern.version",
+	"security.mac.lockdown_mode_state",
+}
+
+// darwinSysctlReadPrefixes are the measured names granted by prefix. The Go and
+// Python runtimes probe CPU features under hw.optional. (four arm64 names in the
+// measurement), and the set they probe differs by CPU and runtime version, so
+// exact names would break the next host. The prefix exposes only feature bits.
+var darwinSysctlReadPrefixes = []string{
+	"hw.optional.",
+}
+
+// sysctlReadRule builds one filtered sysctl-read allow. Several filters in one
+// SBPL rule match if ANY of them matches.
+func sysctlReadRule(names, prefixes []string) string {
+	var b strings.Builder
+	b.WriteString("(allow sysctl-read")
+	for _, n := range names {
+		fmt.Fprintf(&b, " (sysctl-name %q)", n)
+	}
+	for _, p := range prefixes {
+		fmt.Fprintf(&b, " (sysctl-name-prefix %q)", p)
+	}
+	b.WriteString(")")
+	return b.String()
 }
 
 // darwinSystemReadDirs is the read-only tier a workload needs to execute at
