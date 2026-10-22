@@ -55,6 +55,9 @@ func TestIsPanelWide(t *testing.T) {
 			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
 			predicateFinding("kai", CategoryInvariant, "key.go", ""),
 		}, false},
+		{"two empty evidence fields quote nothing, so they are not near-identical", emptyEvidencePair(), false},
+		{"one empty evidence field among quotes breaks the group", append(five(CategoryInvariant)[:4],
+			predicateFinding("otto", CategoryInvariant, "key.go", "")), false},
 		{"non-invariant group", five(CategoryCorrectness), false},
 		{"mixed cluster whose modal category is correctness", append(five(CategoryCorrectness),
 			predicateFinding("penny", CategoryInvariant, "key.go", siblingQuote)), false},
@@ -73,6 +76,27 @@ func TestIsPanelWide(t *testing.T) {
 				t.Errorf("IsPanelWide = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// emptyEvidencePair is two reviewers filing one invariant finding in one file,
+// neither quoting any evidence.
+func emptyEvidencePair() []Finding {
+	return []Finding{
+		predicateFinding("bruce", CategoryInvariant, "key.go", ""),
+		predicateFinding("kai", CategoryInvariant, "key.go", " "),
+	}
+}
+
+// Epic 75 T2: a group whose members quote nothing cites no shared sibling
+// branch, so Merge keeps its reviewer-count confidence and records no discount.
+func TestMerge_EmptyEvidenceIsNotDiscounted(t *testing.T) {
+	m := Merge(emptyEvidencePair())
+	if m.ConfidenceDiscount != "" {
+		t.Errorf("ConfidenceDiscount = %q, want empty", m.ConfidenceDiscount)
+	}
+	if want := ConfidenceFor(2); m.Confidence != want {
+		t.Errorf("Confidence = %q, want %q", m.Confidence, want)
 	}
 }
 
