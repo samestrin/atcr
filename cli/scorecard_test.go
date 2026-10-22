@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,4 +337,51 @@ func survCell(t *testing.T, out, reviewer string) string {
 	}
 	t.Fatalf("no SURV%% column in output:\n%s", out)
 	return ""
+}
+
+// scorecardJSONDoc mirrors the documented `scorecard --json` shape.
+type scorecardJSONDoc struct {
+	RunID     string             `json:"run_id"`
+	Reviewers []scorecard.Record `json:"reviewers"`
+}
+
+// TestScorecardCmd_JSONGolden is Epic 35.22 T2 for scorecard: --json prints the
+// rows the table renders (one per reviewer, a retried emit collapsed
+// last-write-wins, sorted by reviewer), the output parses, and it carries the
+// same record count as the table.
+func TestScorecardCmd_JSONGolden(t *testing.T) {
+	isolate(t)
+	runID := "2026-06-14T10:00:00Z-abc123"
+	storeRecord(t, reviewerRec(runID, "diana", "gpt-4o", 8, 3))
+	storeRecord(t, reviewerRec(runID, "bruce", "claude-sonnet-4-6", 12, 7))
+	retried := reviewerRec(runID, "diana", "gpt-4o", 9, 4) // a retried emit: last write wins
+	verified, refuted, surv := 5, 1, 0.8
+	retried.FindingsVerified, retried.FindingsRefuted, retried.SurvivedSkepticRate = &verified, &refuted, &surv
+	storeRecord(t, retried)
+	storeRecord(t, reviewerRec("2026-06-15T10:00:00Z-other", "clark", "gpt-4o", 1, 1)) // another run
+
+	code, table := execCmdCapture(t, "scorecard", runID)
+	require.Equal(t, 0, code, table)
+	code, got := execCmdCapture(t, "scorecard", runID, "--json")
+	require.Equal(t, 0, code, got)
+
+	assertJSONGolden(t, "scorecard_json.golden.json", got)
+
+	var doc scorecardJSONDoc
+	require.NoError(t, json.Unmarshal([]byte(got), &doc), "scorecard --json must parse")
+	tableRows := len(strings.Split(strings.TrimSpace(table), "\n")) - 1 // minus the header
+	require.Equal(t, 2, tableRows, "fixture sanity: two reviewers in the table")
+	assert.Len(t, doc.Reviewers, tableRows, "JSON records must match the table's reviewer rows")
+	assert.Equal(t, runID, doc.RunID)
+	assert.Equal(t, "bruce", doc.Reviewers[0].Reviewer)
+	assert.Equal(t, 9, doc.Reviewers[1].FindingsRaised, "the retried emit wins, as in the table")
+}
+
+// No records under --json stays the same failure (exit 1) as the table path:
+// there is no document to print, and a script must not read one as success.
+func TestScorecardCmd_JSONNoRecordsFails(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "scorecard", "2026-06-14T10:00:00Z-missing", "--json")
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "no scorecard records found")
 }
