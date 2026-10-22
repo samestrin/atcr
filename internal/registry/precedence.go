@@ -407,8 +407,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		return Settings{}, fmt.Errorf("max_prefetch_bytes must be >= 0 (0 = disabled), got %d", *s.MaxPrefetchBytes)
 	}
 	// context_prefetch.semantic: re-check the merged block (a directly-constructed
-	// proj/reg bypasses the loaders), and require an enabled block to name both an
-	// endpoint and a collection — only the merged value can say whether it does.
+	// proj/reg bypasses the loaders), and require an enabled block to name an
+	// endpoint, an embedding_endpoint and a collection — only the merged value can
+	// say whether it does.
 	if err := validateResolvedSemanticPrefetch(s.SemanticPrefetch, semanticTopKSet); err != nil {
 		return Settings{}, err
 	}

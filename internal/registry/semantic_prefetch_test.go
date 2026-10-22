@@ -17,6 +17,7 @@ const semanticBlock = `context_prefetch:
   semantic:
     enabled: true
     endpoint: https://qdrant.example.com:6333
+    embedding_endpoint: https://embed.example.com
     collection: llm_semantic
     top_k: 7
     allow_insecure_http: false
@@ -64,25 +65,28 @@ func TestSemanticPrefetch_EnabledBlockResolvesFromYAML(t *testing.T) {
 		require.NoError(t, err)
 		s := resolve(t, CLIOverrides{}, proj, nil)
 		require.Equal(t, SemanticPrefetch{
-			Enabled:    true,
-			Endpoint:   "https://qdrant.example.com:6333",
-			Collection: "llm_semantic",
-			TopK:       7,
+			Enabled:           true,
+			Endpoint:          "https://qdrant.example.com:6333",
+			EmbeddingEndpoint: "https://embed.example.com",
+			Collection:        "llm_semantic",
+			TopK:              7,
 		}, s.ResolvedSemanticPrefetch())
 	})
 	t.Run("registry tier", func(t *testing.T) {
 		reg := loadRegistryWith(t, semanticBlock)
 		s := resolve(t, CLIOverrides{}, nil, reg)
 		require.Equal(t, SemanticPrefetch{
-			Enabled:    true,
-			Endpoint:   "https://qdrant.example.com:6333",
-			Collection: "llm_semantic",
-			TopK:       7,
+			Enabled:           true,
+			Endpoint:          "https://qdrant.example.com:6333",
+			EmbeddingEndpoint: "https://embed.example.com",
+			Collection:        "llm_semantic",
+			TopK:              7,
 		}, s.ResolvedSemanticPrefetch())
 	})
 	t.Run("allow_insecure_http survives", func(t *testing.T) {
 		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncontext_prefetch:\n  semantic:\n"+
-			"    enabled: true\n    endpoint: http://qdrant.lan:6333\n    collection: c\n    allow_insecure_http: true\n"))
+			"    enabled: true\n    endpoint: http://qdrant.lan:6333\n    embedding_endpoint: http://embed.lan\n"+
+			"    collection: c\n    allow_insecure_http: true\n"))
 		require.NoError(t, err)
 		got := resolve(t, CLIOverrides{}, proj, nil).ResolvedSemanticPrefetch()
 		require.True(t, got.AllowInsecureHTTP)
@@ -95,12 +99,14 @@ func TestSemanticPrefetch_ProjectOverridesUser(t *testing.T) {
 
 	t.Run("each project field wins", func(t *testing.T) {
 		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncontext_prefetch:\n  semantic:\n"+
-			"    endpoint: http://127.0.0.1:6333\n    collection: atcr-code\n    top_k: 3\n    allow_insecure_http: true\n"))
+			"    endpoint: http://127.0.0.1:6333\n    embedding_endpoint: http://127.0.0.1:8080\n"+
+			"    collection: atcr-code\n    top_k: 3\n    allow_insecure_http: true\n"))
 		require.NoError(t, err)
 		got := resolve(t, CLIOverrides{}, proj, reg).ResolvedSemanticPrefetch()
 		require.Equal(t, SemanticPrefetch{
 			Enabled:           true, // inherited: the project did not say
 			Endpoint:          "http://127.0.0.1:6333",
+			EmbeddingEndpoint: "http://127.0.0.1:8080",
 			Collection:        "atcr-code",
 			TopK:              3,
 			AllowInsecureHTTP: true,
@@ -113,15 +119,16 @@ func TestSemanticPrefetch_ProjectOverridesUser(t *testing.T) {
 	})
 	t.Run("blank project fields inherit the user value", func(t *testing.T) {
 		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncontext_prefetch:\n  semantic:\n"+
-			"    endpoint: \"  \"\n    collection: \"\"\n"))
+			"    endpoint: \"  \"\n    embedding_endpoint: \" \"\n    collection: \"\"\n"))
 		require.NoError(t, err)
 		got := resolve(t, CLIOverrides{}, proj, reg).ResolvedSemanticPrefetch()
 		require.Equal(t, "https://qdrant.example.com:6333", got.Endpoint)
+		require.Equal(t, "https://embed.example.com", got.EmbeddingEndpoint)
 		require.Equal(t, "llm_semantic", got.Collection)
 	})
 	t.Run("project enables a user block that was off", func(t *testing.T) {
 		off := loadRegistryWith(t, "context_prefetch:\n  semantic:\n    enabled: false\n"+
-			"    endpoint: https://qdrant.example.com\n    collection: c\n")
+			"    endpoint: https://qdrant.example.com\n    embedding_endpoint: https://embed.example.com\n    collection: c\n")
 		proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncontext_prefetch:\n  semantic:\n    enabled: true\n"))
 		require.NoError(t, err)
 		require.True(t, resolve(t, CLIOverrides{}, proj, off).ResolvedSemanticPrefetch().Enabled)
@@ -143,9 +150,19 @@ func TestSemanticPrefetch_InvalidValuesRejectedAtLoad(t *testing.T) {
 		"endpoint query":       {"endpoint", "https://qdrant.example.com/?api-key=x", "endpoint"},
 		"endpoint fragment":    {"endpoint", "https://qdrant.example.com/#x", "endpoint"},
 		"endpoint unparseable": {"endpoint", "\"http://[::1\"", "endpoint"},
-		"collection slash":     {"collection", "a/b", "collection"},
-		"collection dotdot":    {"collection", "..", "collection"},
-		"collection space":     {"collection", "\"a b\"", "collection"},
+		// embedding_endpoint takes the same shape check, and its errors name it,
+		// so an operator can tell which of the two URLs is wrong.
+		"embedding_endpoint no scheme":   {"embedding_endpoint", "embed.example.com", "embedding_endpoint"},
+		"embedding_endpoint bad scheme":  {"embedding_endpoint", "ftp://embed.example.com", "embedding_endpoint"},
+		"embedding_endpoint no host":     {"embedding_endpoint", "https://", "embedding_endpoint"},
+		"embedding_endpoint relative":    {"embedding_endpoint", "/v1/embeddings", "embedding_endpoint"},
+		"embedding_endpoint userinfo":    {"embedding_endpoint", "https://user:secret@embed.example.com", "credential"},
+		"embedding_endpoint query":       {"embedding_endpoint", "https://embed.example.com/?key=x", "embedding_endpoint"},
+		"embedding_endpoint fragment":    {"embedding_endpoint", "https://embed.example.com/#x", "embedding_endpoint"},
+		"embedding_endpoint unparseable": {"embedding_endpoint", "\"http://[::1\"", "embedding_endpoint"},
+		"collection slash":               {"collection", "a/b", "collection"},
+		"collection dotdot":              {"collection", "..", "collection"},
+		"collection space":               {"collection", "\"a b\"", "collection"},
 	}
 	for name, tc := range cases {
 		block := "context_prefetch:\n  semantic:\n    " + tc.field + ": " + tc.value + "\n"
@@ -191,6 +208,28 @@ func TestSemanticPrefetch_EnabledWithoutEndpointOrCollectionRejected(t *testing.
 	require.Contains(t, err.Error(), "collection")
 }
 
+func TestSemanticPrefetch_EnabledWithoutEmbeddingEndpointRejected(t *testing.T) {
+	// The client makes two calls — the query text to the embedding service, the
+	// vectors to qdrant — so an enabled block needs both base URLs. A block with
+	// only the qdrant `endpoint` would load and then have nowhere to embed.
+	tr := true
+	_, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{ContextPrefetch: &ContextPrefetchConfig{
+		Semantic: &SemanticPrefetchConfig{Enabled: &tr, Endpoint: "https://q.example.com", Collection: "c"},
+	}}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "context_prefetch.semantic.embedding_endpoint")
+
+	// Either tier may supply it: a user-tier embedding_endpoint completes a
+	// project block that carries the rest.
+	reg := loadRegistryWith(t, "context_prefetch:\n  semantic:\n    embedding_endpoint: https://embed.example.com\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncontext_prefetch:\n  semantic:\n"+
+		"    enabled: true\n    endpoint: https://q.example.com\n    collection: c\n"))
+	require.NoError(t, err)
+	got := resolve(t, CLIOverrides{}, proj, reg).ResolvedSemanticPrefetch()
+	require.Equal(t, "https://embed.example.com", got.EmbeddingEndpoint)
+	require.Equal(t, "https://q.example.com", got.Endpoint)
+}
+
 func TestSemanticPrefetch_ResolverRejectsDirectlyConstructedBadValues(t *testing.T) {
 	// A hand-built ProjectConfig/Registry bypasses the file loaders, so the
 	// resolver re-checks the resolved values (the max_prefetch_bytes idiom).
@@ -206,6 +245,12 @@ func TestSemanticPrefetch_ResolverRejectsDirectlyConstructedBadValues(t *testing
 	}})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "endpoint")
+
+	_, err = ResolveSettings(CLIOverrides{}, nil, &Registry{ContextPrefetch: &ContextPrefetchConfig{
+		Semantic: &SemanticPrefetchConfig{EmbeddingEndpoint: "gopher://x"},
+	}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "embedding_endpoint")
 }
 
 func TestLoadProjectRegistry_ContextPrefetchKeyHint(t *testing.T) {
