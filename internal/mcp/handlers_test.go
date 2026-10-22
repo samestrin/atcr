@@ -527,6 +527,35 @@ func TestReconcileHandler_AppliesScorecardTrustPrior(t *testing.T) {
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
 }
 
+// TestReconcileHandler_AttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// handleReconcile carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from
+// handleReconcile fails this test.
+func TestReconcileHandler_AttachesOpportunityScopedFlag(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	seedTrustedReviewer(t, "sasha")
+	seedTrustedReviewer(t, "vera")
+	id := trustPanelFixture(t, root)
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	// Re-place the panel so the two seeded lenses run on model "m".
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"agents":[{"agent":"sasha","model":"m","status":"ok","findings_count":1},{"agent":"vera","model":"m","status":"ok","findings_count":1},{"agent":"stranger","model":"m","status":"ok","findings_count":1}],"total":3,"succeeded":3}`), 0o644))
+
+	e := &engine{root: root, diag: io.Discard}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var summary struct {
+		OpportunityScoped map[string]bool `json:"opportunity_scoped"`
+	}
+	require.NoError(t, json.Unmarshal(data, &summary))
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, summary.OpportunityScoped)
+}
+
 // --- atcr_report ---------------------------------------------------------
 
 func TestReportHandler_Formats(t *testing.T) {

@@ -236,13 +236,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		validationRoot = storeRoot
 	}
 
-	trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(reviewDir)
+	trustPriors, opportunityScoped, unmeasured := scorecard.ResolveTrustPriorsForReview(reviewDir)
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
-		ReconciledAt: time.Now(),
-		Partial:      fanout.ReadManifestPartial(reviewDir),
-		Root:         validationRoot, // validate finding paths against the store's root (TD-024)
-		TrustPriors:  trustPriors,
-		Consensus:    consensusLevel, // epic 35.9.1: strict (default) | lenient | off
+		ReconciledAt:      time.Now(),
+		Partial:           fanout.ReadManifestPartial(reviewDir),
+		Root:              validationRoot, // validate finding paths against the store's root (TD-024)
+		TrustPriors:       trustPriors,
+		OpportunityScoped: opportunityScoped,
+		Consensus:         consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the
