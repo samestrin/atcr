@@ -111,10 +111,10 @@ var sandboxGetpgid = syscall.Getpgid
 // sandboxProcessTable reads the host's pid -> ppid table, from /proc where
 // there is one and from ps(1) otherwise. Tests replace it to present a table
 // the host cannot be made to produce on demand, such as a recycled pid.
-var sandboxProcessTable = func() (map[int]int, error) {
-	parents, err := procParents()
+var sandboxProcessTable = func(ctx context.Context) (map[int]int, error) {
+	parents, err := procParents(ctx)
 	if err != nil {
-		parents, err = psParents()
+		parents, err = psParents(ctx)
 	}
 	return parents, err
 }
@@ -138,7 +138,7 @@ func sandboxDescendants(cmd *exec.Cmd) []int {
 	if cmd.Process == nil || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
-	parents, err := sandboxProcessTable()
+	parents, err := sandboxProcessTable(context.Background())
 	if err != nil || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
@@ -203,7 +203,7 @@ func descendantsOf(root int, parents map[int]int) []int {
 
 // procParents reads the pid -> ppid table from /proc (Linux). A process that
 // exits mid-scan simply drops out.
-func procParents() (map[int]int, error) {
+func procParents(_ context.Context) (map[int]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, err
@@ -251,8 +251,8 @@ func parseProcStatPPID(stat []byte) (int, bool) {
 // /proc (darwin, the BSDs). The path is absolute so atcr's own PATH cannot
 // substitute another binary, and the bound keeps a hung ps from delaying the
 // group kill that follows.
-func psParents() (map[int]int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func psParents(ctx context.Context) (map[int]int, error) {
+	ctx, cancel := context.WithTimeout(ctx, sandboxScanBudget)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "/bin/ps", "-A", "-o", "pid=", "-o", "ppid=").Output()
 	if err != nil {
@@ -282,3 +282,7 @@ func parsePSParents(out []byte) (map[int]int, error) {
 	}
 	return parents, nil
 }
+
+const sandboxScanBudget = 2 * time.Second
+
+var sandboxSnapshotDegraded = func(error) {}
