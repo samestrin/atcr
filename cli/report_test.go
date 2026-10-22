@@ -572,3 +572,38 @@ func TestLoadContested_ListsCapOverflowItemsWithTheirCountdown(t *testing.T) {
 	assert.Zero(t, cr.OverflowItems[1].UnresolvedAttempts, "an item nobody tried still carries no count")
 	require.Len(t, cr.WithheldItems, 1, "the withheld item stays in its own list")
 }
+
+// TestReportCmd_JSONFlagMatchesFormatJSON covers Epic 35.22 T1: `report --json`
+// prints the same bytes as `report --format json`.
+func TestReportCmd_JSONFlagMatchesFormatJSON(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", oneFinding)
+
+	code, viaFormat, _ := execCmdSplit(t, "report", "--format", "json", "r")
+	require.Equal(t, 0, code)
+	code, viaJSON, _ := execCmdSplit(t, "report", "--json", "r")
+	require.Equal(t, 0, code)
+	require.True(t, json.Valid([]byte(viaJSON)), "report --json must print JSON")
+	assert.Equal(t, viaFormat, viaJSON)
+}
+
+// TestReportCmd_JSONFlagWithDisagreements keeps the radar's JSON form reachable
+// through --json too.
+func TestReportCmd_JSONFlagWithDisagreements(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", splitFinding)
+
+	code, viaFormat, _ := execCmdSplit(t, "report", "--disagreements", "--format", "json", "r")
+	require.Equal(t, 0, code)
+	code, viaJSON, _ := execCmdSplit(t, "report", "--disagreements", "--json", "r")
+	require.Equal(t, 0, code)
+	assert.Equal(t, viaFormat, viaJSON)
+}
+
+// TestReportCmd_JSONFlagWithOtherFormatIsUsageError: --json with a different
+// --format is a usage error (exit 2), not a silent pick of one of them.
+func TestReportCmd_JSONFlagWithOtherFormatIsUsageError(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "r", oneFinding)
+	require.Equal(t, 2, execCmd(t, "report", "--json", "--format", "md", "r"))
+}

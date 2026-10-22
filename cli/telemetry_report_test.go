@@ -387,3 +387,33 @@ func TestQualityReportRows_SkipsReconcilerOnlyPairs(t *testing.T) {
 	assert.Equal(t, "bruce", rows[0].Persona)
 	assert.Equal(t, 1, rows[0].DismissedCount)
 }
+
+// TestQualityReport_JSONFlagMatchesFormatJSON covers Epic 35.22 T1:
+// `quality-report --json` prints the same bytes as `--format json`.
+func TestQualityReport_JSONFlagMatchesFormatJSON(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "alpha", "gpt-4", localdebt.StatusWontfix, "a.go")
+	seedQualityRecord(t, "beta", "claude", localdebt.StatusResolved, "b.go")
+
+	viaFormat, err := runQualityReportCmd(t, "--format", "json")
+	require.NoError(t, err)
+	viaJSON, err := runQualityReportCmd(t, "--json")
+	require.NoError(t, err)
+
+	var rows []qualityReportRow
+	require.NoError(t, json.Unmarshal([]byte(viaJSON), &rows))
+	require.Len(t, rows, 2)
+	assert.Equal(t, viaFormat, viaJSON)
+}
+
+// TestQualityReport_JSONFlagWithFormatMDIsUsageError: --json with --format md is
+// a usage error (exit 2), raised before the store is read — a corrupt store that
+// would exit 1 if reached still yields exit 2.
+func TestQualityReport_JSONFlagWithFormatMDIsUsageError(t *testing.T) {
+	isolate(t)
+	corruptDebtStore(t)
+
+	_, err := runQualityReportCmd(t, "--json", "--format", "md")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+}
