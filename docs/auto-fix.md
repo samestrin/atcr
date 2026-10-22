@@ -206,6 +206,14 @@ Concretely, opting in accepts all of the following:
   `TMPDIR`, `HOME`, `GOCACHE` and `GOTMPDIR` point into the per-run scratch
   directory, so anything following the environment works; a command that
   hardcodes bare `/tmp` fails on macOS with `Operation not permitted`.
+- **The working tree is at `/work` on Linux only.** On Linux `bwrap` reuses the
+  Docker paths: the writable copy is mounted at `/work`, the patched tree at
+  `/src`, and the command starts in `/work`. On macOS `sandbox-exec` cannot remap
+  paths, so the command starts in the copy at its real location inside the
+  per-run scratch directory, and neither `/work` nor `/src` exists. A
+  `validate_command` that hardcodes `/work` (for example `go test /work/...`)
+  passes under Docker and on Linux but fails on macOS. Use paths relative to the
+  starting directory instead (`go test ./...`).
 - **Go dependency resolution needs a module cache you warm yourself.** The sandbox
   has no network, so a non-vendored dependency cannot be downloaded during a run.
   `GOMODCACHE` points at a persistent, atcr-owned cache
