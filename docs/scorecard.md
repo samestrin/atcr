@@ -68,7 +68,7 @@ carries neither and is read as "not measured", never as a measured zero.
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
-| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. **Also includes** each finding this reviewer raised alone that reconcile set aside as ambiguous (`ambiguous.json`) — a singleton the consensus filter removed, or one isolated as noise — because it was raised and is otherwise in no count. It is never corroborated, and it is also counted in `findings_ambiguous`. A finding in a two-finding gray-zone cluster is not counted again here: it is also in `findings.json` and is counted there. |
+| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. **Also includes** each finding this reviewer raised alone that reconcile set aside as ambiguous (`ambiguous.json`) — a singleton the consensus filter removed, or one isolated as noise — because it was raised and is otherwise in no count. It is never corroborated, and it is also counted in `findings_ambiguous`. A finding in a two-finding gray-zone cluster is not counted again here: it is also in `findings.json` and is counted there. **Also includes** each finding an `.atcr/ignore.yaml` rule suppressed (`suppressed.json`) — it was raised, so it stays in the denominator — though it is never corroborated and earns no `weighted_credit` (see [Ignore-suppressed findings](#ignore-suppressed-findings)). |
 | `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
 | `findings_doc_shielded` | int | conditional | Routed findings this record deliberately did NOT charge to `findings_raised`, because the Tier 4 check routed them on the documentation-extension heuristic (`unresolved_reason: doc_shield`) rather than on a genuine absence. Omitted when zero. Read it alongside `corroboration_rate`: the exemption is driven by the reviewer's own finding text, so a rate of 1.00 with a nonzero count here is not the same claim as a rate of 1.00 without one. Likewise, a rate of 0.00 alongside a nonzero count here is the zero-denominator case (every finding was shielded), not a corroboration failure. Note the trust prior does NOT extend the carve-out: shielded counts join the trust rate's denominator. |
 | `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
@@ -250,6 +250,20 @@ a 0.60 prior — and `DOC-SHIELDED` is what makes that difference readable.
 `report.md` reports the same split: its `Unresolved findings:` line counts the two
 shapes separately, because "no symbol correspondence in the tracked tree" is false
 for a doc-shielded record — its subject IS in the tree.
+
+### Ignore-suppressed findings
+
+A finding an `.atcr/ignore.yaml` rule matched (see
+[technical-debt.md](technical-debt.md#ignoring-false-positives-atcr-ignore))
+leaves the reconciled primary stream for `suppressed.json`, but it was still
+**raised**, so it is charged to its reviewer's `findings_raised` denominator —
+leaving it out would let a repo's ignore file lift a lens's corroboration rate by
+deleting its findings from the denominator. It is never counted in
+`findings_corroborated` and earns no `weighted_credit`: the rule says the finding
+is not worth reporting, which says nothing about whether the reviewers who agreed
+on it were right. It carries no `unresolved_reason` charge either — suppression
+is not a Tier 4 routing decision. A reviewer whose every finding on a run was
+suppressed is still registered with outcome `findings`.
 
 Behavior:
 - Empty store (no data at all) → friendly message, exit `0`.
