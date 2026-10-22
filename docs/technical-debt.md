@@ -364,7 +364,7 @@ refusal may not concern the record at all, and restoring the record's own
 `review.md` may still help. `review tree pruned` counts everything else. The three
 figures are exclusive and add up to `unresolved`.
 
-A final clause, `N summary.json over 1 MiB ignored`, counts the
+A final clause, `N summary.json over 1 MiB ignored (only those checked for a policy refusal)`, counts the
 `reconciled/summary.json` files the pass ignored for exceeding the size cap —
 summary files, not records, so it stands apart from the record counters above. A
 review dir whose summary is ignored owns nothing, so a refused `review.md` in it
@@ -383,7 +383,7 @@ that line alone. The run reports both counts, e.g. `3 rewritten (5 lines)`, and
 
 ```console
 $ atcr debt backfill-justifications --dry-run
-dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (0 review tree pruned, 0 declined by policy, 0 policy refusal not tied to the record), 0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), 0 summary.json over 1 MiB ignored
+dry run: 1 scanned, 1 rewritten (1 line), 0 unchanged, 0 unresolved (0 review tree pruned, 0 declined by policy, 0 policy refusal not tied to the record), 0 ambiguous (candidates disagreed), 0 skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), 0 summary.json over 1 MiB ignored (only those checked for a policy refusal)
   2026-08.jsonl:1 "aaaa1111"
     before: "- **internal/thing.go:42** the real narrative explaining the defect."
     after:  "```\n- **internal/thing.go:42** the real narrative explaining the defect."
