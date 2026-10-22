@@ -361,3 +361,37 @@ func TestSandboxCancel_DiscardsASnapshotTakenWhileTheLeaderWasReaped(t *testing.
 	_ = cmd.Cancel()
 	assert.NotContains(t, *kills, unrelated)
 }
+
+func TestKillSandboxDescendants_SkipsAPidWhoseGroupCannotBeRead(t *testing.T) {
+	// A snapshotted descendant that has exited and been waited on fails
+	// Getpgid with ESRCH, and its pid may already belong to an unrelated
+	// process. It must not be signalled. Getpgid is faked so no real pid has
+	// to stay free, and the kill is recorded without being delivered.
+	const gone, live, leader = 1 << 30, 1<<30 + 1, 1<<30 + 2
+	origGetpgid, origKill := sandboxGetpgid, sandboxKill
+	sandboxGetpgid = func(pid int) (int, error) {
+		if pid == gone {
+			return 0, syscall.ESRCH
+		}
+		return pid, nil // a detached descendant leads its own group
+	}
+	var kills []int
+	sandboxKill = func(pid int, _ syscall.Signal) error {
+		kills = append(kills, pid)
+		return nil
+	}
+	t.Cleanup(func() { sandboxGetpgid, sandboxKill = origGetpgid, origKill })
+
+	killSandboxDescendants(leader, []int{gone, live})
+	assert.Equal(t, []int{live}, kills, "only the pid whose group was read as outside the leader's is signalled")
+}
+
+func TestSandboxCancel_BeforeStartSignalsNothing(t *testing.T) {
+	// Cancel before Start has no process: there is nothing to walk from or
+	// kill, and it must not dereference a nil Process.
+	kills := recordSandboxKills(t)
+	cmd := exec.CommandContext(context.Background(), "true")
+	configureSandboxProcessGroup(cmd)
+	assert.NoError(t, cmd.Cancel())
+	assert.Empty(t, *kills)
+}

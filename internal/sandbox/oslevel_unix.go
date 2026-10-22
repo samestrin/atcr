@@ -104,6 +104,10 @@ func killSandboxProcessGroup(cmd *exec.Cmd) error {
 // cancel path signals, and in what order.
 var sandboxKill = syscall.Kill
 
+// sandboxGetpgid is syscall.Getpgid; tests replace it to present a pid whose
+// group cannot be read without depending on a real pid staying free.
+var sandboxGetpgid = syscall.Getpgid
+
 // sandboxProcessTable reads the host's pid -> ppid table, from /proc where
 // there is one and from ps(1) otherwise. Tests replace it to present a table
 // the host cannot be made to produce on demand, such as a recycled pid.
@@ -164,7 +168,7 @@ func sandboxLeaderUnreaped(cmd *exec.Cmd) bool {
 // and the PID allocator to wrap round to the pid at once.
 func killSandboxDescendants(leader int, pids []int) {
 	for _, pid := range pids {
-		pgid, err := syscall.Getpgid(pid)
+		pgid, err := sandboxGetpgid(pid)
 		if err != nil || pgid == leader {
 			continue
 		}
