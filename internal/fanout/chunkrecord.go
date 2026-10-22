@@ -45,9 +45,15 @@ const (
 // which of them never finished. It follows cli/benchmark_checkpoint.go's rule:
 // the unit's record is on disk before the run advances past it.
 type chunkRecord struct {
-	SchemaVersion int              `json:"schema_version"`
-	Agent         string           `json:"agent"`
-	Bins          []chunkRecordBin `json:"bins"`
+	SchemaVersion int    `json:"schema_version"`
+	Agent         string `json:"agent"`
+	// ShedFiles names the repo-relative files the run's byte budget dropped
+	// before binning (Epic 69 T1): they were in scope but no bin carries them,
+	// so a coverage reader counts them as in scope and uncovered. omitempty, so
+	// a run that shed nothing is written exactly as before, and a record written
+	// before this field reads as having shed nothing.
+	ShedFiles []string         `json:"shed_files,omitempty"`
+	Bins      []chunkRecordBin `json:"bins"`
 }
 
 // chunkRecordBin is one planned bin: its index in the persona's chunk order, the
