@@ -71,14 +71,18 @@ func newQualityReportCmd() *cobra.Command {
 	// quality-report at a fixture store without chdir.
 	addDebtStoreFlag(cmd)
 	cmd.Flags().String("format", "md", "output format: md or json")
+	addJSONFlag(cmd)
 	return cmd
 }
 
 func runQualityReport(cmd *cobra.Command, _ []string) error {
 	// Validate --format against the enum BEFORE any I/O: a bad value is a usage
 	// error (exit 2), never conflated with a read failure (exit 1). This mirrors
-	// runReport's format-first ordering.
-	format, _ := cmd.Flags().GetString("format")
+	// runReport's format-first ordering, and folds in --json the same way.
+	format, err := formatWithJSON(cmd)
+	if err != nil {
+		return err
+	}
 	if format != "md" && format != "json" {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are md, json", format))
 	}
