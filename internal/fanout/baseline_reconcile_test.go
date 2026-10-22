@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -263,13 +262,7 @@ func (c fixedFileFindingsCompleter) Complete(_ context.Context, _ llmclient.Invo
 func secondCommit(t *testing.T, dir string, files map[string]string) (base, head string) {
 	t.Helper()
 	run := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-		return strings.TrimSpace(string(out))
+		return fanoutGit(t, dir, args...)
 	}
 	base = run("rev-parse", "HEAD")
 	for p, c := range files {
