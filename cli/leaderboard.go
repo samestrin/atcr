@@ -232,10 +232,17 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 	// this table. Conditional, on the SOLO/VERIFIED precedent in renderScorecard:
 	// a store with nothing shielded prints exactly the table it printed before.
 	hasShielded := false
+	// AMBIGUOUS follows the same rule for raised_denominator era 4 (epic
+	// 35.16.11.3.1): RAISED here sums every era, and an era-4 run charges the
+	// ambiguous singletons an era-3 run did not, so this column is what tells
+	// the two apart on one row.
+	hasAmbiguous := false
 	for _, r := range rows {
 		if r.FindingsDocShielded > 0 {
 			hasShielded = true
-			break
+		}
+		if r.FindingsAmbiguous > 0 {
+			hasAmbiguous = true
 		}
 	}
 
@@ -244,6 +251,9 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 	header := "REVIEWER\tMODEL\tRUNS\tRAISED\tCORROBORATED\tCORR%\tCOST\tCOST/CORR\tLATENCY"
 	if hasShielded {
 		header += "\tDOC-SHIELDED"
+	}
+	if hasAmbiguous {
+		header += "\tAMBIGUOUS"
 	}
 	_, _ = fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -259,6 +269,9 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 			// A literal 0 rather than a dash: this reviewer HAS a measurement and
 			// it is zero, which is a different statement from "not applicable".
 			row += fmt.Sprintf("\t%d", r.FindingsDocShielded)
+		}
+		if hasAmbiguous {
+			row += fmt.Sprintf("\t%d", r.FindingsAmbiguous)
 		}
 		_, _ = fmt.Fprintln(tw, row)
 	}
