@@ -5,7 +5,20 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/reconcile"
 )
+
+// UnmetPlanItemPrefix opens the PROBLEM of every finding a reviewer files for a
+// sprint-plan work item the diff does not implement (Epic 36.2 intent drift), so
+// a reader or a downstream filter can pick those findings out of the report.
+const UnmetPlanItemPrefix = "Unmet plan item:"
+
+// UnmetPlanItemCategory is the CATEGORY the SCOPE CONSTRAINT asks an
+// unmet-plan-item finding to carry: the plan is the contract the change set out
+// to honour. It is a member of the closed reviewer vocabulary, so the finding is
+// scored and promoted like any other rather than segregated as out-of-scope.
+const UnmetPlanItemCategory = reconcile.CategoryContract
 
 // The sprint-plan byte ceiling is caller-supplied (plan 19.10 F9): it is
 // resolved from max_sprint_plan_bytes through internal/registry's precedence
