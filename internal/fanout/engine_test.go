@@ -316,6 +316,38 @@ func TestRun_SerialShortCircuitStampsElapsedDuration(t *testing.T) {
 		"short-circuited slot must record elapsed wall-clock, not 0")
 }
 
+// A run whose context is cancelled before Run starts still reports every slot
+// to WithSlotDone, but leases none of them: slotDone fires for slots whose
+// slotStart never ran, in both lanes. Characterizes the behaviour WithSlotStart
+// documents (Epic 71 T2); a hook pair that assumes start-then-done would break.
+func TestRun_CancelledBeforeRunFiresSlotDoneWithoutSlotStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	serial := agentSlot("s")
+	serial.Serial = true
+	slots := []Slot{agentSlot("a"), agentSlot("b"), serial}
+
+	var mu sync.Mutex
+	started := map[int]int{}
+	done := map[int]string{}
+	NewEngine(newFake(),
+		WithSlotStart(func(i int) {
+			mu.Lock()
+			defer mu.Unlock()
+			started[i]++
+		}),
+		WithSlotDone(func(i int, r Result) {
+			mu.Lock()
+			defer mu.Unlock()
+			done[i] = r.Status
+		})).Run(ctx, slots)
+
+	assert.Empty(t, started, "no slot is leased once the run is cancelled")
+	assert.Equal(t, map[int]string{0: StatusTimeout, 1: StatusTimeout, 2: StatusTimeout}, done,
+		"every slot still reports its final Result to slotDone")
+}
+
 // A serial slot short-circuited by cancellation must carry the primary's review
 // constraints (MinSeverity/MaxFindings) so the cancelled slot's Result is
 // structurally identical to one produced by invokeSlot. Without this, a future
