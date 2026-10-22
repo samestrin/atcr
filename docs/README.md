@@ -85,3 +85,9 @@ single source of truth the website build consumes, so it links every doc in
 - [Telemetry](telemetry.md) — the opt-out usage ping and the `--sync-cloud` push,
   and the privacy model for both.
 - [Logging](logging.md) — log levels and output formats.
+
+## Decision records
+
+- [Reporting entry-point shape](decisions/2026-10-22-reporting-entry-point-shape.md)
+  — why the reporting commands share one `atcr --help` heading instead of
+  moving under a `report` command group (2026-10-22).
