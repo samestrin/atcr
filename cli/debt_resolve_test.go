@@ -1844,3 +1844,34 @@ func TestIsRecordedRationale_MatchesReconcileFenceGrammar(t *testing.T) {
 		})
 	}
 }
+
+// Epic 76 (debt_resolve.go:549): the resolve listing truncates Problem the same
+// way `debt list` does, so it must keep the discount marker the same way.
+func TestRenderResolveList_TruncatedProblemKeepsDiscountMarker(t *testing.T) {
+	rec := openRec("2026-07-01T10:00:00Z-a", "MEDIUM", "a.go", 1, strings.Repeat("a very long problem statement ", 8))
+	rec.ConfidenceDiscount = reconcile.PanelWideReason
+
+	var b bytes.Buffer
+	require.NoError(t, renderResolveList(&b, t.TempDir(), []localdebt.Record{rec}))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[1], "…", "the problem text is still truncated")
+	assert.Contains(t, lines[1], "(confidence discounted: panel-wide instruction",
+		"the discount marker survives Problem truncation")
+}
+
+// An undiscounted row in the resolve listing renders exactly as before.
+func TestRenderResolveList_UndiscountedProblemUnchanged(t *testing.T) {
+	short := openRec("2026-07-01T10:00:00Z-a", "LOW", "a.go", 1, "short problem")
+	long := openRec("2026-07-01T10:00:00Z-b", "LOW", "b.go", 2, strings.Repeat("a very long problem statement ", 8))
+
+	for _, rec := range []localdebt.Record{short, long} {
+		var b bytes.Buffer
+		require.NoError(t, renderResolveList(&b, t.TempDir(), []localdebt.Record{rec}))
+		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+		require.Len(t, lines, 2)
+		assert.True(t, strings.HasSuffix(lines[1], truncate(rec.Problem, 60)),
+			"the row ends with the truncated Problem alone, got %q", lines[1])
+		assert.NotContains(t, lines[1], "confidence discounted")
+	}
+}
