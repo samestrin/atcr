@@ -292,6 +292,18 @@ type Record struct {
 	// FirstSeen sorts below every real timestamp).
 	FirstSeen string `json:"first_seen,omitempty"`
 
+	// ConfidenceDiscount is the reason reconcile lowered Confidence below what the
+	// reviewer count alone earns (Epic 35.16.17), copied verbatim from
+	// JSONFinding.ConfidenceDiscount by PersistForReconcile. Today the only value
+	// is reconcile.PanelWideReason: every reviewer filed one invariant finding in
+	// one file with near-identical evidence, so their agreement was a shared
+	// instruction speaking rather than independent corroboration. It is stored so
+	// a TD row can tell that MEDIUM from one a single reviewer earned (RowProblem).
+	// Additive within v3 like ModelReviewers: an older v3 reader ignores the key.
+	// omitempty keeps every undiscounted record byte-identical to the pre-field
+	// wire shape.
+	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
+
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`
 	Status        string        `json:"status,omitempty"`
@@ -315,6 +327,19 @@ type SourceReport struct {
 // empty problem string.
 func (r *Record) StampID() {
 	r.ID = history.FindingID(r.File, r.Line, r.Problem)
+}
+
+// RowProblem is the Problem text a TD table row renders: Problem itself, with
+// " (confidence discounted: <reason>)" appended when reconcile discounted the
+// record's confidence (ConfidenceDiscount). The reason rides the Problem cell, the
+// way reconcile already appends a severity disagreement inline, so a TD table
+// gains no column and an undiscounted row is byte-identical to the row before
+// the field existed. Escaping is the row writer's job, as it is for Problem.
+func (r Record) RowProblem() string {
+	if r.ConfidenceDiscount == "" {
+		return r.Problem
+	}
+	return r.Problem + " (confidence discounted: " + r.ConfidenceDiscount + ")"
 }
 
 // EffectiveOrigin reports the record's provenance, resolving a v1/v2 record's
