@@ -431,7 +431,8 @@ func assertJSONGolden(t *testing.T, name, got string) {
 }
 
 // markdownSectionRows counts the data rows of the table under a dashboard
-// heading: every "| " line in the section minus the header and separator. A
+// heading: every "| " line in the section minus the header (the separator row
+// starts "|-", so it is never counted). A
 // section with no table ("_No items._", the suppressed top list) counts 0.
 func markdownSectionRows(t *testing.T, md, heading string) int {
 	t.Helper()
@@ -450,7 +451,7 @@ func markdownSectionRows(t *testing.T, md, heading string) int {
 	if rows == 0 {
 		return 0
 	}
-	return rows - 2
+	return rows - 1
 }
 
 // Epic 35.22 T3: `debt dashboard --json` is built from the same data as the
@@ -497,7 +498,8 @@ func TestDebtDashboardJSON_GoldenParsesAndMatchesTheTableRowCounts(t *testing.T)
 // An empty store yields empty arrays, never null: a consumer can range over
 // every section without a nil check.
 func TestDebtDashboardJSON_EmptyStoreHasEmptyArrays(t *testing.T) {
-	dir := writeLocalDebt(t)
+	dir := filepath.Join(t.TempDir(), ".atcr", "debt")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	got, _, err := runDebtSplit(t, "dashboard", "--dir", dir, "--json")
 	require.NoError(t, err)
 	var doc map[string]any

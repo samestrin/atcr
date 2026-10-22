@@ -24,7 +24,8 @@ func newDebtDashboardCmd() *cobra.Command {
 			"atcr report. Secret-shaped tokens in finding text are scrubbed. Use --check\n" +
 			"with --output in CI or a pre-commit hook to fail when the committed\n" +
 			"dashboard is out of date; the render is deterministic so --check flags real\n" +
-			"content drift, not clock movement.",
+			"content drift, not clock movement. Pass --json for the same sections as one\n" +
+			"JSON document on stdout (not combinable with --output or --check).",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtDashboard,
 	}
@@ -34,6 +35,7 @@ func newDebtDashboardCmd() *cobra.Command {
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Int("top", 10, "ranked-display cutoff: how many top-priority items the dashboard's list section shows (0 suppresses the list; every other section still aggregates ALL items). Distinct from debt resolve --max, which caps how many items are selected to act on — and where 0 means no cap, not suppression")
 	cmd.Flags().Bool("check", false, "assert the file at --output matches freshly generated output, exiting non-zero on drift (an assertion against drift, not a --dry-run-style preview)")
+	addJSONFlag(cmd)
 	return cmd
 }
 
@@ -45,6 +47,13 @@ var dashboardHydrateFn = hydrateDebtIDs
 func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	out := mustFlag(cmd, "output")
 	check, _ := cmd.Flags().GetBool("check")
+	jsonOut := boolFlag(cmd, "json")
+	// --output and --check are about the committed Markdown file — its
+	// authorship marker and its drift — so neither means anything for JSON.
+	// Refusing beats letting one flag silently win.
+	if jsonOut && out != "" {
+		return usageError(errors.New("--json cannot be combined with --output or --check: --json prints the dashboard to stdout; redirect it to save a file"))
+	}
 	// --check compares against a file, so it has nothing to compare when the
 	// dashboard is going to stdout. Rejecting it is clearer than silently
 	// checking a file the user never named.
@@ -95,7 +104,11 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("read local debt store: %w", err)
 	}
-	content, err := renderDebtDashboard(localdebt.FoldSummaries(sums), top, func(ids []string) ([]localdebt.Record, error) {
+	render := renderDebtDashboard
+	if jsonOut {
+		render = renderDebtDashboardJSON
+	}
+	content, err := render(localdebt.FoldSummaries(sums), top, func(ids []string) ([]localdebt.Record, error) {
 		return dashboardHydrateFn(dir, ids, opts, debtIsLive)
 	})
 	if err != nil {
