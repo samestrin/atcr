@@ -5,20 +5,19 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	full := append([]string{"-C", dir}, args...)
-	cmd := exec.Command("git", full...)
-	cmd.Env = append(cmd.Environ(),
+	cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+	cmd.Env = append(cmd.Env,
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
