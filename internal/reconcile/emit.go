@@ -28,6 +28,10 @@ const (
 	// declared nowhere in the tracked tree. It is the preserve-never-delete half
 	// of routing them out of the primary stream.
 	UnresolvedJSON = "unresolved.json"
+	// SuppressedJSON is the .atcr/ignore.yaml sidecar (Epic 40.0): the findings
+	// an ignore rule dropped from the primary stream, each with the rule that
+	// matched it. Written on every run, `[]` when nothing was suppressed.
+	SuppressedJSON = "suppressed.json"
 	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
 	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
 	DisagreementsJSON = "disagreements.json"
@@ -106,6 +110,10 @@ type JSONFinding struct {
 	// in-process only (json:"-"): findings.json and unresolved.json are
 	// byte-identical, and a record read back from disk has none.
 	SourceCategories []SourceCategory `json:"-"`
+	// SuppressedBy is the .atcr/ignore.yaml rule that routed this finding into
+	// Result.Suppressed (Epic 40.0). Set only on suppressed records, so
+	// findings.json never carries it and serializes byte-identically.
+	SuppressedBy *IgnoreRule `json:"suppressed_by,omitempty"`
 	// PathSuggestion is the candidate-index correction for a hallucinated path
 	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
 	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
@@ -373,7 +381,8 @@ func ambiguousHash(r Result) string {
 	return HashBytes(buf.Bytes())
 }
 
-// Emit writes the four reconciled artifacts plus the ambiguous.json sidecar into
+// Emit writes the four reconciled artifacts plus the ambiguous.json,
+// disagreements.json, unresolved.json and suppressed.json sidecars into
 // reconciledDir (created if absent). Each file is written atomically.
 func Emit(reconciledDir string, r Result) error {
 	if err := os.MkdirAll(reconciledDir, 0o755); err != nil {
@@ -387,7 +396,12 @@ func Emit(reconciledDir string, r Result) error {
 	}{
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
-		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved)) }},
+		{ReportMD, func(w io.Writer) error {
+			if err := renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved)); err != nil {
+				return err
+			}
+			return writeSuppressedFooter(w, r.Suppressed)
+		}},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error {
 			if len(r.ambiguousBytes) > 0 {
@@ -401,6 +415,9 @@ func Emit(reconciledDir string, r Result) error {
 		// an absent file as "produced before this epic" rather than having to
 		// distinguish that from "this run routed nothing".
 		{UnresolvedJSON, func(w io.Writer) error { return renderIndentedJSON(w, emptyIfNil(r.Unresolved)) }},
+		// Unconditional for the same reason, so an absent file means "produced
+		// before Epic 40.0", never "no rule matched".
+		{SuppressedJSON, func(w io.Writer) error { return renderIndentedJSON(w, emptyIfNil(r.Suppressed)) }},
 	}
 	// Render every artifact first so a render error aborts before any file is
 	// published — the published set is then never partially from this run.
@@ -554,7 +571,43 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 // redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
 	jf := r.JSONFindings()
-	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved))
+	if err := renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved)); err != nil {
+		return err
+	}
+	return writeSuppressedFooter(w, r.Suppressed)
+}
+
+// writeSuppressedFooter appends the Epic 40.0 suppression footer to report.md:
+// the suppressed count and each distinct rule reason, in first-seen order,
+// with how many findings it hid. The reasons come from .atcr/ignore.yaml in
+// the reviewed checkout, so a pull request can write them; they are escaped
+// like every other free-text field, and the count keeps a rule that hides a
+// PR's own findings visible to the reader. Nothing is written when nothing
+// was suppressed, so report.md is byte-identical on the common path.
+func writeSuppressedFooter(w io.Writer, suppressed []JSONFinding) error {
+	if len(suppressed) == 0 {
+		return nil
+	}
+	var reasons []string
+	counts := map[string]int{}
+	for _, f := range suppressed {
+		reason := "(no reason recorded)"
+		if f.SuppressedBy != nil && strings.TrimSpace(f.SuppressedBy.Reason) != "" {
+			reason = esc(strings.TrimSpace(f.SuppressedBy.Reason))
+		}
+		if counts[reason] == 0 {
+			reasons = append(reasons, reason)
+		}
+		counts[reason]++
+	}
+	var b bytes.Buffer
+	b.WriteString("\n## Suppressed Findings\n\n")
+	fmt.Fprintf(&b, "- Suppressed: %d (matched .atcr/ignore.yaml rules; recorded in %s)\n", len(suppressed), SuppressedJSON)
+	for _, reason := range reasons {
+		fmt.Fprintf(&b, "- %s (%d)\n", reason, counts[reason])
+	}
+	_, err := w.Write(b.Bytes())
+	return err
 }
 
 // renderMarkdown is the internal implementation. It renders from the path-stamped
