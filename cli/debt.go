@@ -29,14 +29,14 @@ func newDebtCmd() *cobra.Command {
 		Short: "Query, capture, and report on technical debt",
 		Long: "atcr debt reads and writes the local technical-debt store under\n" +
 			".atcr/debt/ (month-sharded, append-only JSONL) that atcr reconcile\n" +
-			"populates. Its subcommands — list, add, dashboard, resolve, compact, and\n" +
-			"backfill-justifications — operate on that one store, so an item filed by add is visible\n" +
+			"populates. Its subcommands — list, add, dashboard, resolve, recluster, compact,\n" +
+			"and backfill-justifications — operate on that one store, so an item filed by add is visible\n" +
 			"to list and closeable by resolve. Use --dir to point them at a store\n" +
 			"other than the current repo's.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtCompactCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
 	return cmd
 }
 
