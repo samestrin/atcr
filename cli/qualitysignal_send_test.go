@@ -377,14 +377,18 @@ func TestQualitySignalSend_EnabledViaEnv_ExactlyOneRequest_CorrectCounts(t *test
 	assert.NotEmpty(t, got[0].PersonaIDHash)
 	assert.NotContains(t, q[0], "bruce", "the raw persona name must never reach the wire")
 
-	// Body carries no key outside the four-field allowlist.
+	// Body carries exactly the allowlisted keys: Story 1's four plus the three
+	// Epic 36.1 reconciler-error counts, which T3 added deliberately.
 	var raw []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(q[0]), &raw))
 	require.Len(t, raw, 1)
+	keys := make([]string, 0, len(raw[0]))
 	for k := range raw[0] {
-		assert.Contains(t, []string{"persona_id_hash", "model", "dismissed_count", "confirmed_count"}, k,
-			"no field outside Story 1's allowlist may appear on the wire")
+		keys = append(keys, k)
 	}
+	assert.ElementsMatch(t, []string{"persona_id_hash", "model", "dismissed_count", "confirmed_count",
+		"wrong_merge_count", "wrong_split_count", "wrong_category_count"}, keys,
+		"the wire carries exactly the allowlisted keys")
 }
 
 // TestQualitySignalSend_EnabledViaConfig_SameSingleSendBehavior proves a persisted
