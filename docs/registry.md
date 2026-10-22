@@ -182,13 +182,14 @@ context_prefetch:
   semantic:
     enabled: true
     endpoint: http://qdrant.lan:6333
+    embedding_endpoint: http://embeddings.lan
     collection: myrepo
     top_k: 5
     allow_insecure_http: true
 ```
 <!-- /atcr-doc-example -->
 
-Set `collection` to the name you passed to `llm-semantic index --collection` (`llm_semantic` if you let the indexer pick its default). Point `endpoint` at the base URL of the service atcr should query — the example uses the qdrant REST endpoint from step 2. If the qdrant needs an API key, export `QDRANT_API_KEY` in the shell that runs `atcr review`: **the key comes from the environment, never from a config file**, and it is sent only to the qdrant endpoint. The example above uses plain `http` on a LAN, so it also sets `allow_insecure_http: true` — drop that key for an `https` endpoint.
+Set `collection` to the name you passed to `llm-semantic index --collection` (`llm_semantic` if you let the indexer pick its default). Retrieval makes two calls, so the block takes two base URLs. Point `endpoint` at your qdrant REST API — the `QDRANT_API_URL` from step 2 — and `embedding_endpoint` at the embedding service — the `--api-url` from step 2; atcr appends `/v1/embeddings` to it. If the qdrant needs an API key, export `QDRANT_API_KEY` in the shell that runs `atcr review`: **the key comes from the environment, never from a config file**, and it is sent only to the qdrant endpoint, never to the embedding endpoint. The example above uses plain `http` on a LAN, so it also sets `allow_insecure_http: true` — drop that key when both endpoints are `https`.
 
 ### Keys
 
@@ -196,15 +197,16 @@ The block is carried at both the registry (user) and project tiers and resolves 
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `enabled` | `false` | Anything short of an explicit `true` — including an absent, empty, or settings-only block — resolves to disabled, and a disabled block exposes no endpoint to anything that might be tempted to use it. Enabling without an `endpoint` and a `collection` (across both tiers combined — either tier may supply either half) is a configuration error when the run's settings resolve, before any review work begins, not a silent off. |
-| `endpoint` | *none* | Base URL of the retrieval service atcr queries. Must be an absolute `http`/`https` URL with a host and no query or fragment; embedding a credential (`user:pass@host`) is a load error because the index's API key comes from `QDRANT_API_KEY` in the environment. |
+| `enabled` | `false` | Anything short of an explicit `true` — including an absent, empty, or settings-only block — resolves to disabled, and a disabled block exposes no endpoint to anything that might be tempted to use it. Enabling without an `endpoint`, an `embedding_endpoint` and a `collection` (across both tiers combined — either tier may supply any of them) is a configuration error when the run's settings resolve, before any review work begins, not a silent off. |
+| `endpoint` | *none* | Base URL of the qdrant REST API atcr queries (for example `http://qdrant.lan:6333`). Must be an absolute `http`/`https` URL with a host and no query or fragment; embedding a credential (`user:pass@host`) is a load error because the index's API key comes from `QDRANT_API_KEY` in the environment. |
+| `embedding_endpoint` | *none* | Base URL of the OpenAI-compatible embedding service that turns the query text into vectors; atcr appends `/v1/embeddings`. It must serve the model the index was built with. Same rules as `endpoint`: an absolute `http`/`https` URL with a host, no query or fragment, and no credential. |
 | `collection` | *none* | The qdrant collection to query — the same name the index was built with. It is interpolated into a URL path, so it must be 1–255 characters of `A-Z a-z 0-9 . _ -` and not start with `.`. |
 | `top_k` | `5` | Snippets requested per query; the merged result is capped at this many. Must be within `1..100`. Similarity snippets are the lowest-priority tier of the Context Definitions section, so a large value buys network time the `max_prefetch_bytes` ceiling will shed anyway. |
-| `allow_insecure_http` | `false` | Permits a plain-`http` `endpoint` on a non-loopback host (a LAN qdrant). Loopback `http` is always allowed; `https` needs no allowance. |
+| `allow_insecure_http` | `false` | Permits a plain-`http` `endpoint` or `embedding_endpoint` on a non-loopback host (a LAN qdrant or embedding service). Loopback `http` is always allowed; `https` needs no allowance. |
 
 ### Egress, timeout and failure rules
 
-**What leaves the machine.** The query text is the declaration text of the symbols the diff changed (signatures and doc comments), capped at 40 symbols — that text is sent to your embedding endpoint, and the resulting vectors to your qdrant. Until the Epic 35.20 secret scan lands, **that text is declaration text only**: nothing scans it for secrets before it leaves, so do not enable this on code whose declarations must not leave the machine. Retrieved snippets are repository content and are billed to the same `max_prefetch_bytes` ceiling and governed by the same `.gitignore`/`.atcrignore` filter as reference pre-fetching — and they are the first tier shed when the ceiling binds.
+**What leaves the machine.** The query text is the declaration text of the symbols the diff changed (signatures and doc comments), capped at 40 symbols — that text is sent to your `embedding_endpoint`, and the resulting vectors to your qdrant `endpoint`. Until the Epic 35.20 secret scan lands, **that text is declaration text only**: nothing scans it for secrets before it leaves, so do not enable this on code whose declarations must not leave the machine. Retrieved snippets are repository content and are billed to the same `max_prefetch_bytes` ceiling and governed by the same `.gitignore`/`.atcrignore` filter as reference pre-fetching — and they are the first tier shed when the ceiling binds.
 
 **Timeout and budget.** Each HTTP call has a 5-second per-call timeout, and the whole retrieval — one embedding call plus one qdrant query per symbol — is bounded by a 15-second total budget, so many fast calls still cannot stall a review.
 
