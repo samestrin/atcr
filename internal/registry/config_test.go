@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // AC 01-01 / 01-04: AgentsByRole filters agents by role, normalizing empty Role
@@ -589,6 +590,38 @@ agents:
 	assert.Contains(t, reg.AgentsByRole(RoleReviewer), "rev")
 	assert.Empty(t, reg.AgentsByRole(RoleSkeptic))
 	assert.Empty(t, reg.AgentsByRole(RoleJudge))
+}
+
+// TestRegistryLoad_ShippedNadiaPersonaIsRedTeam loads the shipped
+// personas/community/nadia.yaml as an ordinary agent entry and verifies
+// AgentsByRole(RoleRedTeam) returns exactly it while the reviewer lookup does
+// not (Epic 36.5 T3). The role comes from the shipped file, so dropping its
+// role: line fails this test.
+func TestRegistryLoad_ShippedNadiaPersonaIsRedTeam(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "personas", "community", "nadia.yaml"))
+	require.NoError(t, err)
+	var nadia AgentConfig
+	require.NoError(t, yaml.Unmarshal(data, &nadia))
+
+	doc, err := yaml.Marshal(map[string]any{
+		"providers": map[string]any{
+			nadia.Provider: map[string]any{"api_key_env": "KEY"},
+		},
+		"agents": map[string]any{
+			"nadia": nadia,
+			"rev":   map[string]any{"provider": nadia.Provider, "model": "m"},
+		},
+	})
+	require.NoError(t, err)
+	reg, err := LoadRegistry(writeRegistry(t, string(doc)))
+	require.NoError(t, err)
+
+	got := reg.AgentsByRole(RoleRedTeam)
+	require.Len(t, got, 1, "exactly the shipped persona is a red-team agent")
+	assert.Contains(t, got, "nadia")
+	reviewers := reg.AgentsByRole(RoleReviewer)
+	assert.NotContains(t, reviewers, "nadia")
+	assert.Contains(t, reviewers, "rev")
 }
 
 // TestRegistryLoad_ReservedFieldsInert verifies the reserved fields stay at
