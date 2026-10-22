@@ -13,17 +13,29 @@ import (
 	"github.com/samestrin/atcr/internal/scorecard"
 )
 
-// TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys locks the quality-signal
-// wire schema to exactly {persona_id_hash, model, dismissed_count, confirmed_count}
-// with no omitempty ambiguity — an accidental new field (e.g. a file path or a
-// finding excerpt) fails this immediately (AC 01-05). Mirrors
-// TestClient_Send_PayloadHasExactlyFourAllowlistedKeys for Event.
-func TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys(t *testing.T) {
+// qualitySignalKeys is the documented quality-signal wire key set: the four
+// Sprint 30.0 keys plus the three Epic 36.1 reconciler-error counts. The
+// backend validates by strict set equality, so this list changes only on
+// purpose, in step with docs/telemetry.md and the atcr.dev ingest.
+var qualitySignalKeys = []string{
+	"persona_id_hash", "model", "dismissed_count", "confirmed_count",
+	"wrong_merge_count", "wrong_split_count", "wrong_category_count",
+}
+
+// TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys locks the quality-signal
+// wire schema to exactly qualitySignalKeys with no omitempty ambiguity — an
+// accidental new field (e.g. a file path or a finding excerpt) fails this
+// immediately (AC 01-05). Mirrors
+// TestClient_Send_PayloadHasExactlyFourAllowlistedKeys for Event. It was
+// TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys until Epic 36.1 T3
+// added the three reconciler-error counts deliberately.
+func TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys(t *testing.T) {
 	cases := []QualitySignal{
-		{PersonaIDHash: "abc123", Model: "claude-sonnet-4-6", DismissedCount: 3, ConfirmedCount: 1},
-		{}, // zero value: all four keys must still serialize (no omitempty)
+		{PersonaIDHash: "abc123", Model: "claude-sonnet-4-6", DismissedCount: 3, ConfirmedCount: 1,
+			WrongMergeCount: 2, WrongSplitCount: 1, WrongCategoryCount: 4},
+		{}, // zero value: every key must still serialize (no omitempty)
 	}
-	allowed := []string{"persona_id_hash", "model", "dismissed_count", "confirmed_count"}
+	allowed := qualitySignalKeys
 	for _, qs := range cases {
 		raw, err := json.Marshal(qs)
 		if err != nil {
@@ -33,8 +45,8 @@ func TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys(t *testing.T) {
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("unmarshal payload: %v", err)
 		}
-		if len(m) != 4 {
-			t.Fatalf("payload has %d keys, want exactly 4: %s", len(m), raw)
+		if len(m) != len(allowed) {
+			t.Fatalf("payload has %d keys, want exactly %d: %s", len(m), len(allowed), raw)
 		}
 		for _, k := range allowed {
 			if _, ok := m[k]; !ok {
@@ -45,9 +57,9 @@ func TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys(t *testing.T) {
 }
 
 // TestQualitySignal_NoOmitEmptyOrIgnoredTags is the MECHANICAL gate for the
-// "no omitempty" rule that TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys
-// cannot enforce alone (TD 30.0): a 5th field tagged `json:"path,omitempty"` is
-// invisible to the len==4 assertion because the fixtures never populate it, so
+// "no omitempty" rule that TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys
+// cannot enforce alone (TD 30.0): an extra field tagged `json:"path,omitempty"` is
+// invisible to the key-count assertion because the fixtures never populate it, so
 // the field-creep privacy leak would ship green. Reflecting over the struct tags
 // fails the moment ANY field is json-ignored or carries an omitempty option,
 // whatever the fixtures contain — the rule stops being a doc comment.
@@ -69,22 +81,23 @@ func TestQualitySignal_NoOmitEmptyOrIgnoredTags(t *testing.T) {
 		}
 		for _, opt := range strings.Split(opts, ",") {
 			if opt == "omitempty" {
-				t.Errorf("field %s carries omitempty (%q) — a never-populated field would be invisible to the len==4 guard", f.Name, tag)
+				t.Errorf("field %s carries omitempty (%q) — a never-populated field would be invisible to the key-count guard", f.Name, tag)
 			}
 		}
 	}
 }
 
-// TestQualitySignal_ZeroValueStillSerializesAllFourKeys locks AC 01-05 Edge Case
+// TestQualitySignal_ZeroValueStillSerializesEveryKey locks AC 01-05 Edge Case
 // 2: a zero-value struct (including a legitimately-zero count) still serializes
 // every key — a maintainer must be able to distinguish "zero dismissals" from
-// "field absent".
-func TestQualitySignal_ZeroValueStillSerializesAllFourKeys(t *testing.T) {
+// "field absent". It was TestQualitySignal_ZeroValueStillSerializesAllFourKeys
+// until Epic 36.1 T3 grew the key set.
+func TestQualitySignal_ZeroValueStillSerializesEveryKey(t *testing.T) {
 	raw, err := json.Marshal(QualitySignal{})
 	if err != nil {
 		t.Fatalf("marshal zero QualitySignal: %v", err)
 	}
-	for _, k := range []string{"persona_id_hash", "model", "dismissed_count", "confirmed_count"} {
+	for _, k := range qualitySignalKeys {
 		var m map[string]any
 		_ = json.Unmarshal(raw, &m)
 		if _, ok := m[k]; !ok {
@@ -123,7 +136,7 @@ func TestClient_SendQualitySignal_EmptyPayloadNoOps(t *testing.T) {
 // zero QualitySignal sentinel (empty PersonaIDHash — recognizable and droppable by
 // the caller) instead of a valid-looking hash.
 func TestNewQualitySignal_EmptyPersonaReturnsZeroSentinel(t *testing.T) {
-	if qs := NewQualitySignal("", "claude-sonnet-4-6", 3, 1); qs != (QualitySignal{}) {
+	if qs := NewQualitySignal("", "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}); qs != (QualitySignal{}) {
 		t.Errorf("empty persona must return the zero QualitySignal sentinel, got %+v", qs)
 	}
 }
@@ -136,12 +149,12 @@ func TestNewQualitySignal_EmptyPersonaReturnsZeroSentinel(t *testing.T) {
 // TestQualitySignal_PersonaHashedNotRaw asserts byte-equality with scorecard's copy,
 // so together they fail if either producer is changed alone.
 func TestNewQualitySignal_CanonicalizesCaseAndWhitespace(t *testing.T) {
-	want := NewQualitySignal("bruce", "claude-sonnet-4-6", 3, 1).PersonaIDHash
+	want := NewQualitySignal("bruce", "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}).PersonaIDHash
 	if want == "" {
 		t.Fatal("baseline persona must produce a non-empty digest")
 	}
 	for _, variant := range []string{"Bruce", "BRUCE", " bruce ", "\tBruce\n", "bRuCe"} {
-		if got := NewQualitySignal(variant, "claude-sonnet-4-6", 3, 1).PersonaIDHash; got != want {
+		if got := NewQualitySignal(variant, "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}).PersonaIDHash; got != want {
 			t.Errorf("variant %q hashed to %q, want %q — a split here is permanent once atcr.dev peppers it", variant, got, want)
 		}
 	}
@@ -155,7 +168,7 @@ func TestNewQualitySignal_CanonicalizesCaseAndWhitespace(t *testing.T) {
 // constant the sentinel exists to keep off the backend.
 func TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel(t *testing.T) {
 	for _, blank := range []string{" ", "   ", "\t", "\n", " \t\n "} {
-		if qs := NewQualitySignal(blank, "claude-sonnet-4-6", 3, 1); qs != (QualitySignal{}) {
+		if qs := NewQualitySignal(blank, "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}); qs != (QualitySignal{}) {
 			t.Errorf("whitespace-only persona %q must return the zero sentinel, got %+v", blank, qs)
 		}
 	}
@@ -180,7 +193,7 @@ func TestNewQualitySignal_WhitespaceOnlyPersonaReturnsZeroSentinel(t *testing.T)
 // canonical digest.
 func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	const raw = "security-reviewer"
-	qs := NewQualitySignal(raw, "claude-sonnet-4-6", 3, 1)
+	qs := NewQualitySignal(raw, "claude-sonnet-4-6", 3, 1, ReconcilerCounts{})
 
 	if qs.PersonaIDHash != scorecard.HashPersonaID(raw) {
 		t.Errorf("PersonaIDHash = %q, want HashPersonaID(%q)", qs.PersonaIDHash, raw)
@@ -190,7 +203,7 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	}
 
 	for _, noncanonical := range []string{"Security-Reviewer", " security-reviewer ", "SECURITY-REVIEWER", "\tSecurity-Reviewer\n"} {
-		got := NewQualitySignal(noncanonical, "claude-sonnet-4-6", 3, 1).PersonaIDHash
+		got := NewQualitySignal(noncanonical, "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}).PersonaIDHash
 		if want := scorecard.HashPersonaID(noncanonical); got != want {
 			t.Errorf("non-canonical %q: telemetry hashed %q, scorecard hashed %q — the two producers have DRIFTED", noncanonical, got, want)
 		}
@@ -204,7 +217,7 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 	// reimplementation of ToLower or TrimSpace in exactly one producer, which
 	// every fixture above is blind to.
 	for _, drift := range []string{"ΟΔΥΣΣΕΥΣ", "Ревизор", "İstanbul", "bruce\r", "bruce\v"} {
-		got := NewQualitySignal(drift, "claude-sonnet-4-6", 3, 1).PersonaIDHash
+		got := NewQualitySignal(drift, "claude-sonnet-4-6", 3, 1, ReconcilerCounts{}).PersonaIDHash
 		if want := scorecard.HashPersonaID(drift); got != want {
 			t.Errorf("drift fixture %q: telemetry hashed %q, scorecard hashed %q — the two producers have DRIFTED", drift, got, want)
 		}
@@ -219,7 +232,7 @@ func TestQualitySignal_PersonaHashedNotRaw(t *testing.T) {
 // is not a plain catalog identifier is sent as an empty model.
 func TestNewQualitySignal_UnsafeModelSentEmpty(t *testing.T) {
 	for _, m := range []string{"claude sonnet", "a\nb", strings.Repeat("a", 129), "a,b", "clàude"} {
-		got := NewQualitySignal("bruce", m, 2, 1)
+		got := NewQualitySignal("bruce", m, 2, 1, ReconcilerCounts{})
 		if got.Model != "" {
 			t.Errorf("model %q must be sent empty, got %q", m, got.Model)
 		}
@@ -227,7 +240,37 @@ func TestNewQualitySignal_UnsafeModelSentEmpty(t *testing.T) {
 			t.Errorf("model validation must not touch the other fields: %+v", got)
 		}
 	}
-	if got := NewQualitySignal("bruce", "openai/gpt-4o", 0, 0); got.Model != "openai/gpt-4o" {
+	if got := NewQualitySignal("bruce", "openai/gpt-4o", 0, 0, ReconcilerCounts{}); got.Model != "openai/gpt-4o" {
 		t.Errorf("valid slug must pass through, got %q", got.Model)
+	}
+}
+
+// TestNewQualitySignal_CarriesReconcilerCountsApartFromDismissed (Epic 36.1 T3):
+// the reconciler-error counts pass through on their own keys, never folded into
+// dismissed_count, and the persona is hashed exactly as for the other counts.
+func TestNewQualitySignal_CarriesReconcilerCountsApartFromDismissed(t *testing.T) {
+	got := NewQualitySignal("bruce", "claude-sonnet-4-6", 2, 1,
+		ReconcilerCounts{WrongMerge: 3, WrongSplit: 4, WrongCategory: 5})
+	want := QualitySignal{
+		PersonaIDHash:      scorecard.HashPersonaID("bruce"),
+		Model:              "claude-sonnet-4-6",
+		DismissedCount:     2,
+		ConfirmedCount:     1,
+		WrongMergeCount:    3,
+		WrongSplitCount:    4,
+		WrongCategoryCount: 5,
+	}
+	if got != want {
+		t.Errorf("NewQualitySignal = %+v, want %+v", got, want)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "bruce") {
+		t.Errorf("raw persona name on the wire: %s", raw)
+	}
+	if blank := NewQualitySignal(" ", "m", 0, 0, ReconcilerCounts{WrongMerge: 1}); blank != (QualitySignal{}) {
+		t.Errorf("a blank persona must return the zero sentinel even with reconciler counts, got %+v", blank)
 	}
 }

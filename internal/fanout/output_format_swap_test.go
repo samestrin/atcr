@@ -21,7 +21,7 @@ import (
 // matched anything but the FIRST occurrence would corrupt the payload.
 const payloadHeadingSentinel = "+## Output Format\n+PAYLOAD-SENTINEL-KEEP-ME\n"
 
-// allPersonaPrompts returns the 24 embedded persona templates: _base.md, the
+// allPersonaPrompts returns the 25 embedded persona templates: _base.md, the
 // registered personas, and the community library (mirrors personas.allPrompts).
 func allPersonaPrompts(t *testing.T) map[string]string {
 	t.Helper()
@@ -39,7 +39,7 @@ func allPersonaPrompts(t *testing.T) map[string]string {
 		require.NoErrorf(t, err, "CommunityGet(%q)", name)
 		prompts["community/"+name+".md"] = text
 	}
-	require.Len(t, prompts, 24, "precondition: the swap must be proven over all 24 persona files")
+	require.Len(t, prompts, 25, "precondition: the swap must be proven over all 25 persona files")
 	return prompts
 }
 
@@ -94,7 +94,7 @@ func TestJSONObjectOutputFormat_Content(t *testing.T) {
 	assert.True(t, stream.IsNoFindings(`{"findings":[]}`), "the clean reply the block asks for must be a clean review")
 }
 
-// AC 04-01: heading-located swap across all 24 personas; undeclared byte-identical.
+// AC 04-01: heading-located swap across all 25 personas; undeclared byte-identical.
 func TestSwapOutputFormatSection_AllPersonas(t *testing.T) {
 	for _, toolsEnabled := range []bool{false, true} {
 		for file, text := range allPersonaPrompts(t) {

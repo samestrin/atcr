@@ -134,13 +134,22 @@ func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
 		// it and the wire gains an all-zero entry for a pair that previously
 		// produced none — a reviewer that looks perfectly calibrated because its
 		// only measured outcomes are invisible here. Skip it instead: the
-		// outbound payload stays exactly the shape and population it had before
-		// the two statuses existed, which is the deliberate scope boundary.
-		// Extending the payload to carry them is a separate, explicit decision.
-		if r.DismissedCount+r.ConfirmedCount == 0 {
+		// outbound payload stays exactly the population it had before the two
+		// statuses existed, which is the deliberate scope boundary. Extending the
+		// payload to carry them is a separate, explicit decision.
+		//
+		// The Epic 36.1 reconciler-error counts are the opposite case: they DO
+		// have keys of their own, so a pair whose only signal is an annotated
+		// finding (still open, as `atcr debt recluster` leaves it) is reported.
+		reconciler := telemetry.ReconcilerCounts{
+			WrongMerge:    r.WrongMergeCount,
+			WrongSplit:    r.WrongSplitCount,
+			WrongCategory: r.WrongCategoryCount,
+		}
+		if r.DismissedCount+r.ConfirmedCount+reconciler.WrongMerge+reconciler.WrongSplit+reconciler.WrongCategory == 0 {
 			continue
 		}
-		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount)
+		qs := telemetry.NewQualitySignal(r.Persona, r.Model, r.DismissedCount, r.ConfirmedCount, reconciler)
 		if qs.PersonaIDHash == "" {
 			continue // empty/whitespace-only canonical persona
 		}
@@ -148,6 +157,9 @@ func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
 		if existing, ok := groups[k]; ok {
 			existing.DismissedCount += qs.DismissedCount
 			existing.ConfirmedCount += qs.ConfirmedCount
+			existing.WrongMergeCount += qs.WrongMergeCount
+			existing.WrongSplitCount += qs.WrongSplitCount
+			existing.WrongCategoryCount += qs.WrongCategoryCount
 		} else {
 			qsCopy := qs
 			groups[k] = &qsCopy

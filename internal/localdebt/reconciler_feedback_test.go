@@ -153,10 +153,23 @@ func TestReconcilerFeedback_ManualFilingAnnotationIsNotASighting(t *testing.T) {
 }
 
 // TestReconcilerFeedback_QualitySignalUnchanged is T1's third success
-// criterion: AggregateQualitySignal returns the same rows with and without an
-// annotation on the same findings — both when the annotation rides the records
-// themselves and when an annotated copy is appended to each.
+// criterion: AggregateQualitySignal returns the same reviewer outcomes with and
+// without an annotation on the same findings — both when the annotation rides
+// the records themselves and when an annotated copy is appended to each.
+//
+// T3 added the reconciler-error counters to QualityRow on purpose, so the
+// comparison is over the rows with those counters cleared: an annotation moves
+// them and nothing else. The reconciler counts themselves are pinned in
+// qualitysignal_reconciler_test.go.
 func TestReconcilerFeedback_QualitySignalUnchanged(t *testing.T) {
+	outcomes := func(rows []QualityRow) []QualityRow {
+		out := make([]QualityRow, len(rows))
+		for i, r := range rows {
+			r.WrongMergeCount, r.WrongSplitCount, r.WrongCategoryCount = 0, 0, 0
+			out[i] = r
+		}
+		return out
+	}
 	mk := func(id, ts, status string) Record {
 		r := foldRec(id, ts, status)
 		r.Model = "claude-sonnet-4-6"
@@ -187,13 +200,13 @@ func TestReconcilerFeedback_QualitySignalUnchanged(t *testing.T) {
 		r.ReconcilerFeedback = &f
 		inline[i] = r
 	}
-	assert.Equal(t, want, AggregateQualitySignal(inline), "annotation on the same records")
+	assert.Equal(t, want, outcomes(AggregateQualitySignal(inline)), "annotation on the same records")
 
 	appended := append([]Record{}, base...)
 	for _, eff := range FoldRecords(base) {
 		appended = append(appended, annotated(eff, "2026-06-10T00:00:00Z", fb))
 	}
-	assert.Equal(t, want, AggregateQualitySignal(appended), "annotated copy appended per finding")
+	assert.Equal(t, want, outcomes(AggregateQualitySignal(appended)), "annotated copy appended per finding")
 }
 
 // TestAppend_ReconcilerFeedbackWriteGate: the store boundary refuses a malformed

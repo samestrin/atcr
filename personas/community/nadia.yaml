@@ -1,0 +1,7 @@
+name: nadia
+version: 1.0.0
+description: Qwen red-team exploit and bypass reviewer (zero-click attacker lens)
+provider: openrouter
+model: qwen/qwen3-coder-plus
+persona: nadia
+role: redteam

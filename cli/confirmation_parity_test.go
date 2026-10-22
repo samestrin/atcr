@@ -29,7 +29,15 @@ import (
 // The adapter that makes these counters live is TD-039's work and stays unwired.
 func TestScorecardConfirmation_MirrorsLocaldebtCountedOutcomes(t *testing.T) {
 	// nonCounters are QualityRow integer fields that are not per-outcome counters.
-	nonCounters := map[string]bool{"TerminalOutcomes": true}
+	// The three Epic 36.1 reconciler-error counts are listed here, not mirrored:
+	// they are a verdict on how reconcile grouped a finding, not an outcome of the
+	// reviewer that raised it, so they must not reach trust scoring as one.
+	nonCounters := map[string]bool{
+		"TerminalOutcomes":   true,
+		"WrongMergeCount":    true,
+		"WrongSplitCount":    true,
+		"WrongCategoryCount": true,
+	}
 
 	var counted []string
 	row := reflect.TypeOf(localdebt.QualityRow{})
@@ -42,10 +50,10 @@ func TestScorecardConfirmation_MirrorsLocaldebtCountedOutcomes(t *testing.T) {
 			continue
 		}
 		switch {
-		case strings.HasSuffix(f.Name, "Count"):
-			counted = append(counted, strings.TrimSuffix(f.Name, "Count"))
 		case nonCounters[f.Name]:
 			delete(nonCounters, f.Name)
+		case strings.HasSuffix(f.Name, "Count"):
+			counted = append(counted, strings.TrimSuffix(f.Name, "Count"))
 		default:
 			t.Errorf("localdebt.QualityRow integer field %q is neither an <Outcome>Count counter nor a listed non-counter", f.Name)
 		}
