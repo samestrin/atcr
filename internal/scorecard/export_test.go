@@ -948,7 +948,7 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 		older.RaisedIncludesUnresolved = true // era 2: every routed finding charged
 		newer := exportRec("bruce", "claude-sonnet-4-6", 1)
 		newer.RaisedIncludesUnresolved = true
-		newer.RaisedDenominator = RaisedDenominatorCurrent // era 3: doc-shielded carved out
+		newer.RaisedDenominator = RaisedDenominatorCurrent // the current era (raisedDenominatorAmbiguousCharged)
 
 		out, err := Export([]Record{older, newer}, FilterOpts{Since: "all"}, fixedExportNow)
 		require.NoError(t, err)
@@ -982,13 +982,13 @@ func TestExport_CarriesTheRaisedDenominator(t *testing.T) {
 			"the era-2 record must be dropped prefer-newest, not blended into the published row")
 		assert.Equal(t, RaisedDenominatorCurrent, env.Reviewers[0].RaisedDenominator)
 		assert.InDelta(t, 0.25, env.Reviewers[0].CorroborationRate, 1e-9,
-			"the rate is computed from the era-3 record alone (1/4), not the blend (10/14)")
+			"the rate is computed from the current-era record alone (1/4), not the blend (10/14)")
 	})
 
 	// The subtest above does NOT discriminate the era pass: reviewerAcc buckets
-	// by era inside finalize(), so era 2 and era 3 are already separated with or
-	// without `filtered = unresolvedEraRuns(filtered)`. Deleting that line leaves
-	// it green.
+	// by era inside finalize(), so era 2 and the current era are already
+	// separated with or without `filtered = unresolvedEraRuns(filtered)`.
+	// Deleting that line leaves it green.
 	//
 	// What only the era pass does is EXCLUDE an above-current record. byEra keys
 	// on raisedDenominatorOf, which CLAMPS an above-current denominator to
