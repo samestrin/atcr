@@ -191,12 +191,12 @@ func TestResolveTrustPriorsForReview_UsesTheReviewsModels(t *testing.T) {
 
 	onOld := t.TempDir()
 	writePoolSummary(t, onOld, fanout.AgentStatus{Agent: "sasha", Model: "m1"})
-	priors, _ := ResolveTrustPriorsForReview(onOld)
+	priors, _, _ := ResolveTrustPriorsForReview(onOld)
 	assert.Contains(t, priors, "sasha", "still on m1: its m1 history counts")
 
 	onNew := t.TempDir()
 	writePoolSummary(t, onNew, fanout.AgentStatus{Agent: "sasha", Model: "m2"})
-	priors, _ = ResolveTrustPriorsForReview(onNew)
+	priors, _, _ = ResolveTrustPriorsForReview(onNew)
 	assert.NotContains(t, priors, "sasha", "switched to m2: neutral until m2 has its own runs")
 }
 
@@ -211,12 +211,12 @@ func TestResolveTrustPriorsForReview_UnmeasuredFollowsTheModelRule(t *testing.T)
 
 	onOld := t.TempDir()
 	writePoolSummary(t, onOld, fanout.AgentStatus{Agent: "sasha", Model: "m1"})
-	_, unmeasured := ResolveTrustPriorsForReview(onOld)
+	_, _, unmeasured := ResolveTrustPriorsForReview(onOld)
 	assert.Equal(t, 1, unmeasured, "on m1, only the outcome gate keeps sasha out")
 
 	onNew := t.TempDir()
 	writePoolSummary(t, onNew, fanout.AgentStatus{Agent: "sasha", Model: "m2"})
-	_, unmeasured = ResolveTrustPriorsForReview(onNew)
+	_, _, unmeasured = ResolveTrustPriorsForReview(onNew)
 	assert.Zero(t, unmeasured, "on m2 there is no history to un-measure")
 }
 
@@ -226,7 +226,7 @@ func TestResolveTrustPriorsForReview_NoPoolSummaryIsNeutral(t *testing.T) {
 	for _, r := range modelRuns("hist", "sasha", "m1", DefaultTrustMinRuns, 2, 1) {
 		require.NoError(t, Append(store, r))
 	}
-	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
+	priors, _, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
 	assert.Empty(t, priors)
 	assert.Zero(t, unmeasured)
 }

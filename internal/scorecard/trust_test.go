@@ -111,7 +111,7 @@ func TestResolveTrustPriorsForReview_UnresolvableStoreDirIsNil(t *testing.T) {
 	_, err := DefaultDir()
 	require.Error(t, err, "precondition: the store dir cannot be resolved")
 
-	priors, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
+	priors, _, unmeasured := ResolveTrustPriorsForReview(t.TempDir())
 	assert.Nil(t, priors)
 	assert.Zero(t, unmeasured)
 	assert.Nil(t, ResolveTrustPriors(), "both resolvers agree on an unresolvable dir")
