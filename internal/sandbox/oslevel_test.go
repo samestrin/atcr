@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -363,9 +364,16 @@ func TestOSLevelBackendRun_SlowDescendantCannotRecreateTheScratchTree(t *testing
 	// recreating the scratch tree, and nothing ever deleted it again. Its
 	// redirects matter: a descendant still holding the pipes would take the
 	// WaitDelay path instead, and this test is about the exit-0 path.
+	//
+	// The descendant sleeps 30s, far longer than the poll below, so it is
+	// still alive when the poll gives up unless the reap killed it: waiting
+	// for it to die proves the reap, not a race the test always wins. Its pid
+	// goes to a file OUTSIDE the scratch tree, which Run removes.
 	var seen OSLevelConfig
+	pidFile := filepath.Join(t.TempDir(), "descendant.pid")
 	cfg := DefaultOSLevelConfig()
-	cfg.ToolPath = writeFakeOSLevel(t, `( sleep 1; mkdir -p "$HOME/recreated"; touch "$HOME/recreated/late" ) </dev/null >/dev/null 2>&1 &
+	cfg.ToolPath = writeFakeOSLevel(t, `( sleep 30; mkdir -p "$HOME/recreated"; touch "$HOME/recreated/late" ) </dev/null >/dev/null 2>&1 &
+echo $! > '`+pidFile+`'
 exit 0`)
 	cfg.MaxConcurrent = 1
 	b := NewOSLevelBackend(cfg)
@@ -379,9 +387,26 @@ exit 0`)
 	// host temp dir on every test run.
 	t.Cleanup(func() { _ = os.RemoveAll(seen.ScratchDir) })
 
-	// Outlast the descendant's 1s sleep, so the tree's absence is evidence of
-	// the reap rather than a race the test always wins.
-	time.Sleep(2 * time.Second)
+	raw, err := os.ReadFile(pidFile)
+	require.NoError(t, err, "the shim must have recorded the descendant's pid")
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	require.NoError(t, err, "pid file must hold a numeric pid, got %q", raw)
+	// If the reap regresses, do not leave the descendant to wake up and write
+	// under the scratch tree after this test has finished.
+	t.Cleanup(func() {
+		if p, findErr := os.FindProcess(pid); findErr == nil {
+			_ = p.Kill()
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		p, findErr := os.FindProcess(pid)
+		if findErr != nil {
+			return true
+		}
+		return errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone)
+	}, 2*time.Second, 20*time.Millisecond,
+		"descendant (pid %d) left running after a clean exit must be reaped with the process group", pid)
 	assert.NoDirExists(t, seen.ScratchDir,
 		"a descendant left running after a clean exit must be reaped before the scratch tree is removed")
 }
