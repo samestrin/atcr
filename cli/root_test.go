@@ -100,12 +100,7 @@ func TestRepoRoot_LinkedWorktreeResolvesToMainCheckout(t *testing.T) {
 	main := t.TempDir()
 	gitRun := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
+		runFixtureGit(t, dir, args...)
 	}
 	gitRun(main, "init", "-q")
 	require.NoError(t, os.WriteFile(filepath.Join(main, "f"), []byte("x"), 0o644))
