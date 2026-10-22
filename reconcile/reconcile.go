@@ -36,6 +36,19 @@ type Options struct {
 	// byte-identical to pre-35.9 behavior, mirroring epic 13.3's
 	// empty-authority-map guarantee.
 	TrustPriors map[string]float64
+	// OpportunityScoped maps a reviewer's lowercase name — the same key as
+	// TrustPriors — to whether that reviewer's rate was computed over an
+	// opportunity-scoped denominator (true: only the runs in which the reviewer
+	// had something in its remit to find) or the full one (false). Both kinds of
+	// rate are compared against the same trust thresholds, so a consumer of the
+	// reconciled output needs this to tell which definition produced each rate.
+	// It is a separate map rather than a suffix on the TrustPriors key because
+	// consumers look priors up by bare lowercase reviewer name.
+	//
+	// It is carried, never read: the pipeline echoes it into
+	// Summary.OpportunityScoped and nothing else. Nil or empty changes no
+	// output, summary.json included.
+	OpportunityScoped map[string]bool
 	// Consensus selects the consensus filter's corroboration bar (epic 35.9.1):
 	// ConsensusStrict (the default, and what "" means), ConsensusLenient, or
 	// ConsensusOff. It moves ONLY that bar — the consensusMinReviewers panel
@@ -217,6 +230,12 @@ type Summary struct {
 	// attached no priors (a fresh install, an unresolvable config dir, or an
 	// unreadable store — all of which degrade to a nil map by design).
 	TrustPriorsResolved int `json:"trust_priors_resolved"`
+	// OpportunityScoped echoes Options.OpportunityScoped: per lowercase reviewer
+	// name, whether its trust prior was computed over an opportunity-scoped
+	// denominator (true) or the full one (false). A copy, so a caller mutating
+	// its map afterwards cannot rewrite the result. Nil, and omitted from JSON,
+	// when the caller attached no flags.
+	OpportunityScoped map[string]bool `json:"opportunity_scoped,omitempty"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`
@@ -383,11 +402,25 @@ func Reconcile(sources []Source, opts Options) Result {
 			ConsensusFiltered:     consensusFiltered,
 			ConsensusLevel:        consensusLevel,
 			TrustPriorsResolved:   len(opts.TrustPriors),
+			OpportunityScoped:     copyFlags(opts.OpportunityScoped),
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
 		},
 	}
+}
+
+// copyFlags returns a copy of m, or nil when m is empty so an attached-but-empty
+// map serializes exactly like an absent one.
+func copyFlags(m map[string]bool) map[string]bool {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // sortMerged orders findings by severity (most severe first), then file, then
