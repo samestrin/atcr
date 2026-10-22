@@ -20,6 +20,9 @@ single source of truth the website build consumes, so it links every doc in
 
 ## Pipeline stages
 
+- [Review Status (`atcr status`)](status.md) — the progress JSON a poller reads
+  while a review runs: live persona counts, per-persona chunk progress and last
+  activity, the latest finished stage, and the rule for spotting a stalled run.
 - [Payload Modes](payload-modes.md) — `diff`, `blocks`, and `files`: how much
   code each reviewer sees.
 - [Execution reproduction (`--exec`)](execution.md) — sandboxed reproduction of
