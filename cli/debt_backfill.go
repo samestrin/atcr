@@ -117,9 +117,11 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	//
 	// The last clause says why one such dir may own nothing: a reconciled/summary.json
 	// over 1 MiB is ignored (BackfillResult.OversizedSummaries). It counts summary
-	// files, not records, so it stands apart from the partition and the split.
+	// files, not records, so it stands apart from the partition and the split. The pass
+	// reads a dir's summary only when a policy-refused candidate in it asks who owns the
+	// record, so the clause says so: a bare 0 would read as "the tree was checked".
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored (only those checked for a policy refusal)\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
 		res.Unchanged, res.Unresolved, res.Unresolved-res.PolicyUnrepairable-res.PolicyUnattributed,
 		res.PolicyUnrepairable, res.PolicyUnattributed, res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries)

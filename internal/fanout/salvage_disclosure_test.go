@@ -301,18 +301,52 @@ func TestClassifySalvaged_ReadsTheClassFromTheStatusRecord(t *testing.T) {
 	}
 }
 
-// No chunked salvage cost text nests parentheses: the caller already wraps the
-// whole cost in one pair, so an inner pair read as " (chunk 0/1 kept (...))".
-func TestSalvageCost_ChunkedTextHasNoNestedParentheses(t *testing.T) {
-	for _, st := range []AgentStatus{
-		{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2},
-		{Agent: "otto", Salvaged: true, SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3},
-		{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5},
-	} {
-		cost := salvageCost(st)
-		inner := strings.TrimSuffix(strings.TrimPrefix(cost, " ("), ")")
-		assert.NotContains(t, inner, "(", "nested parentheses in %q", cost)
-		assert.NotContains(t, inner, ")", "nested parentheses in %q", cost)
+// No salvage cost text nests parentheses: the caller already wraps the whole cost
+// in one pair, so an inner pair read as " (chunk 0/1 kept (...))". Every branch
+// salvageCost can take has a row, and each row names the text that proves it took
+// that branch, so a row cannot drift onto a sibling branch and leave one unchecked.
+func TestSalvageCost_TextHasNoNestedParentheses(t *testing.T) {
+	cases := []struct {
+		name   string
+		st     AgentStatus
+		branch string // a substring only this row's branch renders; "" for no label
+	}{
+		{"chunked abandoned only",
+			AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5},
+			"refused, its siblings kept"},
+		{"chunked every bin abandoned",
+			AgentStatus{Agent: "dax", Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
+			"contributed nothing"},
+		{"chunked mixed",
+			AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3},
+			"refused, chunk 2 kept as a parsed stop-reason salvage, its siblings kept"},
+		{"chunked every bin on stop",
+			AgentStatus{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2},
+			"chunk 0/1 kept as a parsed stop-reason salvage"},
+		{"unchunked on stop",
+			AgentStatus{Agent: "dax", Salvaged: true, SalvagedOnStop: true},
+			"stop-reason salvage, parsed"},
+		{"unchunked abandoned, no findings",
+			AgentStatus{Agent: "dax", Salvaged: true},
+			"contributed nothing"},
+		{"unchunked abandoned, findings landed",
+			AgentStatus{Agent: "greta", Salvaged: true, FindingsCount: 4},
+			""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cost := salvageCost(tc.st)
+			if tc.branch == "" {
+				require.Empty(t, cost, "precondition: the unlabelled branch")
+				return
+			}
+			require.Contains(t, cost, tc.branch, "precondition: the row takes its branch")
+			require.True(t, strings.HasPrefix(cost, " (") && strings.HasSuffix(cost, ")"),
+				"the cost is wrapped in one outer pair: %q", cost)
+			inner := strings.TrimSuffix(strings.TrimPrefix(cost, " ("), ")")
+			assert.NotContains(t, inner, "(", "nested parentheses in %q", cost)
+			assert.NotContains(t, inner, ")", "nested parentheses in %q", cost)
+		})
 	}
 }
 
