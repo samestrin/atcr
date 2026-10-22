@@ -211,6 +211,13 @@ func TestIgnoreMatcher_NoRules(t *testing.T) {
 	if _, ok := mustMatcher(t).Match(f); ok {
 		t.Error("an empty matcher matched")
 	}
+	// path.Clean("") is ".", which must not let a file-less finding fall
+	// into a repo-root package or a catch-all glob.
+	for _, r := range []IgnoreRule{{Package: ".", Reason: "r"}, {File: "**", Reason: "r"}} {
+		if _, ok := mustMatcher(t, r).Match(JSONFinding{Problem: "x"}); ok {
+			t.Errorf("rule %+v matched a finding with no file", r)
+		}
+	}
 	var nilM *IgnoreMatcher
 	if _, ok := nilM.Match(f); ok {
 		t.Error("a nil matcher matched")
