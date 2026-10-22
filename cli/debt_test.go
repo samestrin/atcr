@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // debtSampleRecords is a small, deterministic corpus spanning severities,
@@ -1206,5 +1207,42 @@ func TestDebtList_MaxCapsHydrationAtSummaryStage(t *testing.T) {
 				assert.Equal(t, all[i].ID, items[i].ID, "row %d", i)
 			}
 		})
+	}
+}
+
+// Epic 76 (debt.go:685): the listing cuts Problem to 60 runes, so a discount
+// reason appended after Problem would be the tail truncation drops. A discounted
+// record with a long Problem must still say so in its listed cell.
+func TestRenderDebtTable_TruncatedProblemKeepsDiscountMarker(t *testing.T) {
+	rec := debtSampleRecords()[0]
+	rec.Problem = strings.Repeat("a very long problem statement ", 8)
+	rec.ConfidenceDiscount = reconcile.PanelWideReason
+	rec.StampID()
+
+	var b bytes.Buffer
+	require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[1], "…", "the problem text is still truncated")
+	assert.Contains(t, lines[1], "(confidence discounted: panel-wide instruction",
+		"the discount marker survives Problem truncation")
+}
+
+// An undiscounted row renders exactly as before the marker existed: Problem
+// truncated to 60 runes and nothing appended.
+func TestRenderDebtTable_UndiscountedProblemUnchanged(t *testing.T) {
+	short := debtSampleRecords()[0]
+	short.Problem = "short problem"
+	long := debtSampleRecords()[0]
+	long.Problem = strings.Repeat("a very long problem statement ", 8)
+
+	for _, rec := range []localdebt.Record{short, long} {
+		var b bytes.Buffer
+		require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+		require.Len(t, lines, 2)
+		assert.True(t, strings.HasSuffix(lines[1], truncate(rec.Problem, 60)),
+			"the row ends with the truncated Problem alone, got %q", lines[1])
+		assert.NotContains(t, lines[1], "confidence discounted")
 	}
 }

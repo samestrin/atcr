@@ -87,7 +87,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
 | `atcr report` | Render md / json / checklist / sarif / axi views over the reconciled findings |
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
-| `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
+| `atcr status` | Print a review's progress as JSON while it runs and after: personas finished so far, each persona's chunk progress and last activity, and the latest finished stage (`fanout` → `reviewed` → `reconciled` → `verified` → `debated`) — see [docs/status.md](docs/status.md) |
 | `atcr init` | Write `.atcr/config.yaml` and the nine default personas (editable) into `.atcr/personas/`, recording what it wrote in `.atcr/personas/.stamp.json`; `--refresh-personas` overwrites built-in copies that have fallen behind the embedded ones (see [Keeping personas current](#keeping-personas-current)) |
 | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`, `--offline`) |
 | `atcr config` | Update project configuration in `.atcr/config.yaml` via `atcr config set <telemetry\|quality_signal> <true\|false>` |
