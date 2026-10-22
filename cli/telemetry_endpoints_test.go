@@ -586,3 +586,19 @@ func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	assert.NotContains(t, stderr.String(), telemetryOverrideLogMsg)
 	assert.Contains(t, stderr.String(), defaultTelemetryEndpoint)
 }
+
+// TestDisplayTelemetryEndpoint pins the scrubbing both the startup log and the
+// first-run notice rely on: scheme, host and path survive; userinfo, query and
+// fragment never do; and a value url.Parse rejects reveals nothing at all.
+func TestDisplayTelemetryEndpoint(t *testing.T) {
+	cases := map[string]string{
+		"https://collector.internal/usage":                       "https://collector.internal/usage",
+		"  https://op:s3cret@collector.internal/usage?t=1#frag ": "https://collector.internal/usage",
+		"http://127.0.0.1:9000/usage":                            "http://127.0.0.1:9000/usage",
+		"https://[::1":                                           "",
+		"":                                                       "",
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, displayTelemetryEndpoint(in), "displayTelemetryEndpoint(%q)", in)
+	}
+}
