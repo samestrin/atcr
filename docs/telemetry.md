@@ -161,6 +161,62 @@ variable set; and setting it back to `true` does **not** override an
 
 ---
 
+## Operator redirect (`--telemetry-endpoint`)
+
+An operator can point the usage ping at a different destination (an internal
+collector, for example) without rebuilding the binary, via the persistent root
+flag `--telemetry-endpoint`:
+
+```sh
+atcr --telemetry-endpoint=https://collector.internal/usage review ...
+```
+
+**The flag is the consent.** There is deliberately **no** environment variable
+and **no** `.atcr/config.yaml` key for this: an ambient env var or a committed
+repo file that silently re-points the destination is an exfiltration channel for
+usage data. Passing the flag on the command line is the explicit, auditable
+opt-in — an override only ever happens because the person invoking the process
+asked for it, in a form visible in CI logs and shell history. An ambient
+environment alone can never redirect the ping.
+
+**The https/loopback rule.** The value is validated by
+`ValidateTelemetryEndpoint` before any client is built, mirroring the
+`--cloud-endpoint` rule (`scorecard.ValidateCloudEndpoint`):
+
+- It must be a well-formed absolute URL.
+- The scheme must be `https://` — plaintext `http://` is allowed **only** for a
+  loopback host (`localhost`, `127.0.0.0/8`, `::1`) for local testing.
+
+A rejected value is a **usage error (exit `2`)** naming `--telemetry-endpoint`;
+the subcommand does not run and nothing is transmitted.
+
+**Scope: the usage ping only.** The override redirects the anonymous usage ping
+and nothing else. The quality-signal destination stays on its compiled-in
+value — the two payloads have different shapes and one URL cannot serve both
+(see [why the destinations must stay distinct](#community-prompt-quality-signal)).
+The opt-out surfaces are unaffected: `ATCR_TELEMETRY=0` or
+`atcr config set telemetry false` still disable the ping wherever it points.
+
+**Startup audit log.** Whenever the flag is given, atcr writes a startup line to
+**stderr** (a `slog` text record) so the effective destination is auditable even
+in a headless CI run:
+
+```
+level=INFO msg="usage telemetry endpoint overridden" endpoint=https://collector.internal/usage
+```
+
+The line is written **whether or not the consent gate permits sending** — it
+records where the process *would* send — and it is never written on the
+non-override path. When the first-run notice is shown, it names the **effective**
+destination, not the compiled-in `atcr.dev` one.
+
+Both the audit line and the notice print the endpoint through
+`displayTelemetryEndpoint`, which keeps only the scheme, host, and path:
+**userinfo, query strings, and fragments are dropped**, so a credential or token
+embedded in an operator URL is never echoed to stderr.
+
+---
+
 ## Persona Leaderboard data
 
 The usage ping above never carries a persona. Persona identity is used only by
