@@ -145,6 +145,7 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt resolve` | List open items and record resolutions |
 | `atcr debt compact` | Fold the append-only store to its live records |
 | `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
+| `atcr debt sync-outcomes` | Record the outcomes of ticked technical-debt README rows that carry a `debt:<id>` token; `--report` shows whether the scorecard gate is met |
 
 ### `atcr debt list`
 
@@ -397,6 +398,72 @@ Refreshing excerpts on every reconcile would re-append a record whenever a revie
 reworded its narrative, and store growth would stop being bounded by finding count
 — which is the whole reason the append path dedupes. Running the repair once, on
 demand, does not. The pass is idempotent: a second run rewrites nothing.
+
+### `atcr debt sync-outcomes`
+
+Seats often close debt by ticking a row in a project's own technical-debt
+README table rather than through `atcr debt resolve`. Until something carries
+that outcome back, the ledger record stays open and the scorecard has no
+ground truth for the reviewer that raised it. `sync-outcomes` is that bridge.
+
+```bash
+atcr debt sync-outcomes --td path/to/technical-debt/README.md
+atcr debt sync-outcomes --report    # read-only; exits 0 either way
+```
+
+**The join is the `debt:<id>` token and nothing else.** A row is matched to a
+ledger record only when its Problem or Source cell carries `debt:` followed by
+the record's 16-hex id. No row is ever matched by file or problem text: rows
+written before the convention carry no id, and that kind of matching joined 0
+of 374 closed rows when it was measured.
+
+**Capture convention.** When you copy a ledger finding into a TD table row, put
+`debt:<id>` in its Problem or Source cell; the id is the leading column of
+`atcr debt list`. When you fix a ledger-backed finding, run
+`atcr debt resolve <id>` directly. `sync-outcomes` is the catch-up for a row
+that was ticked without it.
+
+The row's checkbox marker decides the status, following the TD legend that
+`llm-support td-stats` and `td-filter` read:
+
+| Marker | Legend | Recorded as |
+|--------|--------|-------------|
+| `[x]` or `[X]` | Resolved | `resolved` |
+| `[-]` | Unreproducible (closed without a fix) | `unreproducible` |
+| `[ ]` | Open | nothing; reported and skipped |
+| `[/]` | Deferred | nothing; reported and skipped |
+
+The legend has no marker for `wontfix` or `attempts-exhausted`, so the sync
+never writes either; record those with `atcr debt resolve <id> --status ...`
+and a typed `--reason`. An `unreproducible` record gets the `--reason` its
+status requires from the row: where it came from, and the row's Problem cell.
+A `resolved` record keeps the finding's existing justification, as
+`atcr debt resolve <id>` does.
+
+Each outcome is appended through the same path `atcr debt resolve <id>` uses,
+so reviewer attribution is carried the same way. Run the sync before
+`llm-support td-clean`, which deletes `[x]` rows. Every row it does not record
+is reported, and the run still exits 0:
+
+- a row with no token (counted, not listed);
+- a malformed token, or a row naming more than one id;
+- an unknown marker, or an open or deferred one;
+- an id the store does not hold;
+- two rows that give one id different outcomes (neither is recorded);
+- an id already closed as a different settled status;
+- an id that was re-detected after this outcome was recorded. The row is
+  stale, and re-closing it would close a regression on the strength of the
+  old fix.
+
+**Re-running appends nothing.** An id whose folded record already has the
+row's status counts as `already recorded`.
+
+`--report` prints each persona's counted terminal outcomes (`resolved`,
+`wontfix`, `unreproducible`, `attempts-exhausted`, folded across models, with
+persona names trimmed and lower-cased). It then prints `GATE MET` when at least
+10 personas have 20 or more, the scorecard's `minConfirmationOutcomes` floor,
+and `GATE NOT MET: n of 10 personas at 20` otherwise. `--report` cannot be
+combined with `--td`.
 
 ## End to end
 

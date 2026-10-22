@@ -97,6 +97,12 @@ delivers a genuinely narrower set:
   values toolchains were measured reading at start-up, so the Mac's model and
   hardware UUID are not readable. The host name still is: `sh` and `bash` read
   it when they start.
+- **Programs it can start narrowed (macOS).** The workload can run programs only
+  from `/bin`, `/usr/bin`, `/usr/sbin`, the toolchain prefixes above, the
+  snapshot, and its own scratch directory (where `go test` builds its test
+  binary). These were measured on a real Mac. A program anywhere else, for
+  example in `~/bin` or an app bundle, is refused even where it can be read, and
+  loading code libraries is limited to the toolchain prefixes.
 - **Wall-clock timeout and a concurrency cap**, as with the container backend.
 
 It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
