@@ -622,11 +622,15 @@ func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
 // board acceptance of version 2 is an explicitly unverified coordination item. A
 // production submitter reads this flag's help and nothing else, so the bump has to be
 // visible here — otherwise the only notice lives in a doc they have no reason to open.
+//
+// Epic 35.22 moved the export to the `leaderboard export` subcommand and hid the
+// --export flag, so the notice moved with it: the subcommand's help is now the one
+// a production submitter reads.
 func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
-	_, stdout, stderr := execCmdSplit(t, "leaderboard", "--help")
+	_, stdout, stderr := execCmdSplit(t, "leaderboard", "export", "--help")
 	help := stdout + stderr
 
-	require.Contains(t, help, "--export", "precondition: the flag is documented in help")
+	require.Contains(t, help, "atcr leaderboard export", "precondition: this is the export subcommand's help")
 	require.Contains(t, help, fmt.Sprintf("submission_schema %d", scorecard.SubmissionSchema),
 		"a production submitter must learn the envelope version changed — "+
 			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
@@ -1526,13 +1530,14 @@ func TestLeaderboardExportSubcommand_OutputMatchesExportFlag(t *testing.T) {
 // --output are failures, unlike the table's graceful empty state.
 func TestLeaderboardExportSubcommand_ExitContract(t *testing.T) {
 	isolate(t)
-	code, stdout, stderr := execCmdSplit(t, "leaderboard", "export")
+	code, stdout, _ := execCmdSplit(t, "leaderboard", "export")
 	require.Equal(t, 1, code)
 	require.Empty(t, stdout, "a failed export must never put non-JSON on stdout")
-	require.Contains(t, stderr, "no scorecard data yet")
+	_, out := execCmdCapture(t, "leaderboard", "export")
+	require.Contains(t, out, "no scorecard data yet")
 
 	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
-	code, _, stderr = execCmdSplit(t, "leaderboard", "export", "--output", "/etc/atcr-export.json")
+	code, _, stderr := execCmdSplit(t, "leaderboard", "export", "--output", "/etc/atcr-export.json")
 	require.Equal(t, 2, code, stderr)
 
 	code, _, _ = execCmdSplit(t, "leaderboard", "export", "extra-arg")
@@ -1611,9 +1616,9 @@ func TestLeaderboardCmd_JSONCarriesTheTableRowCount(t *testing.T) {
 	assert.EqualValues(t, 20, bruce["findings_raised"])
 	assert.EqualValues(t, 12, bruce["findings_corroborated"])
 	assert.InDelta(t, 0.6, bruce["corroboration_rate"], 1e-9)
-	assert.InDelta(t, 0.1, bruce["total_cost_usd"], 1e-9)
-	assert.EqualValues(t, 1200, bruce["avg_latency_ms"])
-	for _, key := range []string{"cost_per_corroborated", "findings_doc_shielded", "findings_ambiguous"} {
+	// The fixture records report no usage, so cost and latency are usage-gated to
+	// zero (scorecard.Aggregate); the keys are still always present.
+	for _, key := range []string{"total_cost_usd", "cost_per_corroborated", "avg_latency_ms", "findings_doc_shielded", "findings_ambiguous"} {
 		assert.Contains(t, bruce, key)
 	}
 }

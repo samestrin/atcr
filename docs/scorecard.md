@@ -200,7 +200,7 @@ ranked by corroboration rate (descending). Read-only. Filters compose with AND.
 atcr leaderboard
 
 # Windowed + filtered
-atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona bruce
+atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona=bruce
 ```
 
 Flags:
@@ -210,8 +210,9 @@ Flags:
 | `--since` | `30d` | Time window. `Nd` (days), `Nw` (weeks), `Nm` (30-day months). `N` is a positive integer. |
 | `--model` | _(all)_ | Model id filter (case-insensitive substring, matching `personas search --model`; a full exact id always matches). |
 | `--persona` | _(all)_ | Reviewer/persona filter: the whole name, compared case-insensitively (`Bruce` and `bruce` are one reviewer). |
-| `--export` | off | Emit anonymized public JSON instead of the table (see below). |
-| `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |
+| `--json` | off | Print the table's rows as a JSON array instead of the table (see below). |
+| `--export` | off | **Deprecated, hidden; removed in v0.6.0.** Same as [`atcr leaderboard export`](#atcr-leaderboard-export---output-path). |
+| `--output` | _(stdout)_ | **Deprecated, hidden; removed in v0.6.0.** With `--export`: same as `leaderboard export --output`. |
 
 Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`,
 plus `DOC-SHIELDED` when any group has a nonzero doc-shield count, and
@@ -220,6 +221,15 @@ every run regardless of `raised_denominator`, so a reviewer's `RAISED` can mix
 definition-3 runs, which did not charge the ambiguous findings, with definition-4
 runs, which did; `AMBIGUOUS` is how much of `RAISED` is that charge.
 `COST/CORR` renders as `-` for a group with zero corroborated findings.
+
+`--json` prints the same rows, in the same order, as a JSON array with one object
+per table row: `reviewer`, `model`, `runs`, `findings_raised`,
+`findings_corroborated`, `corroboration_rate`, `total_cost_usd`,
+`cost_per_corroborated` (`null` where the table shows `-`), `avg_latency_ms`,
+`findings_doc_shielded` and `findings_ambiguous` (always present, `0` when the
+table would omit the column). The empty store prints `[]` on stdout and its
+message on stderr, exit `0`; the other outcomes below are unchanged. `--json`
+with `--export` is a usage error (exit `2`).
 
 ### Doc-shielded routings
 
@@ -269,7 +279,11 @@ The canonical form and the reasoning behind it are specified in full under
 catalog personas live in `internal/scorecard/telemetry_test.go`
 (`TestHashPersonaID_PinnedPublishedPersonaDigests`).
 
-### `atcr leaderboard --export [--output path]`
+### `atcr leaderboard export [--output path]`
+
+`leaderboard export` takes the same `--since`, `--model` and `--persona` filters
+as `leaderboard`. It replaced `atcr leaderboard --export [--output path]`, which
+still works as a hidden deprecated alias until v0.6.0 and prints the same bytes.
 
 Emit the versioned, anonymized public submission document (the Epic 10.0
 format). Filters apply **before** anonymization. Output is deterministic
@@ -286,13 +300,13 @@ deliberate; they are not the same guarantee.
 
 ```bash
 # Anonymized JSON to stdout (pipe to jq, a file, etc.)
-atcr leaderboard --export
+atcr leaderboard export
 
 # Anonymized JSON to a file
-atcr leaderboard --export --output /tmp/submission.json
+atcr leaderboard export --output /tmp/submission.json
 
 # Export a filtered slice
-atcr leaderboard --export --since 30d --model claude-sonnet-4-6
+atcr leaderboard export --since 30d --model claude-sonnet-4-6
 ```
 
 The document is the Epic 10.0 submission envelope. It is an **aggregate over the
@@ -377,6 +391,11 @@ for the same shape. The warning is deliberately worded apart from the skip
 report above so a kept record is not mistaken for a dropped one. An identity already
 empty in the store is not warned about — that shape is ordinary history, and reporting
 it would name a large fraction of an unrotated store on every export.
+
+**The exit code does not reflect the blank-identity notice.** An export that kept
+a blank-identity record still exits `0`, deliberately: the record is published, the
+document is complete, and the notice is advice about the store, not a failed
+export. A scripted submitter that wants to catch it must read stderr.
 
 `benchmark export` applies the same rule as a **hard rejection** rather than a skip.
 The asymmetry is deliberate: it validates one just-produced run-result file, where
