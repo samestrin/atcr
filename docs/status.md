@@ -115,6 +115,10 @@ A review with no `summary.json` reads `stale` once the manifest's `started_at`
 plus its `timeout_secs` plus 60 seconds has passed. A review whose manifest
 records neither reads `in_progress` until `summary.json` lands. `stale` means
 the fan-out is presumed dead; `atcr review --resume` continues it.
+`timeout_secs` is the deadline of one bin, not of the whole run, so a long
+multi-bin `--all` / `--scope` review can pass this point while its bins are
+still finishing; check whether `last_activity_at` is still moving before
+resuming one.
 
 ## Spotting a stalled review
 
