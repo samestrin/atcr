@@ -15,6 +15,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/modelslug"
 )
 
 // CloudSyncSchemaVersion is the --sync-cloud payload schema version, emitted on
@@ -54,7 +55,9 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 // push. PersonaIDHash is a one-way HashPersonaID digest (pseudonymous, not
 // anonymous; the ingestion backend keys it with its own pepper on arrival — see
 // HashPersonaID for why the key cannot live in this binary).
-// Model is non-PII. The metrics are the real raw scorecard facts — the
+// Model is the one unhashed identity field, so NewCloudSyncRecord validates it
+// with modelslug.Sanitize: a value that is not a plain catalog slug is sent as "".
+// The metrics are the real raw scorecard facts — the
 // ingestion backend derives any "time/credits saved" figure from these (the CLI
 // ships facts, not a fabricated ROI number).
 type CloudSyncPersona struct {
@@ -109,7 +112,7 @@ func NewCloudSyncRecord(reviewDir, outcome string) CloudSyncRecord {
 		cost := llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
 		rec.Personas = append(rec.Personas, CloudSyncPersona{
 			PersonaIDHash: HashPersonaID(name),
-			Model:         a.Model,
+			Model:         modelslug.Sanitize(a.Model), // pricing above keeps the raw slug
 			CostUSD:       cost,
 			TokensIn:      a.TokensIn,
 			TokensOut:     a.TokensOut,

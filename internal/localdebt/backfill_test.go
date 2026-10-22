@@ -1241,6 +1241,8 @@ func TestReplayCandidates_NilOwnershipCacheDoesNotPanic(t *testing.T) {
 	assert.Empty(t, res.texts, "the symlink must never yield an excerpt")
 	assert.True(t, res.policyRefused,
 		"the refusal sits in the record's own review dir, so a defaulted cache still attributes it")
+	assert.False(t, res.policyUnattributed,
+		"an attributed refusal is not also an unattributed one: the two are exclusive")
 }
 
 // TD internal/localdebt/backfill.go:382 — the namesake narrowing closed the ordinary
@@ -1666,6 +1668,56 @@ func TestBackfillJustifications_NothingToReplayWalksNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, res.Scanned)
 	assert.Zero(t, *walks, "a pass with nothing to replay must not walk the review root")
+}
+
+// TD internal/localdebt/backfill.go:272 — ownershipCache defaults a nil open and log,
+// but the walk seam was copied over the tree's filepath.WalkDir unconditionally, so a
+// zero-value backfillSeams panicked on the first replayable record. A nil walk now
+// keeps the default, as the other two seams do.
+func TestBackfillJustifications_ZeroValueSeamsDoNotPanic(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	rd := filepath.Join(reviewRoot, "sprint-a", "multi-agent", "sources", "pool", "raw", "agent", "dax")
+	require.NoError(t, os.MkdirAll(rd, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(rd, "review.md"),
+		[]byte("# review\n\n- **internal/thing.go:42** the narrative dax wrote.\n"), 0o600))
+	writeShard(t, store, "2026-08",
+		`{"schema_version":3,"id":"dddd0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",`+
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",`+
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",`+
+			`"justification":"- **internal/thing.go:42** a stale excerpt.",`+
+			`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`)
+
+	var res BackfillResult
+	var err error
+	require.NotPanics(t, func() { res, err = backfillJustifications(store, reviewRoot, true, backfillSeams{}) })
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Scanned)
+	assert.Equal(t, 1, res.Rewritten, "a nil walk seam falls back to filepath.WalkDir and still finds review.md")
+}
+
+// TD internal/localdebt/backfill.go:673 — readSummary's io.ReadAll error arm was
+// never reached. The summary here is a regular file whose reconciled_at WOULD own
+// the run, so only the read error stands between it and ownership: an open that
+// hands back the directory makes the read fail, and the summary must read as absent.
+func TestReadSummary_ReadErrorIsTreatedAsAbsent(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
+	openDir := func(name string) (*os.File, error) { return os.Open(filepath.Dir(name)) }
+
+	at, oversized := readSummary(reviewDir, openDir, slog.Default())
+	assert.Empty(t, at, "a summary that cannot be read carries no reconciled_at")
+	assert.False(t, oversized, "a read error is not an oversized skip")
+
+	c := &ownershipCache{open: openDir}
+	assert.False(t, c.owns(reviewDir, "2026-08-01T00:00:00Z-multi-agent"),
+		"an unreadable summary owns nothing, though its contents would have owned the run")
+	assert.Zero(t, c.oversized)
+	assert.True(t, (&ownershipCache{}).owns(reviewDir, "2026-08-01T00:00:00Z-multi-agent"),
+		"control: the same summary read through os.Open does own the run")
 }
 
 // TD internal/localdebt/backfill.go:453 — the walk and the summary open were package

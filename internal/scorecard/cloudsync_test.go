@@ -328,6 +328,48 @@ func TestNewCloudSyncRecord_TrimsAgentNameBeforeHashing(t *testing.T) {
 	}
 }
 
+// TestNewCloudSyncRecord_SanitizesModel covers epic 35.17 AC6: Model is the one
+// unhashed persona field on the --sync-cloud payload, so a value that is not a
+// plain catalog slug is sent as "". Pricing still uses the raw slug, so a real
+// model that is sanitized away keeps its cost.
+func TestNewCloudSyncRecord_SanitizesModel(t *testing.T) {
+	cases := []struct{ model, want string }{
+		{"local/gemma3-27b", "local/gemma3-27b"},
+		{"~anthropic/claude-opus-latest", "~anthropic/claude-opus-latest"},
+		{"corp proxy/secret project", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			dir := t.TempDir()
+			poolDir := filepath.Join(dir, "sources", "pool")
+			if err := os.MkdirAll(poolDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			b, err := json.Marshal(map[string]any{
+				"agents": []map[string]any{{
+					"agent": "greta", "model": tc.model,
+					"tokens_in": 200, "tokens_out": 60, "duration_ms": 1500,
+				}},
+				"total": 1, "succeeded": 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(poolDir, "summary.json"), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			rec := NewCloudSyncRecord(dir, "success")
+			if len(rec.Personas) != 1 {
+				t.Fatalf("Personas len = %d, want 1", len(rec.Personas))
+			}
+			if got := rec.Personas[0].Model; got != tc.want {
+				t.Fatalf("Model = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestNewCloudSyncRecord_MissingPoolSummary covers the best-effort degrade: an
 // unreadable pool summary still yields an outcome-carrying record (no panic).
 func TestNewCloudSyncRecord_MissingPoolSummary(t *testing.T) {
