@@ -127,19 +127,25 @@ func TestIntegration_OSLevelDarwin_MakeRuns(t *testing.T) {
 	// in CI (run 39806011885): "unable to read data link at
 	// '/var/db/xcode_select_link' (Operation not permitted)" under the unchanged,
 	// unscoped exec rule, so the shim failure is a read-tier gap, not something
-	// the exec narrowing can prove or break. A host with no make under a readable
-	// prefix skips, as NpmRuns does. GoTestRuns and NpmRuns carry the
-	// task's proof there.
+	// the exec narrowing can prove or break. The CLT make binary consults
+	// xcode-select too (same error, run 39806821087), so it runs with
+	// DEVELOPER_DIR naming the Command Line Tools, which xcode-select honours
+	// instead of reading the link. Homebrew gmake needs neither and is preferred.
+	// A host with no make under a readable prefix skips, as NpmRuns does;
+	// GoTestRuns and NpmRuns carry the task's proof there.
 	var mk string
 	for _, p := range []string{
-		"/Library/Developer/CommandLineTools/usr/bin/make",
 		"/opt/homebrew/bin/gmake",
 		"/usr/local/bin/gmake",
+		"/Library/Developer/CommandLineTools/usr/bin/make",
 	} {
 		if _, err := os.Stat(p); err == nil {
 			mk = p
 			break
 		}
+	}
+	if strings.HasPrefix(mk, "/Library/Developer/CommandLineTools/") {
+		mk = "DEVELOPER_DIR=/Library/Developer/CommandLineTools " + mk
 	}
 	if mk == "" {
 		t.Skip("no make binary under a prefix the profile reads (Command Line Tools or Homebrew gmake)")
