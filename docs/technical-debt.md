@@ -170,8 +170,9 @@ Flags: `--store`, `--severity` (exact, case-insensitive), `--status` (exact:
 `--max` keeps the first N items of the sorted selection, in the table and in
 `--json` alike. It is a cap, not a pager: there is no offset. Unlike
 `debt resolve --max`, which defaults to `10`, `list` defaults to no cap, so an
-unflagged list is unchanged. On a large store a capped list reads only the N
-records it prints in full, so `--max` is also the way to keep a list cheap.
+unflagged list is unchanged. On a large store a capped list reads in full only
+the N records it prints, but the summary pass that picks them still streams the
+whole store, so peak memory falls but is not proportional to N.
 
 `--status` has no default, so a bare `list` shows every item including closed
 ones, each with its effective status — a resolved item stays visible (as
@@ -351,7 +352,8 @@ whose candidates disagree is left alone rather than rewritten from a guess. The
 run reports those as `ambiguous`, and records no `review.md` yielded an excerpt for
 as `unresolved`. The `unresolved` count is split into three parts. `declined by policy`
 counts a record whose own review holds a `review.md` that the producer refuses (a
-symlink, or a file over the size cap), so restoring the file cannot help. The run
+symlink or other non-regular file, a file over the size cap, a wholly-salvaged reply,
+or a desynced bin list), so restoring the file cannot help. The run
 treats a review dir as the record's own only when its `reconciled/summary.json`
 carries the `reconciled_at` the record's `run_id` was built from, and the dir's name
 matches the one in the `run_id`. For a review dir reached through a symlink, either
