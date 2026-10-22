@@ -118,7 +118,9 @@ type ReviewStatus struct {
 	AgentsPending int    `json:"agents_pending"`
 	Partial       bool   `json:"partial"`
 	// CurrentStage is the latest stage that has finished, never a claim that one
-	// is running: StageFanout while summary.json is absent.
+	// is running: StageFanout while summary.json is absent, then StageReviewed
+	// through StageDebated (postFanoutStage), or the terminal Status of a failed,
+	// interrupted or stale run.
 	CurrentStage string `json:"current_stage,omitempty"`
 	// CompletedAgents is the sorted roster personas with a valid status.json,
 	// whatever outcome it records.
@@ -127,9 +129,18 @@ type ReviewStatus struct {
 	Agents []AgentProgress `json:"agents,omitempty"`
 }
 
-// StageFanout is ReviewStatus.CurrentStage while the fan-out has not written
-// summary.json.
-const StageFanout = "fanout"
+// ReviewStatus.CurrentStage values. StageFanout holds while the fan-out has not
+// written summary.json; the rest name the latest stage that finished after it
+// (Epic 35.16.14.1 T4). reconcile, verify and debate are separate commands and
+// nothing records that one started, so no value means a stage is running. A
+// failed, interrupted or stale run reports its terminal Status instead.
+const (
+	StageFanout     = "fanout"
+	StageReviewed   = "reviewed"
+	StageReconciled = "reconciled"
+	StageVerified   = "verified"
+	StageDebated    = "debated"
+)
 
 // Per-persona states in AgentProgress.State. There is no running state: a lease
 // lives only in memory, so a pending persona may already be mid-run.
@@ -178,6 +189,10 @@ type AgentProgress struct {
 //     neither is read here), so whichever manifest version a reader observes
 //     yields the same result. Therefore no manifest/summary interleaving can
 //     produce a torn-pair misreport: every concurrent read returns a valid state.
+//   - CurrentStage also reads manifest.stages and the reconciled/ marker files.
+//     verify and debate rewrite the manifest atomically and only ever append to
+//     stages, and each marker is an atomic write, so an older manifest or a
+//     missing marker yields an earlier finished stage, never a wrong one.
 //   - The per-persona status.json and chunks.json behind the live counts and the
 //     Agents rows are atomic writes too, and each is read on its own: one that
 //     is corrupt, unreadable or outside the review tree is skipped, never an
@@ -235,6 +250,7 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		}
 		if staleByDeadline(m) {
 			st.Status = RunStale
+			st.CurrentStage = RunStale
 		} else {
 			st.CurrentStage = StageFanout
 		}
@@ -265,7 +281,42 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if m.Interrupted {
 		st.Status = RunInterrupted
 	}
+	if st.Status == RunCompleted {
+		st.CurrentStage = postFanoutStage(reviewDir, m.Stages)
+	} else {
+		st.CurrentStage = st.Status
+	}
 	return st, nil
+}
+
+// postFanoutStage names the latest stage that finished after a completed
+// fan-out: reviewed, then reconciled once reconciled/findings.json exists,
+// verified once reconciled/verification.json exists or stages lists verify, and
+// debated once reconciled/debate.json exists or stages lists debate. The
+// highest one found wins. A marker counts only as a regular file inside the
+// review tree (pathWithin), so a directory or an escaping symlink is ignored.
+func postFanoutStage(reviewDir string, stages []string) string {
+	listed := make(map[string]bool, len(stages))
+	for _, s := range stages {
+		listed[s] = true
+	}
+	marker := func(name string) bool {
+		p := filepath.Join(reviewDir, "reconciled", name)
+		if !pathWithin(reviewDir, p) {
+			return false
+		}
+		fi, err := os.Stat(p)
+		return err == nil && fi.Mode().IsRegular()
+	}
+	switch {
+	case listed["debate"] || marker("debate.json"):
+		return StageDebated
+	case listed["verify"] || marker("verification.json"):
+		return StageVerified
+	case marker("findings.json"):
+		return StageReconciled
+	}
+	return StageReviewed
 }
 
 // staleByDeadline reports whether a summary-less review has exceeded its
