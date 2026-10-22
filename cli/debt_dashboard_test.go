@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -392,4 +396,131 @@ func TestDebtDashboard_CheckFailsAfterStoreMutation(t *testing.T) {
 
 	_, err = runDebt(t, "dashboard", "--dir", dir, "--output", out, "--check")
 	require.Error(t, err, "a store mutation must be detected as drift")
+}
+
+// updateJSONGolden rewrites the --json golden files (Epic 35.22 T3) from the
+// current render. Run it only against a render already checked by hand.
+var updateJSONGolden = flag.Bool("update-json-golden", false, "rewrite cli/testdata/*.golden.json")
+
+// runDebtSplit runs `atcr debt <args>` with stdout and stderr kept apart: the
+// --json contract is that stdout alone parses, so a test must not read the
+// hydrate shortfall notes and warnings that go to stderr as part of it.
+func runDebtSplit(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	cmd := newDebtCmd()
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return out.String(), errBuf.String(), err
+}
+
+// assertJSONGolden compares got against cli/testdata/<name>, rewriting the file
+// first under -update-json-golden.
+func assertJSONGolden(t *testing.T, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *updateJSONGolden {
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, string(want), got, "the --json render drifted from %s", path)
+}
+
+// markdownSectionRows counts the data rows of the table under a dashboard
+// heading: every "| " line in the section minus the header and separator. A
+// section with no table ("_No items._", the suppressed top list) counts 0.
+func markdownSectionRows(t *testing.T, md, heading string) int {
+	t.Helper()
+	start := strings.Index(md, heading)
+	require.GreaterOrEqual(t, start, 0, "the dashboard has a %q section", heading)
+	section := md[start+len(heading):]
+	if next := strings.Index(section, "\n## "); next >= 0 {
+		section = section[:next]
+	}
+	rows := 0
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(line, "| ") {
+			rows++
+		}
+	}
+	if rows == 0 {
+		return 0
+	}
+	return rows - 2
+}
+
+// Epic 35.22 T3: `debt dashboard --json` is built from the same data as the
+// Markdown render, so every table carries the same rows in both, at every --top
+// shape: suppressed, shorter than the backlog, and longer than it.
+func TestDebtDashboardJSON_GoldenParsesAndMatchesTheTableRowCounts(t *testing.T) {
+	dir := writeLocalDebt(t, debtDashboardGoldenCorpus()...)
+	for _, top := range []int{0, 3, 50} {
+		t.Run(fmt.Sprintf("top=%d", top), func(t *testing.T) {
+			got, _, err := runDebtSplit(t, "dashboard", "--dir", dir, "--top", fmt.Sprint(top), "--json")
+			require.NoError(t, err)
+			assertJSONGolden(t, fmt.Sprintf("debt_dashboard_top%d.golden.json", top), got)
+
+			var doc struct {
+				Totals struct {
+					Total                 int `json:"total"`
+					Open                  int `json:"open"`
+					ReconcilerCorrections int `json:"reconciler_corrections"`
+				} `json:"totals"`
+				BySeverity  []map[string]any `json:"by_severity"`
+				ByComponent []map[string]any `json:"by_component"`
+				ByMonth     []map[string]any `json:"by_month"`
+				TopPriority []map[string]any `json:"top_priority"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(got), &doc), "stdout is one JSON document")
+
+			md, _, err := runDebtSplit(t, "dashboard", "--dir", dir, "--top", fmt.Sprint(top))
+			require.NoError(t, err)
+			assert.Equal(t, markdownSectionRows(t, md, "## By Severity"), len(doc.BySeverity), "by_severity rows")
+			assert.Equal(t, markdownSectionRows(t, md, "## By Component"), len(doc.ByComponent), "by_component rows")
+			assert.Equal(t, markdownSectionRows(t, md, "## By Age (unresolved, by month)"), len(doc.ByMonth), "by_month rows")
+			assert.Equal(t, markdownSectionRows(t, md, "## Top Priority"), len(doc.TopPriority), "top_priority rows")
+			assert.Equal(t, 17, doc.Totals.Total)
+			assert.Equal(t, 10, doc.Totals.Open)
+			assert.Equal(t, 1, doc.Totals.ReconcilerCorrections)
+
+			// The help promise ("secret-shaped tokens in finding text are
+			// scrubbed") holds on the JSON path too.
+			assert.NotContains(t, got, "sk-live0000SECRET")
+		})
+	}
+}
+
+// An empty store yields empty arrays, never null: a consumer can range over
+// every section without a nil check.
+func TestDebtDashboardJSON_EmptyStoreHasEmptyArrays(t *testing.T) {
+	dir := writeLocalDebt(t)
+	got, _, err := runDebtSplit(t, "dashboard", "--dir", dir, "--json")
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got), &doc))
+	for _, key := range []string{"by_component", "by_month", "top_priority"} {
+		assert.Equal(t, []any{}, doc[key], "%s is [] on an empty store", key)
+	}
+}
+
+// --output and --check are about the committed Markdown file (its authorship
+// marker and its drift), so neither has a meaning for JSON on stdout. Refused
+// as a usage error rather than one flag silently winning.
+func TestDebtDashboardJSON_RefusesOutputAndCheck(t *testing.T) {
+	dir := writeLocalDebt(t)
+	out := filepath.Join(t.TempDir(), "DASHBOARD.md")
+	for _, args := range [][]string{
+		{"--output", out},
+		{"--output", out, "--check"},
+	} {
+		_, _, err := runDebtSplit(t, append([]string{"dashboard", "--dir", dir, "--json"}, args...)...)
+		require.Error(t, err, "%v", args)
+		assert.Equal(t, exitUsage, exitCode(err), "%v", args)
+		assert.ErrorContains(t, err, "--json")
+		assert.NoFileExists(t, out)
+	}
 }
