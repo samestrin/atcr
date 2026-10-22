@@ -341,23 +341,37 @@ visibility into the service — a copy there could never be detected going stale
 
 ### Quality-signal payload schema
 
-The payload is a list of per-(persona, model) rows. Each row carries exactly four
-allowlisted fields and nothing else:
+The payload is a list of per-(persona, model) rows. Each row carries exactly
+seven allowlisted fields and nothing else:
 
-| Field              | Type   | Example                                                              | Meaning                                                      |
-|--------------------|--------|---------------------------------------------------------------------|-------------------------------------------------------------|
-| `persona_id_hash`  | string | `a1b2c3…` (SHA-256 hex)                                              | The one-way hash of the reviewer/persona name (see below).  |
-| `model`            | string | `claude-sonnet-4-6`                                                  | The model slug that ran under that persona. Sent as `""` unless it is at most 128 characters of `[A-Za-z0-9._:/~@+-]`. |
-| `dismissed_count`  | int    | `3`                                                                  | How many of that pair's findings were dismissed (`wontfix`).|
-| `confirmed_count`  | int    | `1`                                                                  | How many were confirmed/kept (`resolved`).                  |
+| Field                  | Type   | Example                                                              | Meaning                                                      |
+|------------------------|--------|---------------------------------------------------------------------|-------------------------------------------------------------|
+| `persona_id_hash`      | string | `a1b2c3…` (SHA-256 hex)                                              | The one-way hash of the reviewer/persona name (see below).  |
+| `model`                | string | `claude-sonnet-4-6`                                                  | The model slug that ran under that persona. Sent as `""` unless it is at most 128 characters of `[A-Za-z0-9._:/~@+-]`. |
+| `dismissed_count`      | int    | `3`                                                                  | How many of that pair's findings were dismissed (`wontfix`).|
+| `confirmed_count`      | int    | `1`                                                                  | How many were confirmed/kept (`resolved`).                  |
+| `wrong_merge_count`    | int    | `1`                                                                  | How many of that pair's findings a developer annotated `wrong-merge` with `atcr debt recluster` — reconcile merged distinct issues into the finding. |
+| `wrong_split_count`    | int    | `0`                                                                  | The same for `wrong-split` — reconcile split one issue into two findings. |
+| `wrong_category_count` | int    | `2`                                                                  | The same for `wrong-category` — reconcile filed the finding under the wrong category. |
+
+The last three keys are **reconciler-error counts**: a verdict on how reconcile
+grouped the finding, recorded as a `reconciler_feedback` annotation in the local
+debt store (see
+[docs/technical-debt.md](technical-debt.md#atcr-debt-recluster)). They are kept
+apart from `dismissed_count`, which is a verdict on the **reviewer**: a
+`wontfix` dismissal raises `dismissed_count` only, and a `wrong-merge`
+annotation raises `wrong_merge_count` only.
 
 That is the whole payload. This is its **own separately-tested allowlist** — it
 does **not** embed or extend the usage-ping `event`, any scorecard struct, or a
 local-debt record, so no source code, file path, or finding text can structurally
 be placed into it. A dedicated regression test locks the wire schema to exactly
-these four keys and fails loudly on any future field addition.
+these seven keys and fails loudly on any future field addition. The backend
+validates the same set by **strict key-set equality** (see above): an extra or
+missing key is a `400`, so any change to this key set is a coordinated change
+with the atcr.dev ingest.
 
-None of the four fields carries `omitempty`, so **zero-value counts always
+None of the seven fields carries `omitempty`, so **zero-value counts always
 serialize as `0`** — a maintainer can distinguish "zero dismissals" from "field
 absent".
 
@@ -433,7 +447,10 @@ human-readable marker on its own line:
     "persona_id_hash": "a1b2c3…",
     "model": "claude-sonnet-4-6",
     "dismissed_count": 3,
-    "confirmed_count": 1
+    "confirmed_count": 1,
+    "wrong_merge_count": 1,
+    "wrong_split_count": 0,
+    "wrong_category_count": 2
   }
 ]
 Preview only — nothing was transmitted. The quality signal is sent only after you explicitly opt in.
@@ -457,11 +474,11 @@ never be mistaken for confirmation that data was transmitted.
 
 ### No code, no finding content, ever
 
-The quality signal transmits **only** the four allowlisted primitive fields above:
-a hashed persona identifier, a model slug, and two integer counts. It carries **no
+The quality signal transmits **only** the seven allowlisted primitive fields above:
+a hashed persona identifier, a model slug, and five integer counts. It carries **no
 source code, no file path, no repository name, and no finding text, title, or
 excerpt** — not by policy but structurally: the payload type cannot embed or
-extend any struct that holds those, and the four-key allowlist is locked by a
+extend any struct that holds those, and the seven-key allowlist is locked by a
 regression test. Nothing is sent by default, and `--dry-run` lets you inspect the
 exact bytes before you ever opt in.
 

@@ -143,6 +143,7 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt add` | File a new item into the store |
 | `atcr debt dashboard` | Render an aggregated Markdown dashboard |
 | `atcr debt resolve` | List open items and record resolutions |
+| `atcr debt recluster` | Record feedback on how reconcile grouped a finding |
 | `atcr debt compact` | Fold the append-only store to its live records |
 | `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
 | `atcr debt sync-outcomes` | Record the outcomes of ticked technical-debt README rows that carry a `debt:<id>` token; `--report` shows whether the scorecard gate is met |
@@ -246,6 +247,13 @@ redirect stdout to save the JSON.
 
 The render is **deterministic** — no generation timestamp, age grouped by
 calendar month — so `--check` flags real content drift, not clock movement.
+
+The totals header and the By Severity table end with a **Reconciler
+corrections** count: findings whose effective record carries a
+`reconciler_feedback` annotation recorded by `atcr debt recluster`. It is not a
+status bucket and not a summand of Total — an annotated finding is still
+counted under its status — which is why it prints last, after every status
+counter.
 Secret-shaped tokens (bearer / `sk-` API keys) accidentally pasted into finding
 text are scrubbed from the output; file paths and finding ids are preserved (both
 are required core data, and scrubbing an id would break the join contract).
@@ -276,6 +284,45 @@ ground truth when scoring which review lenses produce real findings.
 
 Resolution is append-only: a terminal record is appended, never edited in place,
 and the original id is preserved so the resolution lines up with the finding.
+
+### `atcr debt recluster`
+
+Records a verdict on how **reconcile grouped** a finding — not on the finding
+itself. The reconciler clusters similar findings from different reviewers into
+one; when that clustering is wrong, `recluster` says so:
+
+```bash
+atcr debt recluster <id> --kind wrong-merge    --reason "two unrelated races merged"
+atcr debt recluster <id> --kind wrong-split    --with <finding-id> --reason "one issue filed twice"
+atcr debt recluster <id> --kind wrong-category --reason "this is correctness, not style"
+```
+
+The three `--kind` values:
+
+- `wrong-merge` — reconcile merged distinct issues into this finding.
+- `wrong-split` — reconcile split one issue, so this finding and another should
+  be one; name the other finding with `--with <finding-id>` (the only kind that
+  takes a partner).
+- `wrong-category` — reconcile filed this finding under the wrong category.
+
+Flags: `--store`, `--kind` (required, one of the three above), `--with`
+(the partner finding's id; only with `--kind wrong-split`, and it must name an
+existing finding other than the one named positionally), `--reason`
+(required). The id is positional and is the leading column of `atcr debt list`.
+
+The feedback is appended to the store as a `reconciler_feedback` annotation (see
+the [record schema](#record-schema-v3)). It deliberately changes nothing else:
+the finding's `status` stays as it is, the annotation is not counted as a
+sighting in `occurrences`, and it does not move the `wontfix` count — close or
+dismiss the finding itself with `atcr debt resolve`. The separation matters
+because a `wontfix` is a verdict on the reviewer (ground truth for the quality
+signal), while a recluster annotation is a verdict on the reconciler's grouping.
+The dashboard reports these as **Reconciler corrections**, apart from
+`Wontfix`, and the opt-in quality signal counts them on their own keys (see
+[docs/telemetry.md](telemetry.md#quality-signal-payload-schema)).
+
+An unknown id, an unknown `--kind`, a `--with` on a kind that takes no partner,
+or an empty `--reason` is a usage error (exit 2).
 
 ### `atcr debt compact`
 
