@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1259,4 +1260,116 @@ func TestFormatScoreDetail_MarksBelowFloorSamplesProvisional(t *testing.T) {
 
 	assert.NotContains(t, formatScoreDetail(nil), "provisional",
 		"n/a is the no-data marker and must stay the only one; an unmeasured lens is not a weakly-measured one")
+}
+
+// --- Epic 35.22 T3: personas list --json -------------------------------------
+
+// personasTableRows counts the data rows of a `personas list` table: the lines
+// up to the first blank one (where a --scores footer starts), minus the header.
+func personasTableRows(t *testing.T, out string) int {
+	t.Helper()
+	table, _, _ := strings.Cut(out, "\n\n")
+	lines := strings.Split(strings.TrimRight(table, "\n"), "\n")
+	require.NotEmpty(t, lines)
+	require.True(t, strings.HasPrefix(lines[0], "NAME"), "the table starts with its header: %q", lines[0])
+	return len(lines) - 1
+}
+
+// jsonScoresFixture covers every shape a --scores row can take: a measured lens
+// in use by reconcile, a measured lens that raised nothing (no rate, unlike a
+// real 0%), a registry-only lens with no installed definition, and the built-ins
+// with no history at all.
+func jsonScoresFixture() personasScoreData {
+	return personasScoreData{
+		rates: map[string]float64{"sasha": 0.72, "bruce": 0, "registryonly": 0.5},
+		details: map[string]scorecard.PersonaScoreDetail{
+			"sasha": {Counted: 20, Excluded: 5, Raised: 25, Reasons: map[string]int{
+				scorecard.ReasonOutcomeIneligible: 5,
+			}},
+			"bruce":        {Counted: 3, Raised: 0, Reasons: map[string]int{}},
+			"registryonly": {Counted: 12, Raised: 12, Reasons: map[string]int{}},
+		},
+		path:  "/home/u/.config/atcr/scorecard",
+		inUse: map[string]float64{"sasha": 0.72},
+	}
+}
+
+func TestPersonasListJSON_GoldenParsesAndMatchesTheTableRowCount(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/security/owasp.yaml": cmdValidPersonaYAML})
+	dir := withPersonasEnv(t, srv)
+	require.NoError(t, personas.Install(http.DefaultClient, srv.URL, "security/owasp", dir))
+	called := false
+	withPersonasScores(t, personasScoreData{}, nil, &called)
+
+	got, _, err := executeSplit(t, "personas", "list", "--json")
+	require.NoError(t, err)
+	assertJSONGolden(t, "personas_list.golden.json", got)
+
+	var rows []struct {
+		Name     string   `json:"name"`
+		Version  string   `json:"version"`
+		Source   string   `json:"source"`
+		Language []string `json:"language"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &rows), "stdout is one JSON array")
+
+	table, _, err := executeSplit(t, "personas", "list")
+	require.NoError(t, err)
+	assert.Equal(t, personasTableRows(t, table), len(rows), "one JSON row per table row")
+	assert.False(t, called, "--json without --scores does not load scores either")
+	for _, r := range rows {
+		assert.NotNil(t, r.Language, "%s: language is [] rather than null", r.Name)
+	}
+}
+
+func TestPersonasListJSON_ScoresGoldenParsesAndMatchesTheTableRowCount(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, jsonScoresFixture(), nil, nil)
+
+	got, _, err := executeSplit(t, "personas", "list", "--scores", "--json")
+	require.NoError(t, err)
+	assertJSONGolden(t, "personas_list_scores.golden.json", got)
+
+	type score struct {
+		Corroboration *float64       `json:"corroboration"`
+		Raised        int            `json:"raised"`
+		Counted       int            `json:"counted"`
+		Excluded      int            `json:"excluded"`
+		Reasons       map[string]int `json:"reasons"`
+	}
+	var rows []struct {
+		Name             string `json:"name"`
+		Source           string `json:"source"`
+		Score            *score `json:"score"`
+		InUseByReconcile bool   `json:"in_use_by_reconcile"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(got), &rows), "stdout is one JSON array, with no footer after it")
+
+	table, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Equal(t, personasTableRows(t, table), len(rows), "one JSON row per table row")
+
+	byName := map[string]int{}
+	for i, r := range rows {
+		byName[r.Name] = i
+	}
+	sasha := rows[byName["sasha"]]
+	require.NotNil(t, sasha.Score)
+	require.NotNil(t, sasha.Score.Corroboration)
+	assert.InDelta(t, 0.72, *sasha.Score.Corroboration, 1e-9)
+	assert.Equal(t, 25, sasha.Score.Raised)
+	assert.Equal(t, 5, sasha.Score.Reasons[scorecard.ReasonOutcomeIneligible])
+	assert.True(t, sasha.InUseByReconcile)
+
+	// Raised nothing: the table prints "n/a (raised 0)", never 0.0%, and the
+	// JSON keeps the same distinction with a null rate beside raised: 0.
+	bruce := rows[byName["bruce"]]
+	require.NotNil(t, bruce.Score)
+	assert.Nil(t, bruce.Score.Corroboration)
+	assert.Equal(t, 0, bruce.Score.Raised)
+	assert.False(t, bruce.InUseByReconcile)
+
+	// No history at all: no score object, the table's "n/a".
+	assert.Nil(t, rows[byName["kai"]].Score)
 }
