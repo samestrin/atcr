@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -63,13 +62,7 @@ func initRepo(t *testing.T) (dir, base, head string) {
 	t.Helper()
 	dir = t.TempDir()
 	run := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-		return strings.TrimSpace(string(out))
+		return fanoutGit(t, dir, args...)
 	}
 	run("init", "-q")
 	run("config", "commit.gpgsign", "false")
@@ -434,13 +427,7 @@ func TestRunReview_ConfiguredBudgetRecordsTruncation(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
 	dir := t.TempDir()
 	run := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-		return strings.TrimSpace(string(out))
+		return fanoutGit(t, dir, args...)
 	}
 	run("init", "-q")
 	run("config", "commit.gpgsign", "false")
@@ -495,13 +482,7 @@ func TestPrepareReview_BudgetDropsAllFilesErrors(t *testing.T) {
 func TestPrepareReview_OnlyEmptyCommitsRejectedBeforeScaffold(t *testing.T) {
 	repo, _, head := initRepo(t)
 	run := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-		return strings.TrimSpace(string(out))
+		return fanoutGit(t, repo, args...)
 	}
 	run("commit", "-q", "--allow-empty", "-m", "empty")
 	emptyHead := run("rev-parse", "HEAD")
