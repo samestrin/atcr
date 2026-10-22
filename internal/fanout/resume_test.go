@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -523,6 +526,42 @@ func TestSummarizeStatuses_SumsUnreviewedChunks(t *testing.T) {
 		{Agent: "b", Status: StatusOK},
 	})
 	assert.Equal(t, 1, sum.UnreviewedChunks, "a failed chunk in the union must surface in the resume summary")
+}
+
+// UnreviewedFiles/DeferredFiles are per-persona sums, not the size of the
+// uncovered file set (TD internal/fanout/resume.go:940): three personas missing
+// the same two files report 6, while the coverage line (ReadCoverage) counts
+// those files once. AgentStatus carries counts, not paths, so the resume path
+// cannot form the union; the sum is pinned here, on both producers, and the
+// summarizeStatuses doc comment must say so.
+func TestSummarizeStatuses_UnreviewedFilesArePerPersonaSums(t *testing.T) {
+	var statuses []AgentStatus
+	var results []Result
+	for _, a := range []string{"a", "b", "c"} {
+		// Each persona missed the same two files, both deferred.
+		statuses = append(statuses, AgentStatus{Agent: a, Status: StatusOK, UnreviewedFiles: 2, DeferredFiles: 2})
+		results = append(results, Result{Agent: a, Status: StatusOK, UnreviewedFiles: 2, DeferredFiles: 2})
+	}
+	sum := summarizeStatuses(statuses)
+	assert.Equal(t, 6, sum.UnreviewedFiles, "summed per persona: the same 2 files count once per persona")
+	assert.Equal(t, 6, sum.DeferredFiles, "summed per persona")
+	live := summarize(results)
+	assert.Equal(t, live.UnreviewedFiles, sum.UnreviewedFiles, "the resume tally must match the live one")
+	assert.Equal(t, live.DeferredFiles, sum.DeferredFiles)
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "resume.go", nil, parser.ParseComments)
+	require.NoError(t, err)
+	var doc string
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "summarizeStatuses" {
+			doc = fn.Doc.Text()
+		}
+	}
+	require.NotEmpty(t, doc, "summarizeStatuses must keep its doc comment")
+	for _, want := range []string{"UnreviewedFiles", "DeferredFiles", "per-persona sums", "ReadCoverage"} {
+		assert.Contains(t, doc, want, "the doc comment must state the per-persona sum and name the union")
+	}
 }
 
 // TestExecuteResume_ReviewStageReflectsResumedRun verifies the manifest's Review
