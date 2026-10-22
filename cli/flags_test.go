@@ -533,3 +533,57 @@ func TestValidateDirFlag_AcceptsSymlinkedRootAbsolutePath(t *testing.T) {
 	require.NoError(t, err, "an in-root absolute path in resolved form must be accepted through a symlinked root")
 	assert.Equal(t, "internal/fanout", scope)
 }
+
+// jsonFormatCmd is a bare command carrying --format (default md) and the shared
+// --json flag, the shape report and quality-report have.
+func jsonFormatCmd(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "x"}
+	cmd.Flags().String("format", "md", "")
+	addJSONFlag(cmd)
+	require.NoError(t, cmd.ParseFlags(args))
+	return cmd
+}
+
+// TestFormatWithJSON covers Epic 35.22 T1: --json is sugar for --format json,
+// and asking for JSON and a different --format at once is a usage error (exit 2).
+func TestFormatWithJSON(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+		code int // 0 = no error
+	}{
+		{"neither flag keeps the default", nil, "md", 0},
+		{"--format alone passes through", []string{"--format", "sarif"}, "sarif", 0},
+		{"--json alone means json", []string{"--json"}, "json", 0},
+		{"--json with --format json agrees", []string{"--json", "--format", "json"}, "json", 0},
+		{"--json=false leaves --format alone", []string{"--json=false", "--format", "md"}, "md", 0},
+		{"--json with --format md conflicts", []string{"--json", "--format", "md"}, "", exitUsage},
+		{"--json with --format sarif conflicts", []string{"--format", "sarif", "--json"}, "", exitUsage},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := formatWithJSON(jsonFormatCmd(t, tc.args...))
+			if tc.code != 0 {
+				require.Error(t, err)
+				assert.Equal(t, tc.code, exitCode(err))
+				assert.Contains(t, err.Error(), "--json")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestAddJSONFlag_RegistersBoolDefaultFalse pins the shared flag's shape, so
+// every command that adopts it scripts the same way.
+func TestAddJSONFlag_RegistersBoolDefaultFalse(t *testing.T) {
+	cmd := &cobra.Command{Use: "x"}
+	addJSONFlag(cmd)
+	f := cmd.Flags().Lookup("json")
+	require.NotNil(t, f)
+	assert.Equal(t, "bool", f.Value.Type())
+	assert.Equal(t, "false", f.DefValue)
+}
