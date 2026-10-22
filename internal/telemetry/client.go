@@ -330,6 +330,17 @@ func (c *Client) HasUsageDestination() bool {
 	return c != nil && isSendableEndpoint(c.endpoint)
 }
 
+// UsageEndpoint returns the usage-ping destination this client was built with,
+// exactly as configured (it may carry userinfo, so scrub it before display). The
+// startup audit log and the first-run disclosure read it so they name where the
+// ping actually goes, not the compiled-in default. Nil-safe: "" for a nil client.
+func (c *Client) UsageEndpoint() string {
+	if c == nil {
+		return ""
+	}
+	return c.endpoint
+}
+
 // Go runs fn on a detached goroutine that is registered with the client's
 // WaitGroup BEFORE it starts, so a concurrent Wait cannot return while fn is
 // still running.
