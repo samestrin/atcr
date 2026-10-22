@@ -133,6 +133,7 @@ fail_on: HIGH
 | `cache_max_bytes` | `52428800` | Total-size cap (bytes, 50 MiB default) for the diff cache under `.atcr/cache`. A re-run over an unchanged diff replays each reviewer's prior output and skips the LLM call; cache keys combine the payload digest, model id, and persona digest. Least-recently-used entries are evicted once the cap is exceeded. `0` = unbounded; negative is rejected. Bypass a single run's cache reads with `atcr review --no-cache` (fresh results are still written back). Only the review fan-out is cached — tool-enabled agents (live code reads) and the verification stage are not. |
 | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
 | `consensus` | `strict` | Corroboration bar for the reconcile consensus filter, applied only once a panel has 3+ distinct reviewers. `strict` sidecars every singleton below `HIGH` confidence (the epic-14.2 behavior); `lenient` keeps `MEDIUM`-confidence singletons and sidecars only `LOW` ones; `off` makes the consensus filter inert — but note this is not a return to pre-14.2 output: epic 35.9's trust demotion still applies (it is gated only by the panel floor), so `off` output can contain `LOW`-confidence findings pre-14.2 output never did. Only the bar moves — the panel floor and every exemption (security-related, `HIGH`/`CRITICAL`, out-of-scope, high-trust reviewer) apply identically at all three levels. Case-insensitive; an unrecognized value is rejected. CLI override: `atcr reconcile --consensus <level>`. |
+| `context_prefetch` | *unset — semantic retrieval off* | Optional block whose only member today is `semantic`, the opt-in similarity-retrieval client (Epic 35.16.12). **Off unless every part of it is configured:** an absent, empty, or partially blank block resolves to disabled and the run makes no network call for it. See [Similarity retrieval (`context_prefetch.semantic`)](#similarity-retrieval-context_prefetchsemantic). Resolves at the registry and project tiers only (no CLI flag). |
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
@@ -150,7 +151,66 @@ Most shared settings have an `atcr review` CLI override, but three flag names di
 | `max_parallel` | `--max-parallel` |
 
 `--timeout` takes bare seconds (no unit suffix, matching `timeout_secs`).
-`review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, `max_claim_bytes`, `max_prefetch_bytes`, and `cache_max_bytes` resolve at the registry and project tiers only — there is no CLI flag for them.
+`review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, `max_claim_bytes`, `max_prefetch_bytes`, `cache_max_bytes`, and `context_prefetch` resolve at the registry and project tiers only — there is no CLI flag for them.
+
+## Similarity retrieval (`context_prefetch.semantic`)
+
+The Context Definitions section built by pre-fetching (`max_prefetch_bytes`) finds code related to the change **by reference** — a call site, a consumer. An optional second tier finds code related only **by resemblance**: a sibling handler that needs the same guard, a second place that implements the same invariant by hand. That tier is similarity retrieval (Epic 35.16.12): atcr embeds the declaration text of each changed symbol and queries an external vector index for the chunks nearest to it.
+
+**It is off, and the default path is free.** No `context_prefetch.semantic` block means no client is constructed, no host is resolved, nothing is logged, and the run is byte-identical to a run without the feature. Everything below applies only when you switch it on.
+
+**atcr never builds the index.** The index is an artifact of [`llm-semantic-axi`](https://github.com/samestrin/llm-semantic-axi), a separate tool: atcr never invokes it, never assumes the index exists, and never warns about its absence on the default path. You build and own the index against your own services.
+
+### Turning it on
+
+1. **Install the indexer.** Follow `llm-semantic-axi`'s README: clone the repository and run its installer, or `make build`.
+2. **Build the index.** Run `llm-semantic index` against your own qdrant and embedding endpoint, with the qdrant storage backend and a collection name of your choosing:
+
+   ```bash
+   export QDRANT_API_URL="http://qdrant.lan:6333"   # your qdrant REST endpoint
+   export QDRANT_API_KEY="…"                         # if your qdrant requires one
+   llm-semantic index --storage qdrant --collection myrepo \
+     --api-url http://embeddings.lan --model Qwen/Qwen3-Embedding-4B .
+   ```
+
+   The embedding model must be `Qwen/Qwen3-Embedding-4B` (2560 dimensions, cosine distance): atcr queries with that same model, and a collection embedded with anything else returns scores that mean nothing. Re-run `llm-semantic index-update` after commits to keep the index fresh — atcr re-reads every retrieved span from your working tree at the reviewed revision, but a hit whose file is gone, ignored, changed or out of range is dropped, so a stale index yields less context, never wrong context.
+3. **Set the same collection name in the config.** In `.atcr/config.yaml` (project) or `~/.config/atcr/registry.yaml` (user defaults):
+
+<!-- atcr-doc-example: context_prefetch.semantic -->
+```yaml
+context_prefetch:
+  semantic:
+    enabled: true
+    endpoint: http://qdrant.lan:6333
+    collection: myrepo
+    top_k: 5
+    allow_insecure_http: true
+```
+<!-- /atcr-doc-example -->
+
+Set `collection` to the name you passed to `llm-semantic index --collection` (`llm_semantic` if you let the indexer pick its default). Point `endpoint` at the base URL of the service atcr should query — the example uses the qdrant REST endpoint from step 2. If the qdrant needs an API key, export `QDRANT_API_KEY` in the shell that runs `atcr review`: **the key comes from the environment, never from a config file**, and it is sent only to the qdrant endpoint. The example above uses plain `http` on a LAN, so it also sets `allow_insecure_http: true` — drop that key for an `https` endpoint.
+
+### Keys
+
+The block is carried at both the registry (user) and project tiers and resolves field by field, like every other shared setting — the project tier wins, and either tier may supply part of the block (a project `enabled: false` turns off a block the user tier enabled; a blank field inherits the other tier's value). There is no CLI flag.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | Anything short of an explicit `true` — including an absent, empty, or settings-only block — resolves to disabled, and a disabled block exposes no endpoint to anything that might be tempted to use it. Enabling without an `endpoint` and a `collection` (across both tiers combined — either tier may supply either half) is a configuration error when the run's settings resolve, before any review work begins, not a silent off. |
+| `endpoint` | *none* | Base URL of the retrieval service atcr queries. Must be an absolute `http`/`https` URL with a host and no query or fragment; embedding a credential (`user:pass@host`) is a load error because the index's API key comes from `QDRANT_API_KEY` in the environment. |
+| `collection` | *none* | The qdrant collection to query — the same name the index was built with. It is interpolated into a URL path, so it must be 1–255 characters of `A-Z a-z 0-9 . _ -` and not start with `.`. |
+| `top_k` | `5` | Snippets requested per query; the merged result is capped at this many. Must be within `1..100`. Similarity snippets are the lowest-priority tier of the Context Definitions section, so a large value buys network time the `max_prefetch_bytes` ceiling will shed anyway. |
+| `allow_insecure_http` | `false` | Permits a plain-`http` `endpoint` on a non-loopback host (a LAN qdrant). Loopback `http` is always allowed; `https` needs no allowance. |
+
+### Egress, timeout and failure rules
+
+**What leaves the machine.** The query text is the declaration text of the symbols the diff changed (signatures and doc comments), capped at 40 symbols — that text is sent to your embedding endpoint, and the resulting vectors to your qdrant. Until the Epic 35.20 secret scan lands, **that text is declaration text only**: nothing scans it for secrets before it leaves, so do not enable this on code whose declarations must not leave the machine. Retrieved snippets are repository content and are billed to the same `max_prefetch_bytes` ceiling and governed by the same `.gitignore`/`.atcrignore` filter as reference pre-fetching — and they are the first tier shed when the ceiling binds.
+
+**Timeout and budget.** Each HTTP call has a 5-second per-call timeout, and the whole retrieval — one embedding call plus one qdrant query per symbol — is bounded by a 15-second total budget, so many fast calls still cannot stall a review.
+
+**Scheme rules.** Plain `http` to a non-loopback host is refused — at the initial request and again on every redirect hop, so a redirect cannot downgrade to plaintext — unless the block sets `allow_insecure_http: true`. The qdrant API key header is dropped on a cross-host redirect.
+
+**It fails open, but never silently.** An unreachable endpoint, a missing collection (qdrant 404), a timeout, or a non-200 reply yields zero similarity snippets and the review completes normally — a review never fails because the index is down. (An empty result is not a failure and raises no signal.) But a *configured* retriever that is quietly unreachable is distinguishable from one that was never configured: every failed retrieval increments the `atcr_semindex_configured_unreachable_total` counter once and logs one warning naming the collection.
 
 ## Project registry overlay
 
@@ -190,6 +250,8 @@ The shared review settings (`payload_mode`, `review_strategy`, `on_overflow`, `m
 ```
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
 ```
+
+The `context_prefetch.semantic` block resolves the same per-field way, but over the two file tiers only — no CLI flag and no embedded enablement: project > registry > disabled. See [Similarity retrieval](#similarity-retrieval-context_prefetchsemantic).
 
 A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`, `cache_max_bytes=52428800`. `cache_max_bytes` resolves across the registry and project tiers only (no CLI flag); `--no-cache` is a per-run read bypass, not a settings override. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution. `consensus` resolves over the same shorter chain (`--consensus` flag > project config > registry) and likewise carries no default inside the resolver — an unset value resolves to `""`, which each call site maps to the embedded `strict`, so an unconfigured project keeps the epic-14.2 behavior. Unlike `fail_on`, `--consensus` is registered on `atcr reconcile` only: `atcr review` (one-shot) and `atcr review --resume` honor the config and registry tiers but take no flag.
 
