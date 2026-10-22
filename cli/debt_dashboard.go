@@ -51,7 +51,7 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	// --output and --check are about the committed Markdown file — its
 	// authorship marker and its drift — so neither means anything for JSON.
 	// Refusing beats letting one flag silently win.
-	if jsonOut && out != "" {
+	if jsonOut && (out != "" || check) {
 		return usageError(errors.New("--json cannot be combined with --output or --check: --json prints the dashboard to stdout; redirect it to save a file"))
 	}
 	// --check compares against a file, so it has nothing to compare when the

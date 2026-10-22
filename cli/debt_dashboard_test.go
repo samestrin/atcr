@@ -518,6 +518,7 @@ func TestDebtDashboardJSON_RefusesOutputAndCheck(t *testing.T) {
 	for _, args := range [][]string{
 		{"--output", out},
 		{"--output", out, "--check"},
+		{"--check"},
 	} {
 		_, _, err := runDebtSplit(t, append([]string{"dashboard", "--dir", dir, "--json"}, args...)...)
 		require.Error(t, err, "%v", args)
