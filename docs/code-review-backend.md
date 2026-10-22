@@ -135,7 +135,9 @@ nothing writes that reason to disk, so it cannot be recovered from
 A finding two or more reviewers agree on is normally `HIGH`. When every one of
 them filed an `invariant` finding in the same file quoting near-identical
 evidence, the agreement is what every persona was told to look for, not
-independent corroboration, so the finding is kept at `MEDIUM`. Its
+independent corroboration, so the finding is kept at `MEDIUM`. Every reviewer
+must quote something: if any of them left the evidence empty, there is no
+shared quote, and the finding stays `HIGH`. A discounted finding's
 `findings.json` record then carries one more field:
 
 - `confidence_discount` — why the confidence is lower than the reviewer count

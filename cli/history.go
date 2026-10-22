@@ -23,6 +23,10 @@ const defaultHistorySinceFlag = "90d"
 // absent or fully-filtered history is not an error — it exits 0 with a "no
 // history" notice (Epic 19.0 AC3).
 //
+// --json prints the same table as JSON, built from history.Table, the struct
+// RenderTable renders (Epic 35.22). Under --json stdout always carries one JSON
+// document: an empty result prints an empty table and its notice goes to stderr.
+//
 // --prune <horizon> additionally deletes whole monthly shards older than the
 // horizon before reporting. It is the only destructive thing this command can
 // do, and it is strictly opt-in: there is no default horizon and no implicit
@@ -38,6 +42,7 @@ func newHistoryCmd() *cobra.Command {
 	cmd.Flags().String("since", defaultHistorySinceFlag, `only include findings within this window: Nd (days), Nw (weeks), Nm (30-day months); "all" disables the window`)
 	cmd.Flags().String("package", "", "only include findings whose package is at or under this path prefix (e.g. internal/registry)")
 	cmd.Flags().String("prune", "", "DELETE monthly shards older than this retention horizon before reporting (e.g. 24w, 365d, 6m); minimum 28d, no default")
+	addJSONFlag(cmd)
 	return cmd
 }
 
@@ -109,6 +114,17 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	now := time.Now()
 
 	out := cmd.OutOrStdout()
+	asJSON := boolFlag(cmd, "json")
+	// notice prints an empty-result message: on stdout for the table, on stderr
+	// under --json, where stdout is followed by an empty table instead.
+	notice := func(format string, a ...any) error {
+		if !asJSON {
+			_, _ = fmt.Fprintf(out, format, a...)
+			return nil
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), format, a...)
+		return writeJSON(out, history.BuildTable(nil))
+	}
 	// Prune notices go to stderr, not stdout: stdout carries the markdown table
 	// and nothing else, so `atcr history --prune 365d > report.md` still produces
 	// a valid document.
@@ -163,8 +179,7 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 	// After a prune the hint is suppressed outright: "run atcr review first"
 	// directly under "pruned 4 shard(s)" would contradict the line above it.
 	if len(recs) == 0 && !pruned && !history.HasAny(history.ShardDir(root), history.LegacyLedgerPath(root)) {
-		_, _ = fmt.Fprintln(out, "no history recorded yet — run 'atcr review' first")
-		return nil
+		return notice("no history recorded yet — run 'atcr review' first\n")
 	}
 
 	filtered := history.Filter(recs, since, pkg, now)
@@ -173,10 +188,12 @@ func runHistory(cmd *cobra.Command, _ []string) error {
 		if strings.TrimSpace(pkg) != "" {
 			scope = fmt.Sprintf("package %q within the selected window", strings.TrimSpace(pkg))
 		}
-		_, _ = fmt.Fprintf(out, "no history for %s\n", scope)
-		return nil
+		return notice("no history for %s\n", scope)
 	}
 
+	if asJSON {
+		return writeJSON(out, history.BuildTable(filtered))
+	}
 	_, _ = fmt.Fprint(out, history.RenderTable(filtered))
 	return nil
 }
