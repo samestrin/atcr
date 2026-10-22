@@ -3,11 +3,11 @@ package gitrange
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,9 +15,8 @@ import (
 // gitCmd runs git argv in dir and fails the test on error.
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	full := append([]string{"-C", dir}, args...)
-	cmd := exec.Command("git", full...)
-	cmd.Env = append(cmd.Environ(),
+	cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+	cmd.Env = append(cmd.Env,
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
@@ -195,11 +194,14 @@ func TestResolve_ShallowClone(t *testing.T) {
 	writeCommit(t, origin, "a.txt", "one\ntwo\n", "second")
 	writeCommit(t, origin, "a.txt", "one\ntwo\nthree\n", "third")
 
+	// A depth-1 fetch into a fresh repo is a shallow clone without `git clone`,
+	// which refuses to run with GIT_WORK_TREE pointing at an existing directory.
 	clone := t.TempDir()
-	out, err := exec.Command("git", "clone", "-q", "--depth", "1", "file://"+origin, clone).CombinedOutput()
-	require.NoErrorf(t, err, "clone: %s", out)
+	gitCmd(t, clone, "init", "-q")
+	gitCmd(t, clone, "fetch", "-q", "--depth", "1", "file://"+origin, "HEAD")
+	gitCmd(t, clone, "checkout", "-q", "FETCH_HEAD")
 
-	_, err = Resolve(context.Background(), clone, Options{})
+	_, err := Resolve(context.Background(), clone, Options{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrShallowClone)
 	assert.Contains(t, err.Error(), "git fetch --unshallow")

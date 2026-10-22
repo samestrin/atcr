@@ -85,6 +85,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
 | `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and autonomously fixes its items through the RED→GREEN→ADVERSARIAL→REFACTOR cycle — load the sibling `debt-resolve.md` on demand for that route |
+| `atcr ignore` | Suppress a false-positive finding in future reconciles: `atcr ignore <finding-id> --reason <why>` appends a rule to `.atcr/ignore.yaml` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
 | `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the skill directory to your harness's skills location. If the destination exists and is not empty, the command exits 2 — surface its message and ask the user before re-running with `--force`, and report any stale-file warning it prints on stderr |

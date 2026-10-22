@@ -371,8 +371,7 @@ func TestGitHasStagedChanges(t *testing.T) {
 	}
 	dir := t.TempDir()
 	run := func(args ...string) {
-		c := exec.Command("git", args...)
-		c.Dir = dir
+		c := gitexec.FixtureCommandContext(context.Background(), dir, args...)
 		require.NoError(t, c.Run())
 	}
 	run("init", "-q")
