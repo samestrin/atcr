@@ -366,6 +366,7 @@ func TestSummary_OpportunityScopedRoundTrips(t *testing.T) {
 		"nil OpportunityScoped is identical to leaving it unset")
 	empty := Reconcile(sources, Options{TrustPriors: priors, OpportunityScoped: map[string]bool{}})
 	deepEq(t, empty, baseline, "empty OpportunityScoped is identical to leaving it unset")
+	isTrue(t, empty.Summary.OpportunityScoped == nil, "empty input is normalized to a nil map, not echoed as an empty one")
 	got, err := json.Marshal(empty.Summary)
 	isTrue(t, err == nil, "summary marshals")
 	want, _ := json.Marshal(baseline.Summary)
