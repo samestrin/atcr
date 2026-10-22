@@ -771,3 +771,61 @@ func TestPostInlineComments_FallbackPacesSequentialPosts(t *testing.T) {
 		assert.Equal(t, 1, posted, "only the first comment posted before cancellation")
 	})
 }
+
+// TestGithubCmd_SuppressedCountInCheckRun shows the check run states the
+// suppressed count read from reconciled/suppressed.json (F2): a PR whose
+// ignore rules dropped every finding still posts a green check, but its title
+// and summary say findings were suppressed. With no suppressed.json, or an
+// empty one, the check says nothing about suppression.
+func TestGithubCmd_SuppressedCountInCheckRun(t *testing.T) {
+	post := func(t *testing.T, id string) map[string]any {
+		t.Helper()
+		url, body := captureGitHub(t)
+		code, out := execCmdCapture(t, "github",
+			"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
+			"--api-url", url, "--fail-on", "high", id)
+		require.Equal(t, 0, code, out)
+		output, ok := body()["output"].(map[string]any)
+		require.True(t, ok, "check run carries an output object")
+		return output
+	}
+	writeSuppressed := func(t *testing.T, id, js string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(".atcr", "reviews", id, "reconciled", reconcile.SuppressedJSON), []byte(js), 0o644))
+	}
+
+	t.Run("nonzero", func(t *testing.T) {
+		isolate(t)
+		fixtureReconciled(t, "s1", "[]")
+		writeSuppressed(t, "s1", highFinding)
+		output := post(t, "s1")
+		assert.Contains(t, output["title"], "1 suppressed")
+		assert.Contains(t, output["summary"], "1 finding(s) suppressed by .atcr/ignore.yaml")
+	})
+	t.Run("empty file", func(t *testing.T) {
+		isolate(t)
+		fixtureReconciled(t, "s2", "[]")
+		writeSuppressed(t, "s2", "[]")
+		output := post(t, "s2")
+		assert.NotContains(t, output["title"], "suppressed")
+		assert.NotContains(t, output["summary"], "suppressed")
+	})
+	t.Run("no file", func(t *testing.T) {
+		isolate(t)
+		fixtureReconciled(t, "s3", "[]")
+		output := post(t, "s3")
+		assert.NotContains(t, output["summary"], "suppressed")
+	})
+	t.Run("malformed file", func(t *testing.T) {
+		isolate(t)
+		fixtureReconciled(t, "s4", "[]")
+		writeSuppressed(t, "s4", "{not json")
+		url, body := captureGitHub(t)
+		code, out := execCmdCapture(t, "github",
+			"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
+			"--api-url", url, "s4")
+		assert.Equal(t, 1, code, "an unreadable suppressed.json must not post a check that hides the count")
+		assert.Contains(t, out, reconcile.SuppressedJSON)
+		assert.Nil(t, body(), "no check run is posted")
+	})
+}
