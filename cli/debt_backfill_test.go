@@ -932,13 +932,47 @@ func TestDebtBackfillJustifications_ReportsOversizedSummaries(t *testing.T) {
 		// The oversized summary owns nothing, so the refusal beside it is counted
 		// as not tied to the record (BackfillResult.PolicyUnattributed).
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", 1<<20)))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 0, 1)+", 1 summary.json over 1 MiB ignored\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 0, 1)+", 1 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n")
 	})
 
 	t.Run("a normal summary.json prints a zero", func(t *testing.T) {
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1, 0)+", 0 summary.json over 1 MiB ignored\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1, 0)+", 0 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n")
 	})
+}
+
+// TD cli/debt_backfill.go:119 — the oversized-summary clause printed 0 for a tree
+// that held an oversized summary.json, because the pass reads a review dir's summary
+// only when a policy-refused candidate in it asks who owns the record. The clause now
+// states that condition, so its 0 no longer reads as "the tree was checked".
+func TestDebtBackfillJustifications_OversizedSummaryClauseStatesItsCondition(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	reviewRoot := filepath.Join(root, "reviews")
+	require.NoError(t, os.MkdirAll(store, 0o750))
+
+	// The record's review dir holds an oversized summary.json, but its review.md is
+	// gone: no candidate is refused, so nothing asks who owns the record.
+	ownDir := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+	require.NoError(t, os.MkdirAll(filepath.Join(ownDir, "reconciled"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(ownDir, "reconciled", "summary.json"),
+		[]byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", 1<<20)), 0o600))
+
+	rec := `{"schema_version":3,"id":"eeee0001","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+	require.NoError(t, os.WriteFile(filepath.Join(store, "2026-08.jsonl"), []byte(rec+"\n"), 0o600))
+
+	code, out := execCmdCapture(t, "debt", "backfill-justifications",
+		"--store", store, "--review-root", reviewRoot, "--dry-run")
+	require.Equal(t, 0, code, out)
+
+	require.Contains(t, out, "1 unresolved (1 review tree pruned, 0 declined by policy, 0 policy refusal not tied to the record)",
+		"premise: no candidate was refused, so the oversized summary was never asked about")
+	assert.Contains(t, out, ", 0 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n",
+		"the 0 must say it covers only the summaries a policy refusal asked about, not the whole tree")
 }
 
 // TD internal/localdebt/backfill.go:372 — a policy refusal the pass cannot tie to the
