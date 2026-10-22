@@ -1,0 +1,239 @@
+{
+  "totals": {
+    "total": 17,
+    "open": 10,
+    "deferred": 2,
+    "resolved": 1,
+    "wontfix": 2,
+    "unreproducible": 1,
+    "attempts_exhausted": 1,
+    "reconciler_corrections": 1
+  },
+  "by_severity": [
+    {
+      "severity": "CRITICAL",
+      "total": 3,
+      "open": 2,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 1,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "HIGH",
+      "total": 6,
+      "open": 4,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 0,
+      "unreproducible": 1,
+      "attempts_exhausted": 1,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "MEDIUM",
+      "total": 3,
+      "open": 1,
+      "deferred": 1,
+      "resolved": 0,
+      "wontfix": 1,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 1
+    },
+    {
+      "severity": "LOW",
+      "total": 3,
+      "open": 1,
+      "deferred": 1,
+      "resolved": 1,
+      "wontfix": 0,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "(unknown)",
+      "total": 2,
+      "open": 2,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 0,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    }
+  ],
+  "by_component": [
+    {
+      "component": "cmd/atcr",
+      "unresolved": 2
+    },
+    {
+      "component": "odd/sev",
+      "unresolved": 2
+    },
+    {
+      "component": "(unscoped)",
+      "unresolved": 1
+    },
+    {
+      "component": "a/f.go",
+      "unresolved": 1
+    },
+    {
+      "component": "a/g.go",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/a.go",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/autofix",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/hist",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/keys",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/x | y.go",
+      "unresolved": 1
+    },
+    {
+      "component": "main.go",
+      "unresolved": 1
+    }
+  ],
+  "by_month": [
+    {
+      "month": "2026-05",
+      "unresolved": 5
+    },
+    {
+      "month": "2026-06",
+      "unresolved": 3
+    },
+    {
+      "month": "2026-07",
+      "unresolved": 3
+    },
+    {
+      "month": "unknown",
+      "unresolved": 2
+    }
+  ],
+  "top_priority": [
+    {
+      "id": "2d4f569f7330b0c4",
+      "severity": "CRITICAL",
+      "file": "cmd/atcr/autofix.go",
+      "line": 248,
+      "est_minutes": 15,
+      "problem": "remote leftover"
+    },
+    {
+      "id": "22643a8dc58332b0",
+      "severity": "CRITICAL",
+      "file": "internal/hist/h.go",
+      "line": 12,
+      "est_minutes": 90,
+      "problem": "re-detected text"
+    },
+    {
+      "id": "68f7ecd15cc7ed80",
+      "severity": "HIGH",
+      "file": "internal/a.go",
+      "line": 3,
+      "est_minutes": 5,
+      "problem": "erase\u001b[1Athis�K and \u003cimg src=x onerror=alert(1)\u003e \u2028 tail"
+    },
+    {
+      "id": "433320b5e0795f83",
+      "severity": "HIGH",
+      "file": "internal/keys/[redacted]/app.go",
+      "line": 4,
+      "est_minutes": 20,
+      "problem": "leaked [redacted] in the header"
+    },
+    {
+      "id": "a57d6acaf238a205",
+      "severity": "HIGH",
+      "file": "internal/x | y.go",
+      "line": 1,
+      "est_minutes": 7,
+      "problem": "pipe | in file"
+    },
+    {
+      "id": "717007b4c94d8aae",
+      "severity": "HIGH",
+      "file": "internal/autofix/apply.go",
+      "line": 108,
+      "est_minutes": 60,
+      "problem": "clobber on create"
+    },
+    {
+      "id": "9c8be0c2300d6675",
+      "severity": "HIGH",
+      "file": "a/f.go",
+      "line": 6,
+      "est_minutes": 45,
+      "problem": "attempts exhausted"
+    },
+    {
+      "id": "c0364b1ffcf43bf4",
+      "severity": "MEDIUM",
+      "file": "see the design doc",
+      "line": 0,
+      "est_minutes": 0,
+      "problem": "no timestamp, prose file"
+    },
+    {
+      "id": "af0a76e18d72409d",
+      "severity": "MEDIUM",
+      "file": "cmd/atcr/review.go",
+      "line": 0,
+      "est_minutes": 0,
+      "problem": "exit gate surprise"
+    },
+    {
+      "id": "02e1a05b57777a29",
+      "severity": "LOW",
+      "file": "main.go",
+      "line": 9,
+      "est_minutes": 3,
+      "problem": "malformed timestamp"
+    },
+    {
+      "id": "46d302233e30ff7f",
+      "severity": "LOW",
+      "file": "a/g.go",
+      "line": 7,
+      "est_minutes": 2,
+      "problem": "deferred"
+    },
+    {
+      "id": "aa39a01a9087b299",
+      "severity": "BLOCKER",
+      "file": "odd/sev/a.go",
+      "line": 1,
+      "est_minutes": 1,
+      "problem": "off-enum severity"
+    },
+    {
+      "id": "d6eb7d680a6b5db5",
+      "severity": "",
+      "file": "odd/sev/b.go",
+      "line": 2,
+      "est_minutes": 1,
+      "problem": "empty severity"
+    }
+  ]
+}

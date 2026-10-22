@@ -118,6 +118,8 @@ No scorecard data found at <path>
 
 When the store holds reviewer records but every one was excluded from scoring (for example, all of them were written before the outcome field existed), the footer says that instead, with the record count, so a full store is never reported as an empty one. New reconcile runs are scored.
 
+**As JSON.** Add `--json` (with or without `--scores`) to print the same rows as a JSON array, one object per table row, with `name`, `version`, `source` and `language` (a list, `[]` when unscoped). With `--scores`, each object also has `score` and `in_use_by_reconcile`. `score` is `null` where the table shows `n/a`; otherwise it holds `corroboration` (a fraction from 0 to 1, or `null` for a persona that raised nothing, the table's `n/a (raised 0)`), `raised`, `counted`, `excluded` and `reasons` (the count behind each reason, counted and excluded ones alike). `in_use_by_reconcile` is `true` for the personas the footer's `In use by reconcile` list names. The footers are not printed with `--json`, so stdout is only the array; warnings still go to stderr.
+
 ### `atcr personas search <keyword>`
 
 Fetches the registry's `index.json` and lists entries whose name, description, provider, or model matches the keyword:
