@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -108,15 +110,36 @@ var sandboxKill = syscall.Kill
 // group cannot be read without depending on a real pid staying free.
 var sandboxGetpgid = syscall.Getpgid
 
+// sandboxScanBudget bounds how long the cancel path spends reading the process
+// table before it kills the group. The workload keeps running for the whole
+// scan, so the bound is what a cancel can cost on top of the kill itself; a
+// /proc walk normally takes a few milliseconds and ps(1) tens of them.
+const sandboxScanBudget = 250 * time.Millisecond
+
 // sandboxProcessTable reads the host's pid -> ppid table, from /proc where
 // there is one and from ps(1) otherwise. Tests replace it to present a table
 // the host cannot be made to produce on demand, such as a recycled pid.
+//
+// A non-nil table returned with a non-nil error is partial: every entry in it
+// was read, but the scan did not see every process.
 var sandboxProcessTable = func(ctx context.Context) (map[int]int, error) {
 	parents, err := procParents(ctx)
-	if err != nil {
+	if err != nil && len(parents) == 0 && ctx.Err() == nil {
 		parents, err = psParents(ctx)
 	}
 	return parents, err
+}
+
+// sandboxSnapshotDegraded is told when the cancel path's descendant snapshot
+// failed, was partial, or ran out of its budget, so the cancel fell back to
+// the group kill alone for the descendants it could not see. cmd.Cancel
+// cannot carry the error (exec.Cmd treats any it returns as the run's error),
+// and configureSandboxProcessGroup has no run context to log through, so the
+// default writes to the process-wide logger. Tests replace it to observe the
+// report.
+var sandboxSnapshotDegraded = func(err error) {
+	slog.Warn("sandbox exec cancel: descendant snapshot incomplete; detached descendants it missed may survive the group kill",
+		"backend", osLevelBackendName, "error", err)
 }
 
 // sandboxDescendants returns the PIDs of every live descendant of the
@@ -130,19 +153,50 @@ var sandboxProcessTable = func(ctx context.Context) (map[int]int, error) {
 // holds its pid, so a snapshot bracketed by two such checks lists only its
 // own descendants.
 //
-// It is best effort, and returns nil when the process table cannot be read: a
-// descendant forked after the snapshot, or one whose parent already exited
-// (and was reparented to init), is not found. The group kill still runs either
+// It is best effort: a descendant forked after the snapshot, or one whose
+// parent already exited (and was reparented to init), is not found. The table
+// read is bounded by sandboxScanBudget; a read that fails or overruns it is
+// reported to sandboxSnapshotDegraded and yields nil, and a partial one is
+// reported and walked for what it did see. The group kill still runs either
 // way.
 func sandboxDescendants(cmd *exec.Cmd) []int {
 	if cmd.Process == nil || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
-	parents, err := sandboxProcessTable(context.Background())
-	if err != nil || !sandboxLeaderUnreaped(cmd) {
+	parents, err := readSandboxProcessTable(sandboxScanBudget)
+	if err != nil {
+		sandboxSnapshotDegraded(err)
+	}
+	if len(parents) == 0 || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
 	return descendantsOf(cmd.Process.Pid, parents)
+}
+
+// readSandboxProcessTable runs sandboxProcessTable under a budget-long context
+// and stops waiting for it when the budget is spent, so a reader that does not
+// honour its context (a /proc read stuck in the kernel) still cannot hold the
+// group kill back. An abandoned reader finishes on its own into a buffered
+// channel nobody reads.
+func readSandboxProcessTable(budget time.Duration) (map[int]int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	type table struct {
+		parents map[int]int
+		err     error
+	}
+	read := sandboxProcessTable // read here, not in the goroutine that may outlive this call
+	done := make(chan table, 1)
+	go func() {
+		parents, err := read(ctx)
+		done <- table{parents, err}
+	}()
+	select {
+	case t := <-done:
+		return t.parents, t.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("process table not read within %v: %w", budget, ctx.Err())
+	}
 }
 
 // sandboxLeaderUnreaped reports whether Wait has not yet reaped the leader.
@@ -202,20 +256,32 @@ func descendantsOf(root int, parents map[int]int) []int {
 }
 
 // procParents reads the pid -> ppid table from /proc (Linux). A process that
-// exits mid-scan simply drops out.
-func procParents(_ context.Context) (map[int]int, error) {
+// exits mid-scan simply drops out. It stops when ctx is done, and returns the
+// entries it has read with an error saying the table is partial; an entry it
+// could not read for any reason other than its process exiting does the same.
+func procParents(ctx context.Context) (map[int]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, err
 	}
 	parents := make(map[int]int)
+	var unread error
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return parents, fmt.Errorf("/proc scan stopped after %d entries: %w", len(parents), err)
+		}
 		pid, convErr := strconv.Atoi(e.Name())
 		if convErr != nil {
 			continue
 		}
 		raw, readErr := os.ReadFile("/proc/" + e.Name() + "/stat")
+		if errors.Is(readErr, os.ErrNotExist) || errors.Is(readErr, syscall.ESRCH) {
+			continue // exited mid-scan
+		}
 		if readErr != nil {
+			if unread == nil {
+				unread = readErr
+			}
 			continue
 		}
 		if ppid, ok := parseProcStatPPID(raw); ok {
@@ -224,6 +290,9 @@ func procParents(_ context.Context) (map[int]int, error) {
 	}
 	if len(parents) == 0 {
 		return nil, errors.New("no process entries under /proc")
+	}
+	if unread != nil {
+		return parents, fmt.Errorf("/proc scan skipped unreadable entries: %w", unread)
 	}
 	return parents, nil
 }
@@ -249,11 +318,9 @@ func parseProcStatPPID(stat []byte) (int, bool) {
 
 // psParents reads the pid -> ppid table from ps(1), for unix hosts without
 // /proc (darwin, the BSDs). The path is absolute so atcr's own PATH cannot
-// substitute another binary, and the bound keeps a hung ps from delaying the
-// group kill that follows.
+// substitute another binary, and ctx (bounded by sandboxScanBudget on the
+// cancel path) kills a hung ps before it can delay the group kill that follows.
 func psParents(ctx context.Context) (map[int]int, error) {
-	ctx, cancel := context.WithTimeout(ctx, sandboxScanBudget)
-	defer cancel()
 	out, err := exec.CommandContext(ctx, "/bin/ps", "-A", "-o", "pid=", "-o", "ppid=").Output()
 	if err != nil {
 		return nil, err
@@ -282,7 +349,3 @@ func parsePSParents(out []byte) (map[int]int, error) {
 	}
 	return parents, nil
 }
-
-const sandboxScanBudget = 2 * time.Second
-
-var sandboxSnapshotDegraded = func(error) {}
