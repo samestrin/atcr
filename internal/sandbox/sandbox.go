@@ -71,6 +71,16 @@ type RunSpec struct {
 	// per-run scratch tree before the spawn — no shell wrapper, no image
 	// requirement; see oslevel.go's seedWritableCopy).
 	//
+	// Working-tree path, which differs by platform under OSLevelBackend: on
+	// Linux bwrap reuses Docker's mount points (copy at /work, snapshot at /src,
+	// --chdir /work), so a workload sees the same paths as under DockerBackend.
+	// On darwin sandbox-exec applies a policy to host paths and cannot remap
+	// them, so the run executes in the copy at its host path
+	// (<scratch>/work) and there is no /work and no /src. A validate_command
+	// that hardcodes /work therefore works under Docker and Linux but fails on
+	// darwin; a portable command uses relative paths from its working
+	// directory.
+	//
 	// DockerBackend mounts the snapshot at /src instead of /work, and /work is
 	// backed by an ephemeral tmpfs seeded with a `cp -R /src/. /work/` copy.
 	// The copy step is injected differently per mode. Command mode wraps the argv as

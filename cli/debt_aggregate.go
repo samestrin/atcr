@@ -536,6 +536,10 @@ func renderDebtDashboard(sums []localdebt.Summary, topN int, hydrate func(ids []
 		// routinely written to a published docs path, so scrubbing only Problem
 		// left the --help promise ("secret-shaped tokens in finding text are
 		// scrubbed") true of one column out of three.
+		//
+		// The Problem cell is RowProblem, so a finding whose confidence reconcile
+		// discounted says so and why (Epic 35.16.17); an undiscounted row is
+		// unchanged.
 		top, err := hydrate(sum.Top)
 		if err != nil {
 			return "", err
@@ -544,7 +548,7 @@ func renderDebtDashboard(sums []localdebt.Summary, topN int, hydrate func(ids []
 		for _, r := range top {
 			fmt.Fprintf(&b, "| %s | %s | %s | %d | %s |\n",
 				debtMarkdownCell(debtIDCell(r.ID)), r.Severity, debtMarkdownCell(red.Redact(debtLocation(r))),
-				r.EstMinutes, debtMarkdownCell(red.Redact(r.Problem)))
+				r.EstMinutes, debtMarkdownCell(red.Redact(r.RowProblem())))
 		}
 	}
 

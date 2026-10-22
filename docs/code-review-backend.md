@@ -122,6 +122,21 @@ nothing writes that reason to disk, so it cannot be recovered from
   state qualifies a `0`; it does not cap the count. `unavailable` in particular
   is compatible with a nonzero count — see its row below.
 
+## Discounted confidence
+
+A finding two or more reviewers agree on is normally `HIGH`. When every one of
+them filed an `invariant` finding in the same file quoting near-identical
+evidence, the agreement is what every persona was told to look for, not
+independent corroboration, so the finding is kept at `MEDIUM`. Its
+`findings.json` record then carries one more field:
+
+- `confidence_discount` — why the confidence is lower than the reviewer count
+  alone would give. Today its only value is the panel-wide-instruction reason.
+  Absent on every other finding, so their records are unchanged.
+
+The field records the reconcile-time decision. A later verify verdict may
+restate `confidence` and leaves the field in place.
+
 ## Findings excluded from the primary stream
 
 `findings.txt`, `findings.json` and `report.md` do **not** necessarily contain
