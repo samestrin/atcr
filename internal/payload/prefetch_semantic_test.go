@@ -145,8 +145,16 @@ func TestCapPrefetchSnippets_MixedTiersShedEverySimilarityBeforeAnyReference(t *
 	require.Len(t, kept, 2, "precondition: the cap must bind into the reference tier")
 	require.Len(t, dropped, 4)
 	ledger := renderPrefetchDropLedger(dropped)
-	for _, p := range []string{"sim1.go", "sim2.go", "sim3.go", "ref3.go"} {
-		require.Contains(t, ledger, "dropped "+p+" ", "every shed snippet is named in the ledger")
+	shedRefs := 0
+	for _, d := range dropped {
+		require.Contains(t, ledger, "dropped "+d.Path+" ", "every shed snippet is named in the ledger")
+		if d.Tier == PrefetchTierReference {
+			shedRefs++
+		}
+	}
+	require.Equal(t, 1, shedRefs)
+	for _, p := range []string{"sim1.go", "sim2.go", "sim3.go"} {
+		require.Contains(t, ledger, "dropped "+p+" ", "every similarity snippet is shed")
 	}
 	require.Contains(t, ledger, "tier similarity")
 	require.Contains(t, ledger, "tier reference")
@@ -159,6 +167,7 @@ func TestBuildPrefetch_SimilarityHitsAreValidatedAtHead(t *testing.T) {
 	write(t, dir, "similar.go", prefetchSimilar)
 	write(t, dir, "vendor/lib.go", prefetchSimilar)
 	write(t, dir, ".atcrignore", "vendor/\n")
+	write(t, dir, "pkg/a.go", "package pkg\n")
 	base := commitAll(t, dir, "v1")
 	write(t, dir, "store.go", prefetchStoreV2)
 	head := commitAll(t, dir, "v2: change ReadStore return shape")
@@ -176,6 +185,8 @@ func TestBuildPrefetch_SimilarityHitsAreValidatedAtHead(t *testing.T) {
 		{Path: "missing.go", StartLine: 1, EndLine: 3, Name: "Nope"},
 		// the region the reference pass already shows
 		{Path: "consumer.go", StartLine: 3, EndLine: 10, Name: "Reconcile"},
+		// a directory, not a file: `git show` would print its tree listing
+		{Path: "pkg", StartLine: 1, EndLine: 1, Name: "Tree"},
 	}}
 	g := newGitRunner(context.Background(), dir)
 	WithSemanticRetriever(fake, 10)(g)
@@ -184,7 +195,7 @@ func TestBuildPrefetch_SimilarityHitsAreValidatedAtHead(t *testing.T) {
 
 	require.True(t, st.Present, "precondition: the reference snippet of consumer.go is kept")
 	require.Equal(t, 1, st.Snippets, "no similarity hit survives validation")
-	require.Equal(t, 6, st.Dropped)
+	require.Equal(t, 7, st.Dropped)
 	require.NotContains(t, section, "(similarity to")
 
 	reasons := map[string]string{}
@@ -205,6 +216,7 @@ func TestBuildPrefetch_SimilarityHitsAreValidatedAtHead(t *testing.T) {
 		"similar.go|" + dropReasonOutOfRange,
 		"missing.go|" + dropReasonUnreadable,
 		"consumer.go|" + dropReasonOverlap,
+		"pkg|" + dropReasonUnreadable,
 	} {
 		require.Contains(t, reasons, want, "ledger:\n%s", section)
 	}
@@ -267,4 +279,22 @@ func keys(m map[string][]LineRange) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestBuildPrefetch_BrokenReferenceLookupStillRunsTheSimilarityStage(t *testing.T) {
+	dir, base, head := semanticRepo(t)
+	// An invalid grep.threads makes `git grep` exit 128 while every other
+	// git command this pass runs still works: the reference lookup BREAKS.
+	gitCmd(t, dir, "config", "grep.threads", "-1")
+	fake := &fakeRetriever{hits: []semindex.Snippet{similarHit()}}
+	g := newGitRunner(context.Background(), dir)
+	WithSemanticRetriever(fake, 5)(g)
+
+	section, spans, st := g.buildPrefetch(base, head)
+
+	require.Equal(t, 1, fake.calls, "a broken reference lookup must not skip the similarity stage")
+	require.True(t, st.Failed, "the broken lookup is still reported")
+	require.True(t, st.Present)
+	require.Contains(t, section, "(similarity to ReadCache)")
+	require.Contains(t, spans, "similar.go")
 }

@@ -1255,10 +1255,10 @@ const (
 	// 35.16.12 adds a second, independent producer feeding the same ledger, and
 	// that reachability is what makes the zero value worth a name.
 	PrefetchTierUnset PrefetchTier = iota
-	// PrefetchTierSimilarity is reserved for epic 35.16.12's embedding-similarity
-	// retrieval, and is the lowest REAL tier so similarity snippets shed before
-	// reference ones. THIS EPIC EMITS NONE. It exists so 35.16.12 plugs into this
-	// ledger rather than adding a second injection site — the contract AC7
+	// PrefetchTierSimilarity is a snippet reached by RESEMBLANCE through the
+	// optional similarity index (similaritySnippets, epic 35.16.12.1). It is the
+	// lowest REAL tier so similarity snippets shed before reference ones, and it
+	// rides this ledger rather than a second injection site — the contract AC7
 	// describes when it says a lower-priority tier is always shed first.
 	PrefetchTierSimilarity
 	// PrefetchTierReference is a snippet reached by REFERENCE: a call site that
@@ -1296,6 +1296,13 @@ const (
 	dropReasonNotDeclared = "cue-derived symbol is not declared here"
 	dropReasonOverlap     = "region already shown by an earlier snippet"
 	dropReasonOutOfRange  = "span out of range in the retrieved file"
+
+	// The similarity stage's own reasons. The index is a foreign artifact built
+	// at some earlier revision, so each of these is a hit the index named that
+	// HEAD does not back.
+	dropReasonChanged = "file changed in this diff"
+	dropReasonIgnored = "file excluded by the ignore filter"
+	dropReasonStale   = "indexed region no longer matches head"
 )
 
 // dropReason names why a candidate was discarded, defaulting to the byte-cap
@@ -1862,50 +1869,19 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 			break
 		}
 	}
-	// Laziness (AC4): a diff citing no resolvable symbol returns here, before any
-	// `git grep` runs and before a single file outside the diff is read.
-	if len(symbols) == 0 {
-		return "", nil, PrefetchStatus{}
-	}
+	snips, preDrops, lookupFailed := g.referenceSnippets(base, head, symbols, changedPaths)
 
-	hits, lookupFailed := g.referenceHits(head, symbols, changedPaths)
-	if lookupFailed {
-		// A lookup that BROKE, not one that matched nothing. Both ship empty
-		// context, but only this one is a malfunction worth reporting.
-		return "", nil, PrefetchStatus{Failed: true}
-	}
-	if len(hits) == 0 {
-		return "", nil, PrefetchStatus{}
-	}
-	// Symbols the cue scan guessed are retrieved only from their declaration
-	// sites; symbols the diff genuinely changed keep full call-site retrieval.
-	declOnly := make(map[string]bool, len(symbols))
-	for _, s := range symbols {
-		if s.Mocked {
-			declOnly[s.Name] = true
-		}
-	}
-	snips, preDrops := g.retrieveSnippets(base, head, hits, declOnly)
-	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
-	// tier-agnostic, and 35.16.12 adds a second producer feeding the same ledger.
-	//
-	// The signature is stamped in the same pass and for the same reason:
-	// retrieval resolves a hit to a REGION, while the header belongs to the
-	// changed symbol the region was retrieved for, which only this scope holds.
-	sigByName := make(map[string]string, len(symbols))
-	for _, s := range symbols {
-		if s.Signature != "" {
-			sigByName[s.Name] = s.Signature
-		}
-	}
-	for i := range snips {
-		snips[i].Tier = PrefetchTierReference
-		snips[i].Signature = sigByName[snips[i].Symbol]
-	}
-	// The retrieval-stage drops are stamped in the SAME pass and by the same
-	// producer, so the ledger names a real tier instead of the zero value.
-	for i := range preDrops {
-		preDrops[i].Tier = PrefetchTierReference
+	// The similarity stage runs whatever the reference pass found. A change
+	// whose symbols nothing references is exactly the resemblance-only case the
+	// tier exists for (AC9), so a reference pass that found no hit, or broke,
+	// must not end the pass here as it once did.
+	simSnips, simDrops := g.similaritySnippets(head, symbols, changedPaths, snips)
+	snips = append(snips, simSnips...)
+	preDrops = append(preDrops, simDrops...)
+	if len(snips) == 0 && len(preDrops) == 0 {
+		// A broken lookup is still reported as one: it and a clean no-match both
+		// ship empty context, but only the first is a malfunction.
+		return "", nil, PrefetchStatus{Failed: lookupFailed}
 	}
 
 	// Reserve the retrieval-stage ledger's bytes BEFORE capping. Those lines are
@@ -1920,7 +1896,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	dropped := mergeDrops(preDrops, capDrops)
 	section = renderPrefetchSection(kept, dropped)
 	if section == "" {
-		return "", nil, PrefetchStatus{}
+		return "", nil, PrefetchStatus{Failed: lookupFailed}
 	}
 
 	// Only KEPT snippets become groundable. A shed snippet was never shown, so
@@ -1940,7 +1916,230 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		// so reading it as truncation would tell an operator to raise a cap that
 		// was never the constraint.
 		Truncated: len(capDrops) > 0,
+		// A broken reference lookup next to a delivered similarity section: the
+		// section is real, and so is the malfunction.
+		Failed: lookupFailed,
 	}
+}
+
+// referenceSnippets is the reference half of buildPrefetch: resolve the changed
+// symbols to consuming call sites and retrieve them, stamped
+// PrefetchTierReference. failed reports a lookup that BROKE, as opposed to one
+// that matched nothing.
+func (g *gitRunner) referenceSnippets(base, head string, symbols []changedSymbol, changedPaths map[string]bool) (snips []PrefetchSnippet, drops []PrefetchDrop, failed bool) {
+	// Laziness (AC4): a diff citing no resolvable symbol returns here, before any
+	// `git grep` runs and before a single file outside the diff is read.
+	if len(symbols) == 0 {
+		return nil, nil, false
+	}
+	hits, failed := g.referenceHits(head, symbols, changedPaths)
+	if len(hits) == 0 {
+		return nil, nil, failed
+	}
+	// Symbols the cue scan guessed are retrieved only from their declaration
+	// sites; symbols the diff genuinely changed keep full call-site retrieval.
+	declOnly := make(map[string]bool, len(symbols))
+	for _, s := range symbols {
+		if s.Mocked {
+			declOnly[s.Name] = true
+		}
+	}
+	snips, drops = g.retrieveSnippets(base, head, hits, declOnly)
+	// Tier is stamped HERE rather than inside retrieveSnippets: retrieval is
+	// tier-agnostic, and similaritySnippets is a second producer feeding the
+	// same ledger.
+	//
+	// The signature is stamped in the same pass and for the same reason:
+	// retrieval resolves a hit to a REGION, while the header belongs to the
+	// changed symbol the region was retrieved for, which only this scope holds.
+	sigByName := make(map[string]string, len(symbols))
+	for _, s := range symbols {
+		if s.Signature != "" {
+			sigByName[s.Name] = s.Signature
+		}
+	}
+	for i := range snips {
+		snips[i].Tier = PrefetchTierReference
+		snips[i].Signature = sigByName[snips[i].Symbol]
+	}
+	// The retrieval-stage drops are stamped in the SAME pass and by the same
+	// producer, so the ledger names a real tier instead of the zero value.
+	for i := range drops {
+		drops[i].Tier = PrefetchTierReference
+	}
+	return snips, drops, failed
+}
+
+// semanticQueries returns the similarity queries for the changed symbols: each
+// symbol's declaration text, or its name when no header could be sliced, in
+// symbol order and capped at maxChangedSymbols.
+//
+// Cue-derived (Mocked) symbols are skipped. They are guesses from a test line,
+// and the reference pass already holds them to their declaration; sending a
+// guess to an external index would fetch code resembling a token that may not
+// even be a symbol.
+//
+// The order is the symbol order, which extractChangedSymbols makes
+// deterministic, so every agent in one fan-out sees the same query set (AC6).
+func semanticQueries(symbols []changedSymbol) []string {
+	var out []string
+	for _, s := range symbols {
+		if s.Mocked {
+			continue
+		}
+		q := s.Signature
+		if q == "" {
+			q = s.Name
+		}
+		if q == "" {
+			continue
+		}
+		out = append(out, q)
+		if len(out) >= maxChangedSymbols {
+			break
+		}
+	}
+	return out
+}
+
+// similaritySymbolUnnamed labels a similarity snippet whose index chunk carries
+// no symbol name, so its header and ledger line never render an empty name.
+const similaritySymbolUnnamed = "unnamed"
+
+// similaritySnippets is the similarity half of buildPrefetch (Epic
+// 35.16.12.1): query the configured retriever with the changed symbols and keep
+// every hit HEAD still backs, stamped PrefetchTierSimilarity.
+//
+// The index is a foreign artifact built at some earlier revision, so nothing it
+// returns is trusted. Every hit is re-read from the HEAD blob, and its body is
+// HEAD's text, never the indexed Content. A hit is dropped, with a ledger
+// reason, when its file changed in this diff (the payload already shows it), is
+// excluded by the ignore filter, cannot be read at HEAD (untracked or gone), is
+// over the analyze ceiling, names a span HEAD does not have, holds Content that
+// no longer matches HEAD (stale), or overlaps a region a reference snippet or an
+// earlier hit already shows (AC8). Only kept snippets become groundable.
+//
+// A nil retriever, or a change with no queryable symbol, makes no call. A
+// failed call fails open to zero snippets.
+func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, changedPaths map[string]bool, ref []PrefetchSnippet) ([]PrefetchSnippet, []PrefetchDrop) {
+	if g.retriever == nil {
+		return nil, nil
+	}
+	queries := semanticQueries(symbols)
+	if len(queries) == 0 {
+		return nil, nil
+	}
+	hits, err := g.retriever.Retrieve(g.ctx, queries, g.semanticTopK)
+	if err != nil {
+		g.log().Debug("payload: similarity retrieval failed; review proceeds without similarity snippets",
+			"queries", len(queries), "error", err)
+		return nil, nil
+	}
+	if len(hits) == 0 {
+		return nil, nil
+	}
+
+	emitted := make(map[string][][2]int, len(ref))
+	for _, s := range ref {
+		emitted[s.Path] = append(emitted[s.Path], [2]int{s.Start, s.End})
+	}
+	m := g.matcher()
+	// One HEAD read per path, however many hits name it. reason is set when the
+	// path cannot be read, so every later hit in it is ledgered the same way.
+	type headFile struct {
+		lines  []string
+		reason string
+	}
+	files := make(map[string]headFile)
+
+	var out []PrefetchSnippet
+	var dropped []PrefetchDrop
+	for _, h := range hits {
+		sym := h.Name
+		if sym == "" {
+			sym = similaritySymbolUnnamed
+		}
+		drop := func(reason string) {
+			dropped = append(dropped, PrefetchDrop{Path: h.Path, Symbol: sym, Tier: PrefetchTierSimilarity, Reason: reason})
+		}
+		if changedPaths[h.Path] {
+			drop(dropReasonChanged)
+			continue
+		}
+		if m.active() && m.match(h.Path) {
+			drop(dropReasonIgnored)
+			continue
+		}
+		f, ok := files[h.Path]
+		if !ok {
+			src, err := g.headBlob(head, h.Path)
+			switch {
+			case err != nil:
+				g.log().Debug("payload: similarity hit unreadable at head, skipped", "path", h.Path, "error", err)
+				f.reason = dropReasonUnreadable
+			case len(src) > maxAnalyzeFileBytes:
+				f.reason = dropReasonOversized
+			default:
+				f.lines = splitSnippetLines(src)
+			}
+			files[h.Path] = f
+		}
+		if f.reason != "" {
+			drop(f.reason)
+			continue
+		}
+		// Never clamped, unlike a reference span: a span running past HEAD's end
+		// means the index describes a different file, so no part of it is
+		// trustworthy.
+		if h.StartLine < 1 || h.EndLine < h.StartLine || h.EndLine > len(f.lines) {
+			drop(dropReasonOutOfRange)
+			continue
+		}
+		body := strings.Join(f.lines[h.StartLine-1:h.EndLine], "\n")
+		// An index chunk without Content offers nothing to compare, and the body
+		// shown is HEAD's either way.
+		if h.Content != "" && normalizeChunk(h.Content) != normalizeChunk(body) {
+			drop(dropReasonStale)
+			continue
+		}
+		if overlapsEmitted(emitted[h.Path], h.StartLine, h.EndLine) {
+			drop(dropReasonOverlap)
+			continue
+		}
+		emitted[h.Path] = append(emitted[h.Path], [2]int{h.StartLine, h.EndLine})
+		out = append(out, PrefetchSnippet{
+			Path: h.Path, Symbol: sym, Start: h.StartLine, End: h.EndLine,
+			Body: body, Tier: PrefetchTierSimilarity,
+		})
+	}
+	return out, dropped
+}
+
+// headBlob returns path's content at head only when path is a tracked BLOB
+// there. The similarity stage reads paths an external index named, and `git
+// show <rev>:<dir>` succeeds on a directory by printing its tree listing, which
+// would then render as a snippet of a file that does not exist. `cat-file blob`
+// refuses a tree, a submodule and an untracked path alike.
+//
+// The changed-file memo is not consulted: a hit in a changed file is dropped
+// before any read.
+func (g *gitRunner) headBlob(head, path string) (string, error) {
+	out, err := g.output("cat-file", "blob", head+":"+path)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// normalizeChunk reduces a region's text to what staleness is judged on:
+// trailing whitespace and line endings are formatting the indexer may not have
+// preserved, so they do not make a hit stale.
+func normalizeChunk(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t\r")
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n")
 }
 
 // identifierTokens splits line into identifier-shaped runs, in source order.
