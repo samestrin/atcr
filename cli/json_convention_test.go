@@ -52,13 +52,13 @@ var jsonConventionGaps = map[string]string{
 	"atcr personas search": "search-result table; no machine-readable path yet",
 }
 
-// nonReportCommands act, write files, or print help; the convention does not
-// apply to them.
+// nonReportCommands act, write files, print help, or validate input with a
+// pass/fail result rather than a report; the convention does not apply to them.
 var nonReportCommands = map[string]string{
 	"atcr benchmark":                    "group: prints help",
 	"atcr benchmark export":             "writes the suite-tagged submission record (JSON by construction)",
 	"atcr benchmark run":                "executes a suite and writes a run-result",
-	"atcr benchmark verify":             "validates a manifest and prints its hash",
+	"atcr benchmark verify":             "validator: passes or fails a manifest and prints its hash, not a report",
 	"atcr config":                       "group: prints help",
 	"atcr config set":                   "writes .atcr/config.yaml",
 	"atcr debate":                       "runs the debate stage",
@@ -68,6 +68,7 @@ var nonReportCommands = map[string]string{
 	"atcr debt compact":                 "rewrites the local TD store",
 	"atcr debt sync-outcomes":           "records TD README outcomes",
 	"atcr github":                       "posts a check run",
+	"atcr ignore":                       "appends a suppression rule to .atcr/ignore.yaml",
 	"atcr init":                         "writes config and persona files",
 	"atcr leaderboard export":           "writes the public submission envelope (JSON by construction)",
 	"atcr models":                       "group: prints help",
