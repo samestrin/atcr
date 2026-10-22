@@ -943,6 +943,24 @@ func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
 		"atcr reconcile threads the reviewer trust prior through RunReconcile end-to-end")
 }
 
+// TestReconcileCmd_AttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// `atcr reconcile` carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from the
+// RunReconcile call in cli/reconcile.go fails this test.
+func TestReconcileCmd_AttachesOpportunityScopedFlag(t *testing.T) {
+	isolate(t)
+	seedTrustedReviewer(t, "sasha")
+	seedTrustedReviewer(t, "vera")
+	fixtureReview(t, "r", trustPanelSources())
+	dir := filepath.Join(".atcr", "reviews", "r")
+	writeSeedPool(t, dir, "sasha", "vera", "stranger")
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, reconciledOpportunityScoped(t, dir))
+}
+
 // TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
 // --repo threads the reviewed-repo root into path validation, so a finding whose
 // cited file exists in <other-repo> (but not the CWD) validates clean instead of

@@ -24,6 +24,7 @@ import (
 	"github.com/samestrin/atcr/internal/scorecard"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -304,6 +305,43 @@ func TestResumeReconcile_AppliesScorecardTrustPrior(t *testing.T) {
 		"resumeReconcile threads the reviewer trust prior into RunReconcile")
 	require.NotContains(t, files, "bar.go",
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
+}
+
+// reconciledOpportunityScoped reads a review's reconciled summary.json and
+// returns its opportunity_scoped map (epic 35.16.11.3.2): per reviewer with a
+// trust prior, whether that prior was computed over the opportunity-scoped
+// denominator. Shared by the four reconcile call sites' marker tests.
+func reconciledOpportunityScoped(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var summary struct {
+		OpportunityScoped map[string]bool `json:"opportunity_scoped"`
+	}
+	require.NoError(t, json.Unmarshal(data, &summary))
+	return summary.OpportunityScoped
+}
+
+// TestResumeReconcile_AttachesOpportunityScopedFlag: resumeReconcile attaches
+// the per-reviewer denominator marker beside the trust priors. sasha is one of
+// the nine mapped lenses (opportunity-scoped), vera one of the five unmapped
+// (full denominator); "stranger" has no history, so no prior and no flag.
+// Dropping the OpportunityScoped line from resumeReconcile fails this test.
+func TestResumeReconcile_AttachesOpportunityScopedFlag(t *testing.T) {
+	isolate(t)
+	seedTrustedReviewer(t, "sasha")
+	seedTrustedReviewer(t, "vera")
+	fixtureReview(t, "r", trustPanelSources())
+	dir := filepath.Join(".atcr", "reviews", "r")
+	writeSeedPool(t, dir, "sasha", "vera", "stranger")
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	_, _, err := resumeReconcile(context.Background(), cmd, dir, reclib.ConsensusStrict)
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, reconciledOpportunityScoped(t, dir))
 }
 
 func TestResume_IncompatibleWithIDIsExit2(t *testing.T) {

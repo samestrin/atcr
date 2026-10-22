@@ -137,6 +137,33 @@ func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
 }
 
+// TestReviewCmd_OneShotAttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// the one-shot reconcile carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from the
+// one-shot RunReconcile call in cli/review.go fails this test.
+func TestReviewCmd_OneShotAttachesOpportunityScopedFlag(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+	seedTrustedReviewerOn(t, "sasha", "m-sasha")
+	seedTrustedReviewerOn(t, "vera", "m-vera")
+
+	srv := perAgentMockProviderWithUsage(t, map[string]string{
+		"m-sasha":    "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		"m-vera":     "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
+		"m-stranger": "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "sasha", "vera", "stranger")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
+
+	id, err := os.ReadFile(filepath.Join(".atcr", "latest"))
+	require.NoError(t, err)
+	dir := filepath.Join(".atcr", "reviews", strings.TrimSpace(string(id)))
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, reconciledOpportunityScoped(t, dir))
+}
+
 // TestReviewCmd_OneShotHonorsConfiguredConsensusOff covers the review half of
 // epic 35.9.1's widened T1: runReview must thread the RESOLVED consensus level
 // into its in-process reconcile, not just resolve it. No reviewer has scorecard

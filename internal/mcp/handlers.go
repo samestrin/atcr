@@ -413,7 +413,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		validationRoot = storeRoot
 	}
 
-	trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(dir)
+	trustPriors, opportunityScoped, unmeasured := scorecard.ResolveTrustPriorsForReview(dir)
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
@@ -425,9 +425,10 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		// under the server's cwd (Epic 13.1 TD). A resolved root names the
 		// reviewed repo itself, so validation and AST grouping run against the
 		// right tree (TD-019).
-		Root:        validationRoot,
-		TrustPriors: trustPriors,
-		Consensus:   consensusLevel, // epic 35.9.1: strict (default) | lenient | off
+		Root:              validationRoot,
+		TrustPriors:       trustPriors,
+		OpportunityScoped: opportunityScoped,
+		Consensus:         consensusLevel, // epic 35.9.1: strict (default) | lenient | off
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err
