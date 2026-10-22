@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,9 +17,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// leaderboardExportAliasRemoval is the release that removes the hidden
+// `leaderboard --export` and `--output` aliases. They were deprecated in favour of
+// `atcr leaderboard export` (epic 35.22) and are kept for one minor version.
+const leaderboardExportAliasRemoval = "v0.6.0"
+
+// leaderboardExportClock supplies the export instant (submitted_at and the --since
+// anchor). A var so a test can pin it and compare two exports byte for byte.
+var leaderboardExportClock = func() time.Time { return time.Now().UTC() }
+
 // newLeaderboardCmd builds `atcr leaderboard`: aggregate stored scorecard records
 // across runs into a table ranked by corroboration rate, with optional --since,
-// --model, and --persona filters.
+// --model, and --persona filters. Its `export` subcommand emits the public
+// submission document.
 func newLeaderboardCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "leaderboard",
@@ -26,33 +37,91 @@ func newLeaderboardCmd() *cobra.Command {
 		Long: "Aggregate the local scorecard store across runs into a leaderboard ranked\n" +
 			"by corroboration rate. Records are grouped by (reviewer, model). Filters\n" +
 			"compose with AND semantics. Read-only.\n\n" +
-			"With --export, emit an anonymized, versioned public submission JSON\n" +
-			"document instead of the table (run_id and any path/host/key strings are\n" +
-			"stripped); --output writes it to a file instead of stdout.",
+			"--json prints the table's rows as a JSON array instead of the table. For the\n" +
+			"anonymized public submission document, use `atcr leaderboard export`.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runLeaderboard,
 	}
-	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
-	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
-	cmd.Flags().String("persona", "", "filter to one reviewer/persona name (whole name, case-insensitive)")
-	// The version is named here, not only in the docs, because the bump was made for
-	// a BENCHMARK-side change (coverage in the suite envelope) and board acceptance
-	// of the new number is an unverified coordination item. A production submitter
-	// reads this help and nothing else, so omitting it would leave the one group
-	// affected by the risk uninformed. The number is formatted from the constant so
-	// one bump updates every surface.
-	//
-	// The field set is NO LONGER unchanged from version 1: epic 35.16.6.8 added
-	// raised_denominator to each reviewer row, additively. That is stated here
-	// rather than left to the docs for the same reason the version number is — the
-	// consumer who has to accept the new key is the board this submitter publishes
-	// to, and this help is the only notice the submitter reads.
-	cmd.Flags().Bool("export", false, fmt.Sprintf("emit anonymized public submission JSON instead of the table. The envelope stamps submission_schema %d and each reviewer row carries raised_denominator (which definition of findings-raised produced its rate); a board pinned to an earlier version must be updated to accept it", scorecard.SubmissionSchema))
-	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	addLeaderboardFilterFlags(cmd)
+	addJSONFlag(cmd)
+	// The pre-35.22 spelling of `leaderboard export`. Hidden rather than
+	// MarkDeprecated, for the reason addDebtStoreFlag gives: the parse-time warning
+	// would land in a merged-stream consumer's output. The help still carries the
+	// removal version for anyone who reads the flag's usage directly.
+	cmd.Flags().Bool("export", false, "deprecated: use `atcr leaderboard export`; removed in "+leaderboardExportAliasRemoval)
+	cmd.Flags().String("output", "", "deprecated: with --export, write the JSON to this file; use `atcr leaderboard export --output`; removed in "+leaderboardExportAliasRemoval)
+	_ = cmd.Flags().MarkHidden("export")
+	_ = cmd.Flags().MarkHidden("output")
+	cmd.AddCommand(newLeaderboardExportCmd())
 	return cmd
 }
 
+// newLeaderboardExportCmd builds `atcr leaderboard export`, the promoted form of
+// `leaderboard --export` and the production-side sibling of `benchmark export`.
+func newLeaderboardExportCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "export",
+		Short: "Emit the anonymized public leaderboard submission JSON",
+		// The version is named here, not only in the docs, because the bump was made
+		// for a BENCHMARK-side change (coverage in the suite envelope) and board
+		// acceptance of the new number is an unverified coordination item. A
+		// production submitter reads this help and nothing else, so omitting it would
+		// leave the one group affected by the risk uninformed. The number is formatted
+		// from the constant so one bump updates every surface.
+		//
+		// The field set is NO LONGER unchanged from version 1: epic 35.16.6.8 added
+		// raised_denominator to each reviewer row, additively. That is stated here
+		// rather than left to the docs for the same reason the version number is.
+		Long: fmt.Sprintf("Emit the anonymized, versioned public submission JSON document for the\n"+
+			"records the filters select (run_id and any path/host/key strings are\n"+
+			"stripped). It reads all history; --since filters within it. --output writes\n"+
+			"the document to a file instead of stdout.\n\n"+
+			"The envelope stamps submission_schema %d and each reviewer row carries\n"+
+			"raised_denominator (which definition of findings-raised produced its rate);\n"+
+			"a board pinned to an earlier version must be updated to accept it.\n\n"+
+			"Exit codes: 1 when the store is empty, nothing matches the filters, or a\n"+
+			"record's identity carries a control or format rune. A record whose model or\n"+
+			"reviewer is blank after trimming is kept and named on stderr, and the export\n"+
+			"still exits 0: the exit code does not reflect that notice, so a scripted\n"+
+			"submitter must read stderr to catch it.",
+			scorecard.SubmissionSchema),
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			output, _ := cmd.Flags().GetString("output")
+			return runLeaderboardWith(cmd, true, output)
+		},
+	}
+	addLeaderboardFilterFlags(cmd)
+	cmd.Flags().String("output", "", "write the JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	return cmd
+}
+
+// addLeaderboardFilterFlags declares the --since, --model and --persona filters
+// shared by `leaderboard` and `leaderboard export`.
+func addLeaderboardFilterFlags(cmd *cobra.Command) {
+	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
+	cmd.Flags().String("model", "", "filter to a model id (substring, case-insensitive)")
+	cmd.Flags().String("persona", "", "filter to one reviewer/persona name (whole name, case-insensitive)")
+}
+
+// runLeaderboard is the `leaderboard` RunE: the table, its --json form, or —
+// through the hidden --export alias — the export document.
 func runLeaderboard(cmd *cobra.Command, _ []string) error {
+	export, _ := cmd.Flags().GetBool("export")
+	output, _ := cmd.Flags().GetString("output")
+	// --json is the table's machine form; the export document is a different
+	// document, so asking for both is refused rather than silently picking one.
+	if export && boolFlag(cmd, "json") {
+		return usageError(errors.New("--json cannot be combined with --export: use `atcr leaderboard export` for the submission document"))
+	}
+	return runLeaderboardWith(cmd, export, output)
+}
+
+// runLeaderboardWith runs the leaderboard read with export selecting the
+// submission document over the table. Both `leaderboard --export` and
+// `leaderboard export` come through here, which is what keeps their output
+// byte-identical.
+func runLeaderboardWith(cmd *cobra.Command, export bool, output string) error {
 	since, _ := cmd.Flags().GetString("since")
 	// Map the no-window sentinels to an empty string before building FilterOpts.
 	// scorecard.ApplyFilters already treats empty Since as "no window"; this mapping
@@ -62,8 +131,7 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	}
 	model, _ := cmd.Flags().GetString("model")
 	persona, _ := cmd.Flags().GetString("persona")
-	export, _ := cmd.Flags().GetBool("export")
-	output, _ := cmd.Flags().GetString("output")
+	asJSON := !export && boolFlag(cmd, "json")
 
 	// --output only routes the export document; without --export the table view
 	// has nothing to write, so a bare --output is a usage error (exit 2) rather
@@ -184,8 +252,15 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	}
 
 	if len(records) == 0 {
-		// No data at all is a graceful empty state, not an error (exit 0).
-		_, err := fmt.Fprintln(out, "No scorecard data found. Run 'atcr reconcile' to generate scorecard records.")
+		// No data at all is a graceful empty state, not an error (exit 0). Under
+		// --json stdout still has to parse, so the rows are an empty array there
+		// and the message moves to stderr.
+		const msg = "No scorecard data found. Run 'atcr reconcile' to generate scorecard records."
+		if asJSON {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg)
+			return renderLeaderboardJSON(out, nil)
+		}
+		_, err := fmt.Fprintln(out, msg)
 		return err
 	}
 
@@ -213,7 +288,55 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// happened across all runs", while export and trust must never blend two
 	// raised_denominator definitions. Do not "fix" the asymmetry by wrapping this
 	// call.
-	return renderLeaderboard(out, scorecard.Aggregate(filtered))
+	rows := scorecard.Aggregate(filtered)
+	if asJSON {
+		return renderLeaderboardJSON(out, rows)
+	}
+	return renderLeaderboard(out, rows)
+}
+
+// leaderboardJSONRow is one table row as `leaderboard --json` prints it: every
+// column the table can show, under a stable snake_case key. cost_per_corroborated
+// is null where the table prints "-" (no corroborated findings); the conditional
+// DOC-SHIELDED and AMBIGUOUS columns are always present here, as a count.
+type leaderboardJSONRow struct {
+	Reviewer             string   `json:"reviewer"`
+	Model                string   `json:"model"`
+	Runs                 int      `json:"runs"`
+	FindingsRaised       int      `json:"findings_raised"`
+	FindingsCorroborated int      `json:"findings_corroborated"`
+	CorroborationRate    float64  `json:"corroboration_rate"`
+	TotalCostUSD         float64  `json:"total_cost_usd"`
+	CostPerCorroborated  *float64 `json:"cost_per_corroborated"`
+	AvgLatencyMS         int64    `json:"avg_latency_ms"`
+	FindingsDocShielded  int      `json:"findings_doc_shielded"`
+	FindingsAmbiguous    int      `json:"findings_ambiguous"`
+}
+
+// renderLeaderboardJSON writes rows as an indented JSON array, one element per
+// table row, in the table's order. A nil slice prints [] rather than null.
+func renderLeaderboardJSON(w io.Writer, rows []scorecard.LeaderboardRow) error {
+	out := make([]leaderboardJSONRow, 0, len(rows))
+	for _, r := range rows {
+		jr := leaderboardJSONRow{
+			Reviewer: r.Reviewer, Model: r.Model, Runs: r.Runs,
+			FindingsRaised: r.FindingsRaised, FindingsCorroborated: r.FindingsCorroborated,
+			CorroborationRate: r.CorroborationRate, TotalCostUSD: r.TotalCostUSD,
+			AvgLatencyMS:        r.AvgLatencyMS,
+			FindingsDocShielded: r.FindingsDocShielded, FindingsAmbiguous: r.FindingsAmbiguous,
+		}
+		if r.HasCostPerCorroborated {
+			c := r.CostPerCorroborated
+			jr.CostPerCorroborated = &c
+		}
+		out = append(out, jr)
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(data, '\n'))
+	return err
 }
 
 // renderLeaderboard writes the ranked aggregate table via text/tabwriter. Cost
@@ -286,14 +409,14 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 // stdout or, when output is set, to a file. An empty store returns a "run reconcile"
 // error (exit 1) distinct from the filter-no-match error. Both propagate through
 // main() to stderr so a success-path `--export | jq` never sees non-JSON on
-// stdout. time.Now().UTC() is the envelope timestamp and the --since anchor.
+// stdout. leaderboardExportClock() is the envelope timestamp and the --since anchor.
 func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
 	// One timestamp for the selection and the envelope, resolved HERE and threaded, so a
 	// second time.Now() cannot creep back in below. It is the --since anchor as well as
 	// submitted_at: two instants would publish a document whose submitted_at disagrees
 	// with the window its rows were selected under, and on the boundary would select a
 	// different record set than the identity guard inspected.
-	return runLeaderboardExportAt(cmd, records, filters, output, time.Now().UTC())
+	return runLeaderboardExportAt(cmd, records, filters, output, leaderboardExportClock())
 }
 
 // runLeaderboardExportAt is runLeaderboardExport with the instant injected, so a test
