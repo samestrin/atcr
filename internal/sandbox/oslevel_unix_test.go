@@ -104,3 +104,143 @@ sleep 30`)
 	assert.NoDirExists(t, seen.ScratchDir,
 		"a cancelled run must not leave a descendant able to recreate the scratch tree")
 }
+
+// startSleeper starts a `sleep 30` child of the test process and kills it on
+// cleanup, so a process-table reader has a known pid -> ppid pair to find.
+func startSleeper(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("sleep", "30")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return cmd.Process.Pid
+}
+
+func TestProcParents_FindsAChildOfThisProcess(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc on this host")
+	}
+	pid := startSleeper(t)
+	parents, err := procParents()
+	require.NoError(t, err)
+	assert.Equal(t, os.Getpid(), parents[pid])
+}
+
+func TestPSParents_FindsAChildOfThisProcess(t *testing.T) {
+	// The darwin/BSD path. It runs on Linux CI too wherever /bin/ps exists, so
+	// the fallback is exercised by CI and not only on a developer's Mac.
+	if _, err := os.Stat("/bin/ps"); err != nil {
+		t.Skip("/bin/ps is not installed on this host")
+	}
+	pid := startSleeper(t)
+	parents, err := psParents()
+	require.NoError(t, err)
+	assert.Equal(t, os.Getpid(), parents[pid])
+}
+
+func TestSandboxDescendants_FindsGrandchildrenAndNotTheLeader(t *testing.T) {
+	// The leader backgrounds a grandchild and records its pid; the snapshot
+	// must reach it through the intermediate shell.
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	cmd := exec.Command("sh", "-c", `sleep 30 & echo $! > "$0.tmp" && mv "$0.tmp" "$0"; wait`, pidFile)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	var grandchild int
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(pidFile)
+		if err != nil {
+			return false
+		}
+		grandchild, err = strconv.Atoi(strings.TrimSpace(string(raw)))
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond)
+	t.Cleanup(func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) })
+
+	got := sandboxDescendants(cmd)
+	assert.Contains(t, got, grandchild)
+	assert.NotContains(t, got, cmd.Process.Pid, "the leader is killed with its group, not listed")
+}
+
+func TestSandboxDescendants_UnstartedCommandHasNone(t *testing.T) {
+	assert.Nil(t, sandboxDescendants(exec.Command("true")))
+}
+
+func TestDescendantsOf_WalksTheTreeAndExcludesRoot(t *testing.T) {
+	parents := map[int]int{
+		1:  0,
+		10: 1,
+		11: 10, // child of the root
+		12: 11, // grandchild, e.g. one that called setsid
+		13: 12,
+		20: 1, // unrelated sibling of the root
+		21: 20,
+	}
+	got := descendantsOf(10, parents)
+	assert.ElementsMatch(t, []int{11, 12, 13}, got)
+	assert.Empty(t, descendantsOf(13, parents))
+}
+
+func TestDescendantsOf_TerminatesOnACycle(t *testing.T) {
+	// A torn snapshot (a pid reused between two reads) could in principle show
+	// a parent loop; the walk must still terminate.
+	got := descendantsOf(1, map[int]int{2: 1, 3: 2, 1: 3})
+	assert.ElementsMatch(t, []int{2, 3}, got)
+}
+
+func TestParseProcStatPPID(t *testing.T) {
+	cases := []struct {
+		name string
+		stat string
+		want int
+		ok   bool
+	}{
+		{"plain", "123 (sleep) S 45 123 123 0 -1", 45, true},
+		{"comm with spaces and parens", "123 (a) b (c) R 67 1 1", 67, true},
+		{"no closing paren", "123 sleep S 45", 0, false},
+		{"truncated after comm", "123 (sleep) S", 0, false},
+		{"non-numeric ppid", "123 (sleep) S x", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseProcStatPPID([]byte(tc.stat))
+			assert.Equal(t, tc.ok, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestParsePSParents(t *testing.T) {
+	got, err := parsePSParents([]byte("    1     0\n  412     1\n\ngarbage line here\n  x 1\n  500   412\n"))
+	require.NoError(t, err)
+	assert.Equal(t, map[int]int{1: 0, 412: 1, 500: 412}, got)
+
+	_, err = parsePSParents([]byte("PID PPID\n"))
+	assert.Error(t, err, "output with no pid/ppid pairs must not read as an empty process table")
+}
+
+func TestKillSandboxDescendants_KillsEachListedPid(t *testing.T) {
+	// No "already gone" pid is listed alongside: a reaped pid can be reused by
+	// an unrelated process on the host, which this test would then SIGKILL.
+	cmd := exec.Command("sleep", "30")
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	killSandboxDescendants([]int{cmd.Process.Pid})
+
+	select {
+	case err := <-done:
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, err, &exitErr)
+		assert.Equal(t, syscall.SIGKILL, exitErr.Sys().(syscall.WaitStatus).Signal())
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("the listed pid was not killed")
+	}
+}
