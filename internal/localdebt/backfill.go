@@ -209,7 +209,8 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 
 // backfillSeams is what one backfill pass reaches the review tree and the log
 // through. Carried by value rather than held in package vars, so a test injecting a
-// counting walk or opener sees only its own pass and may run in parallel.
+// counting walk or opener sees only its own pass and may run in parallel. A nil
+// field falls back to its default, so a partial (or zero) value is safe.
 type backfillSeams struct {
 	walk func(root string, fn fs.WalkDirFunc) error // the review-root walk (reviewTree)
 	open func(name string) (*os.File, error)        // the summary.json open (readReconciledAt)
@@ -269,7 +270,11 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 		defer func() { res.OversizedSummaries = ownership.oversized }()
 		folded := FoldRecords(recs)
 		tree := newReviewTree(reviewRoot, folded)
-		tree.walkFn = seams.walk
+		// A nil walk keeps newReviewTree's filepath.WalkDir, as ownershipCache
+		// defaults a nil open and log.
+		if seams.walk != nil {
+			tree.walkFn = seams.walk
+		}
 		for _, r := range folded {
 			if rationaleIDs[r.ID] {
 				// RATIONALE-BEARING, not merely closed — the distinction record.go

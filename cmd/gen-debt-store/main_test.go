@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,20 @@ func TestRun_CreatesAMissingStoreDirectory(t *testing.T) {
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
+}
+
+// The store holds review findings, so the tool creates its directory owner-only,
+// the same 0o700 localdebt's ensureStoreDir uses for a real store.
+func TestRun_CreatesTheStoreDirectoryOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits do not apply on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "fresh", ".atcr", "debt")
+	var stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "1"}, &stderr), stderr.String())
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
 
 func TestRun_UsageErrors(t *testing.T) {
