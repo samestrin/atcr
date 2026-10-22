@@ -39,7 +39,16 @@ type LeaderboardRow struct {
 	// the tally must not also charge them here. Adding them back would
 	// double-count; deleting the fold would silently drop the anti-gaming
 	// property.
-	FindingsDocShielded    int
+	FindingsDocShielded int
+	// FindingsAmbiguous sums the charged ambiguous singletons (charge rule B,
+	// raised_denominator era 4) already counted inside FindingsRaised. The
+	// leaderboard sums raw history across eras, so a row's FindingsRaised mixes
+	// era-3 runs, which did not charge them, with era-4 runs, which did; the
+	// conditional AMBIGUOUS column says how much of it is that charge.
+	//
+	// TrustPriors does NOT read this field: it is already inside FindingsRaised,
+	// and foldAmbiguousChargeEra has zeroed it on every record it took back out.
+	FindingsAmbiguous      int
 	CorroborationRate      float64
 	TotalCostUSD           float64
 	CostPerCorroborated    float64
@@ -147,6 +156,7 @@ func Aggregate(records []Record) []LeaderboardRow {
 		row.FindingsRaised += r.FindingsRaised
 		row.FindingsCorroborated += r.FindingsCorroborated
 		row.FindingsDocShielded += r.FindingsDocShielded
+		row.FindingsAmbiguous += r.FindingsAmbiguous
 		// Cost and latency are usage-gated: see usageReported.
 		if usageReported(r) {
 			row.TotalCostUSD += r.CostUSD

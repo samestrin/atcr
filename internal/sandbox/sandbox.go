@@ -66,11 +66,6 @@ type RunSpec struct {
 	// host file is ever mutated. The package-level read-only-snapshot MUST is
 	// thereby narrowed, not weakened.
 	//
-	// Everything below is DockerBackend-specific mechanics; OSLevelBackend
-	// provides the same guarantee differently (a host-side copy seeded into the
-	// per-run scratch tree before the spawn — no shell wrapper, no image
-	// requirement; see oslevel.go's seedWritableCopy).
-	//
 	// Working-tree path, which differs by platform under OSLevelBackend: on
 	// Linux bwrap reuses Docker's mount points (copy at /work, snapshot at /src,
 	// --chdir /work), so a workload sees the same paths as under DockerBackend.
@@ -80,6 +75,11 @@ type RunSpec struct {
 	// that hardcodes /work therefore works under Docker and Linux but fails on
 	// darwin; a portable command uses relative paths from its working
 	// directory.
+	//
+	// Everything below is DockerBackend-specific mechanics; OSLevelBackend
+	// provides the same guarantee differently (a host-side copy seeded into the
+	// per-run scratch tree before the spawn — no shell wrapper, no image
+	// requirement; see oslevel.go's seedWritableCopy).
 	//
 	// DockerBackend mounts the snapshot at /src instead of /work, and /work is
 	// backed by an ephemeral tmpfs seeded with a `cp -R /src/. /work/` copy.

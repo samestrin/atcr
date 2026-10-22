@@ -1081,6 +1081,52 @@ func TestRenderLeaderboard_ShowsDocShieldedOnlyWhenNonzero(t *testing.T) {
 	})
 }
 
+// TestRenderLeaderboard_ShowsAmbiguousOnlyWhenNonzero pins the leaderboard half
+// of the raised_denominator era 4 bump (epic 35.16.11.3.1 T3). The table sums
+// RAW history across eras, so after the bump a row's RAISED mixes era-3 runs,
+// which did not charge the ambiguous singletons, with era-4 runs, which did.
+// The AMBIGUOUS column says how much of RAISED is that charge, so both eras
+// read off the same row. Conditional, on the DOC-SHIELDED precedent.
+func TestRenderLeaderboard_ShowsAmbiguousOnlyWhenNonzero(t *testing.T) {
+	base := scorecard.LeaderboardRow{
+		Reviewer: "bruce", Model: "m", Runs: 2,
+		FindingsRaised: 6, FindingsCorroborated: 3, CorroborationRate: 0.5,
+	}
+
+	t.Run("absent when every row is zero", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, renderLeaderboard(&buf, []scorecard.LeaderboardRow{base}))
+		assert.NotContains(t, buf.String(), "AMBIGUOUS",
+			"a store with no era-4 charge must render the table unchanged")
+	})
+
+	t.Run("present with the count when any row is nonzero", func(t *testing.T) {
+		charged := base
+		charged.FindingsAmbiguous = 2
+		var buf bytes.Buffer
+		require.NoError(t, renderLeaderboard(&buf, []scorecard.LeaderboardRow{base, charged}))
+		out := buf.String()
+		require.Contains(t, out, "AMBIGUOUS")
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		require.Len(t, lines, 3, "header plus two rows")
+		assert.Regexp(t, `\s2\s*$`, lines[2], "the charged row must end with its count")
+		assert.Regexp(t, `\s0\s*$`, lines[1], "a row with none shows 0")
+	})
+
+	t.Run("after DOC-SHIELDED when both are present", func(t *testing.T) {
+		both := base
+		both.FindingsDocShielded = 1
+		both.FindingsAmbiguous = 2
+		var buf bytes.Buffer
+		require.NoError(t, renderLeaderboard(&buf, []scorecard.LeaderboardRow{both}))
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		require.Len(t, lines, 2)
+		assert.Regexp(t, `DOC-SHIELDED\s+AMBIGUOUS\s*$`, lines[0])
+		assert.Regexp(t, `\s1\s+2\s*$`, lines[1])
+	})
+}
+
 // A whitespace-only identity is kept and published — that is the deliberate scoping
 // TestRunLeaderboardExport_WhitespaceOnlyIdentityIsAlreadyEmptyNotAScrubCasualty pins —
 // but keeping it silently is a strict LOSS of diagnostic. Before the TrimSpace widening

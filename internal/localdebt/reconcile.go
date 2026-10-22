@@ -240,8 +240,11 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 			Evidence:      f.Evidence,
 			Reviewers:     f.Reviewers,
 			Confidence:    f.Confidence,
-			Model:         model,
-			Justification: f.Justification,
+			// The discount reason travels with the confidence it explains, so the
+			// TD row can say why this MEDIUM is not a single reviewer's (35.16.17).
+			ConfidenceDiscount: f.ConfidenceDiscount,
+			Model:              model,
+			Justification:      f.Justification,
 		}
 		if model != "" {
 			rec.ModelReviewers = attributableReviewers(f.Reviewers, modelByReviewer, model)
