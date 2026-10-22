@@ -228,12 +228,21 @@ atcr debt dashboard                                   # print the dashboard
 atcr debt dashboard --output docs/debt-report.md      # write it to a file
 atcr debt dashboard --top 20                          # the 20 highest-priority items
 atcr debt dashboard --output docs/debt-report.md --check   # exit non-zero if stale
+atcr debt dashboard --json                            # the same sections as JSON
 ```
 
-Flags: `--store`, `--output`, `--top`, `--check`.
+Flags: `--store`, `--output`, `--top`, `--check`, `--json`.
 
 `--check` compares against the file named by `--output`, so the two are used
 together; `--check` without `--output` is a usage error.
+
+`--json` prints the same sections as one JSON document on stdout: `totals`, then
+`by_severity`, `by_component`, `by_month` and `top_priority`, each an array with
+one element per row of the matching table (empty, never `null`, when the table
+is). A `top_priority` row carries `id`, `severity`, `file`, `line`,
+`est_minutes` and `problem`. Free text is scrubbed of secret-shaped tokens as in
+the Markdown. `--json` with `--output` or `--check` is a usage error (exit 2);
+redirect stdout to save the JSON.
 
 The render is **deterministic** — no generation timestamp, age grouped by
 calendar month — so `--check` flags real content drift, not clock movement.
