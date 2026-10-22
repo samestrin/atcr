@@ -1599,11 +1599,20 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			// 2 and a successful final reply. Nothing was exhausted and the walk
 			// bought findings, so that walk logs nothing; the r.ThinkSuppressed
 			// conjunct is live on this arm (TD internal/fanout/engine.go:1175).
+			//
+			// The same shape with a final reply that parsed ZERO findings (an
+			// unparseable answer or a committed clean NO FINDINGS) fell through both
+			// arms and logged nothing, losing the burned-attempt count. It gets its
+			// own line: the attempts were burned, but a member answered, so the
+			// chain was not exhausted and the chain wording would be false.
 			if thinkOnlyAttempts > 1 && r.ThinkSuppressed {
 				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			} else if r.ThinkSuppressed {
 				log.FromContext(ctx).Warn("the reply was a think-only run, so the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+			} else if thinkOnlyAttempts > 1 && r.ParsedFindingCount() == 0 {
+				log.FromContext(ctx).Warn("think-only attempts burned before a reply with zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			}
 			// Carry the WALK total onto the returned Result. `r` is fresh per chain

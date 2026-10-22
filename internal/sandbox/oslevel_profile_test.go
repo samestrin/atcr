@@ -1582,3 +1582,44 @@ func TestSandboxExecProfile_ReadTierAncestorsAreStatable(t *testing.T) {
 		`(allow file-read-data (literal "/System/Library/CoreServices/SystemVersion.plist"))`,
 		"the xcrun shim behind /usr/bin/python3 reads the host OS version from this plist")
 }
+
+func TestSandboxExecProfile_SysctlReadsAreNarrowedToTheMeasuredSet(t *testing.T) {
+	// TD-013 / epic 35.23.1 T1. An unfiltered `(allow sysctl-read)` handed
+	// model-authored code the host's identity. The narrowed rule must be
+	// filtered, carry the measured set, and grant no name or prefix covering the
+	// fingerprint names no toolchain leg read in the measurement.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	var sysctlRules []string
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.Contains(line, "sysctl-read") {
+			sysctlRules = append(sysctlRules, line)
+		}
+	}
+	require.Len(t, sysctlRules, 1, "exactly one sysctl-read rule; profile:\n%s", profile)
+	rule := sysctlRules[0]
+	assert.NotEqual(t, "(allow sysctl-read)", rule, "an unfiltered sysctl-read allow leaks host identity (TD-013)")
+	assert.True(t, strings.HasPrefix(rule, "(allow sysctl-read (sysctl-name"),
+		"the rule must be filter-scoped: %s", rule)
+
+	// Spot-check the measured set: what dyld/libsystem, the shells, Go and
+	// Python read at start-up. Dropping any of these is a toolchain-breaking
+	// change that only the darwin integration suite would otherwise catch.
+	for _, name := range []string{"kern.osvariant_status", "security.mac.lockdown_mode_state", "kern.bootargs", "hw.pagesize_compat", "hw.ncpu"} {
+		assert.Contains(t, rule, `(sysctl-name "`+name+`")`, "measured name %s must be granted", name)
+	}
+	assert.Contains(t, rule, `(sysctl-name-prefix "hw.optional.")`, "Go/Python CPU-feature probes must be granted")
+
+	for _, leak := range []string{"hw.model", "kern.uuid", "hw.serialnumber", "kern.hostuuid", "hw.memsize"} {
+		assert.NotContains(t, rule, `"`+leak+`"`, "%s was not read by any measured leg and fingerprints the host", leak)
+		for _, prefix := range darwinSysctlReadPrefixes {
+			assert.False(t, strings.HasPrefix(leak, prefix), "prefix %q widens the grant to %s", prefix, leak)
+		}
+	}
+	for _, name := range append(append([]string{}, darwinSysctlReadNames...), darwinSysctlReadPrefixes...) {
+		assert.Regexp(t, `^[a-z][a-z0-9_.]*[a-z0-9_.]$`, strings.ToLower(name),
+			"sysctl names are emitted into the profile DSL verbatim and must stay plain identifiers: %q", name)
+	}
+}

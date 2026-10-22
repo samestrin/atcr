@@ -93,6 +93,10 @@ delivers a genuinely narrower set:
   `/Library/Developer/CommandLineTools`) on macOS; the equivalent `/usr`, `/bin`,
   `/lib`, and a short list of `/etc` files on Linux. These are read-only: a
   compromised run can execute your toolchain but cannot modify it.
+- **Kernel settings narrowed (macOS).** The workload can read only the `sysctl`
+  values toolchains were measured reading at start-up, so the Mac's model and
+  hardware UUID are not readable. The host name still is: `sh` and `bash` read
+  it when they start.
 - **Wall-clock timeout and a concurrency cap**, as with the container backend.
 
 It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
