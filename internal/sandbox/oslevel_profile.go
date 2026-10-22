@@ -39,9 +39,10 @@ import (
 //
 // Measured minimum for `sandbox-exec -p <profile> /bin/sh -c echo`:
 //
-//	(allow process-exec*) (allow process-fork)  — or nothing can be exec'd at all
+//	(allow process-exec* <darwinExecDirs>) (allow process-fork)
+//	                                             — or nothing can be exec'd at all
 //	(allow sysctl-read <darwinSysctlReadNames>)  — dyld reads kern.* at startup
-//	(allow file-map-executable)                  — mapping the shared cache pages
+//	(allow file-map-executable <toolchain tier>) — non-cache dylibs/frameworks
 //	(allow file-read-metadata …)                 — path resolution along the way
 //	(allow file-read* (literal "/"))             — the loader reads the root entry
 //
@@ -53,17 +54,21 @@ import (
 // revision of that guard let ScratchDir="/" through and a review reproduced a
 // full read of ~/.ssh under the resulting profile.
 //
-// One of these allows is deliberately unscoped and one is narrowed but still
-// grants a fingerprint name; the comment says so instead of claiming a
-// narrowness the rules do not have:
+// Two of these allows are narrowed to measured sets, and the comment says what
+// each still grants instead of claiming a narrowness the rules do not have:
 //
-//   - process-exec*/file-map-executable let the workload exec any binary on the
-//     host, including prefixes with no read allow. That is by design: this
-//     backend confines what code can READ, WRITE, and REACH, not which binaries
-//     it may start. A review verified it is not an escape — a nested
-//     sandbox-exec is refused (`sandbox_apply: Operation not permitted`),
-//     setuid exec is refused, and the deny-default's mach-lookup denial blocks
-//     `open`/`osascript`/`launchctl`/`security`. Narrowing it is TD-012.
+//   - process-exec*/file-map-executable are narrowed to measured subpaths
+//     (TD-012, epic 35.23.1): exec to darwinExecDirs plus the run's own snapshot
+//     and scratch trees, map-executable to vettedToolchainPrefixes. A binary
+//     anywhere else on the host, such as a user-writable ~/bin or an app bundle,
+//     is refused even where it is readable. The run's scratch tree IS writable
+//     and executable, because `go test` execs the test binary it just linked
+//     there, so the workload can still run code it writes; what the narrowing
+//     removes is the rest of the host's binaries. The earlier escape review
+//     still holds on top of it: a nested sandbox-exec is refused
+//     (`sandbox_apply: Operation not permitted`), setuid exec is refused, and
+//     the deny-default's mach-lookup denial blocks
+//     `open`/`osascript`/`launchctl`/`security`.
 //   - sysctl-read is narrowed to the measured darwinSysctlReadNames (TD-013,
 //     epic 35.23.1), so `hw.model`, `kern.uuid` and the serial number are no
 //     longer readable. `kern.hostname` stays granted: sh and bash read it at
@@ -75,11 +80,60 @@ const (
 	profileAllowRootRead = `(allow file-read* (literal "/"))`
 )
 
+// profileRuntimeAllows are the runtime rules that do not depend on the run. The
+// exec and map-executable rules do (they name the run's snapshot and scratch
+// trees), so sandboxExecProfile emits them from execRule/mapExecutableRule.
 var profileRuntimeAllows = []string{
-	"(allow process-exec*)",
 	"(allow process-fork)",
 	sysctlReadRule(darwinSysctlReadNames, darwinSysctlReadPrefixes),
-	"(allow file-map-executable)",
+}
+
+// darwinExecDirs are the host directories the workload may exec from, MEASURED
+// rather than inferred: on macOS 26.2 (arm64) the operator ran the
+// `integration-macos` command, including the T2 `go test` and make legs, under
+// `(allow process-exec* (with report))` and `(allow file-map-executable (with
+// report))` while tailing `log stream`. Every exec the suite made was under
+// /bin (sh, bash, cat, ls, echo), /usr/bin (touch, nc, env, uname and the git
+// shim), /usr/sbin (sysctl), /opt/homebrew (Go's compile/asm/vet/link, Python)
+// or /Library/Developer/CommandLineTools (git, make), plus `go test`'s test
+// binary under the per-run scratch tree, which sandboxExecProfile adds per run.
+//
+// The toolchain tier is vettedToolchainPrefixes, the same single declaration
+// the read tier and the PATH filter use, rather than the two prefixes the Mac
+// mini happened to exercise: /usr/local is where the `integration-macos` job
+// puts Go and where node lives on an Intel Homebrew host, and a binary the
+// profile may read but not exec would only move the failure. /sbin and
+// /usr/libexec were not exec'd by any leg and stay out.
+var darwinExecDirs = append([]string{
+	"/bin",
+	"/usr/bin",
+	"/usr/sbin",
+}, vettedToolchainPrefixes...)
+
+// execRule builds the process-exec* allow: darwinExecDirs plus the run's own
+// trees. The snapshot is included although the measurement only exec'd from
+// the scratch tree: a Writable run executes its copy of the snapshot from
+// scratch, and a read-only run (the agent exec tool) executes the same files in
+// place, so leaving the snapshot out would make `./script.sh` depend on
+// RunSpec.Writable. Empty entries (no scratch dir) are skipped.
+func execRule(snapshot, scratch string) string {
+	dirs := append([]string{}, darwinExecDirs...)
+	for _, d := range []string{snapshot, scratch} {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return "(allow process-exec* " + strings.Join(profileSubpaths(dirs), " ") + ")"
+}
+
+// mapExecutableRule builds the file-map-executable allow. In the measurement it
+// fired only for Python.framework under /opt/homebrew and libxcrun.dylib under
+// the Command Line Tools: system dylibs come from the dyld shared cache and the
+// kernel maps the main executable itself, so neither needs this rule. The grant
+// is the toolchain tier, not the run's trees: nothing the workload writes is
+// mapped as a library.
+func mapExecutableRule() string {
+	return "(allow file-map-executable " + strings.Join(profileSubpaths(vettedToolchainPrefixes), " ") + ")"
 }
 
 // darwinSysctlReadNames is every sysctl name the darwin integration suite read
@@ -399,9 +453,11 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	b.WriteString(profileVersion + "\n")
 	b.WriteString(profileDenyDefault + "\n")
 	b.WriteString(profileDenyNetwork + "\n")
+	b.WriteString(execRule(snapshot, scratch) + "\n")
 	for _, rule := range profileRuntimeAllows {
 		b.WriteString(rule + "\n")
 	}
+	b.WriteString(mapExecutableRule() + "\n")
 	// file-read-metadata is scoped rather than global. Unscoped, it let a
 	// workload stat ~/.ssh/id_ed25519 and read back its size and mtime — no
 	// content, but enough to enumerate an operator's secrets. Measured: scoping

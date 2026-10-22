@@ -171,3 +171,64 @@ func TestIntegration_OSLevelDarwin_NpmRuns(t *testing.T) {
 	})
 	runToolchainLeg(t, b, snapshot, "npm run --silent proof", "atcr-npm-ran")
 }
+
+func TestIntegration_OSLevelDarwin_ExecOutsideTheMeasuredDirsIsRefused(t *testing.T) {
+	// TD-012 / T2, the negative leg. A copy of /bin/echo is placed in the
+	// module cache dir: a tree the profile lets the workload READ but is not in
+	// darwinExecDirs. Reading it inside the sandbox is the control that the
+	// refusal is the exec rule, not the read tier; running it unsandboxed is the
+	// control that the copy is a working binary at all.
+	cache := t.TempDir()
+	bin := filepath.Join(cache, "atcr-echo")
+	src, err := os.ReadFile("/bin/echo")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(bin, src, 0o755))
+
+	if control := runUnsandboxed(t, bin+" atcr-exec-ran"); control.exitCode != 0 || !strings.Contains(control.output, "atcr-exec-ran") {
+		skipOrFail(t, "the copied echo does not run even unsandboxed (exit %d, %q), so a sandboxed refusal proves nothing",
+			control.exitCode, strings.TrimSpace(control.output))
+		return
+	}
+
+	cfg := DefaultOSLevelConfig()
+	cfg.ModuleCacheDir = cache
+	b := NewOSLevelBackend(cfg)
+	if _, err := b.resolveToolPath(); err != nil {
+		skipOrFail(t, "sandbox-exec is not usable on this host: %v", err)
+		return
+	}
+	require.NoError(t, b.Preflight(context.Background()))
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command: []string{"/bin/sh", "-c",
+			`/bin/cat "$0" >/dev/null && echo atcr-readable; "$0" atcr-exec-ran; echo "rc=$?"`, bin},
+		SnapshotDir: t.TempDir(),
+		Timeout:     10 * time.Second,
+	})
+	require.NoError(t, err, "output: %s", res.Output)
+	require.Contains(t, res.Output, "atcr-readable",
+		"the module cache must be readable, or the refusal below is the read tier and not the exec rule; output: %s", res.Output)
+	assert.NotContains(t, res.Output, "atcr-exec-ran",
+		"a binary outside darwinExecDirs ran — the exec narrowing is not enforced; output: %s", res.Output)
+	assert.Contains(t, res.Output, "rc=126", "the shell must report the exec as refused; output: %s", res.Output)
+}
+
+func TestIntegration_OSLevelDarwin_ReadOnlyRunExecsItsSnapshot(t *testing.T) {
+	// T2. A read-only run (the agent exec tool) executes files in the snapshot
+	// in place, where a Writable run executes its scratch copy. execRule grants
+	// the snapshot so `./script.sh` does not depend on RunSpec.Writable.
+	b := darwinIntegrationBackend(t)
+	snapshot := writeFixture(t, map[string]string{
+		"proof.sh": "#!/bin/sh\necho atcr-snapshot-exec-ran\n",
+	})
+	require.NoError(t, os.Chmod(filepath.Join(snapshot, "proof.sh"), 0o755))
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"/bin/sh", "-c", "./proof.sh 2>&1"},
+		SnapshotDir: snapshot,
+		Timeout:     10 * time.Second,
+	})
+	require.NoError(t, err, "output: %s", res.Output)
+	require.Equal(t, 0, res.ExitCode, "a read-only run must exec its own snapshot; output: %s", res.Output)
+	assert.Contains(t, res.Output, "atcr-snapshot-exec-ran", "output: %s", res.Output)
+}
