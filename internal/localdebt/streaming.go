@@ -50,6 +50,12 @@ type Summary struct {
 	Category   string
 	EstMinutes int
 	Origin     string
+
+	// ReconcilerFeedbackKind is the kind of the record's ReconcilerFeedback
+	// annotation (a Feedback* constant), or "" when it carries none. It is the one
+	// part of the annotation `atcr debt dashboard` needs to count reconciler
+	// corrections (Epic 36.1); the reason and the partner id stay unprojected.
+	ReconcilerFeedbackKind string
 }
 
 // EffectiveOrigin reports the summary's provenance with Record.EffectiveOrigin's
@@ -98,6 +104,17 @@ type summaryLine struct {
 	Line          int    `json:"line"`
 	EstMinutes    int    `json:"est_minutes"`
 	Origin        string `json:"origin"`
+
+	// A value, not a pointer, so an unannotated line allocates nothing for it; the
+	// write gate refuses an empty kind, so a non-empty Kind is exactly "the record
+	// carries an annotation". Decoding into a struct also type-checks the field as
+	// an object, as decodeRecord does. Only Kind is read; With and Reason are
+	// declared so a wrong-typed one is rejected here as it is there.
+	ReconcilerFeedback struct {
+		Kind   string     `json:"kind"`
+		With   jsonString `json:"with"`
+		Reason jsonString `json:"reason"`
+	} `json:"reconciler_feedback"`
 
 	// Declared for type-check parity only; never read. See the doc block above. The
 	// nested block is a VALUE, not a pointer, so it stays inline and allocation-free
@@ -206,6 +223,8 @@ func decodeSummary(line []byte, shard string, w io.Writer) (Summary, bool) {
 		Category:   s.Category,
 		EstMinutes: s.EstMinutes,
 		Origin:     s.Origin,
+
+		ReconcilerFeedbackKind: s.ReconcilerFeedback.Kind,
 	}, true
 }
 
