@@ -1,6 +1,10 @@
 package reconcile
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 // Epic 35.9: reconcile-time consumption of the per-reviewer trust prior
 // (scorecard.TrustPriors, epic 35.8) — a singleton from a historically reliable
@@ -318,4 +322,54 @@ func require1Finding(t *testing.T, res Result, file string) {
 		}
 	}
 	eq(t, n, 1, "exactly one merged finding at "+file)
+}
+
+// TestSummary_OpportunityScopedRoundTrips pins the reconcile-wire half of the
+// opportunity-scoped-denominator marker (epic 35.16.11.3.2 T1). The nine
+// remit-mapped personas are scored over an opportunity-filtered denominator and
+// the unmapped lenses over the full one, yet both are compared against the same
+// trust thresholds. Options.OpportunityScoped lets the caller say which
+// definition produced each TrustPriors rate, and Summary echoes it so a consumer
+// of the reconciled output can tell them apart. The flag is carried, never
+// read: it must not move a single finding.
+func TestSummary_OpportunityScopedRoundTrips(t *testing.T) {
+	sources := []Source{
+		{Name: "a", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "possible nil deref on this path", "correctness", "mapped"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "bar.go", 20, "unused import lingers in this file", "style", "unmapped"),
+		}},
+		{Name: "c", Findings: []Finding{
+			cf("MEDIUM", "baz.go", 30, "request body is not validated", "correctness", "third"),
+		}},
+	}
+	priors := map[string]float64{"mapped": trustHighThreshold, "unmapped": trustLowThreshold}
+	flags := map[string]bool{"mapped": true, "unmapped": false}
+
+	without := Reconcile(sources, Options{TrustPriors: priors})
+	with := Reconcile(sources, Options{TrustPriors: priors, OpportunityScoped: flags})
+
+	deepEq(t, with.Summary.OpportunityScoped, flags,
+		"the flag round-trips for a mapped (true) and an unmapped (false) reviewer")
+	deepEq(t, with.Findings, without.Findings, "the flag changes no finding")
+	deepEq(t, with.Ambiguous, without.Ambiguous, "the flag changes no sidecar entry")
+
+	// The echo is a copy: a caller mutating its map after Reconcile returns
+	// cannot rewrite the recorded result.
+	flags["unmapped"] = true
+	isTrue(t, !with.Summary.OpportunityScoped["unmapped"], "the echoed map does not alias the caller's")
+
+	// Nil and empty are complete no-ops, down to the serialized summary.
+	baseline := Reconcile(sources, Options{TrustPriors: priors})
+	deepEq(t, Reconcile(sources, Options{TrustPriors: priors, OpportunityScoped: nil}), baseline,
+		"nil OpportunityScoped is identical to leaving it unset")
+	empty := Reconcile(sources, Options{TrustPriors: priors, OpportunityScoped: map[string]bool{}})
+	deepEq(t, empty, baseline, "empty OpportunityScoped is identical to leaving it unset")
+	isTrue(t, empty.Summary.OpportunityScoped == nil, "empty input is normalized to a nil map, not echoed as an empty one")
+	got, err := json.Marshal(empty.Summary)
+	isTrue(t, err == nil, "summary marshals")
+	want, _ := json.Marshal(baseline.Summary)
+	eq(t, string(got), string(want), "an empty flag changes no summary.json byte")
+	isTrue(t, !strings.Contains(string(got), "opportunity_scoped"), "the key is omitted when no flag is attached")
 }
