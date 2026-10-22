@@ -20,53 +20,53 @@ func TestParseIgnore_RejectsInvalidRules(t *testing.T) {
 		wantErrs []string
 	}{
 		{
-			name: "missing reason",
-			yaml: "rules:\n  - file: internal/x.go\n    match: boom\n",
+			name:     "missing reason",
+			yaml:     "rules:\n  - file: internal/x.go\n    match: boom\n",
 			wantErrs: []string{"rule 1", `file "internal/x.go"`, "reason"},
 		},
 		{
-			name: "whitespace-only reason",
-			yaml: "rules:\n  - file: internal/x.go\n    reason: \"   \"\n",
+			name:     "whitespace-only reason",
+			yaml:     "rules:\n  - file: internal/x.go\n    reason: \"   \"\n",
 			wantErrs: []string{"rule 1", `file "internal/x.go"`, "reason"},
 		},
 		{
-			name: "neither file nor package",
-			yaml: "rules:\n  - file: ok.go\n    reason: fine\n  - match: unsafe\n    reason: intentional\n",
+			name:     "neither file nor package",
+			yaml:     "rules:\n  - file: ok.go\n    reason: fine\n  - match: unsafe\n    reason: intentional\n",
 			wantErrs: []string{"rule 2", `match "unsafe"`, "file", "package"},
 		},
 		{
-			name: "dotdot file path",
-			yaml: "rules:\n  - file: ../x.go\n    reason: intentional\n",
+			name:     "dotdot file path",
+			yaml:     "rules:\n  - file: ../x.go\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `file "../x.go"`, ".."},
 		},
 		{
-			name: "dotdot inside file path",
-			yaml: "rules:\n  - file: a/../../x.go\n    reason: intentional\n",
+			name:     "dotdot inside file path",
+			yaml:     "rules:\n  - file: a/../../x.go\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `file "a/../../x.go"`, ".."},
 		},
 		{
-			name: "dotdot package",
-			yaml: "rules:\n  - package: ../internal\n    reason: intentional\n",
+			name:     "dotdot package",
+			yaml:     "rules:\n  - package: ../internal\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `package "../internal"`, ".."},
 		},
 		{
-			name: "absolute file path",
-			yaml: "rules:\n  - file: /abs/x.go\n    reason: intentional\n",
+			name:     "absolute file path",
+			yaml:     "rules:\n  - file: /abs/x.go\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `file "/abs/x.go"`, "absolute"},
 		},
 		{
-			name: "absolute package path",
-			yaml: "rules:\n  - package: /abs\n    reason: intentional\n",
+			name:     "absolute package path",
+			yaml:     "rules:\n  - package: /abs\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `package "/abs"`, "absolute"},
 		},
 		{
-			name: "invalid regex",
-			yaml: "rules:\n  - file: x.go\n    match: \"(unclosed\"\n    reason: intentional\n",
+			name:     "invalid regex",
+			yaml:     "rules:\n  - file: x.go\n    match: \"(unclosed\"\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `file "x.go"`, "match", "(unclosed"},
 		},
 		{
-			name: "PCRE-only regex is not RE2",
-			yaml: "rules:\n  - file: x.go\n    match: \"foo(?=bar)\"\n    reason: intentional\n",
+			name:     "PCRE-only regex is not RE2",
+			yaml:     "rules:\n  - file: x.go\n    match: \"foo(?=bar)\"\n    reason: intentional\n",
 			wantErrs: []string{"rule 1", `file "x.go"`, "match"},
 		},
 		{
@@ -259,5 +259,81 @@ func TestAppendIgnoreRule_RefusesMalformedExistingFile(t *testing.T) {
 	}
 	if !bytes.Equal(bad, after) {
 		t.Fatalf("malformed file was rewritten:\n%s", after)
+	}
+}
+
+// TestAppendIgnoreRule_KeepsHandWrittenComments: `atcr ignore` edits a file a
+// human also edits, so an append must not strip the comments they wrote.
+func TestAppendIgnoreRule_KeepsHandWrittenComments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), IgnoreFileName)
+	seed := "# team conventions\nrules:\n  # generated protobufs\n  - file: '*.pb.go'\n    reason: generated\n"
+	if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendIgnoreRule(path, IgnoreRule{Package: "cli", Reason: "new"}); err != nil {
+		t.Fatalf("AppendIgnoreRule: %v", err)
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"# team conventions", "# generated protobufs"} {
+		if !strings.Contains(string(out), c) {
+			t.Errorf("append dropped comment %q:\n%s", c, out)
+		}
+	}
+	got, err := ReadIgnoreFile(path)
+	if err != nil {
+		t.Fatalf("ReadIgnoreFile: %v\n%s", err, out)
+	}
+	if want := []IgnoreRule{{File: "*.pb.go", Reason: "generated"}, {Package: "cli", Reason: "new"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rules = %+v, want %+v", got, want)
+	}
+}
+
+// TestAppendIgnoreRule_SeedShapes covers the degenerate files a user might
+// start from: empty, comment-only, an empty flow list, a null `rules:`, and a
+// document with no rules key.
+func TestAppendIgnoreRule_SeedShapes(t *testing.T) {
+	r := IgnoreRule{File: "a.go", Reason: "r"}
+	for _, seed := range []string{"", "# nothing yet\n", "rules: []\n", "rules:\n", "~\n", "{}\n"} {
+		path := filepath.Join(t.TempDir(), IgnoreFileName)
+		if err := os.WriteFile(path, []byte(seed), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := AppendIgnoreRule(path, r); err != nil {
+			t.Fatalf("seed %q: AppendIgnoreRule: %v", seed, err)
+		}
+		got, err := ReadIgnoreFile(path)
+		if err != nil {
+			out, _ := os.ReadFile(path)
+			t.Fatalf("seed %q: ReadIgnoreFile: %v\n%s", seed, err, out)
+		}
+		if want := []IgnoreRule{r}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("seed %q: rules = %+v, want %+v", seed, got, want)
+		}
+		if out, _ := os.ReadFile(path); strings.Contains(string(out), "[") {
+			t.Errorf("seed %q: rules left in flow style:\n%s", seed, out)
+		}
+	}
+}
+
+func TestParseIgnore_RejectsSecondDocument(t *testing.T) {
+	_, err := ParseIgnore([]byte("rules: []\n---\nrules:\n  - file: /abs.go\n    reason: x\n"))
+	if err == nil || !strings.Contains(err.Error(), "one document") {
+		t.Fatalf("ParseIgnore error = %v, want a one-document rejection", err)
+	}
+}
+
+func TestCheckRulePath_BackslashAndDriveForms(t *testing.T) {
+	for _, p := range []string{`..\x.go`, `a\..\..\x.go`, `C:\x.go`, `C:/x.go`, `\\host\share\x.go`} {
+		if checkRulePath(p) == nil {
+			t.Errorf("checkRulePath(%q) accepted an escaping path", p)
+		}
+	}
+	for _, p := range []string{"x.go", "a/b/x.go", ".", "**/*.go", "a/..b/x.go"} {
+		if err := checkRulePath(p); err != nil {
+			t.Errorf("checkRulePath(%q) = %v, want accepted", p, err)
+		}
 	}
 }
