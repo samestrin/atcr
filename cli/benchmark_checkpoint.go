@@ -57,9 +57,14 @@ type runCheckpoint struct {
 // written; the meaningful distinction is stamped versus absent.
 const rosterFormatUnion = "union"
 
-// checkpointCase is one completed case's scored outcome, keyed by its index in the
-// suite's case list (the same index the run loop iterates), so replay folds it back
-// in the original case order — preserving the deterministic aggregation the
+// checkpointCase is one completed case run's recorded outcome, keyed by the pair
+// (Index, Replicate), a caseRun. Index is the case's position in the suite's case
+// list (the same index the run loop iterates); Replicate is which run of that case
+// the entry records. The key is always built from the normalized replicate(),
+// which reads a legacy entry's 0 as 1 (see the Replicate field), so the duplicate
+// check in validateCheckpointIntegrity and the lookup map from doneIndex agree on
+// one key per run. Keying on the suite index lets replay fold each entry back in
+// the original case order — preserving the deterministic aggregation the
 // reproducibility contract depends on (AC3).
 type checkpointCase struct {
 	Index     int                  `json:"index"`
