@@ -656,3 +656,66 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 	}
 	assert.Len(t, recs, len(persisted), "the store holds exactly the in-scope, sibling, anchored and deduplicated rows")
 }
+
+// discountedFindingResult is oneFindingResult with the panel-wide confidence
+// discount reconcile records on a correlated invariant cluster (Epic 35.16.17).
+func discountedFindingResult(file string, line int, problem string) reconcile.Result {
+	res := oneFindingResult(file, line, problem)
+	res.Findings[0].Category = reclib.CategoryInvariant
+	res.Findings[0].Confidence = reclib.ConfMedium
+	res.Findings[0].ConfidenceDiscount = reconcile.PanelWideReason
+	return res
+}
+
+// Epic 35.16.17 T4: the discount reason reaches the TD store and the TD row, so a
+// reader can tell a discounted MEDIUM from one a single reviewer earned.
+func TestPersistForReconcile_CarriesTheConfidenceDiscountIntoTheTDRow(t *testing.T) {
+	root := t.TempDir()
+	PersistForReconcile("review", discountedFindingResult("key.go", 42, "equal() omits Name"), PersistOpts{Root: root})
+
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, reclib.ConfMedium, recs[0].Confidence)
+	assert.Equal(t, reconcile.PanelWideReason, recs[0].ConfidenceDiscount)
+	assert.Equal(t, "equal() omits Name (confidence discounted: "+reconcile.PanelWideReason+")",
+		recs[0].RowProblem(), "the TD row states the confidence was discounted and why")
+
+	data := readStoreBytes(t, root)
+	assert.Contains(t, data, `"confidence_discount":"panel-wide instruction: `)
+}
+
+// An undiscounted finding carries no confidence_discount key, so its JSONL line
+// and its TD row are byte-identical to what they were before the field existed.
+func TestPersistForReconcile_UndiscountedRecordIsByteIdentical(t *testing.T) {
+	root := t.TempDir()
+	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Root: root})
+
+	data := readStoreBytes(t, root)
+	assert.NotContains(t, data, "confidence_discount")
+	assert.Equal(t, `{"schema_version":3,"id":"`+history.FindingID("a.go", 1, "leaks a handle")+
+		`","run_id":"2026-08-04T10:00:00Z-review","ts":"2026-08-04T10:00:00Z","severity":"HIGH","file":"a.go","line":1,`+
+		`"problem":"leaks a handle","fix":"fix it","category":"correctness","est_minutes":10,"evidence":"","reviewers":null,"confidence":""}`+"\n",
+		data, "the pre-35.16.17 wire shape, byte for byte")
+
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "leaks a handle", recs[0].RowProblem())
+}
+
+// readStoreBytes returns the concatenated contents of every shard under root's
+// store, so a test can assert on the exact JSONL a run wrote.
+func readStoreBytes(t *testing.T, root string) string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(DefaultDir(root), "*.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	var b strings.Builder
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		require.NoError(t, err)
+		b.Write(data)
+	}
+	return b.String()
+}

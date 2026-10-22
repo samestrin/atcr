@@ -102,6 +102,7 @@ rather than a fabricated value that `resolve` could not match.
 | `occurrences` | int | **v3** — times this id has been seen; carried through compaction |
 | `counted_through` | string | **v3** — newest sighting `occurrences` accounts for; what makes the count idempotent under repeated compaction |
 | `first_seen` | string | **v3** — timestamp of the id's first append; carried through compaction |
+| `confidence_discount` | string | **v3** — why reconcile lowered `confidence` below what the reviewer count earns (today only the panel-wide-instruction reason); absent when it did not. `atcr debt dashboard` appends it to the Top Priority problem cell as `(confidence discounted: …)` |
 
 Reads are tolerant in one direction only: a v1 or v2 record decodes cleanly, with
 zero values for fields that did not exist yet, and a record with no `origin`

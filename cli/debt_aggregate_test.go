@@ -411,6 +411,22 @@ func TestRenderDebtDashboard_SanitizesFileAndComponent(t *testing.T) {
 	assert.Contains(t, out, "| internal/x / y.go | 1 |")
 }
 
+// Epic 35.16.17 T4: a Top Priority row states that reconcile discounted the
+// finding's confidence and why; an undiscounted row is unchanged.
+func TestRenderDebtDashboard_TopRowStatesTheConfidenceDiscount(t *testing.T) {
+	discounted := mkDebtRecord("", "CRITICAL", "internal/key.go", 42, "2026-06-26T09:00:00Z")
+	discounted.Problem = "equal() omits Name"
+	discounted.ConfidenceDiscount = "panel-wide instruction"
+	discounted.StampID()
+	plain := mkDebtRecord("", "HIGH", "internal/x.go", 1, "2026-06-26T09:00:00Z")
+	plain.Problem = "leaks a handle"
+	plain.StampID()
+
+	out := renderDashboardOf(t, []localdebt.Record{discounted, plain}, 10)
+	assert.Contains(t, out, "| internal/key.go:42 | 0 | equal() omits Name (confidence discounted: panel-wide instruction) |")
+	assert.Contains(t, out, "| internal/x.go:1 | 0 | leaks a handle |\n")
+}
+
 func TestRenderDebtDashboard_TopRespectsLimitAndExcludesResolved(t *testing.T) {
 	out := renderDashboardOf(t, debtSampleRecords(), 1)
 	// Only the single highest-priority (CRITICAL) item is listed in Top Priority.
