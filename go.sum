@@ -61,8 +61,8 @@ github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/f
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
 github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 h1:OkMGxebDjyw0ULyrTYWeN0UNCCkmCWfjPnIA2W6oviI=
 github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06/go.mod h1:+ePHsJ1keEjQtpvf9HHw0f4ZeJ0TLRsxhunSI2hYJSs=
-github.com/samestrin/atcr/reconcile v0.9.0 h1:qMWx1Uo/3qseKMrZi6Z2UegJxmT+ITfOUL3RBatjb4I=
-github.com/samestrin/atcr/reconcile v0.9.0/go.mod h1:XnQsAp1VS+WlukfTPoTbQ/k+VBdNlJXmrBRN7EL6yQI=
+github.com/samestrin/atcr/reconcile v0.10.0 h1:vHRy8IlapNIl6/1z2ux5ww/m+aPwY7hVJC/KpwY78VM=
+github.com/samestrin/atcr/reconcile v0.10.0/go.mod h1:XnQsAp1VS+WlukfTPoTbQ/k+VBdNlJXmrBRN7EL6yQI=
 github.com/samestrin/go-axi v0.4.0 h1:73lU3u6Lrk56xFkY8CLwhP5kRpxu6hiHd/P0F8rFTos=
 github.com/samestrin/go-axi v0.4.0/go.mod h1:xb9XmQ5adGISAZAgFRrf2k7afTPscsavmP4RaXcnp+g=
 github.com/segmentio/asm v1.1.3 h1:WM03sfUOENvvKexOLp+pCqgb/WDjsi7EK8gIsICtzhc=
