@@ -227,4 +227,5 @@ included, so an overwritten sidecar is recoverable from
   epic plan reviewed against one task's diff reports the other tasks as
   unmet. A missing or empty plan is
   ignored and the review runs diff-wide; an unreadable one warns and
-  proceeds.
+  proceeds. The plan text is part of the reviewer prompt, so a change to it
+  (or to this contract) misses the diff cache.
