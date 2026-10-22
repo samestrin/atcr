@@ -62,8 +62,9 @@ func run(args []string, stderr io.Writer) int {
 		}
 	}
 	// Append refuses to recreate a missing store root, which guards real
-	// checkouts; a measurement store is built from nothing, so create it here.
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	// checkouts; a measurement store is built from nothing, so create it here,
+	// owner-only like ensureStoreDir.
+	if err := os.MkdirAll(abs, 0o700); err != nil {
 		_, _ = fmt.Fprintln(stderr, "gen-debt-store:", err)
 		return 1
 	}

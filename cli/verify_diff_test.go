@@ -145,9 +145,11 @@ func stageTestDeletion(t *testing.T) {
 }
 
 // TestStageTestDeletion_GuardsBeforeWriting runs stageTestDeletion in a
-// subprocess whose cwd is NOT a temp dir (the forget-isolate(t) case): the
-// requireTempWorkdir guard must fire before anything is written, so no
-// foo.go/foo_test.go appears and the helper fails.
+// subprocess whose cwd is NOT under the helper's own os.TempDir() (the
+// forget-isolate(t) case; the helper's temp dir is forced to a sibling dir via
+// TMPDIR, TMP and TEMP): the requireTempWorkdir guard must fire before
+// anything is written, so no foo.go/foo_test.go appears and the helper fails
+// with the guard's own "refusing to run git" message.
 func TestStageTestDeletion_GuardsBeforeWriting(t *testing.T) {
 	if os.Getenv("ATCR_STAGE_GUARD_HELPER") == "1" {
 		stageTestDeletion(t)
@@ -164,10 +166,16 @@ func TestStageTestDeletion_GuardsBeforeWriting(t *testing.T) {
 	require.NoError(t, os.Mkdir(alt, 0o755))
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStageTestDeletion_GuardsBeforeWriting$")
-	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1", "TMPDIR="+alt)
+	// os.TempDir() reads TMPDIR on Unix but TMP/TEMP on Windows, so set all
+	// three or the guard compares against the real temp dir there.
+	cmd.Env = append(os.Environ(), "ATCR_STAGE_GUARD_HELPER=1", "TMPDIR="+alt, "TMP="+alt, "TEMP="+alt)
 	cmd.Dir = abs
 	out, runErr := cmd.CombinedOutput()
 	require.Error(t, runErr, "the helper must fail outside a temp workdir, got: %s", out)
+	// Pin WHY it failed: any failure (a git error, a write error) satisfies
+	// require.Error, so only the guard's message proves the guard fired.
+	require.Contains(t, string(out), "refusing to run git",
+		"the helper must fail at the requireTempWorkdir guard, got: %s", out)
 	require.NoFileExists(t, filepath.Join(abs, "foo.go"), "guard must fire before any write")
 	require.NoFileExists(t, filepath.Join(abs, "foo_test.go"), "guard must fire before any write")
 }
