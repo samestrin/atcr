@@ -3,11 +3,11 @@ package reconcile
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,8 +20,7 @@ func gitRepoWithFiles(t *testing.T, relpaths ...string) string {
 	t.Helper()
 	root := t.TempDir()
 	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
+		cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 		out, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
@@ -92,8 +91,7 @@ func gitRepoWithSources(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
+		cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 		out, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
