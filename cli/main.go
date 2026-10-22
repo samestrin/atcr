@@ -460,6 +460,14 @@ func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cob
 				}
 			}
 			telemetryClient := resolveClient(usageOverride)
+			// Audit the redirect: whenever the flag is given, log the destination the
+			// client will actually use, so a redirected ping is never silent. Read
+			// from the client, not the flag, because an embedder's client is
+			// authoritative and may not honor the override.
+			if usageOverride != "" {
+				log.FromContext(cmd.Context()).Info(telemetryOverrideLogMsg,
+					"endpoint", displayTelemetryEndpoint(telemetryClient.UsageEndpoint()))
+			}
 			// Disclose the default-on usage ping once per repository, before any
 			// subcommand work and on this synchronous path — never from the async
 			// send path. Silent and non-fatal by construction; see

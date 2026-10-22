@@ -289,7 +289,9 @@ identifiers:
   `tokens_in`, `tokens_out`, `latency_ms`
 - A `personas` list, one entry per reviewer, each carrying `persona_id_hash`
   (the one-way hash above), `model`, and that reviewer's `cost_usd`,
-  `tokens_in`, `tokens_out`, `latency_ms`
+  `tokens_in`, `tokens_out`, `latency_ms`. `model` is sent as `""` unless it is
+  at most 128 characters of `[A-Za-z0-9._:/~@+-]`; `cost_usd` is still priced
+  from the reviewer's real model.
 
 The CLI ships these **raw metrics** rather than a computed "time/credits saved"
 figure — any ROI/savings number the dashboard shows is derived on the backend
