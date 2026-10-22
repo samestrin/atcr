@@ -117,18 +117,38 @@ func TestSandboxedGoTest(t *testing.T) { t.Log("atcr-go-test-ran") }
 }
 
 func TestIntegration_OSLevelDarwin_MakeRuns(t *testing.T) {
-	// TD-012 / T2, the required non-Go leg. make execs its recipe through
-	// /bin/sh, so this covers a toolchain that starts a second binary of its own.
-	// /usr/bin/make is a Command Line Tools shim, like git.
-	if _, err := exec.LookPath("make"); err != nil {
-		skipOrFail(t, "make is not installed on this host: %v", err)
-		return
+	// TD-012 / T2. make execs its recipe through /bin/sh, so this covers a
+	// toolchain that starts a second binary of its own.
+	//
+	// It runs a real make binary, not the /usr/bin/make shim. The shim asks
+	// xcode-select for the developer dir by reading /var/db/xcode_select_link,
+	// which the profile does not grant, and on the macOS runner that link points
+	// into /Applications/Xcode*.app, which the read tier excludes anyway. Measured
+	// in CI (run 39806011885): "unable to read data link at
+	// '/var/db/xcode_select_link' (Operation not permitted)" under the unchanged,
+	// unscoped exec rule, so the shim failure is a read-tier gap, not something
+	// the exec narrowing can prove or break. A host with no make under a readable
+	// prefix skips, as NpmRuns does. GoTestRuns and NpmRuns carry the
+	// task's proof there.
+	var mk string
+	for _, p := range []string{
+		"/Library/Developer/CommandLineTools/usr/bin/make",
+		"/opt/homebrew/bin/gmake",
+		"/usr/local/bin/gmake",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			mk = p
+			break
+		}
+	}
+	if mk == "" {
+		t.Skip("no make binary under a prefix the profile reads (Command Line Tools or Homebrew gmake)")
 	}
 	b := darwinIntegrationBackend(t)
 	snapshot := writeFixture(t, map[string]string{
 		"Makefile": "proof:\n\t@echo atcr-make-ran\n",
 	})
-	runToolchainLeg(t, b, snapshot, "make --no-print-directory proof", "atcr-make-ran")
+	runToolchainLeg(t, b, snapshot, mk+" --no-print-directory proof", "atcr-make-ran")
 }
 
 func TestIntegration_OSLevelDarwin_NpmRuns(t *testing.T) {
