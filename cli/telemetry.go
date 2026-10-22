@@ -87,6 +87,24 @@ func ValidateTelemetryEndpoint(endpoint string) error {
 	}
 }
 
+// telemetryOverrideLogMsg is the startup audit log message written whenever
+// --telemetry-endpoint is given, so an operator (or anyone reading CI logs) can
+// see where this process sends the usage ping.
+const telemetryOverrideLogMsg = "usage telemetry endpoint overridden"
+
+// displayTelemetryEndpoint renders an endpoint for the startup audit log and the
+// first-run notice: scheme, host and path only. Userinfo, query and fragment are
+// dropped because an operator URL may carry a password or token in them, and
+// neither surface may echo a credential to stderr. An unparseable value reveals
+// nothing.
+func displayTelemetryEndpoint(endpoint string) string {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+}
+
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
 // anonymous usage ping runs ONLY when BOTH surfaces agree it should — the env
 // var permits it AND the persisted config does not disable it. It is total and
@@ -213,7 +231,7 @@ func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
 			"It carries no source code, file paths, or findings — see docs/telemetry.md.\n"+
 			"To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.\n"+
 			"(This notice is shown once per repository.)\n",
-		defaultTelemetryEndpoint)
+		displayTelemetryEndpoint(client.UsageEndpoint()))
 	// Best-effort: if this cannot be persisted the notice simply repeats next run,
 	// which is the safe direction — far better than suppressing a disclosure that
 	// was never recorded.
