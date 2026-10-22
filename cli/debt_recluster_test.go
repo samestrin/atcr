@@ -49,11 +49,14 @@ func TestDebtRecluster_RegisteredBesideResolve(t *testing.T) {
 func TestDebtRecluster_RecordsAnnotationLeavingStatusAndWontfix(t *testing.T) {
 	target := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "two races")
 	dismissed := openRec("2026-07-01T10:00:00Z-b", "LOW", "internal/x/b.go", 3, "style nit")
+	target.Model, dismissed.Model = "claude-sonnet-4-6", "claude-sonnet-4-6"
 	dir := writeDebtStore(t, target, dismissed)
 	_, err := runDebt(t, "resolve", "--dir", dir, dismissed.ID, "--status", "wontfix", "--reason", "not worth it")
 	require.NoError(t, err)
 
 	beforeWontfix := dashboardWontfix(t, dir)
+	beforeSignal := localdebt.AggregateQualitySignal(readStoreRecords(t, dir))
+	require.NotEmpty(t, beforeSignal, "the fixture must yield quality-signal rows for the check to bite")
 	beforeLen := len(readStoreRecords(t, dir))
 
 	out, err := runDebt(t, "recluster", "--dir", dir, target.ID, "--kind", "wrong-merge", "--reason", "two distinct races")
@@ -75,6 +78,8 @@ func TestDebtRecluster_RecordsAnnotationLeavingStatusAndWontfix(t *testing.T) {
 	assert.Empty(t, eff.Status, "the finding is still open")
 	require.NotNil(t, eff.ReconcilerFeedback)
 	assert.Equal(t, beforeWontfix, dashboardWontfix(t, dir), "wontfix count untouched")
+	assert.Equal(t, beforeSignal, localdebt.AggregateQualitySignal(readStoreRecords(t, dir)),
+		"the reviewers' quality-signal rows are unchanged (AC2)")
 
 	// Still on the open worklist.
 	out, err = runDebt(t, "resolve", "--dir", dir)
