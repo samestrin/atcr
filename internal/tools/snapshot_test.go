@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,14 +9,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+	cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %s: %s", strings.Join(args, " "), out)
 	return strings.TrimSpace(string(out))
@@ -65,7 +66,7 @@ func TestSnapshotManagerGit_PinnedPathRunsWithoutPATHLookup(t *testing.T) {
 	}
 	repo := setupGitRepo(t)
 	m := NewSnapshotManager(repo)
-	t.Setenv("PATH", "") // exec.Command("git", ...) now fails LookPath and sets cmd.Err
+	t.Setenv("PATH", "") // a bare "git" now fails LookPath and sets cmd.Err
 	out, err := m.git(gitPath, "rev-parse", "--verify", "-q", "HEAD")
 	if err != nil {
 		t.Fatalf("git() with pinned path must run despite empty PATH: %v", err)
