@@ -118,7 +118,7 @@ func TestDebt_CommandWiring(t *testing.T) {
 // VALUE still carries the shared store.
 func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 	cmd := newDebtCmd()
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		sub := debtSubcommand(t, cmd, name)
 		f := sub.Flags().Lookup("dir")
 		require.NotNil(t, f, "%s registers --dir", name)
@@ -139,7 +139,7 @@ func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
 	debt := newDebtCmd()
 	readers := map[string]*cobra.Command{"quality-report": newQualityReportCmd()}
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		readers["debt "+name] = debtSubcommand(t, debt, name)
 	}
 
@@ -165,7 +165,7 @@ func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
 // addDebtStoreFlag's chained PreRunE, so all six store readers share it with no
 // per-command wiring and no change to debtStoreDir's signature.
 func TestDebtStoreFlag_EmptyDirIsUsageError(t *testing.T) {
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		t.Run("debt "+name, func(t *testing.T) {
 			_, err := runDebt(t, name, "--dir", "")
 			require.Error(t, err, "debt %s --dir \"\" must be rejected", name)
@@ -205,7 +205,7 @@ func TestDebtStoreFlag_RejectsTraversalAndSystemDirs(t *testing.T) {
 		"system directory": "/etc/atcr/debt",
 	}
 	for label, dir := range cases {
-		for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+		for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 			t.Run(label+"/debt "+name, func(t *testing.T) {
 				_, err := runDebt(t, name, "--dir", dir)
 				require.Error(t, err, "debt %s --dir %q must be rejected", name, dir)
@@ -422,7 +422,7 @@ func TestDebtList_RendersTable(t *testing.T) {
 // --help as if the flag took that many arguments.
 func TestDebt_FlagUsageStringsCarryNoBackticks(t *testing.T) {
 	cmd := newDebtCmd()
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		sub := debtSubcommand(t, cmd, name)
 		sub.Flags().VisitAll(func(f *pflag.Flag) {
 			assert.NotContains(t, f.Usage, "`",
