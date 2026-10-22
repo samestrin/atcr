@@ -1,0 +1,57 @@
+{
+  "columns": [
+    "CRITICAL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "BLOCKER",
+    "UNKNOWN"
+  ],
+  "rows": [
+    {
+      "package": "cli",
+      "counts": {
+        "BLOCKER": 1,
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "UNKNOWN": 1
+      },
+      "total": 2
+    },
+    {
+      "package": "internal/fanout",
+      "counts": {
+        "BLOCKER": 0,
+        "CRITICAL": 0,
+        "HIGH": 0,
+        "LOW": 1,
+        "MEDIUM": 1,
+        "UNKNOWN": 0
+      },
+      "total": 2
+    },
+    {
+      "package": "internal/registry",
+      "counts": {
+        "BLOCKER": 0,
+        "CRITICAL": 1,
+        "HIGH": 2,
+        "LOW": 0,
+        "MEDIUM": 0,
+        "UNKNOWN": 0
+      },
+      "total": 3
+    }
+  ],
+  "totals": {
+    "BLOCKER": 1,
+    "CRITICAL": 1,
+    "HIGH": 2,
+    "LOW": 1,
+    "MEDIUM": 1,
+    "UNKNOWN": 1
+  },
+  "total": 7
+}

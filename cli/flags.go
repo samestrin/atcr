@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,6 +331,15 @@ func validateRangeFlags(cmd *cobra.Command) error {
 // makes --json sugar for --format json; elsewhere read it with boolFlag.
 func addJSONFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("json", false, "emit machine-readable JSON (on a command with --format, the same as --format json)")
+}
+
+// writeJSON writes v to w as indented JSON, the layout every --json command
+// prints. The write error is returned so a broken pipe is not reported as
+// success.
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }
 
 // formatWithJSON returns cmd's effective --format, folding in the shared --json

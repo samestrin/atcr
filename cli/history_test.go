@@ -666,11 +666,21 @@ func TestHistoryCmd_PruneEverythingDoesNotSuggestFirstRun(t *testing.T) {
 // the current output. Run it only against output known to be correct.
 var updateJSONGolden = flag.Bool("update-json-golden", false, "rewrite cli/testdata/*_json.golden.json")
 
+// jsonGoldenDir is cli/testdata as an absolute path, resolved before any test
+// changes directory (runHistoryStdout and isolate both do).
+var jsonGoldenDir = func() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	return filepath.Join(wd, "testdata")
+}()
+
 // assertJSONGolden compares got with testdata/<name>, rewriting it under
 // -update-json-golden.
 func assertJSONGolden(t *testing.T, name, got string) {
 	t.Helper()
-	path := filepath.Join("testdata", name)
+	path := filepath.Join(jsonGoldenDir, name)
 	if *updateJSONGolden {
 		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
 	}
