@@ -532,7 +532,7 @@ func severityRank(s string) int {
 // the wrong store is distinguishable from an empty backlog. Exits 0 either way.
 //
 // Every column passes through the same sanitizers renderDebtTable uses
-// (debtIDCell, cell, truncate): a stray tab or CR in a store field must not tear
+// (debtIDCell, cell, listProblem): a stray tab or CR in a store field must not tear
 // a tabwriter row, and an empty id (a hand-edited store is the only source)
 // renders as "-" rather than a blank leading column.
 func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
@@ -546,7 +546,7 @@ func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
-			debtIDCell(r.ID), cell(r.Severity), cell(r.File), r.Line, cell(truncate(r.Problem, 60))); err != nil {
+			debtIDCell(r.ID), cell(r.Severity), cell(r.File), r.Line, cell(listProblem(r))); err != nil {
 			return err
 		}
 	}
