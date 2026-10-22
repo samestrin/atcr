@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -398,10 +397,6 @@ func TestDebtDashboard_CheckFailsAfterStoreMutation(t *testing.T) {
 	require.Error(t, err, "a store mutation must be detected as drift")
 }
 
-// updateJSONGolden rewrites the --json golden files (Epic 35.22 T3) from the
-// current render. Run it only against a render already checked by hand.
-var updateJSONGolden = flag.Bool("update-json-golden", false, "rewrite cli/testdata/*.golden.json")
-
 // runDebtSplit runs `atcr debt <args>` with stdout and stderr kept apart: the
 // --json contract is that stdout alone parses, so a test must not read the
 // hydrate shortfall notes and warnings that go to stderr as part of it.
@@ -415,19 +410,6 @@ func runDebtSplit(t *testing.T, args ...string) (stdout, stderr string, err erro
 	cmd.SetArgs(args)
 	err = cmd.Execute()
 	return out.String(), errBuf.String(), err
-}
-
-// assertJSONGolden compares got against cli/testdata/<name>, rewriting the file
-// first under -update-json-golden.
-func assertJSONGolden(t *testing.T, name, got string) {
-	t.Helper()
-	path := filepath.Join("testdata", name)
-	if *updateJSONGolden {
-		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
-	}
-	want, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Equal(t, string(want), got, "the --json render drifted from %s", path)
 }
 
 // markdownSectionRows counts the data rows of the table under a dashboard

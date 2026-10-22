@@ -36,6 +36,9 @@ package gitexec
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // CommandFn builds a hardened `git <arg...>` command. It is a package-level var so
@@ -48,6 +51,55 @@ var CommandFn = func(arg ...string) *exec.Cmd {
 // context bounds and cancels the child exactly as exec.CommandContext does.
 var CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
 	return hardenEnv(exec.CommandContext(ctx, "git", arg...))
+}
+
+// FixtureCommandContext builds a hardened `git <arg...>` command for a TEST
+// FIXTURE repository rooted at dir. It is for tests only: production git calls go
+// through CommandFn/CommandContextFn.
+//
+// Git exports GIT_DIR into a hook's environment, and GIT_DIR beats `git -C`, so a
+// fixture command run under a hook retargets at the surrounding repository (Epic
+// 45.0: moved HEAD, stray commits, flipped core.bare). This constructor pins
+// GIT_DIR=<dir>/.git and GIT_WORK_TREE=<dir>, which win over any inherited value,
+// and sets GIT_CEILING_DIRECTORIES to dir's parent so discovery can never walk out
+// of the fixture. It also drops the other repo-locating vars a hook exports
+// (the list .githooks/pre-push unsets): an inherited GIT_INDEX_FILE or
+// GIT_OBJECT_DIRECTORY would still send the index or objects elsewhere. The
+// child runs in dir, so relative paths in arg resolve inside the fixture; a
+// relative dir is resolved against the current directory first.
+//
+// It calls exec.CommandContext directly rather than CommandContextFn, because
+// tests replace that var with fakes and a fixture must always run real git.
+func FixtureCommandContext(ctx context.Context, dir string, arg ...string) *exec.Cmd {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	cmd := exec.CommandContext(ctx, "git", arg...)
+	cmd.Dir = dir
+	env := slices.DeleteFunc(cmd.Environ(), func(kv string) bool {
+		for _, k := range inheritedRepoVars {
+			if strings.HasPrefix(kv, k+"=") {
+				return true
+			}
+		}
+		return false
+	})
+	cmd.Env = append(env,
+		"GIT_DIR="+filepath.Join(dir, ".git"),
+		"GIT_WORK_TREE="+dir,
+		"GIT_CEILING_DIRECTORIES="+filepath.Dir(dir),
+	)
+	return hardenEnv(cmd)
+}
+
+// inheritedRepoVars are the repo-locating vars, besides GIT_DIR and GIT_WORK_TREE,
+// that FixtureCommandContext removes from the inherited environment.
+var inheritedRepoVars = []string{
+	"GIT_INDEX_FILE",
+	"GIT_PREFIX",
+	"GIT_COMMON_DIR",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
 }
 
 // hardenEnv appends GIT_CONFIG_NOSYSTEM=1 and GIT_CONFIG_GLOBAL=/dev/null onto the

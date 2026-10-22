@@ -18,9 +18,10 @@ import (
 
 // newScorecardCmd builds `atcr scorecard [id-or-path]`: render the per-reviewer
 // eval table for a single reconcile run, resolved either by run_id or by the
-// review directory that produced it.
+// review directory that produced it. --json prints the rows the table renders
+// (scorecardRows) as JSON instead (Epic 35.22).
 func newScorecardCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "scorecard [id-or-path]",
 		Short: "Display the per-reviewer scorecard for a single reconcile run",
 		Long: "Display the per-reviewer scorecard for a single reconcile run.\n\n" +
@@ -31,6 +32,15 @@ func newScorecardCmd() *cobra.Command {
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: runScorecard,
 	}
+	addJSONFlag(cmd)
+	return cmd
+}
+
+// scorecardJSON is the `scorecard --json` document: the run the records were
+// found under and the same per-reviewer rows the table renders.
+type scorecardJSON struct {
+	RunID     string             `json:"run_id"`
+	Reviewers []scorecard.Record `json:"reviewers"`
 }
 
 func runScorecard(cmd *cobra.Command, args []string) error {
@@ -61,6 +71,7 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 	}
 
 	reviewers := reviewerRecords(recs)
+	found := runID
 	// A run reconciled before the run id gained its path hash is stored under
 	// the bare ReconciledAt-basename form; look that up before reporting none.
 	if len(reviewers) == 0 && legacyRunID != "" {
@@ -69,12 +80,16 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to read scorecard store: %w", err)
 		}
 		reviewers = reviewerRecords(recs)
+		found = legacyRunID
 	}
 	if len(reviewers) == 0 {
 		// No matching records is a real failure (exit 1), not a usage error.
 		return fmt.Errorf("no scorecard records found for run %s: run 'atcr reconcile' to generate data", runID)
 	}
 
+	if boolFlag(cmd, "json") {
+		return writeJSON(cmd.OutOrStdout(), scorecardJSON{RunID: found, Reviewers: scorecardRows(reviewers)})
+	}
 	return renderScorecard(cmd.OutOrStdout(), reviewers)
 }
 
@@ -159,26 +174,34 @@ func runIDFromReviewDir(arg string) (runID, legacyRunID string, err error) {
 	return scorecard.RunIDForReviewDir(s.ReconciledAt, clean), s.ReconciledAt + "-" + filepath.Base(clean), nil
 }
 
-// renderScorecard writes the per-reviewer table to w via text/tabwriter. The
-// verification columns (VERIFIED/REFUTED/SURV%) appear only when at least one
-// record carries verification data; reviewers without it show "-". Duplicate
-// reviewer rows (a retried emit) collapse last-write-wins. The whole table is
+// scorecardRows is the struct behind the scorecard table: one record per
+// reviewer, sorted by reviewer name. Duplicate reviewer records (a retried emit)
+// collapse last-write-wins (AC 02-01 EC3).
+func scorecardRows(recs []scorecard.Record) []scorecard.Record {
+	byRev := make(map[string]scorecard.Record, len(recs))
+	for _, r := range recs {
+		byRev[r.Reviewer] = r
+	}
+	rows := make([]scorecard.Record, 0, len(byRev))
+	for _, r := range byRev {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Reviewer < rows[j].Reviewer })
+	return rows
+}
+
+// renderScorecard writes the per-reviewer table of scorecardRows(recs) to w via
+// text/tabwriter. The verification columns (VERIFIED/REFUTED/SURV%) appear only
+// when at least one record carries verification data; reviewers without it
+// show "-". The whole table is
 // built in a buffer and written once so a flush error cannot emit a half table.
 // The single stdout write's error is propagated so a broken pipe is not silently
 // reported as success.
 func renderScorecard(w io.Writer, recs []scorecard.Record) error {
-	byRev := make(map[string]scorecard.Record, len(recs))
-	for _, r := range recs {
-		byRev[r.Reviewer] = r // last-write-wins (AC 02-01 EC3)
-	}
-	names := make([]string, 0, len(byRev))
-	for n := range byRev {
-		names = append(names, n)
-	}
-	sort.Strings(names)
+	rows := scorecardRows(recs)
 
 	hasVer := false
-	for _, r := range byRev {
+	for _, r := range rows {
 		if r.FindingsVerified != nil {
 			hasVer = true
 			break
@@ -188,7 +211,7 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 	// this table says how many there were. Conditional, like the verification
 	// columns above: a run with nothing shielded renders unchanged.
 	hasShielded := false
-	for _, r := range byRev {
+	for _, r := range rows {
 		if r.FindingsDocShielded > 0 {
 			hasShielded = true
 			break
@@ -205,8 +228,7 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 		header += "\tDOC-SHIELDED"
 	}
 	_, _ = fmt.Fprintln(tw, header)
-	for _, n := range names {
-		r := byRev[n]
+	for _, r := range rows {
 		row := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%dms",
 			sanitizeCell(r.Reviewer), sanitizeCell(r.Model),
 			r.FindingsRaised, r.FindingsCorroborated, r.FindingsSolo,
