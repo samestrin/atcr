@@ -991,8 +991,11 @@ func WithSlotDone(f func(i int, r Result)) EngineOption {
 
 // WithSlotStart wires a per-slot lease hook: f(i) runs once for every slot a
 // worker takes, before its provider call, and is always followed by the slot's
-// WithSlotDone hook. f is called concurrently and must be goroutine-safe and
-// must not panic.
+// WithSlotDone hook. The converse does not hold: a slot the run's cancellation
+// reaches before a worker takes it (including every slot when ctx is already
+// cancelled when Run is called) gets a WithSlotDone call with no f(i) before
+// it, so a slotDone hook must not assume its slot was leased. f is called
+// concurrently and must be goroutine-safe and must not panic.
 func WithSlotStart(f func(i int)) EngineOption {
 	return func(e *Engine) { e.slotStart = f }
 }
