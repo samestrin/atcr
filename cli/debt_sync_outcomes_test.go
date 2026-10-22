@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -241,4 +242,27 @@ func TestDebtSyncOutcomes_GateFloorMatchesTheScorecard(t *testing.T) {
 	require.NotNil(t, m, "trust.go must still declare minConfirmationOutcomes as a literal")
 	assert.Equal(t, string(m[1]), fmt.Sprint(gateMinOutcomes))
 	assert.Equal(t, 10, gateMinPersonas, "trust.go's re-measurement trigger names 10+ distinct personas")
+}
+
+// A resolution that would exceed the store's line cap is refused by the shared
+// append path; the sync reports that row and still records the others.
+func TestDebtSyncOutcomes_OversizedResolutionSkipsOnlyThatRow(t *testing.T) {
+	ts := "2026-10-01T00:00:00Z"
+	small := openRec(ts, "LOW", "c.go", 1, "small")
+	big := openRec(ts, "LOW", "c.go", 2, "big")
+	base, err := json.Marshal(big)
+	require.NoError(t, err)
+	big.Evidence = strings.Repeat("e", localdebt.MaxRecordBytes-len(base)-16)
+	dir := writeDebtStore(t, small, big)
+
+	td := writeTD(t, tdTable(
+		[2]string{"[x]", "debt:" + big.ID},
+		[2]string{"[x]", "debt:" + small.ID},
+	))
+	out, err := runDebt(t, "sync-outcomes", "--store", dir, "--td", td)
+	require.NoError(t, err, out)
+	st := foldedStatus(t, dir)
+	assert.Equal(t, "", st[big.ID])
+	assert.Equal(t, localdebt.StatusResolved, st[small.ID])
+	assert.Contains(t, out, "line 13: debt:"+big.ID+": resolution record is too large")
 }
