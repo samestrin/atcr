@@ -39,9 +39,28 @@ func summariesOf(recs []localdebt.Record) []localdebt.Summary {
 			ID: r.ID, Status: r.Status, Severity: r.Severity, Timestamp: r.Timestamp,
 			HasFile: r.File != "", File: r.File, Line: r.Line,
 			Category: r.Category, EstMinutes: r.EstMinutes, Origin: r.Origin,
+			ReconcilerFeedbackKind: reconcilerFeedbackKind(r),
 		})
 	}
 	return localdebt.FoldSummaries(sums)
+}
+
+// reconcilerFeedbackKind is decodeSummary's projection of the annotation: its
+// kind, or "" when the record carries none.
+func reconcilerFeedbackKind(r localdebt.Record) string {
+	if r.ReconcilerFeedback == nil {
+		return ""
+	}
+	return r.ReconcilerFeedback.Kind
+}
+
+// reclusteredCopy returns the record a recluster writer appends for rec: a later
+// copy of the finding carrying the annotation, status untouched (Epic 36.1).
+func reclusteredCopy(rec localdebt.Record, ts, kind string) localdebt.Record {
+	rec.Timestamp = ts
+	rec.RunID = ts + "-recluster"
+	rec.ReconcilerFeedback = &localdebt.ReconcilerFeedback{Kind: kind, Reason: "r"}
+	return rec
 }
 
 // debtRecordsByID indexes recs by id, folded, so a test can read the record
@@ -719,4 +738,68 @@ func TestDebtIsLiveStatus_AgreesWithDebtIsLiveOnEveryStatus(t *testing.T) {
 			assert.Equal(t, debtIsLiveStatus(tc.status), debtIsLive(r), "record wrapper must agree with the core")
 		})
 	}
+}
+
+// --- Epic 36.1 T4: reconciler corrections ------------------------------------
+
+// TestSummarizeDebt_WrongMergeRaisesReconcilerCorrectionsNotWontfix is T4's
+// second success criterion: a finding annotated wrong-merge raises the
+// reconciler-correction count, in the totals and in its severity row, and not
+// Wontfix. The finding stays in its status bucket (open), because the
+// annotation is a verdict on the reconciler, not on the finding.
+func TestSummarizeDebt_WrongMergeRaisesReconcilerCorrectionsNotWontfix(t *testing.T) {
+	merged := mkDebtRecord("", "HIGH", "internal/x/a.go", 1, "2026-07-01T00:00:00Z")
+	plain := mkDebtRecord("", "HIGH", "internal/x/b.go", 2, "2026-07-01T00:00:00Z")
+	recs := []localdebt.Record{merged, plain, reclusteredCopy(merged, "2026-07-02T00:00:00Z", localdebt.FeedbackWrongMerge)}
+
+	s := summarizeDebt(summariesOf(recs), time.Time{}, 10)
+	assert.Equal(t, 1, s.ReconcilerCorrections)
+	assert.Equal(t, 0, s.Wontfix, "a reconciler correction is not a wontfix")
+	assert.Equal(t, 2, s.Total)
+	assert.Equal(t, 2, s.Open, "the annotated finding is still open")
+	assert.Equal(t, 2, s.Live)
+
+	high := s.BySeverity[1]
+	require.Equal(t, "HIGH", high.Severity)
+	assert.Equal(t, 1, high.ReconcilerCorrections)
+	assert.Equal(t, 0, high.Wontfix)
+	assert.Equal(t, 2, high.Total, "the correction is not a status bucket and does not add to Total")
+}
+
+// TestSummarizeDebt_EveryKindAndStatusCountsOnce: each of the three kinds is a
+// reconciler correction, on a finding of any status, and a settled annotated
+// finding stays in its own status bucket. Total remains an exact sum of the
+// status counters only.
+func TestSummarizeDebt_EveryKindAndStatusCountsOnce(t *testing.T) {
+	var recs []localdebt.Record
+	kinds := []string{localdebt.FeedbackWrongMerge, localdebt.FeedbackWrongSplit, localdebt.FeedbackWrongCategory}
+	statuses := []string{"", localdebt.StatusWontfix, localdebt.StatusResolved}
+	for i, kind := range kinds {
+		r := mkDebtRecord(statuses[i], "LOW", "internal/k/a.go", i+1, "2026-07-01T00:00:00Z")
+		recs = append(recs, r, reclusteredCopy(r, "2026-07-02T00:00:00Z", kind))
+	}
+	s := summarizeDebt(summariesOf(recs), time.Time{}, 10)
+	assert.Equal(t, 3, s.ReconcilerCorrections)
+	assert.Equal(t, 1, s.Open)
+	assert.Equal(t, 1, s.Wontfix, "only the finding whose status is wontfix counts there")
+	assert.Equal(t, 1, s.Resolved)
+	assert.Equal(t, s.Total, s.Open+s.Deferred+s.Resolved+s.Wontfix+s.Unreproducible+s.AttemptsExhausted)
+	assert.Equal(t, 3, s.BySeverity[3].ReconcilerCorrections)
+}
+
+// TestRenderDebtDashboard_PrintsReconcilerCorrections is T4's first success
+// criterion: the dashboard prints a distinct reconciler-correction count, in the
+// totals header and as its own By Severity column, apart from Wontfix.
+func TestRenderDebtDashboard_PrintsReconcilerCorrections(t *testing.T) {
+	merged := mkDebtRecord("", "HIGH", "internal/x/a.go", 1, "2026-07-01T00:00:00Z")
+	out := renderDashboardOf(t, []localdebt.Record{
+		merged, reclusteredCopy(merged, "2026-07-02T00:00:00Z", localdebt.FeedbackWrongMerge),
+	}, 5)
+
+	assert.Contains(t, out, "**Wontfix:** 0")
+	assert.Contains(t, out, "**Reconciler corrections:** 1")
+	assert.Contains(t, out, "| Severity | Open | Deferred | Resolved | Wontfix | Unreproducible | Attempts-exhausted | Total | Reconciler corrections |\n")
+	assert.Contains(t, out, "| HIGH | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 1 |\n",
+		"the HIGH row: one open item, which is also one reconciler correction")
+	assert.Contains(t, out, "| LOW | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |\n")
 }
