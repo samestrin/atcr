@@ -899,8 +899,8 @@ func TestCheckCoverage_DropsAnOutOfVocabularyFailureReason(t *testing.T) {
 // mixedShortfallRun is a 4-case run in which EVERY reviewer row is short in both
 // ways at once: case-03 was recorded as an infrastructure failure (unmeasured) and
 // case-04 is unaccounted for (missing). Two reviewer rows, so the message nests a
-// row list around a two-half description — the shape the separators must keep
-// distinguishable.
+// row list around descriptions of two labelled parts each — the shape the separators
+// must keep distinguishable.
 func mixedShortfallRun() benchmark.RunResult {
 	rr := benchmark.RunResult{
 		SuiteCaseIDs: []string{"case-01", "case-02", "case-03", "case-04"},
@@ -915,16 +915,19 @@ func mixedShortfallRun() benchmark.RunResult {
 	return rr
 }
 
-// The two halves of one row's description and the list of distinct short ROWS are
-// different nesting levels, so they must not share a delimiter. With both at "; " a
-// reader — or anything downstream that splits on it — reads one reviewer row as two.
+// The labelled parts of one row's description (missing, unmeasured, unshown,
+// unmeasured_ok) and the list of distinct short ROWS are different nesting levels, so
+// they must not share a delimiter. With both at "; " a reader — or anything downstream
+// that splits on it — reads one reviewer row as two. The counts below are what
+// mixedShortfallRun's two rows produce, not a ceiling: a row with more labelled parts
+// carries more separators.
 func TestCheckCoverage_LabelSeparatorDoesNotCollideWithTheRowSeparator(t *testing.T) {
 	err := checkCoverage(io.Discard, mixedShortfallRun(), "rr.json", false)
 
 	require.Error(t, err)
 	msg := err.Error()
 	assert.Equal(t, 2, strings.Count(msg, labelSeparator),
-		"each of the two short rows splits its own description in half: %s", msg)
+		"each of mixedShortfallRun's two short rows joins its two labelled parts (missing, unmeasured) once: %s", msg)
 	// One boundary between the two rows, plus the one the remedy clause is appended
 	// after. Both are row-level, which is the property "; " now exclusively carries.
 	assert.Equal(t, 2, strings.Count(msg, "; "),
