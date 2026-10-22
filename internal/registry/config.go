@@ -175,6 +175,10 @@ const (
 	RoleReviewer = "reviewer"
 	RoleSkeptic  = "skeptic"
 	RoleJudge    = "judge"
+	// RoleRedTeam marks a dedicated red-team agent (Epic 36.5). It is accepted
+	// at load and returned by AgentsByRole, but no stage selects it yet: the
+	// skeptic stage and debate casting pick RoleSkeptic only.
+	RoleRedTeam = "redteam"
 	// RoleExecutor names the optional single fix-generation model (Epic 7.0). It
 	// is NOT a reviewer-panel role: an executor lives in the top-level executor:
 	// block, not in agents:, so roleValid (which gates agent roles) intentionally
@@ -635,7 +639,7 @@ type AgentConfig struct {
 	// so there a 0 is bounded rather than unlimited.
 	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"`
 	// Reserved for the agentic stages — parsed + validated, inert in 2.0.
-	Role string `yaml:"role"` // Stage 3/4 — reviewer | skeptic | judge
+	Role string `yaml:"role"` // Stage 3/4 — reviewer | skeptic | judge | redteam
 
 	// SupportsFC declares whether this agent's model supports OpenAI-style
 	// function calling. Active in Epic 2.0 (Phase 4): the engine consults it
@@ -797,7 +801,7 @@ var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM":
 // lowercase form so downstream exact-match comparisons stay valid.
 func roleValid(r string) bool {
 	switch strings.ToLower(strings.TrimSpace(r)) {
-	case "", RoleReviewer, RoleSkeptic, RoleJudge:
+	case "", RoleReviewer, RoleSkeptic, RoleJudge, RoleRedTeam:
 		return true
 	default:
 		return false
@@ -1482,7 +1486,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// role is still reserved (Stage 3/4) but validated at load; max_turns and
 	// tool_budget_bytes are active in 2.0 and bound the tool loop.
 	if !roleValid(a.Role) {
-		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name))
+		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge, redteam", name))
 	}
 	// response_format (Epic 35.16.11.2.1): strict equality, no case-folding or
 	// trimming — the value is forwarded verbatim into the request body, so a

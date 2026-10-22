@@ -355,8 +355,9 @@ The `role` field selects what an agent does in the pipeline. It was **reserved (
 | `reviewer` | 1.x | Produces findings in the review fan-out. The default when `role` is unset. |
 | `skeptic` | 3.0 | Attempts to **refute** reconciled findings in `atcr verify` (see [verification.md](verification.md)). Also casts the **challenger** seat in `atcr debate`. |
 | `judge` | 6.0 | Rules on disputed findings in `atcr debate` — the **judge** seat that settles a cross-examination (see [cross-examination.md](cross-examination.md)). |
+| `redteam` | 36.5 | Marks a dedicated red-team agent. Accepted at load, but no stage selects it yet (see [RedTeam agents](#redteam-agents-role-redteam)). |
 
-An agent with no `role` defaults to `reviewer`, so every 1.x registry keeps working unchanged. The enum is validated at load (`reviewer`, `skeptic`, `judge`); any other value is a load error.
+An agent with no `role` defaults to `reviewer`, so every 1.x registry keeps working unchanged. The enum is validated at load (`reviewer`, `skeptic`, `judge`, `redteam`); any other value is a load error.
 
 A skeptic is an ordinary agent — provider, model, persona — flagged `role: skeptic`. Because a skeptic reads the actual code to refute a finding, give it `tools: true` and `supports_function_calling: true` (same tool-loop fields as a tool-using reviewer, above):
 
@@ -463,6 +464,23 @@ debate:
 | `allow_single_model` | `false` | When `true`, fewer than three distinct models falls back to distinct personas on one model (disclosed as `single_model` in the artifacts and report). |
 
 See [cross-examination.md](cross-examination.md) for the full mechanics, the judge envelope, and gate semantics.
+
+## RedTeam agents (`role: redteam`)
+
+`role: redteam` marks an agent as a dedicated red-team persona: one that hunts for ways the change can be attacked or abused, rather than reviewing it in general. Like `skeptic` and `judge`, it is an ordinary agent (provider, model, persona) with the role set:
+
+```yaml
+agents:
+  redteam-qwen:
+    persona: nadia            # a red-team persona
+    provider: openrouter
+    model: qwen/qwen3-coder-plus
+    role: redteam
+```
+
+The value is matched case-insensitively and stored lowercase, like the other roles. A `role: redteam` agent is returned when a stage looks agents up by the `redteam` role, and never by a `reviewer`, `skeptic` or `judge` lookup.
+
+**No stage selects it yet.** The role is accepted and recorded, but nothing picks red-team agents by role: `atcr verify` chooses only `role: skeptic` agents, and `atcr debate` casts only `role: skeptic` challengers and `role: judge` judges. A `role: redteam` agent named in a review roster still runs in the review fan-out like any other listed agent, because the fan-out does not filter by role.
 
 ## Per-file payload escalation (`payload_escalation:`)
 
