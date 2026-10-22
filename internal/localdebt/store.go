@@ -125,6 +125,13 @@ func appendLocked(dir string, rec Record) error {
 		return fmt.Errorf("appending localdebt record %q: unknown status %q "+
 			"(not a localdebt.Status* value; see IsKnownStatus)", rec.ID, rec.Status)
 	}
+	// The same gate for the reconciler-feedback annotation, for the same reason:
+	// past this point a malformed kind or partner is in an append-only store.
+	if rec.ReconcilerFeedback != nil {
+		if err := rec.ReconcilerFeedback.validate(rec.ID); err != nil {
+			return fmt.Errorf("appending localdebt record %q: invalid reconciler feedback: %w", rec.ID, err)
+		}
+	}
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir: %w", err)
 	}
@@ -803,7 +810,15 @@ func aggregateCounters(eff *Record, group []Record) {
 // copies the folded record wholesale and so inherits Origin from a manually filed
 // item; a resolution always stamps ResolvedAt, and a filing never does, which
 // separates the two exactly.
+//
+// A record carrying ReconcilerFeedback is never a sighting, whatever its status
+// or origin: it is an annotated copy of the effective record, appended to record a
+// verdict on the reconciler, not a new detection. Counting it would report a
+// regression that never happened.
 func isSighting(r Record) bool {
+	if r.ReconcilerFeedback != nil {
+		return false
+	}
 	if r.Status == "" {
 		return true
 	}
