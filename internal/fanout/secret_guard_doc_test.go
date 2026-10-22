@@ -35,6 +35,8 @@ func TestSecretGuardDoc_ProvidersPrivacySection(t *testing.T) {
 		{"`gitleaks stdin` when the binary is on `PATH` and a built-in ruleset otherwise", "the two scanner paths must be stated"},
 		{"fails closed", "block on a scanner failure must be documented, not just block on a hit"},
 		{"review prompt only", "the scope limit must be stated"},
+		{"sprint-plan scope constraint", "the guard also scans the scope constraint; the doc must say so"},
+		{"not persona text", "persona text is rendered after the scan; the doc must not claim it is covered"},
 		{"not the tool-loop results, debate, verify or doctor", "the excluded lanes must be named so nobody expects the guard there"},
 		{"never the value", "the no-secret-material-in-output property must be stated"},
 		{"pre-commit", "layer 1 of the three-layer model"},
@@ -52,6 +54,7 @@ func TestSecretGuardDoc_SecurityPage(t *testing.T) {
 	for _, must := range []struct{ phrase, why string }{
 		{"`secret_guard`", "the security page must name the setting"},
 		{"review prompt only", "the security page must state the scope limit"},
+		{"does not scan persona text", "the security page must not claim persona text is covered"},
 		{"pre-commit", "layer 1 of the three-layer model"},
 		{"egress guard", "layer 2 of the three-layer model"},
 		{"presidio", "layer 3 of the three-layer model"},

@@ -155,9 +155,10 @@ aborts the run rather than send a prompt holding a credential — and fails
 closed when the scan itself could not be trusted. Warnings and block errors
 name the agent, the secret kinds and the files, never the value.
 
-The guard covers the **review prompt only** — the payload and persona text sent
-to a review agent or its fallback. It does not scan tool-loop results, debate,
-verify or doctor traffic.
+The guard covers the **review prompt only** — the payload (diff, claim ledger,
+context definitions, prefetched context) and the sprint-plan scope constraint
+sent to a review agent or its fallback. It does not scan persona text, and it
+does not scan tool-loop results, debate, verify or doctor traffic.
 
 It is one layer of three, and the docs describe them together in
 [docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
