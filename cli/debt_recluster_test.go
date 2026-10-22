@@ -79,8 +79,15 @@ func TestDebtRecluster_RecordsAnnotationLeavingStatusAndWontfix(t *testing.T) {
 	assert.Empty(t, eff.Status, "the finding is still open")
 	require.NotNil(t, eff.ReconcilerFeedback)
 	assert.Equal(t, beforeWontfix, dashboardWontfix(t, dir), "wontfix count untouched")
-	assert.Equal(t, beforeSignal, localdebt.AggregateQualitySignal(readStoreRecords(t, dir)),
-		"the reviewers' quality-signal rows are unchanged (AC2)")
+	// AC2: the reviewer-outcome counts are unchanged. Since T3 the rows also
+	// carry reconciler-error counts, and a wrong-merge raises exactly that one
+	// (AC4) — so the expected rows are the old ones with WrongMergeCount +1.
+	wantSignal := append([]localdebt.QualityRow(nil), beforeSignal...)
+	for i := range wantSignal {
+		wantSignal[i].WrongMergeCount++
+	}
+	assert.Equal(t, wantSignal, localdebt.AggregateQualitySignal(readStoreRecords(t, dir)),
+		"reviewer counts unchanged; only the reconciler wrong-merge count rises (AC2, AC4)")
 
 	// Still on the open worklist.
 	out, err = runDebt(t, "resolve", "--dir", dir)
