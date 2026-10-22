@@ -66,6 +66,7 @@ var nonReportCommands = map[string]string{
 	"atcr debt add":                     "writes a TD item",
 	"atcr debt backfill-justifications": "repairs stored justifications",
 	"atcr debt compact":                 "rewrites the local TD store",
+	"atcr debt recluster":               "appends reconciler-grouping feedback to the local TD store",
 	"atcr debt sync-outcomes":           "records TD README outcomes",
 	"atcr github":                       "posts a check run",
 	"atcr ignore":                       "appends a suppression rule to .atcr/ignore.yaml",
