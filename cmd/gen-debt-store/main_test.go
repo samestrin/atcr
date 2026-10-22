@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,4 +57,61 @@ func TestRun_GenerateFailureIsExitOne(t *testing.T) {
 	stderr.Reset()
 	require.Equal(t, 1, run([]string{"-dir", t.TempDir(), "-n", "-1"}, &stderr))
 	require.Contains(t, stderr.String(), "non-negative")
+}
+
+// Pointed at a live .atcr/debt by mistake, the tool would append 50k synthetic
+// records to a real append-only store. A non-empty existing directory is refused
+// unless -force says the caller means it.
+func TestRun_RefusesANonEmptyExistingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-01.jsonl"), []byte("{}\n"), 0o600))
+	var stderr bytes.Buffer
+	require.Equal(t, 1, run([]string{"-dir", dir, "-n", "2"}, &stderr))
+	require.Contains(t, stderr.String(), "not empty")
+	require.Contains(t, stderr.String(), "-force")
+	got, err := os.ReadFile(filepath.Join(dir, "2026-01.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, "{}\n", string(got), "the refused run wrote nothing")
+}
+
+// -force lifts the directory guard for a dir holding non-record files, but the
+// generator itself still refuses a store that already holds records, so even a
+// forced re-run cannot double the corpus.
+func TestRun_ForceAllowsNonEmptyDirButNeverAppendsToRecords(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600))
+	var stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "3", "-force"}, &stderr), stderr.String())
+
+	stderr.Reset()
+	require.Equal(t, 1, run([]string{"-dir", dir, "-n", "3", "-force"}, &stderr))
+	require.Contains(t, stderr.String(), "already holds records")
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.Len(t, recs, 3)
+}
+
+func TestRun_AcceptsAnExistingEmptyDirectory(t *testing.T) {
+	dir := t.TempDir()
+	var stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "2"}, &stderr), stderr.String())
+}
+
+// -dir goes through the same validation.FilePath the review --output-dir does,
+// on the resolved absolute path, before anything is created.
+func TestRun_ValidatesTheDirectory(t *testing.T) {
+	for _, dir := range []string{"/etc/atcr-debt", "/proc/atcr-debt", "/sys/atcr-debt"} {
+		t.Run(dir, func(t *testing.T) {
+			var stderr bytes.Buffer
+			require.Equal(t, 2, run([]string{"-dir", dir, "-n", "1"}, &stderr))
+			require.Contains(t, stderr.String(), "system directories")
+		})
+	}
+}
+
+func TestRun_RejectsCountAboveCeiling(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "debt")
+	var stderr bytes.Buffer
+	require.Equal(t, 1, run([]string{"-dir", dir, "-n", fmt.Sprint(localdebt.MaxSyntheticRecords + 1)}, &stderr))
+	require.Contains(t, stderr.String(), fmt.Sprint(localdebt.MaxSyntheticRecords))
 }
