@@ -127,6 +127,73 @@ func TestParseIgnore_AcceptsValidRules(t *testing.T) {
 	}
 }
 
+// TestParseIgnore_RejectsCatchAllScope is the F2 guardrail: ignore.yaml is
+// read from the reviewed checkout, so a PR could add one rule whose scope is
+// every file and turn the gate green with no findings. A scope that names no
+// file or package (a wildcard-only glob, ".", or package ".") is refused
+// unless match or category narrows it, and the error names the rule.
+func TestParseIgnore_RejectsCatchAllScope(t *testing.T) {
+	for _, tc := range []struct {
+		scope string
+		label string
+	}{
+		{"file: \"**\"", `file "**"`},
+		{"file: \"*\"", `file "*"`},
+		{"file: .", `file "."`},
+		{"file: ./", `file "./"`},
+		{"file: \"./**\"", `file "./**"`},
+		{"file: \"**/*\"", `file "**/*"`},
+		{"file: \"**/**\"", `file "**/**"`},
+		{"package: .", `package "."`},
+		{"package: ./", `package "./"`},
+		{"file: \"**\"\n    package: .", `file "**"`},
+	} {
+		t.Run(tc.scope, func(t *testing.T) {
+			in := "rules:\n  - file: ok.go\n    reason: fine\n  - " + tc.scope + "\n    reason: everything is fine\n"
+			rules, err := ParseIgnore([]byte(in))
+			if err == nil {
+				t.Fatalf("ParseIgnore accepted a catch-all rule: %+v", rules)
+			}
+			for _, want := range []string{"rule 2", tc.label, "catch-all", "match", "category"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestParseIgnore_AcceptsNarrowedCatchAllScope shows a wildcard scope is still
+// fine once something else narrows it: a match, a category, or a real
+// package alongside the glob.
+func TestParseIgnore_AcceptsNarrowedCatchAllScope(t *testing.T) {
+	for _, in := range []string{
+		"rules:\n  - file: \"**\"\n    match: unsafe\\.Pointer\n    reason: r\n",
+		"rules:\n  - file: \"**\"\n    category: style\n    reason: r\n",
+		"rules:\n  - file: \"**\"\n    package: internal/gen\n    reason: r\n",
+		"rules:\n  - package: .\n    category: style\n    reason: r\n",
+		"rules:\n  - file: \"*.go\"\n    reason: r\n",
+		"rules:\n  - file: \"**/*_gen.go\"\n    reason: r\n",
+	} {
+		if _, err := ParseIgnore([]byte(in)); err != nil {
+			t.Errorf("ParseIgnore(%q): %v", in, err)
+		}
+	}
+}
+
+// TestAppendIgnoreRule_RejectsCatchAllScope shows the writer path enforces the
+// same guard, so `atcr ignore` (or any caller) cannot put one on disk.
+func TestAppendIgnoreRule_RejectsCatchAllScope(t *testing.T) {
+	p := filepath.Join(t.TempDir(), IgnoreFileName)
+	err := AppendIgnoreRule(p, IgnoreRule{File: "**", Reason: "r"})
+	if err == nil || !strings.Contains(err.Error(), "catch-all") {
+		t.Fatalf("AppendIgnoreRule err = %v, want a catch-all rejection", err)
+	}
+	if _, statErr := os.Stat(p); !os.IsNotExist(statErr) {
+		t.Errorf("rejected append created the file (stat err %v)", statErr)
+	}
+}
+
 func TestParseIgnore_EmptyIsNoRules(t *testing.T) {
 	for _, in := range []string{"", "\n", "# only a comment\n", "rules: []\n"} {
 		rules, err := ParseIgnore([]byte(in))
