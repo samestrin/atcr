@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -72,16 +71,8 @@ func perAgentMock(t *testing.T, byModel map[string]string, usage bool) *httptest
 // to cluster together.
 func initGitRepoWithWideChange(t *testing.T) {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	run("init", "-q")
 	require.NoError(t, os.WriteFile("seed.txt", []byte("seed\n"), 0o644))
 	run("add", "seed.txt")
@@ -432,16 +423,8 @@ agents:
 // that differ in file content, so payload building has a real diff.
 func initGitRepoWithChange(t *testing.T) {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	run("init", "-q")
 	require.NoError(t, os.WriteFile("a.txt", []byte("one\n"), 0o644))
 	run("add", "a.txt")

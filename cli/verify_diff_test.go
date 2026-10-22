@@ -80,46 +80,29 @@ func runSmellContext(ctx context.Context, t *testing.T, in string, args ...strin
 	return exitCode(err), outBuf.String(), errBuf.String()
 }
 
-// gitSmell runs git with the same hardened, identity-pinned environment
-// initGitRepo uses, but EXPLICITLY scoped with `-C <cwd>` rather than inheriting
-// the ambient working directory — the rule internal/gitfixtures_test.go enforces
-// (its allowlist of ambient-cwd test files is a freeze to shrink, not to join).
+// gitSmell runs git in the fixture repo at the working dir through fixtureGit,
+// whose environment carries the same config hardening gitexec pins in
+// production (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL=/dev/null), so a test
+// asserting the CLI and a raw git call agree byte-for-byte never reads the
+// runner's global git config on one side only.
 //
-// The temp-dir precondition is still asserted, since the resolved cwd is what
-// gets passed to -C: without it a stray cwd would simply be scoped-to instead of
-// inherited, which is no safer (see initGitRepo's incident note). The
-// not-already-a-repo half is deliberately not asserted — these calls run INSIDE
-// the repo initGitRepo just created.
-// gitSmellEnv is the hardened, identity-pinned environment every test-side git
-// subprocess runs with — the same config surface gitexec pins in production
-// (GIT_CONFIG_GLOBAL/SYSTEM=/dev/null), so a test asserting the CLI and a raw
-// git call agree byte-for-byte never reads the runner's global git config on
-// one side only.
-func gitSmellEnv() []string {
-	return append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-	)
-}
-
+// The temp-dir precondition is still asserted, since the resolved cwd is the
+// fixture fixtureGit pins GIT_DIR to: without it a stray cwd would simply be
+// pinned-to instead of inherited, which is no safer (see initGitRepo's incident
+// note). The not-already-a-repo half is deliberately not asserted — these calls
+// run INSIDE the repo initGitRepo just created.
 func gitSmell(t *testing.T, args ...string) {
 	t.Helper()
 	wd := requireTempWorkdir(t)
-	cmd := exec.Command("git", append([]string{"-C", wd}, args...)...)
-	cmd.Env = gitSmellEnv()
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %v: %s", args, out)
+	runFixtureGit(t, wd, args...)
 }
 
-// gitSmellOutput is gitSmell for callers that need stdout back — same -C
-// scoping and hardened env.
+// gitSmellOutput is gitSmell for callers that need stdout back — same fixture
+// pinning and hardened env.
 func gitSmellOutput(t *testing.T, args ...string) string {
 	t.Helper()
 	wd := requireTempWorkdir(t)
-	cmd := exec.Command("git", append([]string{"-C", wd}, args...)...)
-	cmd.Env = gitSmellEnv()
-	out, err := cmd.Output()
+	out, err := fixtureGit(wd, args...).Output()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return string(out)
 }

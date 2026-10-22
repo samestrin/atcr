@@ -35,14 +35,10 @@ import (
 // entry is a latent hazard. Shrink this list; do not grow it. A new file added
 // here should be a deliberate, argued exception, not a convenience.
 //
-// cli/range_test.go is additionally protected at runtime by
-// requireIsolatedWorkdir, which refuses to run when cwd is inside a git
-// repository. That guard is the pattern the remaining entries should adopt if
-// converting them to an explicit directory proves awkward.
+// Convert a remaining entry by routing its git calls through
+// gitexec.FixtureCommandContext, which pins GIT_DIR and GIT_WORK_TREE to the
+// fixture, as the cli package's fixtureGit helper does.
 var ambientGitAllowlist = map[string]bool{
-	"cli/range_test.go":                true,
-	"cli/resume_test.go":               true,
-	"cli/review_test.go":               true,
 	"internal/personas/submit_test.go": true,
 }
 
@@ -120,7 +116,7 @@ func TestTestHelpers_ScopeGitInvocations(t *testing.T) {
 	assert.Empty(t, offenders,
 		"these tests invoke git against the ambient working directory, which inside a "+
 			"checkout is the developer's own repository. Scope the call with `-C <dir>` or "+
-			"cmd.Dir, or guard it the way cli/range_test.go's requireIsolatedWorkdir does.")
+			"cmd.Dir, or better, build it with gitexec.FixtureCommandContext.")
 }
 
 // TestAmbientGitAllowlist_HasNoStaleEntries keeps the freeze honest: an entry
