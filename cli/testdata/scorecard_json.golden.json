@@ -1,0 +1,42 @@
+{
+  "run_id": "2026-06-14T10:00:00Z-abc123",
+  "reviewers": [
+    {
+      "schema_version": 2,
+      "record_type": "reviewer",
+      "run_id": "2026-06-14T10:00:00Z-abc123",
+      "reviewer": "bruce",
+      "model": "claude-sonnet-4-6",
+      "role": "reviewer",
+      "findings_raised": 12,
+      "findings_corroborated": 7,
+      "findings_solo": 5,
+      "corroboration_rate": 0.5,
+      "cost_usd": 0.0234,
+      "tokens_in": 14200,
+      "tokens_out": 4000,
+      "latency_ms": 3400,
+      "outcome": "findings"
+    },
+    {
+      "schema_version": 2,
+      "record_type": "reviewer",
+      "run_id": "2026-06-14T10:00:00Z-abc123",
+      "reviewer": "diana",
+      "model": "gpt-4o",
+      "role": "reviewer",
+      "findings_raised": 9,
+      "findings_corroborated": 4,
+      "findings_solo": 5,
+      "corroboration_rate": 0.5,
+      "cost_usd": 0.0234,
+      "tokens_in": 14200,
+      "tokens_out": 4000,
+      "latency_ms": 3400,
+      "outcome": "findings",
+      "findings_verified": 5,
+      "findings_refuted": 1,
+      "survived_skeptic_rate": 0.8
+    }
+  ]
+}
