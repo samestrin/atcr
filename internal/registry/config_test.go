@@ -91,6 +91,45 @@ func TestAgentsByRole(t *testing.T) {
 			role:     RoleReviewer,
 			wantKeys: []string{"a1", "a2"},
 		},
+		{
+			name: "filter redteam from mixed registry",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"a3": {Provider: "p", Model: "m", Role: RoleJudge},
+				"a4": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleRedTeam,
+			wantKeys: []string{"a4"},
+		},
+		{
+			name: "redteam agent leaves reviewer lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"a3": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleReviewer,
+			wantKeys: []string{"a1", "a2"},
+		},
+		{
+			name: "redteam agent leaves skeptic lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"a2": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleSkeptic,
+			wantKeys: []string{"a1"},
+		},
+		{
+			name: "redteam agent leaves judge lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: RoleJudge},
+				"a2": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleJudge,
+			wantKeys: []string{"a1"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -524,6 +563,34 @@ agents:
 	assert.Equal(t, "skeptic", a.Role, "role parsed")
 }
 
+// TestRegistryLoad_RedTeamRole verifies a role: redteam agent loads, keeps
+// its canonical lowercase role, and is returned by AgentsByRole(RoleRedTeam)
+// but not by the reviewer, skeptic or judge lookups.
+func TestRegistryLoad_RedTeamRole(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  rt:
+    provider: p
+    model: m
+    role: RedTeam
+  rev:
+    provider: p
+    model: m
+`))
+	require.NoError(t, err)
+	assert.Equal(t, RoleRedTeam, reg.Agents["rt"].Role, "role normalized to lowercase")
+	got := reg.AgentsByRole(RoleRedTeam)
+	require.Len(t, got, 1)
+	assert.Contains(t, got, "rt")
+	assert.NotContains(t, reg.AgentsByRole(RoleReviewer), "rt")
+	assert.Contains(t, reg.AgentsByRole(RoleReviewer), "rev")
+	assert.Empty(t, reg.AgentsByRole(RoleSkeptic))
+	assert.Empty(t, reg.AgentsByRole(RoleJudge))
+}
+
 // TestRegistryLoad_ReservedFieldsInert verifies the reserved fields stay at
 // their inert zero/unset state when omitted — no load-time default is applied
 // (Epic 1.1 keeps the 1.x behavior footprint exactly zero).
@@ -550,6 +617,11 @@ func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
 			"invalid role",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: overlord\n",
 			"role must be one of",
+		},
+		{
+			"unknown role lists redteam",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: auditor\n",
+			"role must be one of reviewer, skeptic, judge, redteam",
 		},
 		{
 			"zero max_turns",
