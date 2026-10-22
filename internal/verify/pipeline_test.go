@@ -8,7 +8,6 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -31,9 +31,8 @@ func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
+		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
 			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
@@ -51,8 +50,7 @@ func initGitRepo(t *testing.T) string {
 // gitHeadSHA returns the full HEAD commit SHA of repo.
 func gitHeadSHA(t *testing.T, repo string) string {
 	t.Helper()
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	cmd.Dir = repo
+	cmd := gitexec.FixtureCommandContext(context.Background(), repo, "rev-parse", "HEAD")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git rev-parse: %s", out)
 	return strings.TrimSpace(string(out))

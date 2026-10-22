@@ -38,9 +38,7 @@ import (
 // Convert a remaining entry by routing its git calls through
 // gitexec.FixtureCommandContext, which pins GIT_DIR and GIT_WORK_TREE to the
 // fixture, as the cli package's fixtureGit helper does.
-var ambientGitAllowlist = map[string]bool{
-	"internal/personas/submit_test.go": true,
-}
+var ambientGitAllowlist = map[string]bool{}
 
 // TestTestHelpers_ScopeGitInvocations fails when a _test.go file builds a git
 // command without naming the directory it should run in.
