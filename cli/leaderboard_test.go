@@ -622,11 +622,15 @@ func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
 // board acceptance of version 2 is an explicitly unverified coordination item. A
 // production submitter reads this flag's help and nothing else, so the bump has to be
 // visible here — otherwise the only notice lives in a doc they have no reason to open.
+//
+// Epic 35.22 moved the export to the `leaderboard export` subcommand and hid the
+// --export flag, so the notice moved with it: the subcommand's help is now the one
+// a production submitter reads.
 func TestLeaderboardExportHelpNamesTheSchemaVersion(t *testing.T) {
-	_, stdout, stderr := execCmdSplit(t, "leaderboard", "--help")
+	_, stdout, stderr := execCmdSplit(t, "leaderboard", "export", "--help")
 	help := stdout + stderr
 
-	require.Contains(t, help, "--export", "precondition: the flag is documented in help")
+	require.Contains(t, help, "atcr leaderboard export", "precondition: this is the export subcommand's help")
 	require.Contains(t, help, fmt.Sprintf("submission_schema %d", scorecard.SubmissionSchema),
 		"a production submitter must learn the envelope version changed — "+
 			"asserted against the constant, not a literal, so the next bump cannot leave a stale pair")
@@ -1464,4 +1468,191 @@ func TestSelectPublishableRecordIdentities_HoldsNoticesUntilThePassSucceeds(t *t
 		assert.Contains(t, errBuf.String(), "blank after trimming")
 		assert.Contains(t, errBuf.String(), "empty once scrubbed")
 	})
+}
+
+// pinLeaderboardExportClock fixes the instant runLeaderboardExport stamps as
+// submitted_at, so two export invocations can be compared byte for byte.
+func pinLeaderboardExportClock(t *testing.T, at time.Time) {
+	t.Helper()
+	prev := leaderboardExportClock
+	leaderboardExportClock = func() time.Time { return at }
+	t.Cleanup(func() { leaderboardExportClock = prev })
+}
+
+// `leaderboard export` is the promoted form of `leaderboard --export` (epic 35.22):
+// for the same store, filters and export time the two must print the same bytes,
+// or a submitter switching to the subcommand publishes a different document.
+func TestLeaderboardExportSubcommand_ByteIdenticalToExportFlag(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	storeLeaderboardRec(t, 2, "diana", "gpt-4o")
+	storeLeaderboardRec(t, 40, "greta", "gpt-4o")
+	pinLeaderboardExportClock(t, time.Now().UTC().Truncate(time.Second))
+
+	for _, filters := range [][]string{nil, {"--since", "7d"}, {"--since", "all", "--model", "gpt"}, {"--persona", "bruce"}} {
+		t.Run(strings.Join(filters, " "), func(t *testing.T) {
+			code, oldOut, oldErr := execCmdSplit(t, append([]string{"leaderboard", "--export"}, filters...)...)
+			require.Equal(t, 0, code, oldErr)
+			code, newOut, newErr := execCmdSplit(t, append([]string{"leaderboard", "export"}, filters...)...)
+			require.Equal(t, 0, code, newErr)
+			require.NotEmpty(t, newOut)
+			require.Equal(t, oldOut, newOut, "the subcommand must print the --export document byte for byte")
+			require.Equal(t, oldErr, newErr)
+		})
+	}
+}
+
+// The --output file is the same document as well, and written the same way (0600).
+func TestLeaderboardExportSubcommand_OutputMatchesExportFlag(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	pinLeaderboardExportClock(t, time.Now().UTC().Truncate(time.Second))
+
+	dir := t.TempDir()
+	oldPath, newPath := filepath.Join(dir, "old.json"), filepath.Join(dir, "nested", "new.json")
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", oldPath)
+	require.Equal(t, 0, code, out)
+	code, out = execCmdCapture(t, "leaderboard", "export", "--output", newPath)
+	require.Equal(t, 0, code, out)
+	require.NotContains(t, out, "submission_schema", "--output routes the document off stdout")
+
+	oldData, err := os.ReadFile(oldPath)
+	require.NoError(t, err)
+	newData, err := os.ReadFile(newPath)
+	require.NoError(t, err)
+	require.Equal(t, oldData, newData)
+	info, err := os.Stat(newPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+// The subcommand keeps the --export failure contract: an empty store and a bad
+// --output are failures, unlike the table's graceful empty state.
+func TestLeaderboardExportSubcommand_ExitContract(t *testing.T) {
+	isolate(t)
+	code, stdout, _ := execCmdSplit(t, "leaderboard", "export")
+	require.Equal(t, 1, code)
+	require.Empty(t, stdout, "a failed export must never put non-JSON on stdout")
+	_, out := execCmdCapture(t, "leaderboard", "export")
+	require.Contains(t, out, "no scorecard data yet")
+
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	code, _, stderr := execCmdSplit(t, "leaderboard", "export", "--output", "/etc/atcr-export.json")
+	require.Equal(t, 2, code, stderr)
+
+	code, _, _ = execCmdSplit(t, "leaderboard", "export", "extra-arg")
+	require.Equal(t, 2, code, "the subcommand takes no positional arguments")
+}
+
+// The exit contract for a blank identity is decided (epic 35.22, Q3): the
+// subcommand still exits 0 and names the record on stderr. The exit code
+// deliberately does not reflect the notice, and the help says so.
+func TestLeaderboardExportSubcommand_BlankIdentityExitsZeroWithNotice(t *testing.T) {
+	isolate(t)
+	storeRecord(t, scorecard.Record{
+		SchemaVersion: scorecard.SchemaVersion, RecordType: scorecard.RecordTypeReviewer,
+		RunID:    time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339) + "-blank",
+		Reviewer: "greta", Model: " ", Role: "reviewer", FindingsRaised: 3, FindingsCorroborated: 2,
+	})
+
+	code, stdout, stderr := execCmdSplit(t, "leaderboard", "export")
+	require.Equal(t, 0, code, stderr)
+	require.Contains(t, stderr, "blank after trimming")
+	require.True(t, json.Valid([]byte(stdout)), stdout)
+
+	_, help, _ := execCmdSplit(t, "leaderboard", "export", "--help")
+	require.Contains(t, help, "exit code does not reflect")
+}
+
+// The old flags still work (pinned by the --export tests above) but are hidden
+// deprecated aliases: absent from `leaderboard --help`, and each names the
+// subcommand that replaces it and the version that removes it.
+func TestLeaderboardCmd_ExportAndOutputAreHiddenDeprecatedAliases(t *testing.T) {
+	_, help, _ := execCmdSplit(t, "leaderboard", "--help")
+	require.NotContains(t, help, "--export")
+	require.NotContains(t, help, "--output")
+	require.Contains(t, help, "export", "the subcommand is listed in its place")
+
+	cmd := newLeaderboardCmd()
+	for _, name := range []string{"export", "output"} {
+		f := cmd.Flags().Lookup(name)
+		require.NotNil(t, f, "--%s must still parse", name)
+		require.True(t, f.Hidden, "--%s must be hidden", name)
+		require.Contains(t, f.Usage, "deprecated")
+		require.Contains(t, f.Usage, "atcr leaderboard export")
+		require.Contains(t, f.Usage, leaderboardExportAliasRemoval)
+	}
+}
+
+// --json on the table path prints the rows the table would print, as a JSON
+// array: one element per table row.
+func TestLeaderboardCmd_JSONCarriesTheTableRowCount(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	storeLeaderboardRec(t, 2, "bruce", "claude-sonnet-4-6")
+	storeLeaderboardRec(t, 2, "diana", "gpt-4o")
+	storeLeaderboardRec(t, 3, "greta", "gpt-4o")
+	storeLeaderboardRec(t, 40, "old", "gpt-4o") // outside the default 30d window
+
+	code, table, stderr := execCmdSplit(t, "leaderboard")
+	require.Equal(t, 0, code, stderr)
+	tableRows := len(strings.Split(strings.TrimSpace(table), "\n")) - 1 // minus the header
+
+	code, out, stderr := execCmdSplit(t, "leaderboard", "--json")
+	require.Equal(t, 0, code, stderr)
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &rows), "--json stdout must parse: %s", out)
+	require.Equal(t, 3, tableRows, "precondition: three (reviewer, model) groups in the window")
+	require.Len(t, rows, tableRows, "--json must carry the table's row count")
+
+	byReviewer := map[string]map[string]any{}
+	for _, r := range rows {
+		byReviewer[r["reviewer"].(string)] = r
+	}
+	bruce := byReviewer["bruce"]
+	require.NotNil(t, bruce)
+	assert.Equal(t, "claude-sonnet-4-6", bruce["model"])
+	assert.EqualValues(t, 2, bruce["runs"])
+	assert.EqualValues(t, 20, bruce["findings_raised"])
+	assert.EqualValues(t, 12, bruce["findings_corroborated"])
+	assert.InDelta(t, 0.6, bruce["corroboration_rate"], 1e-9)
+	// The fixture records report no usage, so cost and latency are usage-gated to
+	// zero (scorecard.Aggregate); the keys are still always present.
+	for _, key := range []string{"total_cost_usd", "cost_per_corroborated", "avg_latency_ms", "findings_doc_shielded", "findings_ambiguous"} {
+		assert.Contains(t, bruce, key)
+	}
+}
+
+// The table's graceful empty state stays exit 0 under --json, but stdout must
+// still parse: the empty array goes to stdout and the message to stderr.
+func TestLeaderboardCmd_JSONEmptyStoreIsAnEmptyArray(t *testing.T) {
+	isolate(t)
+	code, out, stderr := execCmdSplit(t, "leaderboard", "--json")
+	require.Equal(t, 0, code)
+	require.JSONEq(t, "[]", out)
+	require.Contains(t, stderr, "No scorecard data found")
+}
+
+// A row with no corroborated findings has no defined cost per corroborated
+// finding; the table prints "-" and the JSON prints null rather than a fake 0.
+func TestRenderLeaderboardJSON_UndefinedCostPerCorroboratedIsNull(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, renderLeaderboardJSON(&buf, []scorecard.LeaderboardRow{{Reviewer: "a", Model: "m"}}))
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0], "cost_per_corroborated")
+	require.Nil(t, rows[0]["cost_per_corroborated"])
+
+	require.Error(t, renderLeaderboardJSON(&errWriter{err: errors.New("boom")}, nil))
+}
+
+// --json selects the table's machine form; the export document is a different
+// document, so asking for both is a usage error rather than a silent pick.
+func TestLeaderboardCmd_JSONWithExportIsUsageError(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	code, out := execCmdCapture(t, "leaderboard", "--json", "--export")
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "--json")
 }
