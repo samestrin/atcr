@@ -127,6 +127,14 @@ type Result struct {
 	// Preserved, never deleted (AC4). Empty on every path but RunReconcile,
 	// which is the only one with a checked-out tree to resolve against.
 	Unresolved []JSONFinding
+	// Suppressed holds the findings a .atcr/ignore.yaml rule (Epic 40.0)
+	// matched: dropped from Findings/JSONFindings, so they stay out of
+	// findings.json, report.md and the gate, and kept here for the
+	// suppressed.json sidecar and the scorecard. Internal only: the published
+	// reconcile module and its Summary carry no suppressed field. Empty on
+	// every path but RunReconcile, the only one with a checkout to read
+	// rules from.
+	Suppressed []JSONFinding
 	Summary    Summary
 	// jsonFindings caches the path-validated findings.json records the ATCR I/O
 	// layer stamps after reconcile (Phase 2 Clarification Q1): the library Merged
