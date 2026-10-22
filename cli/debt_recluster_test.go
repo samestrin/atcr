@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -181,4 +182,41 @@ func TestDebtRecluster_HelpListsOwnVerbsOnly(t *testing.T) {
 	for _, f := range []string{"--kind", "--with", "wrong-merge", "wrong-split", "wrong-category"} {
 		assert.NotContains(t, resolve, f)
 	}
+}
+
+// The annotated record copies the finding verbatim and adds the feedback, so a
+// finding whose encoded record sits just under the store's read cap tips the
+// annotation OVER it. Unguarded, the line is written and then skipped by every
+// read path: the command reports success while the feedback is lost. It must
+// be refused before the append, as `debt resolve` refuses an oversized
+// resolution (TestDebtResolve_ResolutionRecordOverReadCapIsRejected).
+func TestDebtRecluster_AnnotatedRecordOverReadCapIsRejected(t *testing.T) {
+	base := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "")
+	empty, err := json.Marshal(base)
+	require.NoError(t, err)
+	base.Problem = strings.Repeat("x", localdebt.MaxRecordBytes-len(empty)-1-64)
+	openLine, err := json.Marshal(base)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(openLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the open record itself must still be readable")
+
+	reason := strings.Repeat("r", 2048)
+	note := localdebt.FoldRecords([]localdebt.Record{base})[0]
+	note.RunID = "2026-08-05T12:00:00Z-recluster"
+	note.Timestamp = "2026-08-05T12:00:00Z"
+	note.Occurrences, note.FirstSeen, note.CountedThrough = 0, "", ""
+	note.ReconcilerFeedback = &localdebt.ReconcilerFeedback{Kind: localdebt.FeedbackWrongMerge, Reason: reason}
+	noteLine, err := json.Marshal(note)
+	require.NoError(t, err)
+	require.Greater(t, len(noteLine)+1, localdebt.MaxRecordBytes,
+		"fixture: the annotated record must exceed the read cap")
+
+	dir := writeDebtStore(t, base)
+	before := readStoreRecords(t, dir)
+
+	out, err := runDebt(t, "recluster", "--dir", dir, base.ID, "--kind", "wrong-merge", "--reason", reason)
+	require.Error(t, err, "an annotated record over the read cap must be refused, not written invisibly")
+	assert.Equal(t, exitUsage, exitCode(err), "%v", err)
+	assert.NotContains(t, out, "Recorded", "must not report success for feedback that cannot be read back")
+	assert.Len(t, readStoreRecords(t, dir), len(before), "a refused annotation must not append a record")
 }
