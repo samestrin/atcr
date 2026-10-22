@@ -1,0 +1,159 @@
+{
+  "totals": {
+    "total": 17,
+    "open": 10,
+    "deferred": 2,
+    "resolved": 1,
+    "wontfix": 2,
+    "unreproducible": 1,
+    "attempts_exhausted": 1,
+    "reconciler_corrections": 1
+  },
+  "by_severity": [
+    {
+      "severity": "CRITICAL",
+      "total": 3,
+      "open": 2,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 1,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "HIGH",
+      "total": 6,
+      "open": 4,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 0,
+      "unreproducible": 1,
+      "attempts_exhausted": 1,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "MEDIUM",
+      "total": 3,
+      "open": 1,
+      "deferred": 1,
+      "resolved": 0,
+      "wontfix": 1,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 1
+    },
+    {
+      "severity": "LOW",
+      "total": 3,
+      "open": 1,
+      "deferred": 1,
+      "resolved": 1,
+      "wontfix": 0,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    },
+    {
+      "severity": "(unknown)",
+      "total": 2,
+      "open": 2,
+      "deferred": 0,
+      "resolved": 0,
+      "wontfix": 0,
+      "unreproducible": 0,
+      "attempts_exhausted": 0,
+      "reconciler_corrections": 0
+    }
+  ],
+  "by_component": [
+    {
+      "component": "cmd/atcr",
+      "unresolved": 2
+    },
+    {
+      "component": "odd/sev",
+      "unresolved": 2
+    },
+    {
+      "component": "(unscoped)",
+      "unresolved": 1
+    },
+    {
+      "component": "a/f.go",
+      "unresolved": 1
+    },
+    {
+      "component": "a/g.go",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/a.go",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/autofix",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/hist",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/keys",
+      "unresolved": 1
+    },
+    {
+      "component": "internal/x | y.go",
+      "unresolved": 1
+    },
+    {
+      "component": "main.go",
+      "unresolved": 1
+    }
+  ],
+  "by_month": [
+    {
+      "month": "2026-05",
+      "unresolved": 5
+    },
+    {
+      "month": "2026-06",
+      "unresolved": 3
+    },
+    {
+      "month": "2026-07",
+      "unresolved": 3
+    },
+    {
+      "month": "unknown",
+      "unresolved": 2
+    }
+  ],
+  "top_priority": [
+    {
+      "id": "2d4f569f7330b0c4",
+      "severity": "CRITICAL",
+      "file": "cmd/atcr/autofix.go",
+      "line": 248,
+      "est_minutes": 15,
+      "problem": "remote leftover"
+    },
+    {
+      "id": "22643a8dc58332b0",
+      "severity": "CRITICAL",
+      "file": "internal/hist/h.go",
+      "line": 12,
+      "est_minutes": 90,
+      "problem": "re-detected text"
+    },
+    {
+      "id": "68f7ecd15cc7ed80",
+      "severity": "HIGH",
+      "file": "internal/a.go",
+      "line": 3,
+      "est_minutes": 5,
+      "problem": "erase\u001b[1Athis�K and \u003cimg src=x onerror=alert(1)\u003e \u2028 tail"
+    }
+  ]
+}

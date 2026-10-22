@@ -1,31 +1,31 @@
 package fanout
 
 import (
+	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
-// Shared test helpers for the git-plumbing fixtures in this package. The
-// exec.Command("git", ...) + GIT_AUTHOR_NAME env-scrubbing pattern had drifted
-// into one private copy per test file; this file is the one shared pair new
-// tests must call instead of adding a ninth. Older duplicates elsewhere in the
-// package are a separate cleanup and are intentionally left as they are.
+// Shared test helpers for the git-plumbing fixtures in this package. Every git
+// fixture in the package runs through fanoutGit, so none can retarget at the
+// surrounding repository when the suite runs under a hook (Epic 45.0).
 
-// fanoutGit runs git inside dir with a deterministic author/committer identity
-// and the system/global git config neutered, failing the test on any error. It
-// returns trimmed combined output.
+// fanoutGit runs git inside dir with a deterministic author/committer identity,
+// failing the test on any error. It builds the command with
+// gitexec.FixtureCommandContext, which pins GIT_DIR/GIT_WORK_TREE to dir and
+// neuters the system/global git config. It returns trimmed combined output.
 func fanoutGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(cmd.Environ(),
+	cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+	cmd.Env = append(cmd.Env,
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)

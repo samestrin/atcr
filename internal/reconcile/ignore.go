@@ -32,16 +32,16 @@ const IgnoreFileName = "ignore.yaml"
 // the line moves.
 type IgnoreRule struct {
 	// File is a repo-relative, slash-separated path or glob.
-	File string `yaml:"file,omitempty"`
+	File string `yaml:"file,omitempty" json:"file,omitempty"`
 	// Package is a history.PackageOf directory ("." for the repo root).
-	Package string `yaml:"package,omitempty"`
+	Package string `yaml:"package,omitempty" json:"package,omitempty"`
 	// Category, when set, narrows the rule to one finding category.
-	Category string `yaml:"category,omitempty"`
+	Category string `yaml:"category,omitempty" json:"category,omitempty"`
 	// Match, when set, is an RE2 regex tested against the Problem text.
-	Match string `yaml:"match,omitempty"`
+	Match string `yaml:"match,omitempty" json:"match,omitempty"`
 	// Reason is mandatory: report.md lists it beside the suppressed count, so
 	// a rule nobody can justify cannot hide a finding silently.
-	Reason string `yaml:"reason"`
+	Reason string `yaml:"reason" json:"reason"`
 }
 
 // ignoreFile is the on-disk document shape.
