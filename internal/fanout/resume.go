@@ -1066,6 +1066,14 @@ func RebuildPool(ctx context.Context, poolDir string, roster []string) (Summary,
 
 // summarizeStatuses tallies a union of per-agent statuses into a Summary, mirroring
 // summarize() (which works over []Result) for the resume rebuild path.
+//
+// UnreviewedFiles and DeferredFiles are per-persona sums, not the size of the
+// uncovered file set: three personas missing the same two files report 6, not 2
+// (TD internal/fanout/resume.go:940). An AgentStatus carries counts, not paths,
+// so no union can be formed here; the file-union figure is ReadCoverage's
+// (FilesInScope - FilesCovered, the coverage line), which counts each file once.
+// Read these totals as "is anything missing, and how much work per persona",
+// never as a file count.
 func summarizeStatuses(sts []AgentStatus) Summary {
 	s := Summary{Total: len(sts)}
 	for _, st := range sts {

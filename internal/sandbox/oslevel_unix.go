@@ -38,11 +38,13 @@ import (
 func configureSandboxProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
-		// Snapshot BEFORE the group kill: once the leader dies its descendants
-		// are reparented and no parent link leads to them any more.
-		descendants := sandboxDescendants(cmd)
+		// Snapshot and signal the detached descendants BEFORE the group kill:
+		// once the leader dies they are reparented and no parent link leads to
+		// them any more, and the group kill frees the pids of every member.
+		if cmd.Process != nil {
+			killSandboxDescendants(cmd.Process.Pid, sandboxDescendants(cmd))
+		}
 		err := killSandboxProcessGroup(cmd)
-		killSandboxDescendants(descendants)
 		if errors.Is(err, syscall.ESRCH) {
 			// The group is already gone — the ordinary already-exited race, not
 			// a failure. Report ProcessDone so exec.Wait ignores it, matching
@@ -95,41 +97,82 @@ func killSandboxProcessGroup(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
 		return nil
 	}
-	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	return sandboxKill(-cmd.Process.Pid, syscall.SIGKILL)
+}
+
+// sandboxKill is syscall.Kill; tests replace it to observe which pids the
+// cancel path signals, and in what order.
+var sandboxKill = syscall.Kill
+
+// sandboxGetpgid is syscall.Getpgid; tests replace it to present a pid whose
+// group cannot be read without depending on a real pid staying free.
+var sandboxGetpgid = syscall.Getpgid
+
+// sandboxProcessTable reads the host's pid -> ppid table, from /proc where
+// there is one and from ps(1) otherwise. Tests replace it to present a table
+// the host cannot be made to produce on demand, such as a recycled pid.
+var sandboxProcessTable = func() (map[int]int, error) {
+	parents, err := procParents()
+	if err != nil {
+		parents, err = psParents()
+	}
+	return parents, err
 }
 
 // sandboxDescendants returns the PIDs of every live descendant of the
 // sandboxed leader, found by parent links rather than by group, so one that
-// called setsid/setpgid is included. It must run while the leader is alive.
+// called setsid/setpgid is included.
+//
+// It returns nil unless the leader is still unreaped both before and after the
+// process table is read. cmd.Cancel can race Wait reaping the leader, and a
+// reaped leader's pid may already belong to an unrelated process whose subtree
+// the walk would return. Until Wait reaps it the leader (alive or a zombie)
+// holds its pid, so a snapshot bracketed by two such checks lists only its
+// own descendants.
 //
 // It is best effort, and returns nil when the process table cannot be read: a
 // descendant forked after the snapshot, or one whose parent already exited
 // (and was reparented to init), is not found. The group kill still runs either
 // way.
 func sandboxDescendants(cmd *exec.Cmd) []int {
-	if cmd.Process == nil {
+	if cmd.Process == nil || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
-	parents, err := procParents()
-	if err != nil {
-		parents, err = psParents()
-	}
-	if err != nil {
+	parents, err := sandboxProcessTable()
+	if err != nil || !sandboxLeaderUnreaped(cmd) {
 		return nil
 	}
 	return descendantsOf(cmd.Process.Pid, parents)
 }
 
-// killSandboxDescendants SIGKILLs each snapshotted PID, ignoring errors: most
-// of them died with the group already (ESRCH). A PID that exited after the
-// snapshot could in principle have been reused by an unrelated process in the
-// microseconds between snapshot and kill; a parent that has not yet waited for
-// it keeps it a zombie, which holds the PID, so the window needs a descendant
-// whose parent reaps it within that gap and a PID allocator that wraps round
-// to it at once.
-func killSandboxDescendants(pids []int) {
+// sandboxLeaderUnreaped reports whether Wait has not yet reaped the leader.
+// It asks os.Process rather than calling kill(pid, 0), which succeeds for
+// whatever process holds the pid now: os.Process answers from a pidfd on Linux
+// and from its own reaped flag elsewhere, where only the instant between
+// wait4 returning and that flag being set is left uncovered.
+func sandboxLeaderUnreaped(cmd *exec.Cmd) bool {
+	return cmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+// killSandboxDescendants SIGKILLs each snapshotted PID that is outside the
+// leader's process group, and runs before the group kill. A pid still in the
+// group is left to that kill: signalling it by pid afterwards would target a
+// pid the group kill had just freed (nothing holds a killed member as a zombie
+// once its leader is dead too), which an unrelated process may already hold.
+// A pid whose group cannot be read has exited and is skipped; kill errors are
+// ignored.
+//
+// A narrow window remains: a detached descendant that exits after the snapshot
+// and is reaped by its parent before its kill frees its pid. That needs the
+// parent, still alive at this point, to wait for it inside those microseconds
+// and the PID allocator to wrap round to the pid at once.
+func killSandboxDescendants(leader int, pids []int) {
 	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+		pgid, err := sandboxGetpgid(pid)
+		if err != nil || pgid == leader {
+			continue
+		}
+		_ = sandboxKill(pid, syscall.SIGKILL)
 	}
 }
 
