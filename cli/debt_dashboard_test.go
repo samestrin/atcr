@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/localdebt"
 )
 
 func TestDebtDashboard_Wiring(t *testing.T) {
@@ -508,4 +510,39 @@ func TestDebtDashboardJSON_RefusesOutputAndCheck(t *testing.T) {
 		assert.ErrorContains(t, err, "--json")
 		assert.NoFileExists(t, out)
 	}
+}
+
+// Epic 79 T3: with --top > 0 the dashboard reads the store twice — summaries for
+// every rollup, then full records for the Top Priority ids — and both passes
+// warn about the same malformed line through the one ReadOpts.Writer. The user
+// must see that warning once, while the pass-2 shortfall note (a different line)
+// still reaches stderr.
+func TestDebtDashboard_MalformedLineWarnsOnceAndShortfallNoteStillPrints(t *testing.T) {
+	dir := writeLocalDebt(t)
+	shards, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, shards, "the sample store has a month shard")
+	for _, s := range shards {
+		f, err := os.OpenFile(s, os.O_APPEND|os.O_WRONLY, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString("{not json\n")
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+
+	// Ask pass 2 for one id the store does not hold, so hydrateDebtIDs has a
+	// shortfall to report through the same writer.
+	orig := dashboardHydrateFn
+	t.Cleanup(func() { dashboardHydrateFn = orig })
+	dashboardHydrateFn = func(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+		return orig(dir, append(ids, "ghost-id"), opts, keep)
+	}
+
+	stdout, stderr, err := runDebtSplit(t, "dashboard", "--dir", dir, "--top", "5")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "## Top Priority")
+	assert.Equal(t, len(shards), strings.Count(stderr, localdebt.MsgMalformedSkip),
+		"each malformed line warns once, not once per pass:\n%s", stderr)
+	assert.Contains(t, stderr, "note: 1 selected item(s) were not found when re-reading the store",
+		"the hydrate shortfall note still prints")
 }
