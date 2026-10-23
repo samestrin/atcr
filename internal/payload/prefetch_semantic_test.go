@@ -2,6 +2,8 @@ package payload
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -297,4 +299,67 @@ func TestBuildPrefetch_BrokenReferenceLookupStillRunsTheSimilarityStage(t *testi
 	require.True(t, st.Present)
 	require.Contains(t, section, "(similarity to ReadCache)")
 	require.Contains(t, spans, "similar.go")
+}
+
+// Epic 35.16.12.1 T3: a configured retriever that fails records WHY in
+// PrefetchStatus.DegradeReason and fails open to zero similarity snippets, on
+// every error class and whether or not a reference snippet still ships.
+func TestBuildPrefetch_RetrieverFailureRecordsOneDegradeReason(t *testing.T) {
+	classes := []semindex.Class{
+		semindex.ClassInvalidArgument, semindex.ClassInsecureScheme, semindex.ClassUnreachable,
+		semindex.ClassTimeout, semindex.ClassCanceled, semindex.ClassNotFound,
+		semindex.ClassStatus, semindex.ClassDecode, semindex.ClassContract,
+		"secret-guard-blocked", // internal/fanout's guard rides the same *Error
+	}
+	repos := map[string]func(*testing.T) (string, string, string){
+		"no reference hit":   semanticRepo,
+		"reference snippets": prefetchRepo,
+	}
+	for name, repo := range repos {
+		for _, cl := range classes {
+			t.Run(name+"/"+string(cl), func(t *testing.T) {
+				dir, base, head := repo(t)
+				// A hit returned alongside the error is never trusted.
+				fake := &fakeRetriever{
+					hits: []semindex.Snippet{similarHit()},
+					err:  fmt.Errorf("wrapped: %w", &semindex.Error{Class: cl, Stage: "embedding"}),
+				}
+				g := newGitRunner(context.Background(), dir)
+				WithSemanticRetriever(fake, 3)(g)
+
+				section, spans, st := g.buildPrefetch(base, head)
+
+				require.Equal(t, 1, fake.calls)
+				require.Equal(t, string(cl), st.DegradeReason)
+				require.NotContains(t, section, "similarity")
+				require.NotContains(t, spans, "similar.go")
+				require.False(t, st.Failed, "a retriever failure is not a broken reference lookup")
+			})
+		}
+	}
+}
+
+func TestBuildPrefetch_UnclassifiedRetrieverErrorStillDegrades(t *testing.T) {
+	dir, base, head := semanticRepo(t)
+	fake := &fakeRetriever{err: errors.New("boom")}
+	g := newGitRunner(context.Background(), dir)
+	WithSemanticRetriever(fake, 3)(g)
+
+	section, _, st := g.buildPrefetch(base, head)
+
+	require.Empty(t, section)
+	require.Equal(t, PrefetchStatus{DegradeReason: semanticDegradeUnclassified}, st)
+}
+
+func TestBuildPrefetch_WorkingRetrieverRecordsNoDegradeReason(t *testing.T) {
+	dir, base, head := semanticRepo(t)
+	g := newGitRunner(context.Background(), dir)
+	WithSemanticRetriever(&fakeRetriever{}, 3)(g)
+
+	_, _, st := g.buildPrefetch(base, head)
+
+	require.Empty(t, st.DegradeReason, "an empty result is not a failure")
+	b, err := json.Marshal(st)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "degrade_reason")
 }
