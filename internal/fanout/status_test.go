@@ -1096,8 +1096,9 @@ func TestReadReviewStatus_RequeuedBinWaitingOutBackoffIsNotStale(t *testing.T) {
 	dir, raw := staleRun(t, start, "solo", "other")
 	writeAgentChunks(t, raw, "solo", chunkOutcomePending)
 	touchAt(t, filepath.Join(raw, "solo", chunksFile), requeuedAt)
-	writeAgentChunks(t, raw, "other", StatusOK, chunkOutcomePending)
-	touchAt(t, filepath.Join(raw, "other", chunksFile), requeuedAt.Add(-time.Minute))
+	// Single-bin personas, so no chunk scaling widens the window past 660s.
+	writeAgentStatus(t, raw, "other", StatusOK)
+	touchAt(t, filepath.Join(raw, "other", statusFile), requeuedAt.Add(-time.Minute))
 
 	st, err := ReadReviewStatus(dir, "x")
 	require.NoError(t, err)
