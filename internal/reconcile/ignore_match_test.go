@@ -249,3 +249,34 @@ func TestNewIgnoreMatcher_RejectsBadRules(t *testing.T) {
 		}
 	}
 }
+
+// TestEscapeIgnoreGlob_MatchesOnlyTheLiteralPath pins that an escaped path is
+// a valid rule that covers that exact file and no sibling an unescaped glob
+// would also have reached.
+func TestEscapeIgnoreGlob_MatchesOnlyTheLiteralPath(t *testing.T) {
+	for _, c := range []struct{ path, sibling string }{
+		{"app/[id]/page.tsx", "app/i/page.tsx"},
+		{"a[.go", "a.go"},
+		{"w/*.go", "w/a.go"},
+		{"w/?.go", "w/a.go"},
+		{"**/x.go", "deep/dir/x.go"},
+		{"lib/a-]b^.go", "lib/a-]c^.go"},
+		{"plain/file.go", "plain/other.go"},
+	} {
+		rule := IgnoreRule{File: EscapeIgnoreGlob(c.path), Reason: "r"}
+		m, err := NewIgnoreMatcher([]IgnoreRule{rule})
+		if err != nil {
+			t.Errorf("%s: escaped rule %q rejected: %v", c.path, rule.File, err)
+			continue
+		}
+		if _, ok := m.Match(JSONFinding{File: c.path}); !ok {
+			t.Errorf("%s: escaped rule %q does not match its own path", c.path, rule.File)
+		}
+		if _, ok := m.Match(JSONFinding{File: c.sibling}); ok {
+			t.Errorf("%s: escaped rule %q also matches %s", c.path, rule.File, c.sibling)
+		}
+	}
+	if got, want := EscapeIgnoreGlob("app/[id]/page.tsx"), "app/[[]id]/page.tsx"; got != want {
+		t.Errorf("EscapeIgnoreGlob = %q, want %q", got, want)
+	}
+}
