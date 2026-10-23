@@ -500,13 +500,13 @@ func warnSalvaged(ctx context.Context, count int, agents []string, classes salva
 
 // SalvagedRemedy is the operator action for an ABANDONED salvaged reply: one that was
 // cut off or had no stop reason recorded (an unknown or legacy reason included),
-// which parseFindings refuses. One
-// constant, so the fresh and resumed paths cannot state different fixes for the same
-// condition. It is EXPORTED so the benchmark-coverage diagnostic's `unmeasured_ok`
-// remedy can reuse it rather than restating the same advice in a second place that
-// could drift — that slot contributed nothing, so this text must stay the
-// abandoned-salvage text. A cut-off draft needs more output budget, so that comes
-// first; the stop-reason class has its own remedy, SalvagedOnStopRemedy.
+// which parseFindings refuses. One constant, so the fresh and resumed paths cannot
+// state different fixes for the same condition. It is EXPORTED so the
+// benchmark-coverage diagnostic's `unmeasured_ok` remedy can reuse it rather than
+// restating the same advice in a second place that could drift — that slot
+// contributed nothing, so this text must stay the abandoned-salvage text. A cut-off
+// draft needs more output budget, so that comes first; the stop-reason class has its
+// own remedy, SalvagedOnStopRemedy.
 const SalvagedRemedy = "The model answered on its reasoning channel only, and the reply was cut off or no stop reason was recorded for it, so the salvaged reply is refused rather than parsed: every finding in it is a draft the model did not commit to. Give the agent more output budget (--max-tokens, or a per-agent max_tokens declaration), or declare thinking: off for it so the budget is not spent on reasoning, or repoint it to a model that separates its answer from its reasoning."
 
 // SalvagedOnStopRemedy is the operator action for a STOP-REASON salvaged reply: the
@@ -659,6 +659,20 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 		return findingsResult{}
 	}
 	grounded, ungrounded := groundedFindings(r, changed)
+	return constrainedFindings(r, grounded, ungrounded)
+}
+
+// earlyFindingsFor is findingsFor without the ungrounded-finding warning, for
+// the per-persona early write (writeEarlyAgent). The end-of-run writer
+// (writePool, or writeResumedAgents on a resume) grades the same result again
+// and prints the warning then, so printing it here too would say it twice.
+func earlyFindingsFor(r Result, changed payload.ChangedLines) findingsResult {
+	grounded, ungrounded := gradeFindings(r, changed)
+	return constrainedFindings(r, grounded, ungrounded)
+}
+
+// constrainedFindings applies the per-source constraints to grounded findings.
+func constrainedFindings(r Result, grounded []stream.Finding, ungrounded int) findingsResult {
 	f, dropped, truncated := enforceConstraints(grounded, r.Agent, r.MinSeverity, r.MaxFindings)
 	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated, Ungrounded: ungrounded}
 }
@@ -666,8 +680,18 @@ func findingsFor(r Result, changed payload.ChangedLines) findingsResult {
 // groundedFindings is findingsFor before the per-source constraints: the
 // result's findings stamped with the reviewer and passed through the grounding
 // gate. The resume merge (writeMergedAgent) applies the constraints itself, over
-// the union of replayed and fresh findings.
+// the union of replayed and fresh findings. It prints the per-agent
+// ungrounded-finding warning; gradeFindings is the same without it.
 func groundedFindings(r Result, changed payload.ChangedLines) ([]stream.Finding, int) {
+	grounded, ungrounded := gradeFindings(r, changed)
+	if ungrounded > 0 {
+		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
+	}
+	return grounded, ungrounded
+}
+
+// gradeFindings is groundedFindings without the warning.
+func gradeFindings(r Result, changed payload.ChangedLines) ([]stream.Finding, int) {
 	if r.Content == "" {
 		return nil, 0
 	}
@@ -695,11 +719,7 @@ func groundedFindings(r Result, changed payload.ChangedLines) ([]stream.Finding,
 	// finding is the ROUTINE outcome, so a consumer reading only findings_count
 	// cannot tell that reviewer from one that found nothing — and the benchmark
 	// published it as "clean". A warning on stderr is not reachable by a scorer.
-	grounded, ungrounded := groundFindings(findings, changed)
-	if ungrounded > 0 {
-		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d ungrounded finding(s) not present in the patch\n", r.Agent, ungrounded)
-	}
-	return grounded, ungrounded
+	return groundFindings(findings, changed)
 }
 
 // agentDirName reduces an agent name to a safe single path segment and rejects
