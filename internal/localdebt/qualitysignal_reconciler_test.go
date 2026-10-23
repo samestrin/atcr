@@ -143,3 +143,102 @@ func TestAggregateQualitySignal_UnknownFeedbackKindCreatesNoRow(t *testing.T) {
 	rows := AggregateQualitySignal([]Record{open, annotated(open, "2026-06-10T00:00:00Z", ReconcilerFeedback{Kind: "split", Reason: "r"})})
 	assert.Empty(t, rows)
 }
+
+// --- Epic 36.1 F1: the annotation survives a re-detection and compaction ---
+
+// redetectedAfterRecluster is the store F1 names: a finding, the recluster
+// annotation on it, then the finding resolved (a copy of the annotated
+// effective record, as `debt resolve` writes it) and re-detected by reconcile
+// as a status-less sighting carrying no annotation. The re-detection is the
+// newest record, so it wins rule 2 of the fold.
+func redetectedAfterRecluster() []Record {
+	open := attributed("f000000000000001", "2026-06-01T00:00:00Z", "", "bruce")
+	marked := annotated(open, "2026-06-10T00:00:00Z", ReconcilerFeedback{Kind: FeedbackWrongMerge, Reason: "two races"})
+	resolved := marked
+	resolved.Timestamp, resolved.RunID = "2026-06-11T00:00:00Z", "2026-06-11T00:00:00Z-resolved"
+	resolved.Status, resolved.ResolvedAt = StatusResolved, "2026-06-11T00:00:00Z"
+	regressed := attributed("f000000000000001", "2026-06-20T00:00:00Z", "", "bruce")
+	return []Record{open, marked, resolved, regressed}
+}
+
+// TestAggregateQualitySignal_ReconcilerCountSurvivesARedetection: the plainest
+// form — finding, annotation, newer plain sighting — still counts the
+// developer's feedback, and so does a resolved finding that regresses.
+func TestAggregateQualitySignal_ReconcilerCountSurvivesARedetection(t *testing.T) {
+	open := attributed("f000000000000002", "2026-06-01T00:00:00Z", "", "bruce")
+	marked := annotated(open, "2026-06-10T00:00:00Z", ReconcilerFeedback{Kind: FeedbackWrongSplit, Reason: "one race"})
+	sighting := attributed("f000000000000002", "2026-06-20T00:00:00Z", "", "bruce")
+
+	rows := AggregateQualitySignal([]Record{open, marked, sighting})
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].WrongSplitCount, "a newer plain sighting must not drop the annotation")
+
+	rows = AggregateQualitySignal(redetectedAfterRecluster())
+	require.Len(t, rows, 1)
+	assert.Equal(t, 1, rows[0].WrongMergeCount, "a regressed finding keeps its reconciler feedback")
+}
+
+// TestFoldRecords_CarriesTheNewestAnnotationOfTheGroup: the folded record of a
+// re-detected id carries the newest annotation in its group, and its status is
+// still the re-detection's (the annotation never moves the fold).
+func TestFoldRecords_CarriesTheNewestAnnotationOfTheGroup(t *testing.T) {
+	recs := redetectedAfterRecluster()
+	later := annotated(recs[1], "2026-06-12T00:00:00Z", ReconcilerFeedback{Kind: FeedbackWrongCategory, Reason: "r"})
+	recs = append(recs[:2:2], later, recs[2], recs[3])
+
+	folded := FoldRecords(recs)
+	require.Len(t, folded, 1)
+	assert.Equal(t, "", folded[0].Status, "the re-detection still wins the fold")
+	assert.Equal(t, "2026-06-20T00:00:00Z", folded[0].Timestamp)
+	require.NotNil(t, folded[0].ReconcilerFeedback)
+	assert.Equal(t, FeedbackWrongCategory, folded[0].ReconcilerFeedback.Kind, "the newest annotation is carried")
+	assert.Equal(t, 2, folded[0].Occurrences, "an annotation is still not a sighting")
+}
+
+// TestFoldSummaries_CarriesTheNewestAnnotationOfTheGroup is the summary path's
+// half of the same rule, read from disk the way the dashboard reads it.
+func TestFoldSummaries_CarriesTheNewestAnnotationOfTheGroup(t *testing.T) {
+	dir := t.TempDir()
+	for _, r := range redetectedAfterRecluster() {
+		require.NoError(t, Append(dir, r))
+	}
+	sums, err := ReadSummaries(dir, ReadOpts{})
+	require.NoError(t, err)
+	folded := FoldSummaries(sums)
+	require.Len(t, folded, 1)
+	assert.Equal(t, "", folded[0].Status)
+	assert.Equal(t, FeedbackWrongMerge, folded[0].ReconcilerFeedbackKind)
+}
+
+// TestCompact_KeepsTheAnnotationOfARedetectedFinding: compaction must not
+// discard the annotation for good. The signal, the summary fold and the
+// occurrence count are the same before and after, and a second compaction
+// changes nothing.
+func TestCompact_KeepsTheAnnotationOfARedetectedFinding(t *testing.T) {
+	dir := t.TempDir()
+	for _, r := range redetectedAfterRecluster() {
+		require.NoError(t, Append(dir, r))
+	}
+	before, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	wantRows := AggregateQualitySignal(before)
+	wantFold := FoldRecords(before)
+
+	for pass := 1; pass <= 2; pass++ {
+		_, err = Compact(dir, ReadOpts{})
+		require.NoError(t, err)
+		after, err := ReadAll(dir, ReadOpts{})
+		require.NoError(t, err)
+		assert.Equal(t, wantRows, AggregateQualitySignal(after), "pass %d: the reconciler count survives compaction", pass)
+		gotFold := FoldRecords(after)
+		require.Len(t, gotFold, 1)
+		require.NotNil(t, gotFold[0].ReconcilerFeedback, "pass %d", pass)
+		assert.Equal(t, FeedbackWrongMerge, gotFold[0].ReconcilerFeedback.Kind, "pass %d", pass)
+		assert.Equal(t, wantFold[0].Occurrences, gotFold[0].Occurrences, "pass %d: occurrences unchanged", pass)
+		assert.Equal(t, wantFold[0].Status, gotFold[0].Status, "pass %d", pass)
+
+		sums, err := ReadSummaries(dir, ReadOpts{})
+		require.NoError(t, err)
+		assert.Equal(t, FeedbackWrongMerge, FoldSummaries(sums)[0].ReconcilerFeedbackKind, "pass %d", pass)
+	}
+}
