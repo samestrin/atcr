@@ -363,3 +363,61 @@ func TestBuildPrefetch_WorkingRetrieverRecordsNoDegradeReason(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(b), "degrade_reason")
 }
+
+// Epic 80 T2: a similarity span longer than maxSnippetLines is dropped, not
+// clamped. A clamped body would no longer match the whole indexed chunk, so the
+// stale compare could never pass; the hit is ledgered as oversized before any
+// body is sliced from HEAD.
+func TestSimilaritySnippets_SpanOverMaxSnippetLinesIsDropped(t *testing.T) {
+	dir := initRepo(t)
+	var long strings.Builder
+	long.WriteString("package big\n\nfunc Big() {\n")
+	for i := 0; i < maxSnippetLines+5; i++ {
+		fmt.Fprintf(&long, "\t_ = %d\n", i)
+	}
+	long.WriteString("}\n")
+	write(t, dir, "big.go", long.String())
+	head := commitAll(t, dir, "v1")
+	lines := splitSnippetLines(long.String())
+
+	fit := semindex.Snippet{Path: "big.go", StartLine: 3, EndLine: 3 + maxSnippetLines - 1, Name: "Fits"}
+	fit.Content = strings.Join(lines[fit.StartLine-1:fit.EndLine], "\n")
+	over := semindex.Snippet{Path: "big.go", StartLine: 3, EndLine: len(lines), Name: "Big"}
+	over.Content = strings.Join(lines[over.StartLine-1:over.EndLine], "\n")
+	require.Greater(t, over.EndLine-over.StartLine+1, maxSnippetLines, "precondition: the span is over the cap")
+
+	g := newGitRunner(context.Background(), dir)
+	WithSemanticRetriever(&fakeRetriever{hits: []semindex.Snippet{over, fit}}, 5)(g)
+	symbols := []changedSymbol{{Name: "Big", Signature: "func Big()"}}
+
+	out, dropped, reason := g.similaritySnippets(head, symbols, nil, nil)
+
+	require.Empty(t, reason)
+	require.Equal(t, []PrefetchDrop{{Path: "big.go", Symbol: "Big", Tier: PrefetchTierSimilarity, Reason: dropReasonOversized}}, dropped,
+		"a span over maxSnippetLines is dropped as oversized, even though its Content matches HEAD")
+	require.Len(t, out, 1, "a span of exactly maxSnippetLines is kept")
+	require.Equal(t, "Fits", out[0].Symbol)
+	require.Equal(t, maxSnippetLines, out[0].End-out[0].Start+1)
+}
+
+// Epic 80 T2: semindex.Snippet carries the indexed chunk text and no content
+// hash, so a hit whose Content is empty cannot be checked for staleness at all.
+// It is shown anyway, with HEAD's body, rather than dropped: the body never
+// comes from the index, so the worst case is a less similar region, never a
+// wrong one.
+func TestSimilaritySnippets_EmptyContentCannotBeCheckedForStalenessAndIsShown(t *testing.T) {
+	dir, _, head := semanticRepo(t)
+	hit := similarHit()
+	hit.Content = ""
+	g := newGitRunner(context.Background(), dir)
+	WithSemanticRetriever(&fakeRetriever{hits: []semindex.Snippet{hit}}, 5)(g)
+	symbols := []changedSymbol{{Name: "ReadStore", Signature: "func ReadStore(path string) (string, error)"}}
+
+	out, dropped, reason := g.similaritySnippets(head, symbols, nil, nil)
+
+	require.Empty(t, reason)
+	require.Empty(t, dropped, "an unverifiable hit is not dropped as stale")
+	require.Len(t, out, 1)
+	require.Equal(t, "func ReadCache(key string) (string, error) {\n\treturn \"\", nil\n}", out[0].Body,
+		"the body shown is HEAD's")
+}
