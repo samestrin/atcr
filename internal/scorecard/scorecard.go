@@ -958,9 +958,12 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     charge provably exceeds what its category set can vouch for, so the
 //     opportunity gate must never treat that set as complete evidence for an
 //     out-of-remit drop. Delivering that needs the shielded findings' categories
-//     on the record — data a persisted count cannot carry — which is the
-//     provenance work epic 35.16.11.3 owns (its task 7 rider). Do not narrow
-//     one side without the other here; that is how the two drifted apart.
+//     on the record — data a persisted count cannot carry. That provenance
+//     work was a rider on epic 35.16.11.3, moved to
+//     35.16.11.3.1_scorecard-trust-riders.md, and that plan completed without
+//     delivering it, so the TD-036 doc-shield residual is unowned: no live
+//     plan or debt row tracks it. Do not narrow one side without the other
+//     here; that is how the two drifted apart.
 //
 //   - The result is SORTED, not map-ordered. Two byte-identical runs must
 //     serialize byte-identically, or a diff of the store reports churn that is
