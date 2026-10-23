@@ -37,7 +37,7 @@ func newBenchmarkCmd() *cobra.Command {
 			"Leaderboard. `verify` validates a suite manifest and prints its\n" +
 			"reproducibility hash; `run` executes the suite through the review pipeline\n" +
 			"and writes a scored run-result; `export` produces a suite-tagged public\n" +
-			"submission record (distinct from `leaderboard --export`, so suite runs are\n" +
+			"submission record (distinct from `leaderboard export`, so suite runs are\n" +
 			"distinguishable from production runs on the public board); `fit` judges\n" +
 			"each persona + model pair of a run-result on call health.",
 		Args: usageArgs(cobra.NoArgs),

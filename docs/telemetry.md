@@ -7,9 +7,9 @@ pseudonymous copy of your local scorecard to a cloud dashboard with
 file contents ever leave your machine.
 
 This document is the complete privacy model for those two paths. It is a
-**separate, additive** data path from the local-store `--export` allowlist
+**separate, additive** data path from the local-store `leaderboard export` allowlist
 described in [scorecard.md](scorecard.md) — the two use different schemas and
-different guarantees; nothing here changes what `--export` does.
+different guarantees; nothing here changes what `leaderboard export` does.
 
 The usage ping is wired to fire silently as a byproduct of a completed run, and
 it is **fail-open**: if the network is down, slow, or the endpoint is
@@ -229,13 +229,13 @@ the canonicalized persona/reviewer name (`strings.ToLower(strings.TrimSpace(name
   list of known persona names could match a digest back to a name. Treat
   `persona_id_hash` as a stable pseudonym, not a secret.
 
-This hashing path is **completely separate** from the `--export` /
+This hashing path is **completely separate** from the `leaderboard export` /
 `PublicRecord` allowlist in [scorecard.md](scorecard.md): it lives in its own
 schema, and the leaderboard/cloud-sync payload is not a superset of the export
 record. The vocabularies differ too: telemetry, the quality signal, and
 `--sync-cloud` are persona-**pseudonymous** (hash only, never the raw name),
-whereas `--export` is submitter-**anonymized** and keeps the public persona
-catalog identity in the clear — see the `--export` section of scorecard.md.
+whereas `leaderboard export` is submitter-**anonymized** and keeps the public persona
+catalog identity in the clear — see the `leaderboard export` section of scorecard.md.
 
 ---
 
@@ -281,7 +281,7 @@ run missing both reports the missing destination (exit `2`), not the missing key
 (exit `3`).
 
 **What is pushed.** The payload is a dedicated allowlist — **not** a superset of
-the `--export` record, and it carries no source code, file paths, or raw
+the `leaderboard export` record, and it carries no source code, file paths, or raw
 identifiers:
 
 - `schema_version`, `run_outcome`
@@ -502,5 +502,5 @@ SHA-256** of the canonicalized persona/reviewer name (`strings.ToLower(strings.T
 ## Related
 
 - [Scorecard](scorecard.md) — the local per-reviewer record and the separate
-  `--export` allowlist for the public Model-Eval Leaderboard.
+  `leaderboard export` allowlist for the public Model-Eval Leaderboard.
 - [Metrics](metrics.md) — the operational metrics atcr records locally.

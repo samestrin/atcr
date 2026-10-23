@@ -274,6 +274,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
+	writeSuppressedNotice(cmd.ErrOrStderr(), len(res.Suppressed))
 
 	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
 	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
@@ -541,4 +542,15 @@ func gateFindings(res reconcile.Result, threshold string, requireVerified bool) 
 		return fmt.Errorf("%d finding(s) at or above %s survived reconciliation", n, threshold)
 	}
 	return nil
+}
+
+// writeSuppressedNotice states on stderr how many findings .atcr/ignore.yaml
+// rules dropped. The rules are read from the reviewed checkout, so a pull
+// request can add one and shrink the finding count the gate sees; this line
+// puts the count in the CI log beside the gate's result. Silent at zero.
+func writeSuppressedNotice(w io.Writer, n int) {
+	if n == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "atcr: %d finding(s) suppressed by .atcr/ignore.yaml rules (listed in reconciled/%s)\n", n, reconcile.SuppressedJSON)
 }
