@@ -1047,12 +1047,12 @@ func TestReadReviewStatus_QuietGapWithinScaledBinDeadlineIsNotStale(t *testing.T
 	assert.Equal(t, RunInProgress, st.Status)
 }
 
-// A run whose newest write is older than the scaled bin deadline plus grace is
-// dead: stale, and EnsureReviewComplete names resume.
+// A run whose newest write is older than the scaled bin deadline, the longest
+// requeue wait and grace is dead: stale, and EnsureReviewComplete names resume.
 func TestReadReviewStatus_NoActivityPastScaledDeadlineIsStale(t *testing.T) {
 	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
 	last := start.Add(time.Hour)
-	withNow(t, last.Add(time.Duration(3*600+staleGraceSecs+1)*time.Second))
+	withNow(t, last.Add(time.Duration(3*600+staleGraceSecs+1)*time.Second+maxUnitRequeueWait(defaultUnitRetryPolicy())))
 	dir, raw := staleRun(t, start, "chunky", "solo")
 	writeAgentChunks(t, raw, "chunky", StatusOK, chunkOutcomePending, chunkOutcomePending)
 	touchAt(t, filepath.Join(raw, "chunky", chunksFile), last)
@@ -1068,11 +1068,13 @@ func TestReadReviewStatus_NoActivityPastScaledDeadlineIsStale(t *testing.T) {
 	assert.Contains(t, err.Error(), "--resume")
 }
 
-// Exactly at newest write + scaled deadline + grace the run is not yet stale.
+// Exactly at newest write + scaled deadline + longest requeue wait + grace the
+// run is not yet stale.
 func TestReadReviewStatus_ActivityStaleBoundaryIsExclusive(t *testing.T) {
 	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
 	last := start.Add(time.Hour)
-	withNow(t, last.Add(time.Duration(2*600+staleGraceSecs)*time.Second))
+	boundary := last.Add(time.Duration(2*600+staleGraceSecs)*time.Second + maxUnitRequeueWait(defaultUnitRetryPolicy()))
+	withNow(t, boundary)
 	dir, raw := staleRun(t, start, "chunky")
 	writeAgentChunks(t, raw, "chunky", StatusOK, chunkOutcomePending)
 	touchAt(t, filepath.Join(raw, "chunky", chunksFile), last)
@@ -1080,6 +1082,11 @@ func TestReadReviewStatus_ActivityStaleBoundaryIsExclusive(t *testing.T) {
 	st, err := ReadReviewStatus(dir, "x")
 	require.NoError(t, err)
 	assert.Equal(t, RunInProgress, st.Status)
+
+	withNow(t, boundary.Add(time.Second))
+	st, err = ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status, "one second past the boundary the run is stale")
 }
 
 // A unit that failed retryably flushes chunks.json at the requeue, then waits a

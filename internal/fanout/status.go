@@ -333,7 +333,11 @@ func postFanoutStage(reviewDir string, stages []string) string {
 // and StartedAt stands in until the first one lands. The window is the longest
 // a single unit may run without writing: the base timeout scaled by the
 // persona's chunk count (scaledTimeoutSecs, the budget unitDeadline gives each
-// leased unit), taken over the roster, plus the grace margin.
+// leased unit), taken over the roster, plus the grace margin. A unit that failed
+// retryably writes chunks.json at the requeue and then waits a backoff before
+// its next lease starts a fresh unit deadline, so the longest such wait
+// (maxUnitRequeueWait) is added too: a provider-wide rate limit can quiet every
+// lane at once, leaving no other write to move the anchor.
 func staleByDeadline(m payload.Manifest, rows []AgentProgress, lastActivity time.Time) bool {
 	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
 		return false
@@ -344,7 +348,7 @@ func staleByDeadline(m payload.Manifest, rows []AgentProgress, lastActivity time
 			windowSecs = secs
 		}
 	}
-	totalSecs := windowSecs + staleGraceSecs
+	totalSecs := windowSecs + int(maxUnitRequeueWait(defaultUnitRetryPolicy())/time.Second) + staleGraceSecs
 	if totalSecs < 0 {
 		// int overflow: timeout is beyond representation; deadline is effectively
 		// infinite, so the review cannot be stale.
@@ -361,6 +365,32 @@ func staleByDeadline(m payload.Manifest, rows []AgentProgress, lastActivity time
 		anchor = lastActivity
 	}
 	return nowFunc().After(anchor.Add(d))
+}
+
+// maxUnitRequeueWait is the longest single wait p lets a requeued unit sit
+// between two leases: the largest backoff hop either budget admits, whether a
+// retryable failure's (rate limit or outage class, doubled per attempt, the sum
+// capped by p.budget) or an open breaker's (p.circuitWait, capped by
+// p.circuitBudget).
+func maxUnitRequeueWait(p unitRetryPolicy) time.Duration {
+	var longest, spent [2]time.Duration
+	for attempt := 1; attempt < p.maxAttempts; attempt++ {
+		for k, c := range [2]failureClass{failureRateLimit, failureServer} {
+			d := p.backoff(c, attempt)
+			if spent[k]+d > p.budget {
+				continue
+			}
+			spent[k] += d
+			if d > longest[k] {
+				longest[k] = d
+			}
+		}
+	}
+	out := max(longest[0], longest[1])
+	if p.circuitWait <= p.circuitBudget && p.circuitWait > out {
+		out = p.circuitWait
+	}
+	return out
 }
 
 // readAgentProgress builds one AgentProgress row per roster persona and the
