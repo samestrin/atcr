@@ -89,12 +89,13 @@ func newInitCmd() *cobra.Command {
 // config.yaml, .gitignore and community personas are never touched. Git is the
 // undo: the generated .atcr/.gitignore keeps personas/ tracked.
 //
-// Each file is written by writeFile (atomicfs.WriteFileAtomic in production; a
-// test passes one that fails partway), an atomic temp-file write and rename, so a symlinked
-// copy is replaced by a regular file and its target is left untouched. The
-// stamp is written last, so a run that fails partway leaves the stamp as it was
-// and a re-run finishes the job. A missing .atcr/personas or one that cannot be
-// written to is a named error, raised before any file changes.
+// Each file is written by writeFile, which the command passes as
+// atomicfs.WriteFileAtomic: an atomic temp-file write and rename, so a symlinked
+// copy is replaced by a regular file and its target is left untouched. (A test
+// passes a writer that fails partway.) The stamp is written last, merged into
+// the stamp as it is on disk then, so a run that fails partway leaves the stamp
+// as it was and a re-run finishes the job. A missing .atcr/personas or one that
+// cannot be written to is a named error, raised before any file changes.
 func runRefreshPersonas(dir string, dryRun bool, out io.Writer, writeFile func(path string, data []byte) error) error {
 	personasDir := filepath.Join(dir, ".atcr", "personas")
 	info, err := os.Stat(personasDir)
