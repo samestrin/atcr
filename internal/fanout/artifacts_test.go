@@ -816,3 +816,62 @@ func TestWriteEarlyAgent_SynthesizedCancelOnlySkippedOnResume(t *testing.T) {
 	require.NoError(t, writeEarlyAgent(poolDir, synth, nil, nil, false))
 	assert.Equal(t, StatusTimeout, readAgentStatus(t, poolDir, "greta").Status, "a fresh review records the timeout at once")
 }
+
+// ungroundedBody is one grounded finding (auth.go:42, inside groundedChanged)
+// and one ungrounded one (auth.go:999), so the grounding gate drops exactly one.
+const ungroundedBody = "MEDIUM|auth.go:42|real bug|f|correctness|10|token := parseToken(r)\n" +
+	"HIGH|auth.go:999|hallucinated|f|correctness|10|invented unrelated snippet\n"
+
+var groundedChanged = payload.ChangedLines{
+	"auth.go": {
+		Ranges:      []payload.LineRange{{Start: 40, End: 45}},
+		ChangedText: []string{"token := parseToken(r)"},
+	},
+}
+
+const ungroundedWarning = `atcr: warning: agent "greta": dropped 1 ungrounded finding(s) not present in the patch`
+
+// Epic 78 T2 (row artifacts.go:700): a persona written early and then again by
+// the end-of-run writer is graded twice, but its ungrounded-finding warning is
+// printed once — on a fresh run, on a resume, and on a resume whose replayed
+// bins the early write already merged.
+func TestEarlyWrite_UngroundedWarningPrintedOnce(t *testing.T) {
+	r := okResult("greta", ungroundedBody)
+
+	t.Run("fresh run", func(t *testing.T) {
+		poolDir := t.TempDir()
+		out := captureStderr(t, func() {
+			require.NoError(t, writeEarlyAgent(poolDir, r, groundedChanged, nil, false))
+			_, err := writePool(context.Background(), poolDir, []Result{r}, groundedChanged, "")
+			require.NoError(t, err)
+		})
+		assert.Equal(t, 1, strings.Count(out, ungroundedWarning), "stderr:\n%s", out)
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		poolDir := t.TempDir()
+		out := captureStderr(t, func() {
+			require.NoError(t, writeEarlyAgent(poolDir, r, groundedChanged, nil, true))
+			require.NoError(t, writeResumedAgents(poolDir, []Result{r}, groundedChanged, nil))
+		})
+		assert.Equal(t, 1, strings.Count(out, ungroundedWarning), "stderr:\n%s", out)
+	})
+
+	t.Run("resume with replayed bins", func(t *testing.T) {
+		poolDir := t.TempDir()
+		prior := []stream.Finding{{Severity: "LOW", File: "main.go", Line: 3, Problem: "p", Fix: "f", Category: "style", EstMinutes: 5, Reviewer: "greta"}}
+		require.NoError(t, writeAgentFiles(poolDir, "greta", "greta", "prior review", prior, &AgentStatus{Agent: "greta", Status: StatusOK}))
+		l := &chunkLedger{
+			records: map[string]*chunkRecord{"greta": {Bins: []chunkRecordBin{
+				{Files: []string{"main.go"}, Outcome: StatusOK},
+				{Files: []string{"auth.go"}, Outcome: StatusOK},
+			}}},
+			carried: map[string]map[string]bool{"greta": {"main.go": true}},
+		}
+		out := captureStderr(t, func() {
+			require.NoError(t, writeEarlyAgent(poolDir, r, groundedChanged, l, true))
+			require.NoError(t, writeResumedAgents(poolDir, []Result{r}, groundedChanged, l))
+		})
+		assert.Equal(t, 1, strings.Count(out, ungroundedWarning), "stderr:\n%s", out)
+	})
+}
