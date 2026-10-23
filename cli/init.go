@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -108,14 +109,15 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 
 	type refresh struct {
 		file, content string
-		edited        bool // differs from its stamp entry
+		state         copyState
+		edited        bool // read, and differs from its stamp entry
 		stamped       bool
 	}
 	stamp, hadStamp := registry.ReadPersonaStamp(personasDir)
 	if !hadStamp {
 		stamp = registry.NewPersonaStamp()
 	}
-	stampChanged := false
+	stampFixed := 0 // current copies whose stamp entry this run corrects
 	var todo []refresh
 	base, err := builtins.Base()
 	if err != nil {
@@ -141,30 +143,36 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		stampHash, stamped := stamp.Files[f.file]
 		// Only a regular file is read. A symlink, FIFO or device is always
 		// replaced, so its content is never needed — and reading through a
-		// link to /dev/zero or a FIFO would hang. Its empty hash differs.
+		// link to /dev/zero or a FIFO would hang.
 		var fileHash string
+		f.state = copyNonRegular
 		if info.Mode().IsRegular() {
-			if fileHash, err = hashPersonaCopy(path); err != nil {
+			if fileHash, f.state, err = hashPersonaCopy(path, info); err != nil {
 				return fmt.Errorf("cannot read %s: %w", path, err)
 			}
 		}
-		if fileHash == embeddedHash && info.Mode().IsRegular() {
+		if f.state == copyRegular && fileHash == embeddedHash {
 			// Already current. Record it so a re-run after an interrupted
 			// refresh leaves an accurate entry for a file the first run wrote.
 			if stampHash != embeddedHash {
 				stamp.Record(f.file, []byte(f.content))
-				stampChanged = true
+				stampFixed++
 			}
 			continue
 		}
 		f.stamped = stamped
-		f.edited = stamped && fileHash != stampHash
+		// A copy that was not read cannot be known to be edited by hand.
+		f.edited = f.state == copyRegular && stamped && fileHash != stampHash
 		todo = append(todo, f)
 	}
 
 	if len(todo) == 0 {
-		_, _ = fmt.Fprintln(out, "Persona files are current; nothing to refresh")
-		if dryRun || !stampChanged {
+		switch {
+		case stampFixed == 0:
+			_, _ = fmt.Fprintln(out, "Persona files are current; nothing to refresh")
+			return nil
+		case dryRun:
+			_, _ = fmt.Fprintf(out, "Persona files are current; would refresh the stamp for %d file(s)\n", stampFixed)
 			return nil
 		}
 	} else {
@@ -176,6 +184,10 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		for _, f := range todo {
 			note := ""
 			switch {
+			case f.state == copyNonRegular:
+				note = " (not a regular file — it will be replaced by one)"
+			case f.state == copyOversized:
+				note = " (over 1 MiB, not read — it will be replaced)"
 			case f.edited:
 				note = " (edited by hand — your changes will be overwritten)"
 			case !f.stamped:
@@ -211,6 +223,8 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 	}
 	if len(todo) > 0 {
 		_, _ = fmt.Fprintf(out, "Refreshed %d persona file(s); review the changes with git diff\n", len(todo))
+	} else {
+		_, _ = fmt.Fprintf(out, "Persona files are current; refreshed the stamp for %d file(s)\n", stampFixed)
 	}
 	return nil
 }
@@ -220,23 +234,44 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 // a cloned repo can carry a huge one, and reading it whole must not be possible.
 const maxPersonaCopyBytes = 1 << 20
 
-// hashPersonaCopy hashes the regular file at path, reading at most
-// maxPersonaCopyBytes+1 bytes. A file over the cap hashes to "", which differs
-// from every embedded persona, so the refresh replaces it.
-func hashPersonaCopy(path string) (string, error) {
-	f, err := os.Open(path)
+// copyState says whether a persona copy was read, and if not, why not.
+type copyState int
+
+const (
+	copyRegular    copyState = iota // a regular file, read and hashed
+	copyNonRegular                  // a symlink, FIFO, device or directory: not read
+	copyOversized                   // a regular file over maxPersonaCopyBytes: not read whole
+)
+
+// hashPersonaCopy hashes the persona copy at path, which an earlier Lstat
+// reported as checked. It opens path once and stats the held handle, so a copy
+// swapped for a symlink, FIFO or other file after the check is never read
+// through: the handle is not a regular file, or not the file that was checked,
+// and the copy is reported copyNonRegular. The open is non-blocking, so a FIFO
+// swapped in does not wait for a writer. At most maxPersonaCopyBytes+1 bytes are
+// read; a file over the cap is reported copyOversized. Only a copyRegular copy
+// has a hash.
+func hashPersonaCopy(path string, checked fs.FileInfo) (string, copyState, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return "", err
+		return "", copyRegular, err
 	}
 	defer func() { _ = f.Close() }()
+	held, err := f.Stat()
+	if err != nil {
+		return "", copyRegular, err
+	}
+	if !held.Mode().IsRegular() || !os.SameFile(checked, held) {
+		return "", copyNonRegular, nil
+	}
 	data, err := io.ReadAll(io.LimitReader(f, maxPersonaCopyBytes+1))
 	if err != nil {
-		return "", err
+		return "", copyRegular, err
 	}
 	if len(data) > maxPersonaCopyBytes {
-		return "", nil
+		return "", copyOversized, nil
 	}
-	return registry.HashPersonaContent(data), nil
+	return registry.HashPersonaContent(data), copyRegular, nil
 }
 
 // atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
