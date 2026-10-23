@@ -553,6 +553,14 @@ func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cob
 		return usageError(err)
 	})
 
+	// The reporting entry points share one root-help heading (cobra help groups,
+	// epic 35.22 T6; the shape decision is docs/decisions/2026-10-22-reporting-entry-point-shape.md).
+	// Grouping renames nothing: every command keeps its path. `debt dashboard` is
+	// nested, and cobra groups only direct children, so the heading names it.
+	// AddGroup must run before any GroupID is assigned — cobra panics on a
+	// GroupID that names an undefined group.
+	root.AddGroup(&cobra.Group{ID: reportingGroupID, Title: "Reporting Commands (also: atcr debt dashboard):"})
+
 	root.AddCommand(
 		newReviewCmd(),
 		newReconcileCmd(),
@@ -582,7 +590,27 @@ func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cob
 		newSkillCmd(),
 		newVersionCmd(),
 	)
+	for _, c := range root.Commands() {
+		if reportingCommands[c.Name()] {
+			c.GroupID = reportingGroupID
+		}
+	}
 	return root
+}
+
+// reportingGroupID is the root help group the reporting entry points render under.
+const reportingGroupID = "reporting"
+
+// reportingCommands names the top-level reporting entry points placed in the
+// reporting help group. The seventh, `debt dashboard`, is a `debt` subcommand
+// and is named in the group's title instead.
+var reportingCommands = map[string]bool{
+	"report":         true,
+	"history":        true,
+	"leaderboard":    true,
+	"scorecard":      true,
+	"quality-report": true,
+	"audit-report":   true,
 }
 
 // logLevelFromEnv returns the configured log level, defaulting to "info" when
