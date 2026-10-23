@@ -300,6 +300,15 @@ func TestReadPriorChunkRecords_RefusesUntrustedRecords(t *testing.T) {
 	}
 }
 
+// A run with no chunk ledger (nothing chunked) has a nil *chunkLedger, and
+// mergedEarly is nil-safe like carriedFiles: it answers false, not a panic.
+func TestMergedEarly_NilLedger(t *testing.T) {
+	var l *chunkLedger
+	require.NotPanics(t, func() {
+		assert.False(t, l.mergedEarly("greta"))
+	})
+}
+
 // An ok prior bin with no files is never carried: it would replay nothing and
 // shift every fresh bin's index.
 func TestCarryReviewed_SkipsEmptyBins(t *testing.T) {
