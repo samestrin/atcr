@@ -429,12 +429,17 @@ func Emit(reconciledDir string, r Result) error {
 		}
 		rendered[x.name] = bytes.Clone(buf.Bytes())
 	}
+	// findings.json is published last: fanout reads its presence as the
+	// "reconciled" marker (status.go), so every sibling must already exist.
 	for _, x := range writers {
+		if x.name == FindingsJSON {
+			continue
+		}
 		if err := atomicfs.WriteFileAtomic(filepath.Join(reconciledDir, x.name), rendered[x.name]); err != nil {
 			return err
 		}
 	}
-	return nil
+	return atomicfs.WriteFileAtomic(filepath.Join(reconciledDir, FindingsJSON), rendered[FindingsJSON])
 }
 
 // emptyIfNil normalizes a nil finding slice to an empty one so the sidecar
