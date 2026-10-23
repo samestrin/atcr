@@ -352,8 +352,9 @@ func TestRetrieve_DropsMalformedHits(t *testing.T) {
 }
 
 // TestRetrieve_ErrorMappingAndCounter is the table the task names: every
-// failure class maps to its Class, and each increments the
-// configured-but-unreachable counter exactly once.
+// failure class maps to its Class, and each server failure increments the
+// configured-but-unreachable counter exactly once. An invalid topK is the
+// caller's bug, not the server's, so it is not counted.
 func TestRetrieve_ErrorMappingAndCounter(t *testing.T) {
 	status := func(code int) func(http.ResponseWriter, *http.Request, map[string]any) {
 		return func(w http.ResponseWriter, _ *http.Request, _ map[string]any) {
@@ -370,6 +371,8 @@ func TestRetrieve_ErrorMappingAndCounter(t *testing.T) {
 		query func(http.ResponseWriter, *http.Request, map[string]any)
 		topK  int
 		want  Class
+		// uncounted marks a failure that is not the server's.
+		uncounted bool
 	}{
 		{name: "embedding non-200", embed: status(500), want: ClassStatus},
 		{name: "embedding malformed json", embed: body(`{"data":`), want: ClassDecode},
@@ -381,7 +384,7 @@ func TestRetrieve_ErrorMappingAndCounter(t *testing.T) {
 		{name: "qdrant non-200", query: status(503), want: ClassStatus},
 		{name: "qdrant malformed json", query: body(`not json`), want: ClassDecode},
 		{name: "qdrant no result object", query: body(`{"status":"ok"}`), want: ClassContract},
-		{name: "invalid topK", topK: -1, want: ClassInvalidArgument},
+		{name: "invalid topK", topK: -1, want: ClassInvalidArgument, uncounted: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -402,7 +405,38 @@ func TestRetrieve_ErrorMappingAndCounter(t *testing.T) {
 			var se *Error
 			require.True(t, errors.As(err, &se), "error is a *semindex.Error: %v", err)
 			assert.Equal(t, tc.want, se.Class, "err: %v", err)
-			assert.Equal(t, int64(1), h.unreachable(), "exactly one increment per failed retrieval")
+			wantCount := int64(1)
+			if tc.uncounted {
+				wantCount = 0
+			}
+			assert.Equal(t, wantCount, h.unreachable(), "exactly one increment per server failure")
+		})
+	}
+}
+
+// TestRetrieve_InvalidTopKIsNotCountedAsUnreachable pins that a caller bug is
+// not reported as a configured-but-unreachable server: topK<=0 returns an
+// invalid-argument error, makes no call and leaves the counter alone.
+func TestRetrieve_InvalidTopKIsNotCountedAsUnreachable(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		queries []string
+		topK    int
+	}{
+		{name: "queries, zero", queries: []string{"q1", "q2"}, topK: 0},
+		{name: "queries, negative", queries: []string{"q1", "q2"}, topK: -1},
+		{name: "no queries, zero", topK: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			got, err := h.c.Retrieve(context.Background(), tc.queries, tc.topK)
+			require.Error(t, err)
+			assert.Nil(t, got)
+			var se *Error
+			require.True(t, errors.As(err, &se), "error is a *semindex.Error: %v", err)
+			assert.Equal(t, ClassInvalidArgument, se.Class)
+			assert.Equal(t, int64(0), h.unreachable(), "an invalid topK is not an unreachable server")
+			assert.Empty(t, h.f.paths, "no request is sent")
 		})
 	}
 }

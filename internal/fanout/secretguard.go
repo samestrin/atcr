@@ -2,11 +2,16 @@ package fanout
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/samestrin/atcr/internal/payload"
 )
@@ -42,6 +47,138 @@ func secretGuardPolicy(cfg *ReviewConfig) string {
 	return secretGuardWarn
 }
 
+// scanSecrets is the scanner guardSecrets runs; a variable so tests can count
+// its invocations.
+var scanSecrets = payload.ScanPayloadContext
+
+// Scan reuse (row secretguard.go:80). Every agent of a panel is handed the same
+// payload and scope constraint, so guardSecrets caches each segment's scan and
+// prints each warning once, instead of one gitleaks process (up to its timeout)
+// and one warning per agent.
+//
+// guardSecrets has no run handle, and `atcr serve` and the MCP server keep one
+// process alive across reviews, so a run is inferred: within a run each agent
+// asks for a given set of segments once, so the same agent asking again starts
+// a new run, which warns afresh and retries a scan that failed. A scan that
+// succeeded depends only on the text and the scanner, so it is reused across
+// runs (and across one agent's chunks, which share a scope constraint) until it
+// expires. secretScanTTL bounds how long a result or a
+// suppressed warning outlives its run when the next run's panel shares no
+// agent, and secretScanCacheCap bounds the memory a long process holds.
+var (
+	secretScanNow      = time.Now
+	secretScanTTL      = 5 * time.Minute
+	secretScanCacheCap = 256
+)
+
+// runSeen is a cache entry's run: when it began and which agents it served.
+type runSeen struct {
+	at     time.Time
+	agents map[string]bool
+}
+
+// claim records agent against the entry and reports whether the entry may be
+// reused: false when it expired, or when perRun and agent already used it.
+func (r *runSeen) claim(agent string, now time.Time, perRun bool) bool {
+	if now.Sub(r.at) >= secretScanTTL || (perRun && r.agents[agent]) {
+		return false
+	}
+	r.agents[agent] = true
+	return true
+}
+
+func newRunSeen(agent string, now time.Time) runSeen {
+	return runSeen{at: now, agents: map[string]bool{agent: true}}
+}
+
+type cachedScanResult struct {
+	runSeen
+	hits []payload.SecretHit
+	err  error
+}
+
+var secretScanCache struct {
+	sync.Mutex
+	scans  map[string]*cachedScanResult
+	warned map[string]*runSeen
+}
+
+// resetSecretScanCache forgets every cached scan and warning; tests call it
+// for isolation.
+func resetSecretScanCache() {
+	secretScanCache.Lock()
+	defer secretScanCache.Unlock()
+	secretScanCache.scans = nil
+	secretScanCache.warned = nil
+}
+
+func secretScanCacheLen() int {
+	secretScanCache.Lock()
+	defer secretScanCache.Unlock()
+	return len(secretScanCache.scans) + len(secretScanCache.warned)
+}
+
+// scannerIdentity names what a scan result depends on besides the text: the
+// gitleaks binary PATH resolves (or none, for the built-in ruleset) and the
+// environment that points gitleaks at a config.
+func scannerIdentity() string {
+	bin, _ := exec.LookPath("gitleaks")
+	return bin + "\x00" + os.Getenv("GITLEAKS_CONFIG") + "\x00" + os.Getenv("GITLEAKS_CONFIG_TOML")
+}
+
+func textDigest(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// cachedScan returns the scan of text for agent, reusing a cached result. A
+// scan error is cached with its hits for the rest of the run, so block fails
+// closed for every agent that shares the text, not only the first.
+func cachedScan(agent, scanner, text string) ([]payload.SecretHit, error) {
+	key := scanner + "\x00" + textDigest(text)
+	c := &secretScanCache
+	c.Lock()
+	if e := c.scans[key]; e != nil && e.claim(agent, secretScanNow(), e.err != nil) {
+		c.Unlock()
+		return e.hits, e.err
+	}
+	c.Unlock()
+
+	hits, err := scanSecrets(context.Background(), text, nil)
+
+	c.Lock()
+	defer c.Unlock()
+	if c.scans == nil || len(c.scans) >= secretScanCacheCap {
+		c.scans = make(map[string]*cachedScanResult)
+	}
+	c.scans[key] = &cachedScanResult{runSeen: newRunSeen(agent, secretScanNow()), hits: hits, err: err}
+	return hits, err
+}
+
+// firstWarning reports whether the warnings for this exact set of segments, under
+// this policy and scanner, are still unprinted in the current run.
+func firstWarning(agent, policy, scanner string, segs []guardSegment) bool {
+	var b strings.Builder
+	b.WriteString(policy + "\x00" + scanner)
+	for _, s := range segs {
+		b.WriteString("\x00" + textDigest(s.text))
+	}
+	key := b.String()
+	c := &secretScanCache
+	c.Lock()
+	defer c.Unlock()
+	now := secretScanNow()
+	if e := c.warned[key]; e != nil && e.claim(agent, now, true) {
+		return false
+	}
+	if c.warned == nil || len(c.warned) >= secretScanCacheCap {
+		c.warned = make(map[string]*runSeen)
+	}
+	r := newRunSeen(agent, now)
+	c.warned[key] = &r
+	return true
+}
+
 // guardSegment is one piece of text bound for a provider. file names it in a
 // warning or block error; mode, when set, says the text is a rendered payload
 // whose per-file markers locate each hit's file.
@@ -69,12 +206,13 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 		found     []secretFinding
 		scanErr   error
 		redactHit = make([][]payload.SecretHit, len(segs))
+		scanner   = scannerIdentity()
 	)
 	for i, s := range segs {
 		if s.text == "" {
 			continue
 		}
-		hits, err := payload.ScanPayloadContext(context.Background(), s.text, nil)
+		hits, err := cachedScan(agent, scanner, s.text)
 		if err != nil {
 			scanErr = err
 		}
@@ -87,7 +225,9 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 			found = append(found, secretFinding{kind: h.Kind, file: files.at(h.Start, s.file)})
 		}
 	}
-	if scanErr != nil {
+	// Only warnings are deduplicated: a block error is returned to every agent.
+	warn := (len(found) > 0 || scanErr != nil) && firstWarning(agent, policy, scanner, segs)
+	if scanErr != nil && warn {
 		// ScanPayloadContext's error names only the failure mode, never scanner
 		// output, so it is safe to print.
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: secret scan: %v; using the built-in ruleset\n", agent, scanErr)
@@ -104,11 +244,11 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 		for i := range out {
 			out[i] = payload.RedactSecrets(out[i], redactHit[i])
 		}
-		if len(found) > 0 {
+		if len(found) > 0 && warn {
 			fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: redacted %s from the review prompt (secret_guard: redact)\n", agent, describeFindings(found))
 		}
 	default:
-		if len(found) > 0 {
+		if len(found) > 0 && warn {
 			fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: the review prompt holds %s and is sent unchanged (secret_guard: warn); set secret_guard: redact or block to stop it\n", agent, describeFindings(found))
 		}
 	}

@@ -543,3 +543,86 @@ func TestDoctor_SilentOnAMissingOrValidPersonaStamp(t *testing.T) {
 		})
 	}
 }
+
+// damagedStampNote returns doctor's one damaged-stamp note line from stderr.
+func damagedStampNote(t *testing.T, stderr string) string {
+	t.Helper()
+	var notes []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "damaged") {
+			notes = append(notes, line)
+		}
+	}
+	require.Len(t, notes, 1, "the damaged stamp is noted exactly once:\n%s", stderr)
+	return notes[0]
+}
+
+// registry.PersonaStampDamaged reports more than an unparseable stamp: a stamp
+// that is not a regular file, is over the 1 MiB cap or cannot be read is
+// damaged too. The note has to name every one of those, or an operator holding
+// a directory or a 2 MiB stamp reads "does not parse" and looks for a syntax
+// error that is not there. Each kind fires the same note.
+func TestDoctor_DamagedPersonaStampNoteNamesEveryKind(t *testing.T) {
+	for name, damage := range map[string]func(t *testing.T){
+		"unparseable":     func(t *testing.T) { writeRawPersonaStamp(t, "{") },
+		"no files object": func(t *testing.T) { writeRawPersonaStamp(t, `{"version":1}`) },
+		"oversized": func(t *testing.T) {
+			writeRawPersonaStamp(t, `{"files":{}}`+strings.Repeat(" ", 1<<20))
+		},
+		"not a regular file": func(t *testing.T) {
+			require.NoError(t, os.MkdirAll(registry.PersonaStampPath(filepath.Join(".atcr", "personas")), 0o755))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := echoProvider(t, 0)
+			setupDoctorEnv(t, srv.URL)
+			t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+			damage(t)
+
+			_, stderr, err := executeSplit(t, "doctor")
+			require.NoError(t, err, "a damaged stamp is advisory: the exit code must stay 0")
+
+			note := damagedStampNote(t, stderr)
+			for _, kind := range []string{
+				"not a regular file", "over 1 MiB", "cannot be read",
+				"does not parse", "has no \"files\" object",
+			} {
+				assert.Contains(t, note, kind, "the note names every kind of damaged stamp")
+			}
+			assert.Contains(t, note, "atcr init --refresh-personas")
+			assert.Contains(t, note, "every built-in persona copy",
+				"the note says the refresh is not limited to the stamp")
+			assert.Contains(t, note, "not only the ones doctor listed",
+				"the note says the refresh also overwrites copies doctor did not list")
+		})
+	}
+}
+
+// The stale warning lists only the copies serving the roster (or the selected
+// agents), but --refresh-personas brings every built-in copy under
+// .atcr/personas back to the embedded content. The warning must say so, or an
+// operator expects the refresh to touch only the files it named.
+func TestDoctor_StaleWarningSaysTheRefreshCoversEveryBuiltInCopy(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	writeProjectPersona(t, "bruce", "# bruce\n\n## Focus\n1. Correctness\n")
+
+	_, stderr, err := executeSplit(t, "doctor")
+	require.NoError(t, err)
+
+	var line string
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.Contains(l, "stale persona files") {
+			line = l
+		}
+	}
+	require.NotEmpty(t, line, "no stale persona warning in output:\n%s", stderr)
+	assert.Contains(t, line, "every built-in persona copy",
+		"the warning says the refresh covers every built-in copy")
+	assert.Contains(t, line, "not only the ones listed here",
+		"the warning says the refresh also overwrites copies it did not list")
+	assert.Contains(t, line, "edited ones included", "the overwrite-edits caveat stays")
+	assert.Contains(t, line, "add --dry-run to preview", "the preview hint stays")
+}

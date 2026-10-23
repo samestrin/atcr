@@ -300,6 +300,49 @@ func TestReadPriorChunkRecords_RefusesUntrustedRecords(t *testing.T) {
 	}
 }
 
+// A run with no chunk ledger (nothing chunked) has a nil *chunkLedger, and
+// mergedEarly is nil-safe like carriedFiles: it answers false, not a panic.
+func TestMergedEarly_NilLedger(t *testing.T) {
+	var l *chunkLedger
+	require.NotPanics(t, func() {
+		assert.False(t, l.mergedEarly("greta"))
+	})
+}
+
+// Epic 78 T4: an early write that fails after review.md landed (here at
+// status.json) leaves the persona unmarked, so writeResumedAgents merges it
+// again; that second merge must not append the fresh output to the review.md
+// the first one already wrote. The result matches a resume with no failure.
+func TestResumeMerge_FailedEarlyWriteDoesNotDuplicateReview(t *testing.T) {
+	entries := sixtyFourFiles()
+	resumed := func(t *testing.T, failEarly bool) (review string, findings []string) {
+		t.Helper()
+		dir := originalRun(t, entries, 4)
+		poolDir := filepath.Join(dir, "sources", "pool")
+		if failEarly {
+			orig := writeStatusFn
+			t.Cleanup(func() { writeStatusFn = orig })
+			var calls int
+			writeStatusFn = func(path string, s *AgentStatus) error {
+				if calls++; calls == 1 {
+					return fmt.Errorf("simulated status.json write failure")
+				}
+				return orig(path, s)
+			}
+		}
+		resumeGreta(t, dir, gretaBaselineSlots(t, entries[4:]), baselineChunkFindingCompleter{})
+		data, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "greta", reviewFile))
+		require.NoError(t, err)
+		return string(data), agentFindingFiles(t, poolDir, "greta")
+	}
+
+	wantReview, wantFindings := resumed(t, false)
+	gotReview, gotFindings := resumed(t, true)
+	assert.Equal(t, strings.Count(wantReview, chunkBoundaryLine), strings.Count(gotReview, chunkBoundaryLine), "no chunk boundary is added twice")
+	assert.Equal(t, wantReview, gotReview, "review.md carries the fresh output once")
+	assert.ElementsMatch(t, wantFindings, gotFindings)
+}
+
 // An ok prior bin with no files is never carried: it would replay nothing and
 // shift every fresh bin's index.
 func TestCarryReviewed_SkipsEmptyBins(t *testing.T) {
