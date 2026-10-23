@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -608,4 +609,104 @@ func TestNewRootCmdWithClient_InjectsProvidedClient(t *testing.T) {
 	require.NoError(t, root.PersistentPreRunE(root, nil))
 	assert.Same(t, client, telemetry.FromContext(root.Context()),
 		"main's drain target must be the client subcommands send through")
+}
+
+// reportingEntryPoints is the seven reporting entry points epic 35.22 T6 groups
+// under one root-help heading, as command paths below the root. `debt dashboard`
+// is nested, so it cannot carry a root GroupID; it is named in the heading.
+var reportingEntryPoints = [][]string{
+	{"report"},
+	{"history"},
+	{"leaderboard"},
+	{"scorecard"},
+	{"quality-report"},
+	{"audit-report"},
+	{"debt", "dashboard"},
+}
+
+// helpSection returns the command names listed under the help heading that
+// starts with prefix, reading entry lines until the blank line that ends the
+// section, plus the full heading line. ok is false when no such heading exists.
+func helpSection(out, prefix string) (heading string, names []string, ok bool) {
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		for _, entry := range lines[i+1:] {
+			if strings.TrimSpace(entry) == "" {
+				break
+			}
+			names = append(names, strings.Fields(entry)[0])
+		}
+		return line, names, true
+	}
+	return "", nil, false
+}
+
+// TestRootCmd_HelpGroupsTheReportingEntryPoints pins epic 35.22 T6: `atcr
+// --help` lists the seven reporting entry points under one group heading, and
+// none of the top-level six is left under "Additional Commands".
+func TestRootCmd_HelpGroupsTheReportingEntryPoints(t *testing.T) {
+	out, err := execute(t, "--help")
+	require.NoError(t, err)
+
+	heading, names, ok := helpSection(out, "Reporting Commands")
+	require.True(t, ok, "root help must carry a Reporting Commands heading:\n%s", out)
+	assert.Contains(t, heading, "debt dashboard", "the nested seventh entry point is named in the heading")
+
+	var topLevel []string
+	for _, path := range reportingEntryPoints {
+		if len(path) == 1 {
+			topLevel = append(topLevel, path[0])
+		}
+	}
+	assert.ElementsMatch(t, topLevel, names, "the reporting group lists exactly the top-level reporting entry points")
+
+	_, additional, ok := helpSection(out, "Additional Commands")
+	require.True(t, ok, "ungrouped commands still render under Additional Commands")
+	for _, name := range topLevel {
+		assert.NotContains(t, additional, name, "%q must move out of Additional Commands", name)
+	}
+	assert.Contains(t, additional, "debt", "`debt` itself is not a reporting entry point and stays ungrouped")
+}
+
+// TestRootCmd_ReportingEntryPointsKeepTheirNames pins the other half of T6:
+// help groups rename nothing, so every old command path still resolves to the
+// same command and runs.
+func TestRootCmd_ReportingEntryPointsKeepTheirNames(t *testing.T) {
+	for _, path := range reportingEntryPoints {
+		t.Run(strings.Join(path, " "), func(t *testing.T) {
+			cmd, rest, err := NewRootCmd().Find(path)
+			require.NoError(t, err)
+			assert.Empty(t, rest)
+			assert.Equal(t, path[len(path)-1], cmd.Name())
+			assert.Equal(t, strings.Join(append([]string{"atcr"}, path...), " "), cmd.CommandPath())
+			assert.False(t, cmd.Hidden)
+
+			out, err := execute(t, append(path, "--help")...)
+			require.NoError(t, err)
+			assert.Contains(t, out, "Usage:")
+		})
+	}
+}
+
+// TestReportingShapeDecisionRecord pins that the dated decision record exists
+// and names both shapes and the reasons the `report` group was rejected.
+func TestReportingShapeDecisionRecord(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRootDir(t), "docs", "decisions", "2026-10-22-reporting-entry-point-shape.md"))
+	require.NoError(t, err)
+	record := string(b)
+	for _, want := range []string{
+		"Date: 2026-10-22",
+		"AddGroup",
+		"GroupID",
+		"report [id-or-path]",
+		"leaf",
+		"aliases do not cross nesting",
+		"Chosen",
+		"Rejected",
+	} {
+		assert.Contains(t, record, want)
+	}
 }
