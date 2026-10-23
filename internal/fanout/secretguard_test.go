@@ -162,9 +162,9 @@ func TestGuardSecrets_BlockFailsEveryAgentOnACachedHit(t *testing.T) {
 	assert.Equal(t, 1, calls[text])
 }
 
-// An agent asking again for text it already had scanned starts a new run (a
-// second review in the same `atcr serve` process): the text is rescanned, so a
-// transient scan failure is retried, and the warning prints again.
+// An agent asking again for the segments it already had guarded starts a new
+// run (a second review in the same `atcr serve` process): the warning prints
+// again. A clean scan depends only on the text and the scanner, so it is reused.
 func TestGuardSecrets_RepeatAgentStartsANewRun(t *testing.T) {
 	calls := countingScanner(t, nil)
 	text := guardPayload()
@@ -178,8 +178,48 @@ func TestGuardSecrets_RepeatAgentStartsANewRun(t *testing.T) {
 		}
 	})
 
-	assert.Equal(t, 2, calls[text], "one scan per run")
+	assert.Equal(t, 1, calls[text], "a successful scan is reused by the next run")
 	assert.Equal(t, 2, strings.Count(stderr, "in config.go"), "one warning per run:\n%s", stderr)
+}
+
+// A failed scan is not carried into the next run: the transient failure is
+// retried, and block still fails closed in both runs while it persists.
+func TestGuardSecrets_NewRunRetriesAFailedScan(t *testing.T) {
+	calls := countingScanner(t, fmt.Errorf("%w: timeout", payload.ErrSecretScanFailed))
+	text := guardPayload()
+
+	captureStderr(t, func() {
+		for run := 0; run < 2; run++ {
+			for _, agent := range panel {
+				_, err := guardSecrets(secretGuardBlock, agent, panelSegments("", text)...)
+				require.ErrorIs(t, err, ErrSecretGuardBlocked)
+			}
+		}
+	})
+
+	assert.Equal(t, 2, calls[text], "one scan per run")
+}
+
+// One agent's chunks share its scope constraint; it is scanned once, not once
+// per chunk, while each chunk is scanned and reported on its own.
+func TestGuardSecrets_ChunksShareOneScopeScan(t *testing.T) {
+	calls := countingScanner(t, nil)
+	scope := "SCOPE CONSTRAINT: only config.go\n"
+	chunks := []string{guardPayload(), "diff --git a/b.go b/b.go\n@@ -1 +1 @@\n+x := 1\n"}
+
+	stderr := captureStderr(t, func() {
+		for _, agent := range panel {
+			for _, ck := range chunks {
+				_, err := guardSecrets(secretGuardWarn, agent, panelSegments(scope, ck)...)
+				require.NoError(t, err)
+			}
+		}
+	})
+
+	assert.Equal(t, 1, calls[scope])
+	assert.Equal(t, 1, calls[chunks[0]])
+	assert.Equal(t, 1, calls[chunks[1]])
+	assert.Equal(t, 1, strings.Count(stderr, "in config.go"), stderr)
 }
 
 // A cached scan expires, so a long-lived process never reuses a stale result or
