@@ -158,6 +158,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ### Fixed
 
+- `atcr reconcile` now writes `reconciled/findings.json` after every other reconciled file, so `atcr status` never reports `reconciled` while `report.md`, `summary.json` or a sidecar is still missing. If a write fails partway, `findings.json` is not published. (epic 81.0)
 - `atcr debt dashboard` prints a warning about a malformed line in the local debt store once instead of twice. With `--top` above 0 the dashboard reads the store a second time for its Top Priority rows, and that read repeated every warning the first one had printed. Other stderr notes, such as the count of selected items not found on the second read, still print. (technical debt, epic 79)
 - `atcr review` prints its "dropped N ungrounded finding(s) not present in the patch" warning once per reviewer. It was printed twice, because a reviewer's files are written as soon as it finishes and again at the end of the run. (epic 78)
 - A finding annotated with `atcr debt recluster` no longer loses the annotation when reconcile detects it again (for example after it was resolved and regressed) or when the store is compacted. The newer detection used to replace the annotated record, so `atcr debt dashboard`'s Reconciler corrections and the quality signal's `wrong_merge_count`, `wrong_split_count` and `wrong_category_count` silently dropped the developer's feedback. (epic 36.1)
