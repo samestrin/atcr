@@ -382,7 +382,17 @@ func (s Summary) foldTimestamp() string { return s.Timestamp }
 // Because both functions call the same foldByID helper, a change to the fold
 // automatically reaches both; TestFoldSummaries_MatchesFoldRecords pins that they
 // agree on id ordering and on the winning record per id.
+//
+// Like FoldRecords it carries the id group's newest reconciler-feedback kind onto
+// the folded summary (see newestAnnotatedIndex), so a re-detection newer than the
+// annotation does not drop it from `atcr debt dashboard`'s correction count.
 func FoldSummaries(sums []Summary) []Summary {
-	folded, _ := foldByID(sums)
+	folded, byID := foldByID(sums)
+	for i := range folded {
+		group := byID[folded[i].ID]
+		if j := newestAnnotatedIndex(group, func(s Summary) bool { return s.ReconcilerFeedbackKind != "" }); j >= 0 {
+			folded[i].ReconcilerFeedbackKind = group[j].ReconcilerFeedbackKind
+		}
+	}
 	return folded
 }

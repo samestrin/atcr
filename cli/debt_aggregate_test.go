@@ -787,6 +787,21 @@ func TestSummarizeDebt_EveryKindAndStatusCountsOnce(t *testing.T) {
 	assert.Equal(t, 3, s.BySeverity[3].ReconcilerCorrections)
 }
 
+// TestSummarizeDebt_ReconcilerCorrectionSurvivesARedetection is Epic 36.1 F1:
+// a newer plain sighting of an annotated finding (reconcile re-detecting it)
+// wins the fold, and the dashboard must still count the developer's feedback.
+func TestSummarizeDebt_ReconcilerCorrectionSurvivesARedetection(t *testing.T) {
+	merged := mkDebtRecord("", "HIGH", "internal/x/a.go", 1, "2026-07-01T00:00:00Z")
+	sighting := merged
+	sighting.Timestamp, sighting.RunID = "2026-07-03T00:00:00Z", "2026-07-03-run"
+	recs := []localdebt.Record{merged, reclusteredCopy(merged, "2026-07-02T00:00:00Z", localdebt.FeedbackWrongMerge), sighting}
+
+	s := summarizeDebt(summariesOf(recs), time.Time{}, 10)
+	assert.Equal(t, 1, s.ReconcilerCorrections, "the re-detection must not drop the annotation")
+	assert.Equal(t, 1, s.BySeverity[1].ReconcilerCorrections)
+	assert.Equal(t, 1, s.Open)
+}
+
 // TestRenderDebtDashboard_PrintsReconcilerCorrections is T4's first success
 // criterion: the dashboard prints a distinct reconciler-correction count, in the
 // totals header and as its own By Severity column, apart from Wontfix.
