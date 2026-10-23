@@ -546,3 +546,18 @@ func TestDebtDashboard_MalformedLineWarnsOnceAndShortfallNoteStillPrints(t *test
 	assert.Contains(t, stderr, "note: 1 selected item(s) were not found when re-reading the store",
 		"the hydrate shortfall note still prints")
 }
+
+// The dedup writer judges whole lines, so a line split across two writes is
+// still recognized as a repeat, and a fragment that never ends is not lost.
+func TestLineDedupWriter_SplitWritesAndFlush(t *testing.T) {
+	var buf bytes.Buffer
+	d := newLineDedupWriter(&buf)
+	for _, chunk := range []string{"warn: a\n", "warn:", " a\nwarn: b\n", "tail"} {
+		n, err := d.Write([]byte(chunk))
+		require.NoError(t, err)
+		require.Equal(t, len(chunk), n)
+	}
+	assert.Equal(t, "warn: a\nwarn: b\n", buf.String(), "the split repeat is dropped; the fragment is held")
+	d.Flush()
+	assert.Equal(t, "warn: a\nwarn: b\ntail", buf.String(), "Flush writes the held fragment")
+}
