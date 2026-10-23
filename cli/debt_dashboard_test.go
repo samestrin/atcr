@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/localdebt"
 )
 
 func TestDebtDashboard_Wiring(t *testing.T) {
@@ -508,4 +511,79 @@ func TestDebtDashboardJSON_RefusesOutputAndCheck(t *testing.T) {
 		assert.ErrorContains(t, err, "--json")
 		assert.NoFileExists(t, out)
 	}
+}
+
+// Epic 79 T3: with --top > 0 the dashboard reads the store twice — summaries for
+// every rollup, then full records for the Top Priority ids — and both passes
+// warn about the same malformed line through the one ReadOpts.Writer. The user
+// must see that warning once, while the pass-2 shortfall note (a different line)
+// still reaches stderr.
+func TestDebtDashboard_MalformedLineWarnsOnceAndShortfallNoteStillPrints(t *testing.T) {
+	dir := writeLocalDebt(t)
+	shards, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	require.NoError(t, err)
+	require.NotEmpty(t, shards, "the sample store has a month shard")
+	for _, s := range shards {
+		f, err := os.OpenFile(s, os.O_APPEND|os.O_WRONLY, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString("{not json\n")
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+
+	// Ask pass 2 for one id the store does not hold, so hydrateDebtIDs has a
+	// shortfall to report through the same writer.
+	orig := dashboardHydrateFn
+	t.Cleanup(func() { dashboardHydrateFn = orig })
+	dashboardHydrateFn = func(dir string, ids []string, opts localdebt.ReadOpts, keep func(localdebt.Record) bool) ([]localdebt.Record, error) {
+		return orig(dir, append(ids, "ghost-id"), opts, keep)
+	}
+
+	stdout, stderr, err := runDebtSplit(t, "dashboard", "--dir", dir, "--top", "5")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "## Top Priority")
+	assert.Equal(t, len(shards), strings.Count(stderr, localdebt.MsgMalformedSkip),
+		"each malformed line warns once, not once per pass:\n%s", stderr)
+	assert.Contains(t, stderr, "note: 1 selected item(s) were not found when re-reading the store",
+		"the hydrate shortfall note still prints")
+}
+
+// The dedup writer judges whole lines, so a line split across two writes is
+// still recognized as a repeat, and a fragment that never ends is not lost.
+func TestLineDedupWriter_SplitWritesAndFlush(t *testing.T) {
+	var buf bytes.Buffer
+	d := newLineDedupWriter(&buf)
+	for _, chunk := range []string{"warn: a\n", "warn:", " a\nwarn: b\n", "tail"} {
+		n, err := d.Write([]byte(chunk))
+		require.NoError(t, err)
+		require.Equal(t, len(chunk), n)
+	}
+	assert.Equal(t, "warn: a\nwarn: b\n", buf.String(), "the split repeat is dropped; the fragment is held")
+	d.Flush()
+	assert.Equal(t, "warn: a\nwarn: b\ntail", buf.String(), "Flush writes the held fragment")
+}
+
+// flakyWriter fails its first Write and records every later one, so a test can
+// see both the error and whatever the caller wrote after it.
+type flakyWriter struct {
+	failed bool
+	buf    bytes.Buffer
+}
+
+func (f *flakyWriter) Write(p []byte) (int, error) {
+	if !f.failed {
+		f.failed = true
+		return 0, errors.New("stderr broken")
+	}
+	return f.buf.Write(p)
+}
+
+// A failed write to the underlying sink is returned to the caller, and the
+// dedup writer stops there rather than pushing the rest of the chunk after it.
+func TestLineDedupWriter_WriteErrorIsReturned(t *testing.T) {
+	fw := &flakyWriter{}
+	d := newLineDedupWriter(fw)
+	_, err := d.Write([]byte("warn: a\nwarn: b\n"))
+	require.ErrorContains(t, err, "stderr broken")
+	assert.Empty(t, fw.buf.String(), "no later line is written after the failed one")
 }
