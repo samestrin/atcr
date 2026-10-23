@@ -82,6 +82,40 @@ func TestRunCheckpoint_DoneIndexKeysReplicates(t *testing.T) {
 	}
 }
 
+// key() is the one place an entry's caseRun is built: (Index, Replicate) with a
+// legacy 0 read as 1. doneIndex files every entry under exactly that key, and the
+// run loop's lookup — built from its counters, replicate starting at 1 — matches it.
+func TestCheckpointCase_Key(t *testing.T) {
+	for _, tc := range []struct {
+		entry checkpointCase
+		want  caseRun
+	}{
+		{checkpointCase{Index: 3}, caseRun{3, 1}},
+		{checkpointCase{Index: 3, Replicate: 1}, caseRun{3, 1}},
+		{checkpointCase{Index: 3, Replicate: 2}, caseRun{3, 2}},
+		{checkpointCase{Index: 0, Replicate: 5}, caseRun{0, 5}},
+	} {
+		assert.Equal(t, tc.want, tc.entry.key(), "entry %+v", tc.entry)
+	}
+
+	cp := &runCheckpoint{Cases: []checkpointCase{
+		{Index: 0, CaseID: "a"},
+		{Index: 1, CaseID: "b", Replicate: 1},
+		{Index: 1, CaseID: "b", Replicate: 2},
+	}}
+	done := cp.doneIndex()
+	require.Len(t, done, len(cp.Cases))
+	for _, c := range cp.Cases {
+		got, ok := done[c.key()]
+		require.True(t, ok, "doneIndex must file entry %+v under its key()", c)
+		assert.Equal(t, c, got)
+	}
+	// The run loop's lookup for the scored run of case 0 (rep counter = 1) finds
+	// the legacy entry.
+	_, ok := done[caseRun{index: 0, replicate: 1}]
+	assert.True(t, ok)
+}
+
 // The duplicate check is keyed (index, replicate): replicates of one index are
 // legal, while a repeated replicate — or a legacy entry beside an explicit
 // replicate 1, which both claim the scored run — is corrupt.
