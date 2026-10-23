@@ -8,7 +8,7 @@
 #
 # Mirrors the GitHub "Go Lint & Test", reconcile-module and parser-modules jobs so
 # failures surface locally first. Two deliberate divergences, both documented at
-# their call site: this hook never runs -race (it corrupted the repository; see
+# their call site: this hook never runs -race (CI runs it on pull_request; see
 # below), and it skips a gate rather than failing when the tool or toolchain it
 # needs is absent locally — CI still enforces every one of them.
 #
@@ -111,12 +111,15 @@ else
   echo "pre-push: golangci-lint not installed — skipping locally (CI still enforces it)"
 fi
 
-# NOT -race. `go test -race ./...` run from a working checkout has been observed
-# writing git fixtures into the live repository: it rewrote a feature branch's
-# ref (discarding nine commits), stacked ~200 fixture commits onto another, and
-# flipped core.bare to true. The plain suite has never reproduced any of it. The
-# -race gate now runs in CI on pull_request, where the checkout is ephemeral and
-# damage is impossible. See the integrity check below, and epic 45.0.
+# NOT -race. The suite run from this hook wrote git fixtures into the live
+# repository four times: it rewrote a feature branch's ref (discarding nine
+# commits), stacked ~200 fixture commits onto another, and flipped core.bare to
+# true. -race was suspected first and was not the cause: incident 4 was the
+# plain `go test ./...`. The cause was the GIT_DIR this hook inherits (unset at
+# the top), and every test fixture now pins its own GIT_DIR through
+# gitexec.FixtureCommandContext. -race stays off here anyway; it runs in CI on
+# pull_request, where the checkout is ephemeral. Keep the integrity check below
+# regardless. See epic 45.0.
 echo "pre-push: go test ./..."
 if ! go test ./...; then
   echo "pre-push FAILED: go test"
