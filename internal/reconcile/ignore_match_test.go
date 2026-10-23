@@ -171,10 +171,12 @@ func TestIgnoreMatcher_ScopeAndOptionalFields(t *testing.T) {
 	if _, ok := mustMatcher(t, IgnoreRule{Package: "pkg/", Reason: "r"}).Match(f); !ok {
 		t.Error("a trailing slash on package should not change its meaning")
 	}
-	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Reason: "r"}).Match(JSONFinding{File: "main.go"}); !ok {
+	// package "." alone is a catch-all scope (F2), so a category narrows it;
+	// both findings carry that category, leaving the package the only variable.
+	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Category: "style", Reason: "r"}).Match(JSONFinding{File: "main.go", Category: "style"}); !ok {
 		t.Error(`package "." should cover a repo-root file`)
 	}
-	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Reason: "r"}).Match(f); ok {
+	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Category: "style", Reason: "r"}).Match(f); ok {
 		t.Error(`package "." must not cover a file in a subdirectory`)
 	}
 	if _, ok := mustMatcher(t, IgnoreRule{File: "pkg/a.go", Category: " Style ", Reason: "r"}).Match(f); !ok {
@@ -212,8 +214,10 @@ func TestIgnoreMatcher_NoRules(t *testing.T) {
 		t.Error("an empty matcher matched")
 	}
 	// path.Clean("") is ".", which must not let a file-less finding fall
-	// into a repo-root package or a catch-all glob.
-	for _, r := range []IgnoreRule{{Package: ".", Reason: "r"}, {File: "**", Reason: "r"}} {
+	// into a repo-root package or a catch-all glob. Each rule carries a match
+	// the Problem satisfies (a bare catch-all scope is rejected, F2), so the
+	// missing file is the only reason left for it not to match.
+	for _, r := range []IgnoreRule{{Package: ".", Match: "x", Reason: "r"}, {File: "**", Match: "x", Reason: "r"}} {
 		if _, ok := mustMatcher(t, r).Match(JSONFinding{Problem: "x"}); ok {
 			t.Errorf("rule %+v matched a finding with no file", r)
 		}

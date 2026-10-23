@@ -884,6 +884,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// Carries the state alongside the count, exactly as `atcr reconcile` does:
 		// a 0 is ambiguous between "ran and routed nothing" and "never ran".
 		log.FromContext(ctx).Info("tier-4 content resolution", "state", rec.Summary.UnresolvedState, "unresolved_filtered", rec.Summary.UnresolvedFiltered)
+		// Mirrors the `atcr reconcile` line: an ignore rule from the reviewed
+		// checkout can shrink what this gate sees, so the count rides stderr.
+		writeSuppressedNotice(cmd.ErrOrStderr(), len(rec.Suppressed))
 		// Persist the inline reconcile's findings to the local TD store, mirroring
 		// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
 		// cli/review.go:747): this one-shot --fail-on/--verify/--debate/--auto-fix

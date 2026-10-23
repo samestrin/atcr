@@ -185,3 +185,17 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) (CheckOut
 
 	return CheckOutput{Title: title, Summary: summary, Text: b.String()}, conclusion, failCount
 }
+
+// NoteSuppressed adds the .atcr/ignore.yaml suppressed count to a check run's
+// title and summary. The rules live in the reviewed checkout, so a pull request
+// can add one and drop findings; the check run is where a CI reader looks, and
+// without this a run whose rules dropped every finding reads "no findings".
+// A zero count returns out unchanged.
+func NoteSuppressed(out CheckOutput, n int) CheckOutput {
+	if n <= 0 {
+		return out
+	}
+	out.Title += fmt.Sprintf(", %d suppressed", n)
+	out.Summary += fmt.Sprintf(" %d finding(s) suppressed by .atcr/ignore.yaml rules (listed in reconciled/%s).", n, reconcile.SuppressedJSON)
+	return out
+}
