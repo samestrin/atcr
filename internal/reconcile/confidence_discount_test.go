@@ -131,6 +131,38 @@ func TestMergeJSONFindings_DiscountedMemberIsReadThroughItsFirstQuote(t *testing
 	}
 }
 
+// A member with no reviewers (a hand-built or old findings.json record) still
+// stands in the independence test as one entry: it adds no voice, but its file
+// and evidence are compared, so a reviewer-less member quoting other code in
+// another file keeps the union out of the class (TD merge.go:113).
+func TestMergeJSONFindings_ReviewerlessMemberCountsInTheIndependenceTest(t *testing.T) {
+	reviewerless := predicateRecord("", "hash.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }")
+	reviewerless.Reviewers = nil
+
+	members := panelWideMembers([]JSONFinding{reviewerless})
+	require.Len(t, members, 1)
+	assert.Equal(t, Finding{File: "hash.go", Category: "invariant", Evidence: reviewerless.Evidence}, members[0])
+
+	m := MergeJSONFindings([]JSONFinding{
+		predicateRecord("bruce", "key.go", discountQuote),
+		predicateRecord("kai", "key.go", discountQuote),
+		reviewerless,
+	})
+	assert.Equal(t, []string{"bruce", "kai"}, m.Reviewers)
+	assert.Equal(t, ConfHigh, m.Confidence)
+	assert.Empty(t, m.ConfidenceDiscount)
+
+	same := predicateRecord("", "key.go", discountQuote)
+	same.Reviewers = nil
+	m = MergeJSONFindings([]JSONFinding{
+		predicateRecord("bruce", "key.go", discountQuote),
+		predicateRecord("kai", "key.go", discountQuote),
+		same,
+	})
+	assert.Equal(t, ConfMedium, m.Confidence, "a reviewer-less member quoting the same code keeps the discount")
+	assert.Equal(t, PanelWideReason, m.ConfidenceDiscount)
+}
+
 func TestRecomputeFallbackConfidence_KeepsTheDiscountWhileTwoVoicesRemain(t *testing.T) {
 	discounted := func(file string, fb map[string]string) JSONFinding {
 		f := predicateRecord("bruce", file, discountQuote)
