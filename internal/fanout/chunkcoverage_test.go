@@ -61,51 +61,30 @@ func writeRawCoverageRecord(t *testing.T, reviewDir, agent, body string) {
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 }
 
-// Files the run's byte budget shed before binning (shed_files) are in scope but
-// were never reviewed: a run whose bins all finished ok still reads under 100%
-// (Epic 69 T1). Without the field the same bins read 100%, as before.
-func TestReadCoverage_ShedFilesAreInScopeAndUncovered(t *testing.T) {
+// A record written while chunks.json carried a shed_files key (Epic 69 T1, never
+// written by production code and removed in Epic 78 T5) still reads: the key is
+// ignored, and coverage counts the planned bins exactly as a record without it.
+func TestReadCoverage_LegacyShedFilesKeyStillReads(t *testing.T) {
 	const bins = `"bins": [
 		{"index": 0, "files": ["a", "b"], "outcome": "ok"},
 		{"index": 1, "files": ["c"], "outcome": "ok"}
 	]`
-
-	dir := t.TempDir()
-	writeRawCoverageRecord(t, dir, "brad",
-		`{"schema_version": 1, "agent": "brad", "shed_files": ["big1", "big2"], `+bins+`}`)
-	cov, ok, err := ReadCoverage(dir)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, Coverage{BinsReviewed: 2, BinsPlanned: 2, FilesCovered: 3, FilesInScope: 5}, cov,
-		"every bin covered its own files; the 2 shed files are in scope and uncovered")
-	assert.Less(t, cov.FilesCovered, cov.FilesInScope)
-	assert.InDelta(t, 60.0, cov.FilePercent(), 1e-9)
+	want := Coverage{BinsReviewed: 2, BinsPlanned: 2, FilesCovered: 3, FilesInScope: 3}
 
 	legacy := t.TempDir()
-	writeRawCoverageRecord(t, legacy, "brad", `{"schema_version": 1, "agent": "brad", `+bins+`}`)
-	cov, ok, err = ReadCoverage(legacy)
+	writeRawCoverageRecord(t, legacy, "brad",
+		`{"schema_version": 1, "agent": "brad", "shed_files": ["big1", "big2"], `+bins+`}`)
+	cov, ok, err := ReadCoverage(legacy)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, Coverage{BinsReviewed: 2, BinsPlanned: 2, FilesCovered: 3, FilesInScope: 3}, cov,
-		"a record without shed_files reads as before")
-	assert.InDelta(t, 100.0, cov.FilePercent(), 1e-9)
-}
+	assert.Equal(t, want, cov, "the legacy shed_files key is ignored")
 
-// Shed files join the cross-persona union like any planned file: a file one
-// persona shed is covered when another persona reviewed it in a bin, and a file
-// two personas shed is counted in scope once.
-func TestReadCoverage_ShedFilesJoinTheUnion(t *testing.T) {
-	dir := t.TempDir()
-	writeRawCoverageRecord(t, dir, "brad", `{"schema_version": 1, "agent": "brad", "shed_files": ["x", "y"],
-		"bins": [{"index": 0, "files": ["a"], "outcome": "ok"}]}`)
-	writeRawCoverageRecord(t, dir, "kai", `{"schema_version": 1, "agent": "kai", "shed_files": ["y"],
-		"bins": [{"index": 0, "files": ["x"], "outcome": "ok"}]}`)
-
-	cov, ok, err := ReadCoverage(dir)
+	plain := t.TempDir()
+	writeRawCoverageRecord(t, plain, "brad", `{"schema_version": 1, "agent": "brad", `+bins+`}`)
+	cov, ok, err = ReadCoverage(plain)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, Coverage{BinsReviewed: 2, BinsPlanned: 2, FilesCovered: 2, FilesInScope: 3}, cov,
-		"in scope: a, x, y; covered: a (brad), x (kai); y shed by both")
+	assert.Equal(t, want, cov)
 }
 
 // A review whose personas wrote no chunks.json (bulk or diff) has no bin-level
