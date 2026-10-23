@@ -478,3 +478,39 @@ func TestGuardSecrets_CrossingTheCapEvictsAnExpiredEntryFirst(t *testing.T) {
 	guard("kai", chunkSeg(1))
 	assert.Equal(t, 1, calls[chunkSeg(1).text], "the least recently used live entry is kept")
 }
+
+// A scanner that panics leaves a failed scan behind, never a running one: the
+// agents after it fail closed under block instead of waiting forever.
+func TestGuardSecrets_PanickedScanFailsClosed(t *testing.T) {
+	countingScanner(t, nil)
+	scanSecrets = func(context.Context, string, *slog.Logger) ([]payload.SecretHit, error) {
+		panic("scanner bug")
+	}
+	text := guardPayload()
+
+	require.Panics(t, func() { _, _ = guardSecrets(secretGuardBlock, "greta", panelSegments("", text)...) })
+	captureStderr(t, func() {
+		_, err := guardSecrets(secretGuardBlock, "kai", panelSegments("", text)...)
+		require.ErrorIs(t, err, ErrSecretGuardBlocked)
+		assert.ErrorIs(t, err, payload.ErrSecretScanFailed)
+	})
+}
+
+// One agent repeating within the TTL starts a run each time; an entry
+// remembers at most secretScanRunCap of them.
+func TestGuardSecrets_RunsPerEntryAreBounded(t *testing.T) {
+	countingScanner(t, nil)
+	text := guardPayload()
+	captureStderr(t, func() {
+		for i := 0; i < 3*secretScanRunCap; i++ {
+			_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+			require.NoError(t, err)
+		}
+	})
+	secretScanCache.Lock()
+	defer secretScanCache.Unlock()
+	require.Len(t, secretScanCache.warned, 1)
+	for _, e := range secretScanCache.warned {
+		assert.Len(t, e.runs, secretScanRunCap)
+	}
+}
