@@ -28,6 +28,9 @@ import (
 	"github.com/samestrin/atcr/internal/validation"
 )
 
+// chmodFn is os.Chmod, swapped in tests to reach the tighten-failure path.
+var chmodFn = os.Chmod
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
 }
@@ -63,8 +66,13 @@ func run(args []string, stderr io.Writer) int {
 	}
 	// Append refuses to recreate a missing store root, which guards real
 	// checkouts; a measurement store is built from nothing, so create it here,
-	// owner-only like ensureStoreDir.
+	// owner-only like ensureStoreDir. MkdirAll leaves an existing directory's
+	// mode alone, so tighten it too.
 	if err := os.MkdirAll(abs, 0o700); err != nil {
+		_, _ = fmt.Fprintln(stderr, "gen-debt-store:", err)
+		return 1
+	}
+	if err := chmodFn(abs, 0o700); err != nil {
 		_, _ = fmt.Fprintln(stderr, "gen-debt-store:", err)
 		return 1
 	}

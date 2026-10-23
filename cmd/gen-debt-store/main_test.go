@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,4 +146,17 @@ func TestRun_RejectsCountAboveCeiling(t *testing.T) {
 	var stderr bytes.Buffer
 	require.Equal(t, 1, run([]string{"-dir", dir, "-n", fmt.Sprint(localdebt.MaxSyntheticRecords + 1)}, &stderr))
 	require.Contains(t, stderr.String(), fmt.Sprint(localdebt.MaxSyntheticRecords))
+}
+
+func TestRun_TightenFailureIsExitOne(t *testing.T) {
+	orig := chmodFn
+	t.Cleanup(func() { chmodFn = orig })
+	chmodFn = func(string, os.FileMode) error { return errors.New("chmod refused") }
+	dir := filepath.Join(t.TempDir(), "debt")
+	var stderr bytes.Buffer
+	require.Equal(t, 1, run([]string{"-dir", dir, "-n", "1"}, &stderr))
+	require.Contains(t, stderr.String(), "gen-debt-store: chmod refused")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "no records are written when the directory cannot be tightened")
 }
