@@ -534,6 +534,12 @@ a bad rule silently match too much or never match:
 
 - `reason` is mandatory on every rule.
 - Every rule needs a `file` or `package` scope; a rule cannot be repo-wide.
+- A catch-all scope must be narrowed. A `file` glob made only of `*` and `**`
+  segments (such as `**`, `*` or `**/*`), a `file` of `.`, or a `package` of `.`
+  names no particular file, so a rule with one of these scopes is refused
+  unless it also sets `match` or `category`. The file is read from the reviewed
+  checkout, so without this one line in a pull request could drop every finding
+  and leave the gate green.
 - Paths must stay inside the repository: no absolute paths, no `..` segment, and
   backslashes are folded to slashes first so `..\x.go` is caught too.
 - `match` must compile as RE2 (Go's `regexp`): a PCRE-only construct is an
@@ -550,6 +556,11 @@ On the next `atcr reconcile`, a matched finding leaves the primary stream:
 in [`reconciled/suppressed.json`](findings-format.md#companion-artifact-suppressedjson)
 with the rule recorded in its `suppressed_by` field. `report.md` ends with a
 `## Suppressed Findings` footer counting them and listing each distinct reason.
+When anything was suppressed, `atcr reconcile` (and the one-shot `atcr review`
+gate) also prints `atcr: N finding(s) suppressed by .atcr/ignore.yaml rules` to
+stderr, and `atcr github` adds the count to the check run's title and summary,
+so a CI reader sees it beside the gate result. Nothing is printed when the
+count is zero.
 The scorecard still charges each suppressed finding to its reviewer's
 `findings_raised` — a rule says the finding is not worth reporting, not that the
 reviewer was wrong to raise it — but it is never corroborated and earns no
