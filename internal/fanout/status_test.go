@@ -972,3 +972,112 @@ func TestReadReviewStatus_StageInference(t *testing.T) {
 		assert.Equal(t, RunStale, st.CurrentStage)
 	})
 }
+
+// --- Epic 78 T1: staleness from activity across all bins ---
+
+// staleRun scaffolds a summary-less review that started at start with a 600s
+// base timeout, and returns its dir and raw/agent dir.
+func staleRun(t *testing.T, start time.Time, roster ...string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	m := &payload.Manifest{Base: "a", Head: "b", Roster: roster, StartedAt: start, TimeoutSecs: 600}
+	require.NoError(t, WriteManifest(dir, m))
+	raw := filepath.Join(dir, "sources", "pool", poolRawAgentDir)
+	require.NoError(t, os.MkdirAll(raw, 0o755))
+	return dir, raw
+}
+
+func touchAt(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	require.NoError(t, os.Chtimes(path, at, at))
+}
+
+// A live multi-bin run outlives StartedAt + timeout_secs: its bins resolve one
+// after another and each one rewrites chunks.json. One persona went quiet past
+// the deadline, another resolved a bin a minute ago. The run is still live, so
+// it is in_progress, and EnsureReviewComplete says to poll, not to resume.
+func TestReadReviewStatus_LiveMultiBinRunIsNotStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Hour) // far past start + 600s + grace
+	withNow(t, now)
+	dir, raw := staleRun(t, start, "quiet", "busy")
+	writeAgentChunks(t, raw, "quiet", StatusTimeout, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "quiet", chunksFile), start.Add(time.Minute))
+	writeAgentChunks(t, raw, "busy", StatusOK, StatusOK, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "busy", chunksFile), now.Add(-time.Minute))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "a bin resolved a minute ago: the run is live")
+	assert.Equal(t, StageFanout, st.CurrentStage)
+
+	err = EnsureReviewComplete(dir, "run-7")
+	require.ErrorIs(t, err, ErrReviewInProgress)
+	assert.NotErrorIs(t, err, ErrReviewStale)
+	assert.NotContains(t, err.Error(), "--resume", "a live run must not be resumed")
+}
+
+// A persona's status.json write is activity too, not only chunks.json.
+func TestReadReviewStatus_RecentStatusWriteIsNotStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Hour)
+	withNow(t, now)
+	dir, raw := staleRun(t, start, "done", "pending")
+	writeAgentStatus(t, raw, "done", StatusOK)
+	touchAt(t, filepath.Join(raw, "done", statusFile), now.Add(-5*time.Minute))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// One bin of a chunked persona may run for the base timeout scaled by its chunk
+// count (unitDeadline), so a quiet gap longer than the base timeout but inside
+// the scaled one is still live.
+func TestReadReviewStatus_QuietGapWithinScaledBinDeadlineIsNotStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	last := start.Add(time.Hour)
+	withNow(t, last.Add(1000*time.Second)) // > 600+60, < 3*600+60
+	dir, raw := staleRun(t, start, "chunky")
+	writeAgentChunks(t, raw, "chunky", StatusOK, chunkOutcomePending, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "chunky", chunksFile), last)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// A run whose newest write is older than the scaled bin deadline plus grace is
+// dead: stale, and EnsureReviewComplete names resume.
+func TestReadReviewStatus_NoActivityPastScaledDeadlineIsStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	last := start.Add(time.Hour)
+	withNow(t, last.Add(time.Duration(3*600+staleGraceSecs+1)*time.Second))
+	dir, raw := staleRun(t, start, "chunky", "solo")
+	writeAgentChunks(t, raw, "chunky", StatusOK, chunkOutcomePending, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "chunky", chunksFile), last)
+	writeAgentStatus(t, raw, "solo", StatusOK)
+	touchAt(t, filepath.Join(raw, "solo", statusFile), start.Add(time.Minute))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status)
+
+	err = EnsureReviewComplete(dir, "run-7")
+	require.ErrorIs(t, err, ErrReviewStale)
+	assert.Contains(t, err.Error(), "--resume")
+}
+
+// Exactly at newest write + scaled deadline + grace the run is not yet stale.
+func TestReadReviewStatus_ActivityStaleBoundaryIsExclusive(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	last := start.Add(time.Hour)
+	withNow(t, last.Add(time.Duration(2*600+staleGraceSecs)*time.Second))
+	dir, raw := staleRun(t, start, "chunky")
+	writeAgentChunks(t, raw, "chunky", StatusOK, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "chunky", chunksFile), last)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
