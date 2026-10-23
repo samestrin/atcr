@@ -932,12 +932,12 @@ func TestDebtBackfillJustifications_ReportsOversizedSummaries(t *testing.T) {
 		// The oversized summary owns nothing, so the refusal beside it is counted
 		// as not tied to the record (BackfillResult.PolicyUnattributed).
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`+strings.Repeat(" ", 1<<20)))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 0, 1)+", 1 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 0, 1)+", 1 summary.json over 1 MiB ignored (summaries are read only for a policy refusal)\n")
 	})
 
 	t.Run("a normal summary.json prints a zero", func(t *testing.T) {
 		out := run(t, []byte(`{"reconciled_at":"2026-08-01T00:00:00Z"}`))
-		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1, 0)+", 0 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n")
+		assert.Contains(t, out, fmt.Sprintf(prefix, 0, 1, 0)+", 0 summary.json over 1 MiB ignored (summaries are read only for a policy refusal)\n")
 	})
 }
 
@@ -971,8 +971,12 @@ func TestDebtBackfillJustifications_OversizedSummaryClauseStatesItsCondition(t *
 
 	require.Contains(t, out, "1 unresolved (1 review tree pruned, 0 declined by policy, 0 policy refusal not tied to the record)",
 		"premise: no candidate was refused, so the oversized summary was never asked about")
-	assert.Contains(t, out, ", 0 summary.json over 1 MiB ignored (only those checked for a policy refusal)\n",
-		"the 0 must say it covers only the summaries a policy refusal asked about, not the whole tree")
+	assert.Contains(t, out, ", 0 summary.json over 1 MiB ignored (summaries are read only for a policy refusal)\n",
+		"the 0 must say summaries are read only for a policy refusal, not that the whole tree was checked")
+	// TD cli/debt_backfill.go:124 — "0 ... ignored (only those checked ...)" read as a
+	// contradiction: "only those" restricts a set the 0 says is empty. The qualifier
+	// now states when a summary is read, which holds for 0 and for N alike.
+	assert.NotContains(t, out, "only those checked", "the old qualifier must not return")
 }
 
 // TD internal/localdebt/backfill.go:372 — a policy refusal the pass cannot tie to the

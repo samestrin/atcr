@@ -253,9 +253,13 @@ func isLoopback(host string) bool {
 // outside the repo or with no usable span), merges duplicates keeping the best
 // score, and returns at most topK snippets ordered by score descending, then
 // path, then start line. No queries means no call and no error. An empty
-// result is not a failure; every error is an *Error and is counted once.
+// result is not a failure; every error is an *Error. A topK<=0 is the caller's
+// bug, so it is returned uncounted; every other error is counted once.
 func (c *Client) Retrieve(ctx context.Context, queries []string, topK int) ([]Snippet, error) {
-	if len(queries) == 0 && topK > 0 {
+	if topK <= 0 {
+		return nil, &Error{Class: ClassInvalidArgument, Stage: "request", Err: fmt.Errorf("topK must be positive, got %d", topK)}
+	}
+	if len(queries) == 0 {
 		return nil, nil
 	}
 	snips, err := c.retrieve(ctx, queries, topK)
@@ -269,9 +273,6 @@ func (c *Client) Retrieve(ctx context.Context, queries []string, topK int) ([]Sn
 }
 
 func (c *Client) retrieve(ctx context.Context, queries []string, topK int) ([]Snippet, error) {
-	if topK <= 0 {
-		return nil, &Error{Class: ClassInvalidArgument, Stage: "request", Err: fmt.Errorf("topK must be positive, got %d", topK)}
-	}
 	budget, cancel := context.WithTimeout(ctx, c.cfg.TotalBudget)
 	defer cancel()
 

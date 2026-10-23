@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -1089,7 +1090,7 @@ func TestRefreshPersonas_ReplacesSymlinkLeavesTarget(t *testing.T) {
 // TestRefreshPersonas_SymlinkIsNotReadThrough: a symlinked copy is queued for
 // replacement without reading its target, so a link to a directory (unreadable)
 // or to /dev/zero (endless) neither fails nor hangs the refresh. A stamped link
-// is marked edited, as a dangling one always was.
+// is marked as not a regular file, not as edited by hand: its content is unread.
 func TestRefreshPersonas_SymlinkIsNotReadThrough(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks")
@@ -1116,9 +1117,73 @@ func TestRefreshPersonas_SymlinkIsNotReadThrough(t *testing.T) {
 				t.Fatal("refresh hung reading through the symlink")
 			}
 			assert.Contains(t, out.String(), "Would refresh 1 persona file(s)")
-			assert.Contains(t, out.String(), "  bruce.md (edited by hand")
+			assert.Contains(t, out.String(), "  bruce.md (not a regular file")
+			assert.NotContains(t, out.String(), "edited by hand", "an unread copy cannot be known to be hand-edited")
 		})
 	}
+}
+
+// TestRefreshPersonas_FIFOCopyIsNotReadAndHasItsOwnNote: a FIFO copy is queued
+// for replacement without being opened for a blocking read, is marked as not a
+// regular file rather than edited by hand, and is replaced by the embedded file.
+func TestRefreshPersonas_FIFOCopyIsNotReadAndHasItsOwnNote(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	brucePath := filepath.Join(pdir, "bruce.md")
+	require.NoError(t, os.Remove(brucePath))
+	mkfifo(t, brucePath)
+
+	done := make(chan error, 1)
+	var out bytes.Buffer
+	go func() { done <- runRefreshPersonas(dir, false, &out) }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("refresh hung on the FIFO copy")
+	}
+	assert.Contains(t, out.String(), "  bruce.md (not a regular file")
+	assert.NotContains(t, out.String(), "edited by hand")
+	assert.True(t, lstat(t, brucePath).Mode().IsRegular())
+	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
+}
+
+// TestRefreshPersonas_StampOnlyRefreshSaysSo: when every copy is current but a
+// stamp entry is not, the refresh rewrites the stamp and says it did, rather
+// than reporting nothing to refresh; a dry run says it would and writes nothing.
+func TestRefreshPersonas_StampOnlyRefreshSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	stamp.Record("bruce.md", []byte("OLD BRUCE"))
+	stamp.Record("greta.md", []byte("OLD GRETA"))
+	require.NoError(t, registry.WritePersonaStamp(pdir, stamp))
+	stampBefore := readFile(t, registry.PersonaStampPath(pdir))
+
+	var out bytes.Buffer
+	require.NoError(t, runRefreshPersonas(dir, true, &out))
+	assert.Contains(t, out.String(), "would refresh the stamp for 2 file(s)")
+	assert.NotContains(t, out.String(), "nothing to refresh")
+	assert.Equal(t, stampBefore, readFile(t, registry.PersonaStampPath(pdir)), "a dry run writes nothing")
+
+	out.Reset()
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	assert.Contains(t, out.String(), "refreshed the stamp for 2 file(s)")
+	assert.NotContains(t, out.String(), "nothing to refresh")
+	stamp, ok = registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	for _, name := range []string{"bruce", "greta"} {
+		assert.Equal(t, registry.HashPersonaContent([]byte(embeddedPersona(t, name))), stamp.Files[name+".md"])
+	}
+
+	// With the stamp now current, a re-run has nothing to do.
+	out.Reset()
+	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	assert.Contains(t, out.String(), "nothing to refresh")
+	assert.NotContains(t, out.String(), "refreshed the stamp")
 }
 
 // TestHashPersonaCopy_CapsTheRead: a copy over maxPersonaCopyBytes is not read
@@ -1131,13 +1196,85 @@ func TestHashPersonaCopy_CapsTheRead(t *testing.T) {
 	over := filepath.Join(pdir, "over.md")
 	require.NoError(t, os.WriteFile(over, bytes.Repeat([]byte("a"), maxPersonaCopyBytes+1), 0o644))
 
-	hash, err := hashPersonaCopy(atCap)
+	hash, state, err := hashPersonaCopy(atCap, lstat(t, atCap))
 	require.NoError(t, err)
+	assert.Equal(t, copyRegular, state)
 	assert.Equal(t, registry.HashPersonaContent(bytes.Repeat([]byte("a"), maxPersonaCopyBytes)), hash)
 
-	hash, err = hashPersonaCopy(over)
+	hash, state, err = hashPersonaCopy(over, lstat(t, over))
 	require.NoError(t, err)
+	assert.Equal(t, copyOversized, state)
 	assert.Empty(t, hash)
+}
+
+func lstat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	return info
+}
+
+// mkfifo makes a named pipe at path, skipping the test where none can be made.
+func mkfifo(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("named pipes")
+	}
+	if out, err := exec.Command("mkfifo", path).CombinedOutput(); err != nil {
+		t.Skipf("mkfifo: %v: %s", err, out)
+	}
+}
+
+// TestHashPersonaCopy_SwappedCopyIsNotReadThrough: a copy checked as a regular
+// file and then swapped for a symlink (to /dev/zero or to another regular file)
+// or a FIFO before the read is not read: the held handle is stat'd and found not
+// to be the file that was checked. Neither case hangs.
+func TestHashPersonaCopy_SwappedCopyIsNotReadThrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks and named pipes")
+	}
+	external := filepath.Join(t.TempDir(), "external.md")
+	require.NoError(t, os.WriteFile(external, []byte("EXTERNAL"), 0o644))
+	swaps := map[string]func(t *testing.T, path string){
+		"symlink to /dev/zero": func(t *testing.T, path string) {
+			if _, err := os.Stat("/dev/zero"); err != nil {
+				t.Skipf("/dev/zero: %v", err)
+			}
+			require.NoError(t, os.Symlink("/dev/zero", path))
+		},
+		"symlink to a regular file": func(t *testing.T, path string) {
+			require.NoError(t, os.Symlink(external, path))
+		},
+		"fifo": func(t *testing.T, path string) { mkfifo(t, path) },
+	}
+	for name, swap := range swaps {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "bruce.md")
+			require.NoError(t, os.WriteFile(path, []byte("BRUCE"), 0o644))
+			checked := lstat(t, path)
+			require.NoError(t, os.Remove(path))
+			swap(t, path)
+
+			type result struct {
+				hash  string
+				state copyState
+				err   error
+			}
+			done := make(chan result, 1)
+			go func() {
+				hash, state, err := hashPersonaCopy(path, checked)
+				done <- result{hash, state, err}
+			}()
+			select {
+			case r := <-done:
+				require.NoError(t, r.err)
+				assert.Equal(t, copyNonRegular, r.state)
+				assert.Empty(t, r.hash, "the swapped-in file must not be read")
+			case <-time.After(10 * time.Second):
+				t.Fatal("hashPersonaCopy hung reading the swapped-in file")
+			}
+		})
+	}
 }
 
 // TestRefreshPersonas_OversizedCopyIsRefreshed: a regular copy over the cap is
@@ -1151,7 +1288,8 @@ func TestRefreshPersonas_OversizedCopyIsRefreshed(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, runRefreshPersonas(dir, false, &out))
-	assert.Contains(t, out.String(), "  bruce.md (edited by hand")
+	assert.Contains(t, out.String(), "  bruce.md (over 1 MiB, not read")
+	assert.NotContains(t, out.String(), "edited by hand", "an unread copy cannot be known to be hand-edited")
 	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
 }
 

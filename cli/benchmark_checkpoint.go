@@ -60,12 +60,14 @@ const rosterFormatUnion = "union"
 // checkpointCase is one completed case run's recorded outcome, keyed by the pair
 // (Index, Replicate), a caseRun. Index is the case's position in the suite's case
 // list (the same index the run loop iterates); Replicate is which run of that case
-// the entry records. The key is always built from the normalized replicate(),
-// which reads a legacy entry's 0 as 1 (see the Replicate field), so the duplicate
-// check in validateCheckpointIntegrity and the lookup map from doneIndex agree on
-// one key per run. Keying on the suite index lets replay fold each entry back in
-// the original case order — preserving the deterministic aggregation the
-// reproducibility contract depends on (AC3).
+// the entry records. Every key built FROM an entry goes through key(), which reads
+// a legacy entry's 0 as 1 (see the Replicate field), so the duplicate check in
+// validateCheckpointIntegrity and the lookup map from doneIndex agree on one key
+// per run. The run loop's lookup builds its key from its own counters instead,
+// whose replicate starts at 1, so it lands on the same normalized key. The Index
+// half lets replay fold each entry back in the original case order, preserving the
+// deterministic aggregation the reproducibility contract depends on (AC3); the
+// Replicate half keeps the N runs of one case distinct.
 type checkpointCase struct {
 	Index     int                  `json:"index"`
 	CaseID    string               `json:"case_id"`
@@ -103,6 +105,11 @@ type checkpointCase struct {
 // replicate returns the entry's replicate number, reading a legacy 0 as 1.
 func (c checkpointCase) replicate() int {
 	return max(c.Replicate, 1)
+}
+
+// key returns the caseRun this entry records, with a legacy replicate 0 read as 1.
+func (c checkpointCase) key() caseRun {
+	return caseRun{index: c.Index, replicate: c.replicate()}
 }
 
 // caseRun keys one checkpointed run of a case: its suite index and replicate.
@@ -262,7 +269,7 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 		// Keyed on the NORMALIZED replicate, so a legacy entry (0) and an explicit
 		// replicate 1 for the same index collide: both claim the scored run, and
 		// doneIndex would last-write-win between them.
-		key := caseRun{index: c.Index, replicate: c.replicate()}
+		key := c.key()
 		if _, ok := seen[key]; ok {
 			if c.replicate() == 1 {
 				// Byte-identical to the pre-replicate message for the only shape an
@@ -318,7 +325,7 @@ func saveCheckpoint(path string, cp *runCheckpoint) error {
 func (cp *runCheckpoint) doneIndex() map[caseRun]checkpointCase {
 	done := make(map[caseRun]checkpointCase, len(cp.Cases))
 	for _, c := range cp.Cases {
-		done[caseRun{index: c.Index, replicate: c.replicate()}] = c
+		done[c.key()] = c
 	}
 	return done
 }
