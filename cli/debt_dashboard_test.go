@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -560,4 +561,29 @@ func TestLineDedupWriter_SplitWritesAndFlush(t *testing.T) {
 	assert.Equal(t, "warn: a\nwarn: b\n", buf.String(), "the split repeat is dropped; the fragment is held")
 	d.Flush()
 	assert.Equal(t, "warn: a\nwarn: b\ntail", buf.String(), "Flush writes the held fragment")
+}
+
+// flakyWriter fails its first Write and records every later one, so a test can
+// see both the error and whatever the caller wrote after it.
+type flakyWriter struct {
+	failed bool
+	buf    bytes.Buffer
+}
+
+func (f *flakyWriter) Write(p []byte) (int, error) {
+	if !f.failed {
+		f.failed = true
+		return 0, errors.New("stderr broken")
+	}
+	return f.buf.Write(p)
+}
+
+// A failed write to the underlying sink is returned to the caller, and the
+// dedup writer stops there rather than pushing the rest of the chunk after it.
+func TestLineDedupWriter_WriteErrorIsReturned(t *testing.T) {
+	fw := &flakyWriter{}
+	d := newLineDedupWriter(fw)
+	_, err := d.Write([]byte("warn: a\nwarn: b\n"))
+	require.ErrorContains(t, err, "stderr broken")
+	assert.Empty(t, fw.buf.String(), "no later line is written after the failed one")
 }
