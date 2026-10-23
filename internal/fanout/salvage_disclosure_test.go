@@ -303,38 +303,45 @@ func TestClassifySalvaged_ReadsTheClassFromTheStatusRecord(t *testing.T) {
 
 // No salvage cost text nests parentheses: the caller already wraps the whole cost
 // in one pair, so an inner pair read as " (chunk 0/1 kept (...))". Every branch
-// salvageCost can take has a row, and each row names the text that proves it took
-// that branch, so a row cannot drift onto a sibling branch and leave one unchecked.
+// salvageCost can take has a row. Each row names text its branch renders, and that
+// text is unique to the branch except for the two whole-loss arms: the unchunked one
+// and the bin-indexed one both render exactly " (contributed nothing)", so the text
+// alone cannot tell them apart. Each row therefore also names the arm its record
+// enters (binIndexed: SalvagedChunks is non-empty), so a row cannot drift onto a
+// sibling branch and leave one unchecked.
 func TestSalvageCost_TextHasNoNestedParentheses(t *testing.T) {
 	cases := []struct {
-		name   string
-		st     AgentStatus
-		branch string // a substring only this row's branch renders; "" for no label
+		name       string
+		st         AgentStatus
+		binIndexed bool   // the record enters salvageCost's bin-indexed arm, not the unchunked one
+		branch     string // text this row's branch renders; "" for no label
 	}{
 		{"chunked abandoned only",
 			AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{1}, ChunkCount: 4, FindingsCount: 5},
-			"refused, its siblings kept"},
+			true, "refused, its siblings kept"},
 		{"chunked every bin abandoned",
 			AgentStatus{Agent: "dax", Salvaged: true, SalvagedChunks: []int{0, 1}, ChunkCount: 2},
-			"contributed nothing"},
+			true, "contributed nothing"},
 		{"chunked mixed",
 			AgentStatus{Agent: "otto", Salvaged: true, SalvagedChunks: []int{0, 2}, SalvagedOnStopChunks: []int{2}, ChunkCount: 4, FindingsCount: 3},
-			"refused, chunk 2 kept as a parsed stop-reason salvage, its siblings kept"},
+			true, "refused, chunk 2 kept as a parsed stop-reason salvage, its siblings kept"},
 		{"chunked every bin on stop",
 			AgentStatus{Agent: "kai", Salvaged: true, SalvagedChunks: []int{0, 1}, SalvagedOnStopChunks: []int{0, 1}, ChunkCount: 2},
-			"chunk 0/1 kept as a parsed stop-reason salvage"},
+			true, "chunk 0/1 kept as a parsed stop-reason salvage"},
 		{"unchunked on stop",
 			AgentStatus{Agent: "dax", Salvaged: true, SalvagedOnStop: true},
-			"stop-reason salvage, parsed"},
+			false, "stop-reason salvage, parsed"},
 		{"unchunked abandoned, no findings",
 			AgentStatus{Agent: "dax", Salvaged: true},
-			"contributed nothing"},
+			false, "contributed nothing"},
 		{"unchunked abandoned, findings landed",
 			AgentStatus{Agent: "greta", Salvaged: true, FindingsCount: 4},
-			""},
+			false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.binIndexed, len(tc.st.SalvagedChunks) > 0,
+				"precondition: the row's record enters the arm it names")
 			cost := salvageCost(tc.st)
 			if tc.branch == "" {
 				require.Empty(t, cost, "precondition: the unlabelled branch")

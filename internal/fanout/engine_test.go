@@ -1154,14 +1154,16 @@ func TestResult_ParseFindings_MemoizesTheParsedSlice(t *testing.T) {
 	}
 }
 
-// TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview is the complement
-// of TestInvokeSlot_SalvagedReply_ContributesNoFindings for the clean-review
-// sentinel: a salvaged reply whose promoted reasoning is literally "NO FINDINGS".
-// The sentinel parses to zero findings, so control always reaches the sentinel arm
-// in invokeSlot; what the arm decides is whether the reply COMMITTED that answer.
-// A reply the provider cut off did not, so scoring it clean would be the silent
-// false no-issues-found — StatusOK, zero findings, no marker.
-func TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview(t *testing.T) {
+// TestInvokeSlot_SalvagedSentinelShapedReply_IsCleanOnlyOnAStopReasonSalvage is
+// the complement of TestInvokeSlot_SalvagedReply_ContributesNoFindings for the
+// clean-review sentinel: a salvaged reply whose promoted reasoning is literally
+// "NO FINDINGS". The sentinel parses to zero findings, so control always reaches
+// the sentinel arm in invokeSlot; what the arm decides is whether the reply
+// COMMITTED that answer. A reply the provider cut off did not, so scoring it clean
+// would be the silent false no-issues-found — StatusOK, zero findings, no marker.
+// Only a stop-reason salvage of the exact sentinel scores clean; every other
+// subtest pins an unparseable outcome.
+func TestInvokeSlot_SalvagedSentinelShapedReply_IsCleanOnlyOnAStopReasonSalvage(t *testing.T) {
 	slot := Slot{Primary: Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "m"}}}
 
 	t.Run("truncated salvage: not a committed clean review", func(t *testing.T) {
