@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,22 @@ func TestRun_CreatesTheStoreDirectoryOwnerOnly(t *testing.T) {
 		t.Skip("Unix permission bits do not apply on Windows")
 	}
 	dir := filepath.Join(t.TempDir(), "fresh", ".atcr", "debt")
+	var stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "1"}, &stderr), stderr.String())
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
+// MkdirAll leaves an existing directory's mode alone, so a store directory made
+// earlier with a looser umask is tightened to owner-only as well.
+func TestRun_TightensAnExistingStoreDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits do not apply on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "debt")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755))
 	var stderr bytes.Buffer
 	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "1"}, &stderr), stderr.String())
 	info, err := os.Stat(dir)
@@ -129,4 +146,17 @@ func TestRun_RejectsCountAboveCeiling(t *testing.T) {
 	var stderr bytes.Buffer
 	require.Equal(t, 1, run([]string{"-dir", dir, "-n", fmt.Sprint(localdebt.MaxSyntheticRecords + 1)}, &stderr))
 	require.Contains(t, stderr.String(), fmt.Sprint(localdebt.MaxSyntheticRecords))
+}
+
+func TestRun_TightenFailureIsExitOne(t *testing.T) {
+	orig := chmodFn
+	t.Cleanup(func() { chmodFn = orig })
+	chmodFn = func(string, os.FileMode) error { return errors.New("chmod refused") }
+	dir := filepath.Join(t.TempDir(), "debt")
+	var stderr bytes.Buffer
+	require.Equal(t, 1, run([]string{"-dir", dir, "-n", "1"}, &stderr))
+	require.Contains(t, stderr.String(), "gen-debt-store: chmod refused")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries, "no records are written when the directory cannot be tightened")
 }
