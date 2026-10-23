@@ -3,6 +3,8 @@ package payload
 import (
 	"context"
 	"sync/atomic"
+
+	"github.com/samestrin/atcr/internal/semindex"
 )
 
 // RangeBuilder computes every whole-range artifact a fan-out review needs — the
@@ -143,6 +145,23 @@ func WithMaxClaimBytes(n int64) RangeOption {
 // negative value is treated as disabled, so a mis-resolved setting fails safe.
 func WithMaxPrefetchBytes(n int64) RangeOption {
 	return func(g *gitRunner) { g.maxPrefetchBytes = n }
+}
+
+// WithSemanticRetriever attaches the optional similarity index (Epic
+// 35.16.12.1). The pre-fetch pass then queries r with the changed symbols'
+// declaration text, asking for at most topK hits, and feeds every hit that
+// survives re-validation at HEAD into the Context Definitions section at
+// PrefetchTierSimilarity, the tier the byte cap sheds first.
+//
+// The caller builds r (internal/fanout, from the registry's resolved
+// context_prefetch.semantic settings), because payload must not import
+// registry. A nil r leaves the stage off, and WithMaxPrefetchBytes(0) still
+// disables it together with the reference pass.
+func WithSemanticRetriever(r semindex.Retriever, topK int) RangeOption {
+	return func(g *gitRunner) {
+		g.retriever = r
+		g.semanticTopK = topK
+	}
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
