@@ -236,3 +236,27 @@ func debtRow(t *testing.T) string {
 	t.Fatal("SKILL.md has no `atcr debt` routing-table row")
 	return ""
 }
+
+// TestReference_LeaderboardRowRoutesFinalSurface (epic 35.22 T7) — the
+// `atcr leaderboard` routing row names the two machine outputs the command
+// has: `--json` for the table, and the `atcr leaderboard export` subcommand for
+// the public submission document, which replaced `leaderboard --export`.
+func TestReference_LeaderboardRowRoutesFinalSurface(t *testing.T) {
+	row := routingRow(t, "leaderboard")
+	assert.Contains(t, row, "`atcr leaderboard export",
+		"the leaderboard row must route the submission document to `atcr leaderboard export`")
+	assert.Contains(t, row, "--json", "the leaderboard row must name the table's --json output")
+	assert.NotContains(t, row, "--export", "the leaderboard row must not teach the deprecated --export alias")
+}
+
+// routingRow returns the single `atcr <name>` routing-table row from SKILL.md.
+func routingRow(t *testing.T, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(SkillMD, "\n") {
+		if strings.HasPrefix(line, "| `atcr "+name+"`") {
+			return line
+		}
+	}
+	t.Fatalf("SKILL.md has no `atcr %s` routing-table row", name)
+	return ""
+}

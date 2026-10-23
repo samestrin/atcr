@@ -1568,3 +1568,95 @@ func TestVocabularyCeilingDocMatchesTheGuard(t *testing.T) {
 	require.Contains(t, sentence, "inclusive",
 		"docs/benchmark.md must call the ceiling inclusive, matching ExceedsVocabularyCeiling and the CLI's \"at or above\" wording")
 }
+
+// docUnits splits markdown into the units a reader takes in at once: each
+// table row on its own, and each blank-line-separated paragraph otherwise.
+func docUnits(md string) []string {
+	var units []string
+	var para []string
+	flush := func() {
+		if len(para) > 0 {
+			units = append(units, strings.Join(para, "\n"))
+			para = nil
+		}
+	}
+	for _, ln := range strings.Split(md, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		switch {
+		case trimmed == "":
+			flush()
+		case strings.HasPrefix(trimmed, "|"):
+			flush()
+			units = append(units, ln)
+		default:
+			para = append(para, ln)
+		}
+	}
+	flush()
+	return units
+}
+
+// undeprecatedExportUnits returns every unit of md that names the retired
+// `--export` spelling without also saying it is deprecated.
+func undeprecatedExportUnits(md string) []string {
+	var bad []string
+	for _, u := range docUnits(md) {
+		if strings.Contains(u, "--export") && !strings.Contains(strings.ToLower(u), "deprecat") {
+			bad = append(bad, u)
+		}
+	}
+	return bad
+}
+
+// TestUndeprecatedExportUnitsIsScopedToTheUnit pins the helper: a paragraph or
+// table row naming --export passes only when that same unit says deprecated,
+// and a deprecation note in a neighbouring row does not cover it.
+func TestUndeprecatedExportUnitsIsScopedToTheUnit(t *testing.T) {
+	md := "Run `atcr leaderboard --export`.\n\n" +
+		"`--export` is deprecated; use `atcr leaderboard export`.\n\n" +
+		"| `--export` | off | Deprecated, hidden. |\n" +
+		"| `--output` | stdout | With `--export`, the file. |\n\n" +
+		"Run `atcr leaderboard export`.\n"
+	require.Equal(t, []string{
+		"Run `atcr leaderboard --export`.",
+		"| `--output` | stdout | With `--export`, the file. |",
+	}, undeprecatedExportUnits(md))
+}
+
+// TestDocsShowLeaderboardExportOnlyAsDeprecatedAlias (epic 35.22 T7) — the
+// public-submission document is `atcr leaderboard export`; `leaderboard
+// --export` survives only as a hidden alias removed in
+// leaderboardExportAliasRemoval. Every doc, the README, the shipped skill
+// files and every command's help text may still name the old spelling, but
+// only where the same paragraph or table row says it is deprecated, so no
+// reader is taught the retired form as the current one.
+func TestDocsShowLeaderboardExportOnlyAsDeprecatedAlias(t *testing.T) {
+	sources := auditedMarkdown(t)
+	skillFiles, err := filepath.Glob(filepath.Join(repoRootDir(t), "skills", "*", "*.md"))
+	require.NoError(t, err)
+	require.NotEmpty(t, skillFiles)
+	for _, p := range skillFiles {
+		b, err := os.ReadFile(p)
+		require.NoError(t, err)
+		rel, _ := filepath.Rel(repoRootDir(t), p)
+		sources[rel] = string(b)
+	}
+	for path, md := range sources {
+		for _, u := range undeprecatedExportUnits(md) {
+			t.Errorf("%s names --export without saying it is deprecated; write `atcr leaderboard export`:\n%s", path, u)
+		}
+	}
+
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, text := range []string{c.Short, c.Long, c.Example} {
+			for _, u := range undeprecatedExportUnits(text) {
+				t.Errorf("`%s` help names --export without saying it is deprecated:\n%s", c.CommandPath(), u)
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(NewRootCmd())
+}

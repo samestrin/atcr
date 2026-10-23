@@ -153,7 +153,7 @@ discovers them.
 ### Scoring
 
 Each reviewer's per-case findings are folded into the **single public reviewer
-schema** (the same row shape `export` and `leaderboard --export` emit):
+schema** (the same row shape `export` and `leaderboard export` emit):
 
 | Field | Benchmark meaning |
 |-------|-------------------|
@@ -619,7 +619,7 @@ internal-consistency check — make that trade deliberately, not as a workaround
 bundled suite's largest diff is two orders of magnitude under the cap; this matters
 only for hand-built suites with very large case diffs.)
 
-The output envelope is **distinct from the production `leaderboard --export`** by
+The output envelope is **distinct from the production `leaderboard export`** by
 its `source`, `suite`, and `suite_version` fields — that is what lets the public
 board accept suite submissions and reject production ones. The example below uses a
 neutral `example-suite` with synthetic case ids; a real `standard-v1` submission's
@@ -659,7 +659,7 @@ and PR they name (see [`docs/scorecard.md`](scorecard.md)):
 ```
 
 The `reviewers[]` rows reuse the **same public reviewer schema** as
-`leaderboard --export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
+`leaderboard export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
 public board renders one consistent set of columns for both submission sources.
 
 #### Coverage in the envelope (`submission_schema` 2)
@@ -725,7 +725,7 @@ submissions:
 
 A dedicated scoring/metric version in the envelope would say this more directly, but
 `submission_schema` is a **shared** public contract — the same constant stamps the
-production `leaderboard --export` envelope — so adding a field is a schema-versioning
+production `leaderboard export` envelope — so adding a field is a schema-versioning
 decision that costs a bump on both producers, not a documentation fix. (Schema 2 paid
 that cost once, for coverage.) Until such a field exists, `atcr_version` carries the
 meaning, and consumers must be told so — which is what this section does.
@@ -921,7 +921,7 @@ Behavior:
   non-empty on both sides of the scrub. Hand-assembly only, but **not** for the reason
   the next bullet gives: `atcr benchmark run` rejects such an identity outright, at
   load for the configured roster and again at the fold for the realized one, so it
-  cannot produce a file this rule rejects. `atcr leaderboard --export` applies the same
+  cannot produce a file this rule rejects. `atcr leaderboard export` applies the same
   rule to the records it publishes.
 - A reviewer `model`/`persona` that is non-empty in the file but **empty once scrubbed
   for publication** → error. The scrub is what the submission actually carries, so an
@@ -1032,7 +1032,7 @@ the suite identity (`source`, `suite`, `suite_version`).
 ## Related
 
 - [`docs/scorecard.md`](scorecard.md) — the local scorecard store, the
-  `leaderboard --export` production submission, and the shared public reviewer
+  `leaderboard export` production submission, and the shared public reviewer
   schema + privacy model.
 - [`benchmarks/standard-v1/`](../benchmarks/standard-v1/) — the curated
   `standard-v1` suite content bundled in this repo, with its attribution in

@@ -144,8 +144,14 @@ atcr history --since 2w --package internal/registry
 | `--since` | Window to report: `Nd` (days), `Nw` (weeks), `Nm` (30-day months), or `all` to disable the window. `N` is a positive integer. Default `90d`. Clock units are **not** accepted — `48h` is a usage error; write `2d`. This is the same grammar `atcr leaderboard --since` uses (`internal/timewindow`), so `3m` means three months on every command. |
 | `--package` | Restrict to a package path prefix. Separator-aware: `internal/registry` matches `internal/registry/sub` but never the sibling `internal/registry2`. |
 | `--prune` | **Destructive.** Delete monthly shards older than this retention horizon before reporting. No default. |
+| `--json` | Print the table as JSON instead of markdown (see below). |
 
 Output is a markdown table of counts by severity per package, with a totals row.
+
+`--json` prints the same table as one JSON document: `columns` (the severities in
+table order), one `rows` entry per package with its `counts` and `total`, and the
+grand `totals` and `total`. An empty result prints an empty table (`"rows": []`)
+and sends the notice below to stderr, so stdout always parses.
 
 An absent or fully-filtered history is **not** an error: the command exits 0 with
 a short notice. A repo that has never recorded anything is told to run `atcr
