@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -351,11 +352,10 @@ func seedUnrelatedCommit(t *testing.T, root string) string {
 
 	run := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
@@ -461,11 +461,10 @@ func seedFormatRepo(t *testing.T) (root, base, head string) {
 
 	run := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
@@ -511,11 +510,10 @@ func seedRepo(t *testing.T) (root, base, head string) {
 
 	run := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))

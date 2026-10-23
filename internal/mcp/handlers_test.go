@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -105,8 +105,8 @@ func gitRepo(t *testing.T) (dir, base, head string) {
 	t.Helper()
 	dir = t.TempDir()
 	run := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
+		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
+		cmd.Env = append(cmd.Env,
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 		out, err := cmd.CombinedOutput()
@@ -525,6 +525,35 @@ func TestReconcileHandler_AppliesScorecardTrustPrior(t *testing.T) {
 		"handleReconcile threads the reviewer trust prior into RunReconcile")
 	assert.NotContains(t, files, "bar.go",
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
+}
+
+// TestReconcileHandler_AttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// handleReconcile carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from
+// handleReconcile fails this test.
+func TestReconcileHandler_AttachesOpportunityScopedFlag(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	seedTrustedReviewer(t, "sasha")
+	seedTrustedReviewer(t, "vera")
+	id := trustPanelFixture(t, root)
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	// Re-place the panel so the two seeded lenses run on model "m".
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"agents":[{"agent":"sasha","model":"m","status":"ok","findings_count":1},{"agent":"vera","model":"m","status":"ok","findings_count":1},{"agent":"stranger","model":"m","status":"ok","findings_count":1}],"total":3,"succeeded":3}`), 0o644))
+
+	e := &engine{root: root, diag: io.Discard}
+	_, _, err := e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "summary.json"))
+	require.NoError(t, err)
+	var summary struct {
+		OpportunityScoped map[string]bool `json:"opportunity_scoped"`
+	}
+	require.NoError(t, json.Unmarshal(data, &summary))
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, summary.OpportunityScoped)
 }
 
 // --- atcr_report ---------------------------------------------------------

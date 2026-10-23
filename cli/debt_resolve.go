@@ -532,7 +532,7 @@ func severityRank(s string) int {
 // the wrong store is distinguishable from an empty backlog. Exits 0 either way.
 //
 // Every column passes through the same sanitizers renderDebtTable uses
-// (debtIDCell, cell, truncate): a stray tab or CR in a store field must not tear
+// (debtIDCell, cell, listProblem): a stray tab or CR in a store field must not tear
 // a tabwriter row, and an empty id (a hand-edited store is the only source)
 // renders as "-" rather than a blank leading column.
 func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
@@ -546,7 +546,7 @@ func renderResolveList(w io.Writer, dir string, recs []localdebt.Record) error {
 	}
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
-			debtIDCell(r.ID), cell(r.Severity), cell(r.File), r.Line, cell(truncate(r.Problem, 60))); err != nil {
+			debtIDCell(r.ID), cell(r.Severity), cell(r.File), r.Line, cell(listProblem(r))); err != nil {
 			return err
 		}
 	}
@@ -585,6 +585,36 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	if err != nil {
 		return fmt.Errorf("atcr debt resolve: failed to read local debt store: %w", err)
 	}
+	rec, closedStatus, err := buildDebtResolution(recs, id, status, reason)
+	if err != nil {
+		return err
+	}
+	// Concurrency-tolerant, not lock-protected: the item is already settled, so this
+	// invocation reports and no-ops instead of appending another terminal record.
+	// Two concurrent invocations can each pass this check before either appends (the
+	// accepted TD-004 no-lock stance). Since epic 24.0 those two records need not be
+	// identical duplicates: one may be --status resolved and the other --status
+	// wontfix, so the durable trail can carry divergent terminal claims for one id.
+	// The reported status comes from localdebt.FoldRecords, which resolves divergent
+	// terminals by precedence (wontfix outranks resolved) rather than by shard read
+	// order — so it is well-defined, not order-dependent.
+	if closedStatus != "" {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
+		return nil
+	}
+	if err := appendDebtResolution(dir, rec, "atcr debt resolve"); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s %s.\n", id, status)
+	return nil
+}
+
+// buildDebtResolution is the record-building half of markDebtResolved, shared with
+// `atcr debt sync-outcomes` so both write an outcome the same way. recs is the
+// id's raw history (collectDebtIDRecords). It returns the resolution record to
+// append, or a non-empty closedStatus when the id is already settled and nothing
+// should be appended.
+func buildDebtResolution(recs []localdebt.Record, id, status, reason string) (rec localdebt.Record, closedStatus string, err error) {
 
 	// The already-closed guard tests the FOLDED effective status, not the presence
 	// of a terminal record somewhere in history. Scanning all history would refuse
@@ -593,9 +623,9 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// closed again.
 	// FoldRecords emits exactly one record per id, so this both decides the guard
 	// and supplies the record to copy. Divergent terminal records can coexist for
-	// one id (the no-lock TD-004 window below); the fold already resolves them by
-	// precedence rather than shard read order, so the reported status is
-	// deterministic — wontfix outranks resolved/deferred.
+	// one id (the no-lock TD-004 window markDebtResolved documents); the fold
+	// already resolves them by precedence rather than shard read order, so the
+	// reported status is deterministic — wontfix outranks resolved/deferred.
 	var effective *localdebt.Record
 	for _, f := range localdebt.FoldRecords(recs) {
 		if f.ID == id {
@@ -611,7 +641,6 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// showing it as outstanding work. Deciding to fix or dismiss a deferred item
 	// later is exactly what deferring is for.
 	var alreadyClosed bool
-	var closedStatus string
 	if effective != nil && localdebt.IsSettledStatus(effective.Status) {
 		alreadyClosed = true
 		// Print the status the gate actually MATCHED, not the raw store text:
@@ -665,18 +694,8 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 			model = recs[i].Model
 		}
 	}
-	// Concurrency-tolerant, not lock-protected: the item is already settled, so this
-	// invocation reports and no-ops instead of appending another terminal record.
-	// Two concurrent invocations can each pass this check before either appends (the
-	// accepted TD-004 no-lock stance). Since epic 24.0 those two records need not be
-	// identical duplicates: one may be --status resolved and the other --status
-	// wontfix, so the durable trail can carry divergent terminal claims for one id.
-	// The reported status comes from localdebt.FoldRecords, which resolves divergent
-	// terminals by precedence (wontfix outranks resolved) rather than by shard read
-	// order — so it is well-defined, not order-dependent.
 	if alreadyClosed {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s is already closed as %s; nothing to do.\n", id, closedStatus)
-		return nil
+		return localdebt.Record{}, closedStatus, nil
 	}
 	// A nil effective record is the true "no such id" case. An id that DOES
 	// resolve but whose effective record carries no File is a different defect:
@@ -684,10 +703,10 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// reporting it as nonexistent would send the operator hunting for an id
 	// that is right there — name the actual problem instead.
 	if effective == nil {
-		return fmt.Errorf("no open technical-debt item with id %q in the local store", id)
+		return localdebt.Record{}, "", fmt.Errorf("no open technical-debt item with id %q in the local store", id)
 	}
 	if effective.File == "" {
-		return fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
+		return localdebt.Record{}, "", fmt.Errorf("id %q has no file location and cannot be resolved; it must be corrected in the store", id)
 	}
 	orig := *effective
 	// Every status other than `resolved` requires a rationale. The condition is
@@ -725,11 +744,11 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// symmetrically, and the rejection is the same usage error the empty case gets.
 	typedRationaleUsable := strings.TrimSpace(reason) != "" && isRecordedRationale(reason)
 	if status != localdebt.StatusResolved && !typedRationaleUsable && !storedRationaleStandsIn {
-		return usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
+		return localdebt.Record{}, "", usageError(fmt.Errorf("--status %s requires --reason <justification>", status))
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec := orig
+	rec = orig
 	// Assign only a non-empty union, symmetric with Model below: an empty union
 	// means no live record carried attribution, and blanking the copied record's
 	// Reviewers would destroy credit rather than decline to add any.
@@ -786,6 +805,12 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 			}
 		}
 	}
+	return rec, "", nil
+}
+
+// appendDebtResolution appends a resolution record built by buildDebtResolution.
+// prefix names the command in the error text.
+func appendDebtResolution(dir string, rec localdebt.Record, prefix string) error {
 	// Bound the ENCODED record before appending, the same rule `debt add` enforces
 	// (cli/debt_add.go): the resolution copies the finding verbatim and adds the
 	// terminal fields, so a finding whose own record sits just under the read cap
@@ -795,7 +820,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 	// bounds only the --reason slice of the record; this bounds the whole thing.
 	line, err := json.Marshal(rec)
 	if err != nil {
-		return fmt.Errorf("atcr debt resolve: failed to encode resolution: %w", err)
+		return fmt.Errorf("%s: failed to encode resolution: %w", prefix, err)
 	}
 	if len(line)+1 > localdebt.MaxRecordBytes {
 		return usageError(fmt.Errorf(
@@ -803,8 +828,7 @@ func markDebtResolved(cmd *cobra.Command, dir, id, status, reason string) error 
 			len(line)+1, localdebt.MaxRecordBytes))
 	}
 	if err := localdebt.Append(dir, rec); err != nil {
-		return fmt.Errorf("atcr debt resolve: failed to record resolution: %w", err)
+		return fmt.Errorf("%s: failed to record resolution: %w", prefix, err)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Marked %s %s.\n", id, status)
 	return nil
 }

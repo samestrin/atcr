@@ -254,6 +254,13 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 		return Result{}, err
 	}
 
+	// Load the .atcr/ignore.yaml rules (Epic 40.0) before any work is spent, so
+	// a rule file that does not parse fails the run before anything is emitted.
+	ignore, err := loadIgnoreMatcher(opts.Root)
+	if err != nil {
+		return Result{}, err
+	}
+
 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
 
 	adjudicating := false
@@ -379,6 +386,18 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	// same distinct-reviewer trust-inflation the disagreement radar already de-weights.
 	// Only fallback-collapsed records are touched; authority/verify promotions stand.
 	recomputeFallbackConfidence(jf)
+	// Drop the findings a .atcr/ignore.yaml rule matches (Epic 40.0) into
+	// Suppressed, with the same index-aligned splice as the Tier 4 routing
+	// above, so findings.json, report.md and the gate never see them. Applied
+	// last, after stampFindingIDs, so a suppressed record carries the same id,
+	// anchor and provenance it would have had in findings.json. TotalFindings
+	// and OutOfScope are recomputed for the same reason as above; the merge
+	// diagnostics keep describing the reconcile pass.
+	if idx := ignoredIndexes(ignore, jf); len(idx) > 0 {
+		res.Findings, jf, res.Suppressed = routeUnresolved(res.Findings, jf, idx)
+		res.Summary.TotalFindings = len(res.Findings)
+		res.Summary.OutOfScope = countOutOfScope(res.Findings)
+	}
 	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {
@@ -413,4 +432,43 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 		return Result{}, err
 	}
 	return res, nil
+}
+
+// loadIgnoreMatcher reads root/.atcr/ignore.yaml. An empty root (no checkout)
+// or a missing file is a nil matcher, which matches nothing; a file that does
+// not parse, holds an invalid rule or a malformed glob is an error naming it.
+func loadIgnoreMatcher(root string) (*IgnoreMatcher, error) {
+	if root == "" {
+		return nil, nil
+	}
+	path := filepath.Join(root, ".atcr", IgnoreFileName)
+	rules, err := ReadIgnoreFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	m, err := NewIgnoreMatcher(rules)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return m, nil
+}
+
+// ignoredIndexes returns the indexes into jf that m matches, ascending, and
+// stamps each matched record's SuppressedBy with its rule, so suppressed.json
+// and the report.md footer can name the rule after the splice.
+func ignoredIndexes(m *IgnoreMatcher, jf []JSONFinding) []int {
+	if m == nil {
+		return nil
+	}
+	var idx []int
+	for i, f := range jf {
+		if rule, ok := m.Match(f); ok {
+			jf[i].SuppressedBy = &rule
+			idx = append(idx, i)
+		}
+	}
+	return idx
 }

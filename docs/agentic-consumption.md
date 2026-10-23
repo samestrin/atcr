@@ -275,6 +275,34 @@ sink, so `run.toon`/`findings.toon` are byte-clean payloads; and the exit code i
 authoritative, so the sweeper never has to parse stdout to decide whether the run
 failed.
 
+## The `--json` convention
+
+Outside AXI, every command that prints a report for a person takes the same
+opt-in `--json` flag: the default output stays human, and `--json` prints the
+same data as JSON on stdout, with notices kept on stderr. The reporting commands
+follow it:
+
+| Command | `--json` prints |
+|---------|-----------------|
+| `atcr report` | the same JSON as `--format json`; `--json` with any other `--format` is a usage error (exit `2`) |
+| `atcr quality-report` | the same JSON as `--format json`, with the same usage error |
+| `atcr history` | the history table: `columns`, `rows` and the grand `totals` ([history.md](history.md#cli-usage)) |
+| `atcr scorecard` | `run_id` and one stored record per reviewer row ([scorecard.md](scorecard.md#atcr-scorecard-id-or-path)) |
+| `atcr leaderboard` | the table's rows as a JSON array ([scorecard.md](scorecard.md#atcr-leaderboard)) |
+| `atcr debt dashboard` | the dashboard's sections as one document ([technical-debt.md](technical-debt.md#atcr-debt-dashboard)) |
+| `atcr personas list` | the table's rows, `--scores` included ([personas-install.md](personas-install.md#atcr-personas-list)) |
+
+`atcr leaderboard export` is not a `--json` view of the table: it prints a
+different document, the anonymized public submission, and is always JSON
+([scorecard.md](scorecard.md#atcr-leaderboard-export---output-path)).
+
+Three commands are left out on purpose. `atcr range` and `atcr status` print
+JSON and nothing else, so a flag would change nothing. `atcr trust` authorizes
+providers; it is not a report. `atcr audit-report`, `atcr benchmark fit` and
+`atcr personas search` print reports with no machine-readable form yet.
+`cli/json_convention_test.go` walks the command tree and fails when a new
+report-producing command has no `--json`.
+
 ## See also
 
 - [CI Integration](ci-integration.md) — the exit-semantics contract AXI reuses,

@@ -11,13 +11,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStatusCmd builds `atcr status [id-or-path]`: print a review's fan-out
-// progress as JSON so the Skill's orchestration loop can poll it. Defaults to
-// .atcr/latest. The same engine reader backs the atcr_status MCP tool.
+// newStatusCmd builds `atcr status [id-or-path]`: print a review's progress as
+// JSON so the Skill's orchestration loop, or a widget, can poll it. Defaults to
+// .atcr/latest. The same engine reader backs the atcr_status MCP tool, and the
+// command prints its ReviewStatus whole: the six run-level fields plus
+// current_stage, completed_agents and the per-persona agents rows
+// (docs/status.md).
 func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status [id-or-path]",
-		Short: "Print a review's fan-out progress as JSON",
+		Short: "Print a review's progress as JSON (counts, stage, per-persona rows)",
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runStatus,
 	}

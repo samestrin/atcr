@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // debtSampleRecords is a small, deterministic corpus spanning severities,
@@ -117,7 +118,7 @@ func TestDebt_CommandWiring(t *testing.T) {
 // VALUE still carries the shared store.
 func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 	cmd := newDebtCmd()
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		sub := debtSubcommand(t, cmd, name)
 		f := sub.Flags().Lookup("dir")
 		require.NotNil(t, f, "%s registers --dir", name)
@@ -138,7 +139,7 @@ func TestDebt_AllSubcommandsShareTheSameStoreDefault(t *testing.T) {
 func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
 	debt := newDebtCmd()
 	readers := map[string]*cobra.Command{"quality-report": newQualityReportCmd()}
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		readers["debt "+name] = debtSubcommand(t, debt, name)
 	}
 
@@ -164,7 +165,7 @@ func TestDebtStoreFlag_SharedRegistrationAcrossStoreReaders(t *testing.T) {
 // addDebtStoreFlag's chained PreRunE, so all six store readers share it with no
 // per-command wiring and no change to debtStoreDir's signature.
 func TestDebtStoreFlag_EmptyDirIsUsageError(t *testing.T) {
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		t.Run("debt "+name, func(t *testing.T) {
 			_, err := runDebt(t, name, "--dir", "")
 			require.Error(t, err, "debt %s --dir \"\" must be rejected", name)
@@ -204,7 +205,7 @@ func TestDebtStoreFlag_RejectsTraversalAndSystemDirs(t *testing.T) {
 		"system directory": "/etc/atcr/debt",
 	}
 	for label, dir := range cases {
-		for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+		for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 			t.Run(label+"/debt "+name, func(t *testing.T) {
 				_, err := runDebt(t, name, "--dir", dir)
 				require.Error(t, err, "debt %s --dir %q must be rejected", name, dir)
@@ -421,7 +422,7 @@ func TestDebtList_RendersTable(t *testing.T) {
 // --help as if the flag took that many arguments.
 func TestDebt_FlagUsageStringsCarryNoBackticks(t *testing.T) {
 	cmd := newDebtCmd()
-	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact"} {
+	for _, name := range []string{"list", "add", "dashboard", "resolve", "compact", "sync-outcomes"} {
 		sub := debtSubcommand(t, cmd, name)
 		sub.Flags().VisitAll(func(f *pflag.Flag) {
 			assert.NotContains(t, f.Usage, "`",
@@ -1206,5 +1207,42 @@ func TestDebtList_MaxCapsHydrationAtSummaryStage(t *testing.T) {
 				assert.Equal(t, all[i].ID, items[i].ID, "row %d", i)
 			}
 		})
+	}
+}
+
+// Epic 76 (debt.go:685): the listing cuts Problem to 60 runes, so a discount
+// reason appended after Problem would be the tail truncation drops. A discounted
+// record with a long Problem must still say so in its listed cell.
+func TestRenderDebtTable_TruncatedProblemKeepsDiscountMarker(t *testing.T) {
+	rec := debtSampleRecords()[0]
+	rec.Problem = strings.Repeat("a very long problem statement ", 8)
+	rec.ConfidenceDiscount = reconcile.PanelWideReason
+	rec.StampID()
+
+	var b bytes.Buffer
+	require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.Contains(t, lines[1], "…", "the problem text is still truncated")
+	assert.Contains(t, lines[1], "(confidence discounted: panel-wide instruction",
+		"the discount marker survives Problem truncation")
+}
+
+// An undiscounted row renders exactly as before the marker existed: Problem
+// truncated to 60 runes and nothing appended.
+func TestRenderDebtTable_UndiscountedProblemUnchanged(t *testing.T) {
+	short := debtSampleRecords()[0]
+	short.Problem = "short problem"
+	long := debtSampleRecords()[0]
+	long.Problem = strings.Repeat("a very long problem statement ", 8)
+
+	for _, rec := range []localdebt.Record{short, long} {
+		var b bytes.Buffer
+		require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
+		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+		require.Len(t, lines, 2)
+		assert.True(t, strings.HasSuffix(lines[1], truncate(rec.Problem, 60)),
+			"the row ends with the truncated Problem alone, got %q", lines[1])
+		assert.NotContains(t, lines[1], "confidence discounted")
 	}
 }

@@ -372,3 +372,48 @@ func TestQualityReportRows_KeepsPairsThatHaveAMeasuredOutcome(t *testing.T) {
 	assert.InDelta(t, 0.25, rows[0].DismissalRate, 0.0001,
 		"the new outcomes must not enter the dismissal-rate denominator")
 }
+
+// TestQualityReportRows_SkipsReconcilerOnlyPairs (Epic 36.1 T3): a pair whose
+// only signal is a reconciler-error count has no outcome in any of this report's
+// columns, so it would render all zeros and read as a flawless reviewer. It is
+// left out, keeping the report's population what it was before the reconciler
+// counts existed; a pair with an outcome beside its reconciler count stays.
+func TestQualityReportRows_SkipsReconcilerOnlyPairs(t *testing.T) {
+	rows := qualityReportRows([]localdebt.QualityRow{
+		{Persona: "diana", Model: "m1", WrongMergeCount: 2, WrongSplitCount: 1, WrongCategoryCount: 1},
+		{Persona: "bruce", Model: "m1", DismissedCount: 1, WrongMergeCount: 1},
+	})
+	require.Len(t, rows, 1)
+	assert.Equal(t, "bruce", rows[0].Persona)
+	assert.Equal(t, 1, rows[0].DismissedCount)
+}
+
+// TestQualityReport_JSONFlagMatchesFormatJSON covers Epic 35.22 T1:
+// `quality-report --json` prints the same bytes as `--format json`.
+func TestQualityReport_JSONFlagMatchesFormatJSON(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "alpha", "gpt-4", localdebt.StatusWontfix, "a.go")
+	seedQualityRecord(t, "beta", "claude", localdebt.StatusResolved, "b.go")
+
+	viaFormat, err := runQualityReportCmd(t, "--format", "json")
+	require.NoError(t, err)
+	viaJSON, err := runQualityReportCmd(t, "--json")
+	require.NoError(t, err)
+
+	var rows []qualityReportRow
+	require.NoError(t, json.Unmarshal([]byte(viaJSON), &rows))
+	require.Len(t, rows, 2)
+	assert.Equal(t, viaFormat, viaJSON)
+}
+
+// TestQualityReport_JSONFlagWithFormatMDIsUsageError: --json with --format md is
+// a usage error (exit 2), raised before the store is read — a corrupt store that
+// would exit 1 if reached still yields exit 2.
+func TestQualityReport_JSONFlagWithFormatMDIsUsageError(t *testing.T) {
+	isolate(t)
+	corruptDebtStore(t)
+
+	_, err := runQualityReportCmd(t, "--json", "--format", "md")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+}

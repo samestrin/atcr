@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -72,16 +71,8 @@ func perAgentMock(t *testing.T, byModel map[string]string, usage bool) *httptest
 // to cluster together.
 func initGitRepoWithWideChange(t *testing.T) {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	run("init", "-q")
 	require.NoError(t, os.WriteFile("seed.txt", []byte("seed\n"), 0o644))
 	run("add", "seed.txt")
@@ -135,6 +126,33 @@ func TestReviewCmd_OneShotAppliesScorecardTrustPrior(t *testing.T) {
 		"the one-shot reconcile threads the reviewer trust prior into RunReconcile")
 	require.NotContains(t, lines, 30,
 		"a singleton from a reviewer with no scorecard history is still sidecarred")
+}
+
+// TestReviewCmd_OneShotAttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// the one-shot reconcile carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from the
+// one-shot RunReconcile call in cli/review.go fails this test.
+func TestReviewCmd_OneShotAttachesOpportunityScopedFlag(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithWideChange(t)
+	seedTrustedReviewerOn(t, "sasha", "m-sasha")
+	seedTrustedReviewerOn(t, "vera", "m-vera")
+
+	srv := perAgentMockProviderWithUsage(t, map[string]string{
+		"m-sasha":    "MEDIUM|wide.go:10|possible nil deref on this path|Guard it|correctness|10|ev",
+		"m-vera":     "MEDIUM|wide.go:30|unused import lingers in this file|Drop it|style|10|ev",
+		"m-stranger": "MEDIUM|wide.go:50|request body is not validated|Validate it|correctness|10|ev",
+	})
+	liveReviewConfig(t, srv.URL, "sasha", "vera", "stranger")
+
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^", "--fail-on", "CRITICAL"))
+
+	id, err := os.ReadFile(filepath.Join(".atcr", "latest"))
+	require.NoError(t, err)
+	dir := filepath.Join(".atcr", "reviews", strings.TrimSpace(string(id)))
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, reconciledOpportunityScoped(t, dir))
 }
 
 // TestReviewCmd_OneShotHonorsConfiguredConsensusOff covers the review half of
@@ -405,16 +423,8 @@ agents:
 // that differ in file content, so payload building has a real diff.
 func initGitRepoWithChange(t *testing.T) {
 	t.Helper()
-	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
-	}
+	wd := requireTempWorkdir(t)
+	run := func(args ...string) { runFixtureGit(t, wd, args...) }
 	run("init", "-q")
 	require.NoError(t, os.WriteFile("a.txt", []byte("one\n"), 0o644))
 	run("add", "a.txt")

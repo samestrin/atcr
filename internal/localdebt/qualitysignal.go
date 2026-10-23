@@ -7,9 +7,10 @@ import (
 
 // qualitysignal.go builds the content-free, per-(persona, model) quality signal
 // (Sprint 30.0) from the append-only local-debt stream. It reads only the
-// Reviewers, Model, and Status fields already present on Record — never code,
-// file paths, or problem/fix text — so the aggregated shape is structurally
-// incapable of carrying finding content.
+// Reviewers, Model, and Status fields already present on Record, plus the Kind
+// of a ReconcilerFeedback annotation (Epic 36.1) — never code, file paths,
+// problem/fix text, or the annotation's reason or partner id — so the
+// aggregated shape is structurally incapable of carrying finding content.
 
 // foldTerminalByID folds the append-only record stream by ID down to at most one
 // TERMINAL record per id, discarding ids whose effective record is not terminal.
@@ -195,6 +196,26 @@ type QualityRow struct {
 	// KEEPS an attempts-exhausted outcome, because re-detection confirms it —
 	// see foldTerminalByID.
 	TerminalOutcomes int
+
+	// WrongMergeCount, WrongSplitCount and WrongCategoryCount are the Epic 36.1
+	// reconciler-error counts: how many findings this persona+model raised
+	// carry a ReconcilerFeedback annotation of each kind. They are a verdict on
+	// how reconcile GROUPED the finding, not on the finding, so they sit apart
+	// from the four outcome counters above — a wrong-merge never raises
+	// DismissedCount, and a wontfix never raises these — and are NOT part of
+	// TerminalOutcomes. A row can carry only these (an annotated finding that
+	// is still open, which is what `atcr debt recluster` leaves behind).
+	//
+	// Like the outcome counters they are CURRENT FOLD STATE: one per finding
+	// id, read from the id's effective record (FoldRecords), whatever its
+	// status. A finding annotated twice counts once, under its latest kind;
+	// an annotation the fold no longer carries — a later re-detection by a
+	// fresh review run supersedes it — no longer counts. Reading the fold
+	// rather than the raw stream is what keeps the count unchanged by
+	// compaction, which keeps only the effective record's annotation.
+	WrongMergeCount    int
+	WrongSplitCount    int
+	WrongCategoryCount int
 }
 
 // AggregateQualitySignal folds the append-only debt stream by ID to its terminal
@@ -207,7 +228,8 @@ type QualityRow struct {
 // Aggregate() grouping/sort idiom (map-of-key + insertion-order slice +
 // sort.SliceStable tie-break).
 //
-// Exclusion rules (all content-free, reading only Reviewers/Model/Status):
+// Exclusion rules (all content-free, reading only Reviewers/Model/Status and an
+// annotation's Kind):
 //   - Records with an empty Model (v1, or v2 with unresolved attribution) are
 //     excluded from every per-model row rather than bucketed under "" (AC 01-02).
 //   - A terminal status outside the four counted outcomes (i.e. deferred)
@@ -221,6 +243,12 @@ type QualityRow struct {
 //     covers), falling back to Reviewers on pre-field records, whose Reviewers
 //     were already narrowed to the attributable set at write time.
 //
+// The reconciler-error counts (Epic 36.1) are a second, independent pass over
+// the fold: every effective record carrying a ReconcilerFeedback annotation,
+// whatever its status, credits its kind to the same persona set under the same
+// rules (empty Model excluded, ModelReviewers falling back to Reviewers,
+// deduplicated) — see QualityRow for why they are fold state.
+//
 // It is a total, pure function: nil input yields a non-nil empty slice, and
 // repeated calls on the same input are byte-for-byte identical (no shared mutable
 // state). Complexity is O(n) fold + O(sum reviewers) group + O(k log k) sort.
@@ -228,8 +256,9 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 	type key struct{ persona, model string }
 	groups := map[key]*QualityRow{}
 	order := []key{}
-
-	for _, rec := range foldTerminalByID(records) {
+	// rowsFor returns the row for each persona rec credits under its model,
+	// creating rows on first sight; nil when rec has no model attribution.
+	rowsFor := func(rec Record) []*QualityRow {
 		// Trim attribution fields the same way Status is normalized below, so a
 		// whitespace-only model or persona is treated as empty/excluded rather than
 		// forming its own spurious group (adversarial 1.8.A). Model slugs and persona
@@ -237,8 +266,38 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		// structurally, not left to input hygiene.
 		model := strings.TrimSpace(rec.Model)
 		if model == "" {
-			continue // attribution-incomplete: excluded from per-model rows
+			return nil // attribution-incomplete: excluded from per-model rows
 		}
+		// ModelReviewers is the attributable subset for the record's Model. An
+		// empty ModelReviewers on a model-carrying record means a pre-field
+		// record, whose Reviewers were already narrowed to exactly that set at
+		// write time — falling back to them preserves the pre-field behavior
+		// for the existing store.
+		reviewers := rec.ModelReviewers
+		if len(reviewers) == 0 {
+			reviewers = rec.Reviewers
+		}
+		var out []*QualityRow
+		seen := map[string]bool{}
+		for _, raw := range reviewers {
+			persona := strings.TrimSpace(raw)
+			if persona == "" || seen[persona] {
+				continue
+			}
+			seen[persona] = true
+			k := key{persona, model}
+			row, ok := groups[k]
+			if !ok {
+				row = &QualityRow{Persona: persona, Model: model}
+				groups[k] = row
+				order = append(order, k)
+			}
+			out = append(out, row)
+		}
+		return out
+	}
+
+	for _, rec := range foldTerminalByID(records) {
 		var dismissed, confirmed, unreproducible, attemptsExhausted int
 		switch normalizeStatus(rec.Status) {
 		case StatusWontfix:
@@ -260,34 +319,33 @@ func AggregateQualitySignal(records []Record) []QualityRow {
 		// and TestProducesQualitySignal_MatchesTheAggregationSwitch surfaces any
 		// drift between the two at the next test run.
 
-		seen := map[string]bool{}
-		// ModelReviewers is the attributable subset for the record's Model. An
-		// empty ModelReviewers on a model-carrying record means a pre-field
-		// record, whose Reviewers were already narrowed to exactly that set at
-		// write time — falling back to them preserves the pre-field behavior
-		// for the existing store.
-		reviewers := rec.ModelReviewers
-		if len(reviewers) == 0 {
-			reviewers = rec.Reviewers
-		}
-		for _, raw := range reviewers {
-			persona := strings.TrimSpace(raw)
-			if persona == "" || seen[persona] {
-				continue
-			}
-			seen[persona] = true
-			k := key{persona, model}
-			row, ok := groups[k]
-			if !ok {
-				row = &QualityRow{Persona: persona, Model: model}
-				groups[k] = row
-				order = append(order, k)
-			}
+		for _, row := range rowsFor(rec) {
 			row.DismissedCount += dismissed
 			row.ConfirmedCount += confirmed
 			row.UnreproducibleCount += unreproducible
 			row.AttemptsExhaustedCount += attemptsExhausted
 			row.TerminalOutcomes++
+		}
+	}
+
+	// The reconciler-error pass reads the plain fold, not foldTerminalByID: an
+	// annotation is a verdict on the grouping, so an open finding carries one as
+	// fully as a closed one, and a deferred one too.
+	for _, rec := range FoldRecords(records) {
+		// An off-vocabulary kind (the write gate refuses one, but the store is
+		// world-appendable) counts nowhere, so it must not create an empty row.
+		if rec.ReconcilerFeedback == nil || !IsKnownFeedbackKind(rec.ReconcilerFeedback.Kind) {
+			continue
+		}
+		for _, row := range rowsFor(rec) {
+			switch rec.ReconcilerFeedback.Kind {
+			case FeedbackWrongMerge:
+				row.WrongMergeCount++
+			case FeedbackWrongSplit:
+				row.WrongSplitCount++
+			case FeedbackWrongCategory:
+				row.WrongCategoryCount++
+			}
 		}
 	}
 

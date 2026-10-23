@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -14,18 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// gitRun runs a git command in dir and returns trimmed stdout, failing the test
-// on error. It mirrors the closure in initRepo so the ignore-aware fixtures below
-// are self-contained.
+// gitRun runs a git command in dir and returns trimmed output, failing the test
+// on error. It is the fanoutGit fixture helper under the name the ignore-aware
+// fixtures below call.
 func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %v: %s", args, out)
-	return strings.TrimSpace(string(out))
+	return fanoutGit(t, dir, args...)
 }
 
 func writeFileAt(t *testing.T, dir, name, content string) {

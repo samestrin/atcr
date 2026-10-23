@@ -402,6 +402,25 @@ func TestWorkLedger_PreAttemptsRecordReadsAsZeroAttempts(t *testing.T) {
 	assert.Equal(t, StatusOK, rec.Bins[0].Outcome)
 }
 
+// shed_files round-trips through chunks.json, and a record with none writes no
+// shed_files key, so a run that shed nothing is written exactly as before
+// (Epic 69 T1).
+func TestChunkRecord_ShedFilesRoundTripAndOmitEmpty(t *testing.T) {
+	rec := chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "greta", ShedFiles: []string{"big1", "big2"},
+		Bins: []chunkRecordBin{{Index: 0, Files: []string{"a.go"}, Outcome: StatusOK}}}
+	data, err := json.Marshal(rec)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"shed_files":["big1","big2"]`)
+	var back chunkRecord
+	require.NoError(t, json.Unmarshal(data, &back))
+	assert.Equal(t, rec, back)
+
+	rec.ShedFiles = nil
+	data, err = json.Marshal(rec)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "shed_files")
+}
+
 // A unit that completes twice (a re-queue) is restamped whole: the second
 // completion's outcome replaces the first's re_packed / served_files and
 // contributed_nothing instead of inheriting them, and both attempts are counted.

@@ -185,7 +185,7 @@ func TestScorecardDoc_ConditionalFieldsParagraphNamesBothOmissions(t *testing.T)
 // which are the verification stage's contract and have no business being demanded
 // of the submission-envelope schema.
 func TestScorecardDoc_PublicEnvelopeRowStatesTheAllTruncatedOmission(t *testing.T) {
-	section := docSection(t, readDoc(t, "scorecard.md"), "### `atcr leaderboard --export [--output path]`")
+	section := docSection(t, readDoc(t, "scorecard.md"), "### `atcr leaderboard export [--output path]`")
 	row := docTableRow(t, section, "survived_skeptic_rate")
 
 	assert.Contains(t, row, "truncated",

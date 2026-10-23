@@ -120,7 +120,7 @@ func newReviewCmd() *cobra.Command {
 	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why (the
 	// parse-time warning pollutes merged-stream output consumers).
 	_ = cmd.Flags().MarkHidden("dir")
-	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
+	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items and report each plan item the diff does not implement (\"Unmet plan item:\", category contract); a missing or empty plan is ignored")
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
@@ -861,13 +861,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag || debateFlag || autoFix {
-		trustPriors, unmeasured := scorecard.ResolveTrustPriorsForReview(result.Dir)
+		trustPriors, opportunityScoped, unmeasured := scorecard.ResolveTrustPriorsForReview(result.Dir)
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
-			ReconciledAt: time.Now(),
-			Partial:      result.Summary.Partial,
-			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
-			TrustPriors:  trustPriors,
-			Consensus:    consensusLevel,
+			ReconciledAt:      time.Now(),
+			Partial:           result.Summary.Partial,
+			Root:              ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+			TrustPriors:       trustPriors,
+			OpportunityScoped: opportunityScoped,
+			Consensus:         consensusLevel,
 		})
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
@@ -883,6 +884,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// Carries the state alongside the count, exactly as `atcr reconcile` does:
 		// a 0 is ambiguous between "ran and routed nothing" and "never ran".
 		log.FromContext(ctx).Info("tier-4 content resolution", "state", rec.Summary.UnresolvedState, "unresolved_filtered", rec.Summary.UnresolvedFiltered)
+		// Mirrors the `atcr reconcile` line: an ignore rule from the reviewed
+		// checkout can shrink what this gate sees, so the count rides stderr.
+		writeSuppressedNotice(cmd.ErrOrStderr(), len(rec.Suppressed))
 		// Persist the inline reconcile's findings to the local TD store, mirroring
 		// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
 		// cli/review.go:747): this one-shot --fail-on/--verify/--debate/--auto-fix

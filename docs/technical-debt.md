@@ -103,6 +103,7 @@ rather than a fabricated value that `resolve` could not match.
 | `counted_through` | string | **v3** — newest sighting `occurrences` accounts for; what makes the count idempotent under repeated compaction |
 | `first_seen` | string | **v3** — timestamp of the id's first append; carried through compaction |
 | `confidence_discount` | string | **v3** — why reconcile lowered `confidence` below what the reviewer count earns (today only the panel-wide-instruction reason); absent when it did not. `atcr debt dashboard` appends it to the Top Priority problem cell as `(confidence discounted: …)` |
+| `reconciler_feedback` | object | **v3** — a verdict on how reconcile grouped the finding, not on the finding: `{"kind": …, "with": …, "reason": …}`, where `kind` is `wrong-merge`, `wrong-split` or `wrong-category` and `with` (only on `wrong-split`, optional) is the partner finding's id. It never changes `status`, and a record carrying it is not counted as a sighting in `occurrences`; absent on every unannotated record |
 
 Reads are tolerant in one direction only: a v1 or v2 record decodes cleanly, with
 zero values for fields that did not exist yet, and a record with no `origin`
@@ -142,8 +143,10 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt add` | File a new item into the store |
 | `atcr debt dashboard` | Render an aggregated Markdown dashboard |
 | `atcr debt resolve` | List open items and record resolutions |
+| `atcr debt recluster` | Record feedback on how reconcile grouped a finding |
 | `atcr debt compact` | Fold the append-only store to its live records |
 | `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
+| `atcr debt sync-outcomes` | Record the outcomes of ticked technical-debt README rows that carry a `debt:<id>` token; `--report` shows whether the scorecard gate is met |
 
 ### `atcr debt list`
 
@@ -226,15 +229,31 @@ atcr debt dashboard                                   # print the dashboard
 atcr debt dashboard --output docs/debt-report.md      # write it to a file
 atcr debt dashboard --top 20                          # the 20 highest-priority items
 atcr debt dashboard --output docs/debt-report.md --check   # exit non-zero if stale
+atcr debt dashboard --json                            # the same sections as JSON
 ```
 
-Flags: `--store`, `--output`, `--top`, `--check`.
+Flags: `--store`, `--output`, `--top`, `--check`, `--json`.
 
 `--check` compares against the file named by `--output`, so the two are used
 together; `--check` without `--output` is a usage error.
 
+`--json` prints the same sections as one JSON document on stdout: `totals`, then
+`by_severity`, `by_component`, `by_month` and `top_priority`, each an array with
+one element per row of the matching table (empty, never `null`, when the table
+is). A `top_priority` row carries `id`, `severity`, `file`, `line`,
+`est_minutes` and `problem`. Free text is scrubbed of secret-shaped tokens as in
+the Markdown. `--json` with `--output` or `--check` is a usage error (exit 2);
+redirect stdout to save the JSON.
+
 The render is **deterministic** — no generation timestamp, age grouped by
 calendar month — so `--check` flags real content drift, not clock movement.
+
+The totals header and the By Severity table end with a **Reconciler
+corrections** count: findings whose effective record carries a
+`reconciler_feedback` annotation recorded by `atcr debt recluster`. It is not a
+status bucket and not a summand of Total — an annotated finding is still
+counted under its status — which is why it prints last, after every status
+counter.
 Secret-shaped tokens (bearer / `sk-` API keys) accidentally pasted into finding
 text are scrubbed from the output; file paths and finding ids are preserved (both
 are required core data, and scrubbing an id would break the join contract).
@@ -265,6 +284,49 @@ ground truth when scoring which review lenses produce real findings.
 
 Resolution is append-only: a terminal record is appended, never edited in place,
 and the original id is preserved so the resolution lines up with the finding.
+
+### `atcr debt recluster`
+
+Records a verdict on how **reconcile grouped** a finding — not on the finding
+itself. The reconciler clusters similar findings from different reviewers into
+one; when that clustering is wrong, `recluster` says so:
+
+```bash
+atcr debt recluster <id> --kind wrong-merge    --reason "two unrelated races merged"
+atcr debt recluster <id> --kind wrong-split    --with <finding-id> --reason "one issue filed twice"
+atcr debt recluster <id> --kind wrong-category --reason "this is correctness, not style"
+```
+
+The three `--kind` values:
+
+- `wrong-merge` — reconcile merged distinct issues into this finding.
+- `wrong-split` — reconcile split one issue, so this finding and another should
+  be one; name the other finding with `--with <finding-id>` (the only kind that
+  takes a partner).
+- `wrong-category` — reconcile filed this finding under the wrong category.
+
+Flags: `--store`, `--kind` (required, one of the three above), `--with`
+(the partner finding's id; only with `--kind wrong-split`, and it must name an
+existing finding other than the one named positionally), `--reason`
+(required). The id is positional and is the leading column of `atcr debt list`.
+
+The feedback is appended to the store as a `reconciler_feedback` annotation (see
+the [record schema](#record-schema-v3)). It deliberately changes nothing else:
+the finding's `status` stays as it is, the annotation is not counted as a
+sighting in `occurrences`, and it does not move the `wontfix` count — close or
+dismiss the finding itself with `atcr debt resolve`. The separation matters
+because a `wontfix` is a verdict on the reviewer (ground truth for the quality
+signal), while a recluster annotation is a verdict on the reconciler's grouping.
+The dashboard reports these as **Reconciler corrections**, apart from
+`Wontfix`, and the opt-in quality signal counts them on their own keys (see
+[docs/telemetry.md](telemetry.md#quality-signal-payload-schema)).
+
+The annotation belongs to the finding, not to one record: a finding keeps its
+newest annotation when reconcile detects it again, and when `atcr debt compact`
+folds its history. A later `recluster` on the same finding replaces it.
+
+An unknown id, an unknown `--kind`, a `--with` on a kind that takes no partner,
+or an empty `--reason` is a usage error (exit 2).
 
 ### `atcr debt compact`
 
@@ -396,6 +458,171 @@ Refreshing excerpts on every reconcile would re-append a record whenever a revie
 reworded its narrative, and store growth would stop being bounded by finding count
 — which is the whole reason the append path dedupes. Running the repair once, on
 demand, does not. The pass is idempotent: a second run rewrites nothing.
+
+### `atcr debt sync-outcomes`
+
+Seats often close debt by ticking a row in a project's own technical-debt
+README table rather than through `atcr debt resolve`. Until something carries
+that outcome back, the ledger record stays open and the scorecard has no
+ground truth for the reviewer that raised it. `sync-outcomes` is that bridge.
+
+```bash
+atcr debt sync-outcomes --td path/to/technical-debt/README.md
+atcr debt sync-outcomes --report    # read-only; exits 0 either way
+```
+
+**The join is the `debt:<id>` token and nothing else.** A row is matched to a
+ledger record only when its Problem or Source cell carries `debt:` followed by
+the record's 16-hex id. No row is ever matched by file or problem text: rows
+written before the convention carry no id, and that kind of matching joined 0
+of 374 closed rows when it was measured.
+
+**Capture convention.** When you copy a ledger finding into a TD table row, put
+`debt:<id>` in its Problem or Source cell; the id is the leading column of
+`atcr debt list`. When you fix a ledger-backed finding, run
+`atcr debt resolve <id>` directly. `sync-outcomes` is the catch-up for a row
+that was ticked without it.
+
+The row's checkbox marker decides the status, following the TD legend that
+`llm-support td-stats` and `td-filter` read:
+
+| Marker | Legend | Recorded as |
+|--------|--------|-------------|
+| `[x]` or `[X]` | Resolved | `resolved` |
+| `[-]` | Unreproducible (closed without a fix) | `unreproducible` |
+| `[ ]` | Open | nothing; reported and skipped |
+| `[/]` | Deferred | nothing; reported and skipped |
+
+The legend has no marker for `wontfix` or `attempts-exhausted`, so the sync
+never writes either; record those with `atcr debt resolve <id> --status ...`
+and a typed `--reason`. An `unreproducible` record gets the `--reason` its
+status requires from the row: where it came from, and the row's Problem cell.
+A `resolved` record keeps the finding's existing justification, as
+`atcr debt resolve <id>` does.
+
+Each outcome is appended through the same path `atcr debt resolve <id>` uses,
+so reviewer attribution is carried the same way. Run the sync before
+`llm-support td-clean`, which deletes `[x]` rows. Every row it does not record
+is reported, and the run still exits 0:
+
+- a row with no token (counted, not listed);
+- a malformed token, or a row naming more than one id;
+- an unknown marker, or an open or deferred one;
+- an id the store does not hold;
+- two rows that give one id different outcomes (neither is recorded);
+- an id already closed as a different settled status;
+- an id that was re-detected after this outcome was recorded. The row is
+  stale, and re-closing it would close a regression on the strength of the
+  old fix.
+
+**Re-running appends nothing.** An id whose folded record already has the
+row's status counts as `already recorded`.
+
+`--report` prints each persona's counted terminal outcomes (`resolved`,
+`wontfix`, `unreproducible`, `attempts-exhausted`, folded across models, with
+persona names trimmed and lower-cased). It then prints `GATE MET` when at least
+10 personas have 20 or more, the scorecard's `minConfirmationOutcomes` floor,
+and `GATE NOT MET: n of 10 personas at 20` otherwise. `--report` cannot be
+combined with `--td`.
+
+## Ignoring false positives (`atcr ignore`)
+
+`atcr debt resolve --status wontfix` closes a backlog item that is already in
+the store. `atcr ignore` is the earlier lever: it stops a known false positive
+from being **reported** at all, by every future `atcr reconcile` on this
+checkout.
+
+```bash
+atcr ignore 8421025ce7cde4d3 --reason "sanitizer-bound test fixture, never shipped"
+atcr ignore 8421025ce7cde4d3 --reason "..." --review 2026-10-20-abcdef
+```
+
+The command reads a review's `reconciled/findings.json` (the latest review by
+default; `--review` picks another id or directory), finds the finding with the
+given id, and appends one rule for it to `.atcr/ignore.yaml`. `--reason` is
+required — say why the finding is a false positive. Re-running it on a finding
+an identical rule already covers is a no-op that says so.
+
+The derived rule never stores the finding's id or line: both drift with every
+edit above the finding (the id hashes file, line and problem). It keys on the
+finding's **file** and **category** plus a **match** regex-quoted from its
+problem text, whose `(symbol) ` anchor keeps the rule on the same symbol after
+the line moves.
+
+The derived `file` is the finding's path with each glob metacharacter turned
+into a one-character class, so a path such as `app/[id]/page.tsx` is written as
+`app/[[]id]/page.tsx` and matches only itself, not `app/i/page.tsx`.
+
+### The `.atcr/ignore.yaml` format
+
+```yaml
+rules:
+  - file: internal/store/cache.go          # repo-relative path or glob; ** spans segments
+    category: performance                  # optional; narrows the rule to one category
+    match: Unbounded map grows without eviction  # optional RE2 regex on the problem text
+    reason: bounded by the caller's pool   # required
+  - package: internal/legacy               # alternative scope: one package directory
+    reason: vendored code, frozen upstream
+```
+
+One document, one `rules:` list. Each rule carries:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `reason` | always | Why the finding is a false positive. `report.md` lists it beside the suppressed count, so a rule nobody can justify cannot hide a finding silently. |
+| `file` | one of `file`/`package` | Repo-relative, slash-separated path or glob. `*` never crosses a `/`; `**` matches zero or more whole segments. |
+| `package` | one of `file`/`package` | A package directory (`.` for the repo root), matched exactly, not as a prefix. |
+| `category` | no | Narrows the rule to one finding category, compared case-insensitively. |
+| `match` | no | An RE2 regex tested unanchored against the finding's problem text. |
+
+A rule covers a finding when **every** field it sets holds. Rules are matched in
+file order; the first match wins. A finding with no file never matches — every
+rule is scoped by file or package. Hand-written rules are welcome: `atcr ignore`
+edits through the YAML node tree, so comments survive, and the write is atomic.
+
+### Guardrails
+
+The file is validated as a whole on every read — by `atcr ignore` before it
+appends and by `atcr reconcile` before it applies the rules — and **any invalid
+rule rejects the whole file** with an error naming the rule, rather than letting
+a bad rule silently match too much or never match:
+
+- `reason` is mandatory on every rule.
+- Every rule needs a `file` or `package` scope; a rule cannot be repo-wide.
+- A catch-all scope must be narrowed. A `file` glob made only of `*` and `**`
+  segments (such as `**`, `*` or `**/*`), a `file` of `.`, or a `package` of `.`
+  names no particular file, so a rule with one of these scopes is refused
+  unless it also sets `match` or `category`. The file is read from the reviewed
+  checkout, so without this one line in a pull request could drop every finding
+  and leave the gate green.
+- Paths must stay inside the repository: no absolute paths, no `..` segment, and
+  backslashes are folded to slashes first so `..\x.go` is caught too.
+- `match` must compile as RE2 (Go's `regexp`): a PCRE-only construct is an
+  error, not a rule that never fires.
+- Decoding is strict: a typo'd or unsupported key such as `line:` is an error.
+  There is deliberately **no line field** — a line number drifts with every edit
+  above the finding.
+- `file` must parse as a glob: `atcr ignore` will not write a malformed one such
+  as `a[.go`, and one written by hand fails the whole file at load, not
+  silently at match. A backslash cannot escape a metacharacter (it is folded to
+  a slash); write a literal `[`, `*` or `?` as `[[]`, `[*]` or `[?]`.
+
+### What a match does
+
+On the next `atcr reconcile`, a matched finding leaves the primary stream:
+`reconciled/findings.json` and `findings.txt` no longer carry it, and it lands
+in [`reconciled/suppressed.json`](findings-format.md#companion-artifact-suppressedjson)
+with the rule recorded in its `suppressed_by` field. `report.md` ends with a
+`## Suppressed Findings` footer counting them and listing each distinct reason.
+When anything was suppressed, `atcr reconcile` (and the one-shot `atcr review`
+gate) also prints `atcr: N finding(s) suppressed by .atcr/ignore.yaml rules` to
+stderr, and `atcr github` adds the count to the check run's title and summary,
+so a CI reader sees it beside the gate result. Nothing is printed when the
+count is zero.
+The scorecard still charges each suppressed finding to its reviewer's
+`findings_raised` — a rule says the finding is not worth reporting, not that the
+reviewer was wrong to raise it — but it is never corroborated and earns no
+`weighted_credit` (see [scorecard.md](scorecard.md#ignore-suppressed-findings)).
 
 ## End to end
 

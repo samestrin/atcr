@@ -60,7 +60,7 @@ If the pool partially fails (some agents error, at least one succeeds), reconcil
 
 ## Commands
 
-Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `skill`) expose them via `atcr <command> --help`; never invent subcommand names.
+Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `leaderboard`, `skill`, `config`) expose them via `atcr <command> --help`; never invent subcommand names. For machine-readable output from a reporting command (`report`, `quality-report`, `history`, `scorecard`, `leaderboard`, `debt dashboard`, `personas list`), pass `--json` (`audit-report` has no machine-readable output yet); `atcr --help` lists the reporting commands under one `Reporting Commands` heading.
 
 | Command | What it does |
 |---------|--------------|
@@ -80,11 +80,12 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr doctor` | Self-test every configured model endpoint |
 | `atcr trust` | Authorize project-defined providers (.atcr/registry.yaml) |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
-| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate |
+| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate; `--json` prints the table's rows, and `atcr leaderboard export [--output <file>]` prints the anonymized public submission document |
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
 | `atcr debt` | Query and report on technical debt; `atcr debt resolve` lists and marks-resolved the public `.atcr/`-scoped local store, and autonomously fixes its items through the RED→GREEN→ADVERSARIAL→REFACTOR cycle — load the sibling `debt-resolve.md` on demand for that route |
+| `atcr ignore` | Suppress a false-positive finding in future reconciles: `atcr ignore <finding-id> --reason <why>` appends a rule to `.atcr/ignore.yaml` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
 | `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the skill directory to your harness's skills location. If the destination exists and is not empty, the command exits 2 — surface its message and ask the user before re-running with `--force`, and report any stale-file warning it prints on stderr |

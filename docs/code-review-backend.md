@@ -121,13 +121,23 @@ nothing writes that reason to disk, so it cannot be recovered from
   `unresolved_filtered`; see below for why a bare `0` cannot be interpreted. The
   state qualifies a `0`; it does not cap the count. `unavailable` in particular
   is compatible with a nonzero count — see its row below.
+- `opportunity_scoped` — per lowercase reviewer name, whether its trust prior
+  was computed over an opportunity-scoped denominator (`true`: only the runs
+  where that reviewer had something in its remit to find) or the full one
+  (`false`). Both kinds of rate are compared against the same trust
+  thresholds; this says which definition produced each. `atcr` writes one
+  entry per reviewer that has a trust prior: `true` for the nine personas with
+  an in-repo remit, `false` for the five registry-only lenses. Absent when no
+  reviewer has a prior. It is a record only: it changes no finding.
 
 ## Discounted confidence
 
 A finding two or more reviewers agree on is normally `HIGH`. When every one of
 them filed an `invariant` finding in the same file quoting near-identical
 evidence, the agreement is what every persona was told to look for, not
-independent corroboration, so the finding is kept at `MEDIUM`. Its
+independent corroboration, so the finding is kept at `MEDIUM`. Every reviewer
+must quote something: if any of them left the evidence empty, there is no
+shared quote, and the finding stays `HIGH`. A discounted finding's
 `findings.json` record then carries one more field:
 
 - `confidence_discount` — why the confidence is lower than the reviewer count
@@ -212,5 +222,14 @@ included, so an overwritten sidecar is recoverable from
   review to a specific plan's work items, pass `atcr review --sprint-plan
   <path>`: the plan's markdown content is injected as a `SCOPE CONSTRAINT`
   before the diff so reviewers suppress findings unrelated to those work
-  items. A missing or empty plan is ignored; an unreadable one warns and
-  proceeds.
+  items. The plan is also checked against the diff: for each work item the
+  diff does not implement, a reviewer files one finding whose `problem`
+  starts with `Unmet plan item:` followed by the item, with category
+  `contract`, cited file-level (no line number) on the changed file where the
+  work belongs, so the grounding gate keeps it. Pass the plan for the work
+  this diff is meant to finish: every item in the file is checked, so a whole
+  epic plan reviewed against one task's diff reports the other tasks as
+  unmet. A missing or empty plan is
+  ignored and the review runs diff-wide; an unreadable one warns and
+  proceeds. The plan text is part of the reviewer prompt, so a change to it
+  (or to this contract) misses the diff cache.

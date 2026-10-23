@@ -1,0 +1,64 @@
+[
+  {
+    "name": "bruce",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "greta",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "kai",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "mira",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "dax",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "sasha",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "penny",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "ingrid",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "otto",
+    "version": "built-in",
+    "source": "built-in",
+    "language": []
+  },
+  {
+    "name": "security/owasp",
+    "version": "1.0.0",
+    "source": "community",
+    "language": [
+      "go"
+    ]
+  }
+]

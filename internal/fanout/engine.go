@@ -41,8 +41,8 @@ var errEmptyResponse = errors.New("reviewer returned an empty response")
 // silentLaneMaxTokensOut output tokens on more than silentLaneMinTokensIn input
 // tokens most likely skipped its review rather than finished it: ronin-backup
 // replied NO FINDINGS in 10 tokens on about 158k in. Both bounds are strict.
-// Named, not inlined, because Epic 35.16.11.2.2.8 scores its `silent` outcome
-// on the same two numbers.
+// Named, not inlined, because Epic 35.16.11.2.2.8 counts silent chunks
+// (`silent_chunks`) on the same two numbers.
 const (
 	silentLaneMaxTokensOut = 50
 	silentLaneMinTokensIn  = 10000
@@ -50,10 +50,19 @@ const (
 
 // isSilentLane is the one silent-lane predicate (Epic 35.16.11.2.2.8 T1): the
 // 35.16.11.2.2.7 warning and the per-chunk SilentChunks count both call it, so
-// the two cannot drift. answer is the think-stripped reply; tokens are the one
-// attempt's, never a chunked persona's sum.
-func isSilentLane(answer string, tokensIn, tokensOut int, inv llmclient.Invocation) bool {
-	return stream.IsNoFindings(answer) && tokensOut < silentLaneMaxTokensOut &&
+// the two cannot drift. noFindings is stream.IsNoFindings of the think-stripped
+// reply, computed once by the caller, which reuses it for the unparseable
+// check; tokens are the one attempt's, never a chunked persona's sum.
+//
+// An attempt's tokens are still summed across its turns: a tool-loop agent's
+// usage covers every tool round-trip, not just the final answer. So a tool
+// agent whose final turn answered NO FINDINGS in a handful of tokens can read
+// as not silent here, and its chunk is not counted in `silent_chunks` — a
+// false `fit`. The sum only grows the token counts, so it can never make a
+// genuine review read as silent: never a false `unfit`. Documented, not
+// changed (Epic 71): per-turn usage is not recorded.
+func isSilentLane(noFindings bool, tokensIn, tokensOut int, inv llmclient.Invocation) bool {
+	return noFindings && tokensOut < silentLaneMaxTokensOut &&
 		tokensIn > silentLaneMinTokensIn &&
 		registry.ThinkingEnabled(inv.Thinking, inv.ThinkingLevel)
 }
@@ -982,8 +991,11 @@ func WithSlotDone(f func(i int, r Result)) EngineOption {
 
 // WithSlotStart wires a per-slot lease hook: f(i) runs once for every slot a
 // worker takes, before its provider call, and is always followed by the slot's
-// WithSlotDone hook. f is called concurrently and must be goroutine-safe and
-// must not panic.
+// WithSlotDone hook. The converse does not hold: a slot the run's cancellation
+// reaches before a worker takes it (including every slot when ctx is already
+// cancelled when Run is called) gets a WithSlotDone call with no f(i) before
+// it, so a slotDone hook must not assume its slot was leased. f is called
+// concurrently and must be goroutine-safe and must not panic.
 func WithSlotStart(f func(i int)) EngineOption {
 	return func(e *Engine) { e.slotStart = f }
 }
@@ -1494,6 +1506,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				r.UnparseableResponse = true
 			} else {
 				answer, _ := llmclient.SplitThink(r.Content)
+				// Evaluated once: the silent-lane predicate and the unparseable
+				// check below both read it.
+				noFindings := stream.IsNoFindings(answer)
 				// Silent lane (Epic 35.16.11.2.2.7 T1): a clean review this short
 				// on a payload this large is more likely a reasoner that skipped
 				// the review than one that finished it. A warning only — status,
@@ -1505,13 +1520,13 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				//
 				// The same predicate counts the chunk as silent (Epic 35.16.11.2.2.8
 				// T1), so the warning and the fit signal cannot drift.
-				if isSilentLane(answer, r.TokensIn, r.TokensOut, a.Invocation) {
+				if isSilentLane(noFindings, r.TokensIn, r.TokensOut, a.Invocation) {
 					r.SilentChunks = 1
 					log.FromContext(ctx).Warn("reviewer answered NO FINDINGS in very few tokens on a large payload; the lane may have skipped its review",
 						"agent", a.Name, "model", a.Invocation.Model,
 						"tokens_in", r.TokensIn, "tokens_out", r.TokensOut)
 				}
-				if !stream.IsNoFindings(answer) {
+				if !noFindings {
 					r.UnparseableResponse = true
 					// Distinct signal (TD engine.go:533): the strip consumed the WHOLE
 					// reply as reasoning — content was entirely a think run, not merely
@@ -1584,11 +1599,20 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			// 2 and a successful final reply. Nothing was exhausted and the walk
 			// bought findings, so that walk logs nothing; the r.ThinkSuppressed
 			// conjunct is live on this arm (TD internal/fanout/engine.go:1175).
+			//
+			// The same shape with a final reply that parsed ZERO findings (an
+			// unparseable answer or a committed clean NO FINDINGS) fell through both
+			// arms and logged nothing, losing the burned-attempt count. It gets its
+			// own line: the attempts were burned, but a member answered, so the
+			// chain was not exhausted and the chain wording would be false.
 			if thinkOnlyAttempts > 1 && r.ThinkSuppressed {
 				log.FromContext(ctx).Warn("think-only replies exhausted the fallback chain: the walk bought zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			} else if r.ThinkSuppressed {
 				log.FromContext(ctx).Warn("the reply was a think-only run, so the walk bought zero findings",
+					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
+			} else if thinkOnlyAttempts > 1 && r.ParsedFindingCount() == 0 {
+				log.FromContext(ctx).Warn("think-only attempts burned before a reply with zero findings",
 					"agent", s.Primary.Name, "attempts", len(chain), "think_only_attempts", thinkOnlyAttempts)
 			}
 			// Carry the WALK total onto the returned Result. `r` is fresh per chain
@@ -1807,6 +1831,11 @@ func thinkSuppressedContent(content string) bool {
 // invokeAgent metrics wrapper (it produced a result), but no provider round-trip
 // is recorded, which is the whole point. On a miss it calls live and stores a
 // successful result; a failed/timed-out review is never cached.
+//
+// Because a hit carries no usage, the silent-lane predicate (isSilentLane)
+// never fires on it: a replayed NO FINDINGS is never counted in
+// `silent_chunks`, whatever the original live call's token counts were.
+// Documented, not changed (Epic 71): the cache entry stores no usage.
 func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 	if e.cache == nil || a.CacheKey == "" {
 		return e.invokeSingleShot(ctx, a)

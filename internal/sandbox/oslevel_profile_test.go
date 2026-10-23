@@ -1582,3 +1582,107 @@ func TestSandboxExecProfile_ReadTierAncestorsAreStatable(t *testing.T) {
 		`(allow file-read-data (literal "/System/Library/CoreServices/SystemVersion.plist"))`,
 		"the xcrun shim behind /usr/bin/python3 reads the host OS version from this plist")
 }
+
+func TestSandboxExecProfile_SysctlReadsAreNarrowedToTheMeasuredSet(t *testing.T) {
+	// TD-013 / epic 35.23.1 T1. An unfiltered `(allow sysctl-read)` handed
+	// model-authored code the host's identity. The narrowed rule must be
+	// filtered, carry the measured set, and grant no name or prefix covering the
+	// fingerprint names no toolchain leg read in the measurement.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	var sysctlRules []string
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.Contains(line, "sysctl-read") {
+			sysctlRules = append(sysctlRules, line)
+		}
+	}
+	require.Len(t, sysctlRules, 1, "exactly one sysctl-read rule; profile:\n%s", profile)
+	rule := sysctlRules[0]
+	assert.NotEqual(t, "(allow sysctl-read)", rule, "an unfiltered sysctl-read allow leaks host identity (TD-013)")
+	assert.True(t, strings.HasPrefix(rule, "(allow sysctl-read (sysctl-name"),
+		"the rule must be filter-scoped: %s", rule)
+
+	// Spot-check the measured set: what dyld/libsystem, the shells, Go and
+	// Python read at start-up. Dropping any of these is a toolchain-breaking
+	// change that only the darwin integration suite would otherwise catch.
+	for _, name := range []string{"kern.osvariant_status", "security.mac.lockdown_mode_state", "kern.bootargs", "hw.pagesize_compat", "hw.ncpu"} {
+		assert.Contains(t, rule, `(sysctl-name "`+name+`")`, "measured name %s must be granted", name)
+	}
+	assert.Contains(t, rule, `(sysctl-name-prefix "hw.optional.")`, "Go/Python CPU-feature probes must be granted")
+
+	for _, leak := range []string{"hw.model", "kern.uuid", "hw.serialnumber", "kern.hostuuid", "hw.memsize"} {
+		assert.NotContains(t, rule, `"`+leak+`"`, "%s was not read by any measured leg and fingerprints the host", leak)
+		for _, prefix := range darwinSysctlReadPrefixes {
+			assert.False(t, strings.HasPrefix(leak, prefix), "prefix %q widens the grant to %s", prefix, leak)
+		}
+	}
+	for _, name := range append(append([]string{}, darwinSysctlReadNames...), darwinSysctlReadPrefixes...) {
+		assert.Regexp(t, `^[a-z][a-z0-9_.]*[a-z0-9_.]$`, strings.ToLower(name),
+			"sysctl names are emitted into the profile DSL verbatim and must stay plain identifiers: %q", name)
+	}
+}
+
+func TestSandboxExecProfile_ExecIsNarrowedToTheMeasuredSubpaths(t *testing.T) {
+	// TD-012 / epic 35.23.1 T2. An unfiltered `(allow process-exec*)` let the
+	// workload start any binary on the host, and an unfiltered
+	// `(allow file-map-executable)` let it map any file as code. Both rules must
+	// now be subpath-scoped to the measured set, plus the run's own trees.
+	cfg, spec := profileFixture(t)
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+
+	assert.NotContains(t, profile, "(allow process-exec*)\n", "an unfiltered exec allow lets the workload start any host binary (TD-012)")
+	assert.NotContains(t, profile, "(allow file-map-executable)\n", "an unfiltered map-executable allow lets the workload map any file as code (TD-012)")
+
+	exec := map[string]bool{}
+	for _, dir := range clauseOperands(t, profile, "(allow process-exec*", "subpath") {
+		exec[dir] = true
+	}
+	// The measurement: the shells and coreutils from /bin and /usr/bin, sysctl
+	// from /usr/sbin, the Go and Python toolchains under /opt/homebrew, git and
+	// make under the Command Line Tools, and `go test`'s own test binary under
+	// the per-run scratch tree.
+	for _, dir := range []string{"/bin", "/usr/bin", "/usr/sbin", "/opt/homebrew", "/Library/Developer/CommandLineTools", cfg.ScratchDir} {
+		assert.True(t, exec[dir], "measured exec subpath %q must be granted; got %v", dir, exec)
+	}
+	for _, dir := range vettedToolchainPrefixes {
+		assert.True(t, exec[dir], "vetted toolchain prefix %q must stay executable (node/npm and the CI Go live there); got %v", dir, exec)
+	}
+	assert.True(t, exec[spec.SnapshotDir], "a read-only run executes the same tree a Writable run executes from its scratch copy; got %v", exec)
+
+	// Nothing wider than what was measured: never the root, never a parent of a
+	// measured dir, never the module cache (read-only data, not code), never the
+	// host temp roots or a home tree.
+	for _, dir := range []string{"/", "/usr", "/private", "/private/var", "/private/var/folders", "/opt", "/Library", "/Users", "/Applications", "/tmp", "/private/tmp", cfg.ModuleCacheDir} {
+		assert.False(t, exec[dir], "%q must not be executable; got %v", dir, exec)
+	}
+	assert.Len(t, exec, 5+len(vettedToolchainPrefixes), "exec subpaths: system dirs, toolchain prefixes, snapshot and scratch only; got %v", exec)
+
+	mapExec := map[string]bool{}
+	for _, dir := range clauseOperands(t, profile, "(allow file-map-executable", "subpath") {
+		mapExec[dir] = true
+	}
+	// Measured: file-map-executable fired only for Python.framework under
+	// /opt/homebrew and libxcrun.dylib under the Command Line Tools. System
+	// dylibs come from the shared cache and the main executable is mapped by the
+	// kernel, so neither needs the rule.
+	assert.Equal(t, len(vettedToolchainPrefixes), len(mapExec), "map-executable is the toolchain tier only; got %v", mapExec)
+	for _, dir := range vettedToolchainPrefixes {
+		assert.True(t, mapExec[dir], "toolchain prefix %q must stay mappable; got %v", dir, mapExec)
+	}
+}
+
+func TestSandboxExecProfile_ExecRuleOmitsAnAbsentScratchDir(t *testing.T) {
+	// An empty ScratchDir is valid for a read-only run and must not emit
+	// (subpath ""), which is not a path at all.
+	cfg, spec := profileFixture(t)
+	cfg.ScratchDir = ""
+	profile, err := sandboxExecProfile(cfg, spec)
+	require.NoError(t, err)
+	for _, dir := range clauseOperands(t, profile, "(allow process-exec*", "subpath") {
+		assert.NotEmpty(t, dir)
+	}
+	assert.NotContains(t, profile, `(subpath "")`)
+}

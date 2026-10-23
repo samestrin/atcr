@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -321,4 +323,36 @@ func validateRangeFlags(cmd *cobra.Command) error {
 		return usageError(errors.New("--merge-commit cannot be combined with --base/--head"))
 	}
 	return nil
+}
+
+// addJSONFlag declares the shared --json flag (Epic 35.22): the one way every
+// report-producing command offers machine-readable output. On a command that
+// also has --format, read the effective format through formatWithJSON, which
+// makes --json sugar for --format json; elsewhere read it with boolFlag.
+func addJSONFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("json", false, "emit machine-readable JSON (on a command with --format, the same as --format json)")
+}
+
+// writeJSON writes v to w as indented JSON, the layout every --json command
+// prints. The write error is returned so a broken pipe is not reported as
+// success.
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
+
+// formatWithJSON returns cmd's effective --format, folding in the shared --json
+// flag: --json alone means "json", and --json with an explicit --format other
+// than json is a usage error (exit 2) rather than a silent pick of one of them.
+// Keyed on --json's value, not Changed, so --json=false leaves --format alone.
+func formatWithJSON(cmd *cobra.Command) (string, error) {
+	format, _ := cmd.Flags().GetString("format")
+	if !boolFlag(cmd, "json") {
+		return format, nil
+	}
+	if cmd.Flags().Changed("format") && format != "json" {
+		return "", usageError(fmt.Errorf("--json cannot be combined with --format %s: --json is shorthand for --format json", format))
+	}
+	return "json", nil
 }

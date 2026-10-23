@@ -30,6 +30,7 @@ func newReportCmd() *cobra.Command {
 		RunE:  runReport,
 	}
 	cmd.Flags().String("format", "md", "output format: "+formatHelp())
+	addJSONFlag(cmd)
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
 	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
@@ -49,8 +50,12 @@ func formatHelp() string {
 
 func runReport(cmd *cobra.Command, args []string) error {
 	// Validate --format against the enum before any I/O (TD-003): a bad value is
-	// a usage error (exit 2), consistent with the rest of the CLI.
-	format, _ := cmd.Flags().GetString("format")
+	// a usage error (exit 2), consistent with the rest of the CLI. --json is
+	// folded in first, so `--json --format md` is the same usage error class.
+	format, err := formatWithJSON(cmd)
+	if err != nil {
+		return err
+	}
 	if !report.ValidFormat(format) {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are %s", format, report.Formats()))
 	}

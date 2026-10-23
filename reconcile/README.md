@@ -259,6 +259,15 @@ result safely.
   complete no-op, so confidence and filtering are byte-identical to the
   pre-trust-prior behavior until a reviewer earns enough history to have an
   opinion about it.
+- **Denominator marker — `Options.OpportunityScoped`.** A caller-supplied map,
+  keyed like `TrustPriors`, saying whether each reviewer's rate was computed over
+  an opportunity-scoped denominator (`true`: only the runs where the reviewer had
+  something in its remit to find) or the full one (`false`). Both kinds of rate
+  meet the same trust thresholds, so the map is echoed verbatim (as a copy) in
+  `Summary.OpportunityScoped` (`opportunity_scoped` in `summary.json`) for a
+  consumer that needs to tell them apart. The pipeline never reads it: no
+  finding, confidence or sidecar entry changes, and a nil or empty map omits the
+  key entirely.
 
 ## JSON format adapter
 
@@ -275,6 +284,9 @@ unknown fields, but an embedder decoding `summary.json` into its own struct with
 `DisallowUnknownFields` must add them (or upgrade) before consuming output from
 ATCR versions that emit them. `unresolved_state` is `omitempty`, so a run that
 did not resolve content still decodes byte-identically to before.
+`summary.opportunity_scoped` (reconcile `v0.11.0`) is additive and `omitempty`
+on the same terms: it appears only when the caller attached
+`Options.OpportunityScoped`.
 
 ```go
 sources, err := json.Decode(inputBytes)        // []reconcile.Source

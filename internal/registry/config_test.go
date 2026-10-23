@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // AC 01-01 / 01-04: AgentsByRole filters agents by role, normalizing empty Role
@@ -90,6 +91,45 @@ func TestAgentsByRole(t *testing.T) {
 			},
 			role:     RoleReviewer,
 			wantKeys: []string{"a1", "a2"},
+		},
+		{
+			name: "filter redteam from mixed registry",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"a3": {Provider: "p", Model: "m", Role: RoleJudge},
+				"a4": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleRedTeam,
+			wantKeys: []string{"a4"},
+		},
+		{
+			name: "redteam agent leaves reviewer lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"a3": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleReviewer,
+			wantKeys: []string{"a1", "a2"},
+		},
+		{
+			name: "redteam agent leaves skeptic lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"a2": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleSkeptic,
+			wantKeys: []string{"a1"},
+		},
+		{
+			name: "redteam agent leaves judge lookup unchanged",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: RoleJudge},
+				"a2": {Provider: "p", Model: "m", Role: RoleRedTeam},
+			},
+			role:     RoleJudge,
+			wantKeys: []string{"a1"},
 		},
 	}
 	for _, tt := range tests {
@@ -524,6 +564,66 @@ agents:
 	assert.Equal(t, "skeptic", a.Role, "role parsed")
 }
 
+// TestRegistryLoad_RedTeamRole verifies a role: redteam agent loads, keeps
+// its canonical lowercase role, and is returned by AgentsByRole(RoleRedTeam)
+// but not by the reviewer, skeptic or judge lookups.
+func TestRegistryLoad_RedTeamRole(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  rt:
+    provider: p
+    model: m
+    role: RedTeam
+  rev:
+    provider: p
+    model: m
+`))
+	require.NoError(t, err)
+	assert.Equal(t, RoleRedTeam, reg.Agents["rt"].Role, "role normalized to lowercase")
+	got := reg.AgentsByRole(RoleRedTeam)
+	require.Len(t, got, 1)
+	assert.Contains(t, got, "rt")
+	assert.NotContains(t, reg.AgentsByRole(RoleReviewer), "rt")
+	assert.Contains(t, reg.AgentsByRole(RoleReviewer), "rev")
+	assert.Empty(t, reg.AgentsByRole(RoleSkeptic))
+	assert.Empty(t, reg.AgentsByRole(RoleJudge))
+}
+
+// TestRegistryLoad_ShippedNadiaPersonaIsRedTeam loads the shipped
+// personas/community/nadia.yaml as an ordinary agent entry and verifies
+// AgentsByRole(RoleRedTeam) returns exactly it while the reviewer lookup does
+// not (Epic 36.5 T3). The role comes from the shipped file, so dropping its
+// role: line fails this test.
+func TestRegistryLoad_ShippedNadiaPersonaIsRedTeam(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "personas", "community", "nadia.yaml"))
+	require.NoError(t, err)
+	var nadia AgentConfig
+	require.NoError(t, yaml.Unmarshal(data, &nadia))
+
+	doc, err := yaml.Marshal(map[string]any{
+		"providers": map[string]any{
+			nadia.Provider: map[string]any{"api_key_env": "KEY"},
+		},
+		"agents": map[string]any{
+			"nadia": nadia,
+			"rev":   map[string]any{"provider": nadia.Provider, "model": "m"},
+		},
+	})
+	require.NoError(t, err)
+	reg, err := LoadRegistry(writeRegistry(t, string(doc)))
+	require.NoError(t, err)
+
+	got := reg.AgentsByRole(RoleRedTeam)
+	require.Len(t, got, 1, "exactly the shipped persona is a red-team agent")
+	assert.Contains(t, got, "nadia")
+	reviewers := reg.AgentsByRole(RoleReviewer)
+	assert.NotContains(t, reviewers, "nadia")
+	assert.Contains(t, reviewers, "rev")
+}
+
 // TestRegistryLoad_ReservedFieldsInert verifies the reserved fields stay at
 // their inert zero/unset state when omitted — no load-time default is applied
 // (Epic 1.1 keeps the 1.x behavior footprint exactly zero).
@@ -550,6 +650,11 @@ func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
 			"invalid role",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: overlord\n",
 			"role must be one of",
+		},
+		{
+			"unknown role lists redteam",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: auditor\n",
+			"role must be one of reviewer, skeptic, judge, redteam",
 		},
 		{
 			"zero max_turns",

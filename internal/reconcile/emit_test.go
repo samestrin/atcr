@@ -384,6 +384,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// (Epic 35.3, internal/verify/executor.go generateFixes) — same lifecycle as
 		// FixWarning above — so it is downstream-only here too.
 		"FixReview": true,
+		// SuppressedBy is stamped by ignoredIndexes (Epic 40.0) AFTER
+		// JSONFindings(), and only onto records an ignore rule routes into
+		// Result.Suppressed, so it is downstream-only like UnresolvedReason.
+		"SuppressedBy": true,
 	}
 	m := Merged{
 		Finding: Finding{

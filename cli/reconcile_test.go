@@ -943,6 +943,24 @@ func TestReconcileCmd_AppliesScorecardTrustPrior(t *testing.T) {
 		"atcr reconcile threads the reviewer trust prior through RunReconcile end-to-end")
 }
 
+// TestReconcileCmd_AttachesOpportunityScopedFlag (epic 35.16.11.3.2 T2):
+// `atcr reconcile` carries the per-reviewer denominator marker into
+// summary.json — sasha (mapped) opportunity-scoped, vera (unmapped) not, and
+// "stranger" (no prior) absent. Dropping the OpportunityScoped line from the
+// RunReconcile call in cli/reconcile.go fails this test.
+func TestReconcileCmd_AttachesOpportunityScopedFlag(t *testing.T) {
+	isolate(t)
+	seedTrustedReviewer(t, "sasha")
+	seedTrustedReviewer(t, "vera")
+	fixtureReview(t, "r", trustPanelSources())
+	dir := filepath.Join(".atcr", "reviews", "r")
+	writeSeedPool(t, dir, "sasha", "vera", "stranger")
+
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	assert.Equal(t, map[string]bool{"sasha": true, "vera": false}, reconciledOpportunityScoped(t, dir))
+}
+
 // TestReconcileCmd_RepoFlagValidatesAgainstOtherRepo proves the Epic 22.1 fix:
 // --repo threads the reviewed-repo root into path validation, so a finding whose
 // cited file exists in <other-repo> (but not the CWD) validates clean instead of
@@ -2155,4 +2173,30 @@ func TestRunReconcile_TrustPriorFollowsTheReviewsModel(t *testing.T) {
 			assert.Regexp(t, `trust priors resolved.*`+tc.want, logBuf.String())
 		})
 	}
+}
+
+// TestReconcile_SuppressedCountOnStderr is the F2 visibility half: a rule in
+// .atcr/ignore.yaml shrinks findings.json and can turn the gate green, so
+// `atcr reconcile` states the suppressed count on stderr, where a CI log reader
+// sees it. A run that suppressed nothing prints no such line.
+func TestReconcile_SuppressedCountOnStderr(t *testing.T) {
+	const findings = "HIGH|a.go:1|unsafe use|f|security|1|ev|host\nLOW|b.go:2|slow|f|perf|1|ev|host\n"
+	t.Run("nonzero", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": findings})
+		require.NoError(t, os.WriteFile(filepath.Join(".atcr", reconcile.IgnoreFileName),
+			[]byte("rules:\n  - file: a.go\n    reason: reviewed, intentional\n"), 0o644))
+
+		code, _, stderr := execCmdSplit(t, "reconcile", "--fail-on", "high", "r")
+		assert.Equal(t, 0, code, "the only HIGH was suppressed, so the gate passes")
+		assert.Contains(t, stderr, "1 finding(s) suppressed by .atcr/ignore.yaml")
+		assert.Contains(t, stderr, reconcile.SuppressedJSON)
+	})
+	t.Run("zero", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": findings})
+
+		_, _, stderr := execCmdSplit(t, "reconcile", "r")
+		assert.NotContains(t, stderr, "suppressed by .atcr/ignore.yaml")
+	})
 }

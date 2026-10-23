@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 
 	reclib "github.com/samestrin/atcr/reconcile"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/history"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -526,8 +526,7 @@ func gitRepoWithFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	run := func(args ...string) {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
+		cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 		out, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}

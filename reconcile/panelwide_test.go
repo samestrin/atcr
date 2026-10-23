@@ -55,6 +55,9 @@ func TestIsPanelWide(t *testing.T) {
 			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
 			predicateFinding("kai", CategoryInvariant, "key.go", ""),
 		}, false},
+		{"two empty evidence fields quote nothing, so they are not near-identical", emptyEvidencePair(), false},
+		{"one empty evidence field among quotes breaks the group", append(five(CategoryInvariant)[:4],
+			predicateFinding("otto", CategoryInvariant, "key.go", "")), false},
 		{"non-invariant group", five(CategoryCorrectness), false},
 		{"mixed cluster whose modal category is correctness", append(five(CategoryCorrectness),
 			predicateFinding("penny", CategoryInvariant, "key.go", siblingQuote)), false},
@@ -76,11 +79,39 @@ func TestIsPanelWide(t *testing.T) {
 	}
 }
 
+// emptyEvidencePair is two reviewers filing one invariant finding in one file,
+// neither quoting any evidence.
+func emptyEvidencePair() []Finding {
+	return []Finding{
+		predicateFinding("bruce", CategoryInvariant, "key.go", ""),
+		predicateFinding("kai", CategoryInvariant, "key.go", " "),
+	}
+}
+
+// Epic 75 T2: a group whose members quote nothing cites no shared sibling
+// branch, so Merge keeps its reviewer-count confidence and records no discount.
+func TestMerge_EmptyEvidenceIsNotDiscounted(t *testing.T) {
+	m := Merge(emptyEvidencePair())
+	if m.ConfidenceDiscount != "" {
+		t.Errorf("ConfidenceDiscount = %q, want empty", m.ConfidenceDiscount)
+	}
+	if want := ConfidenceFor(2); m.Confidence != want {
+		t.Errorf("Confidence = %q, want %q", m.Confidence, want)
+	}
+}
+
 func TestPanelWideReason_IsShortAndNamesTheClass(t *testing.T) {
 	if strings.ContainsAny(PanelWideReason, "\n|") {
 		t.Errorf("reason must fit one TD table cell: %q", PanelWideReason)
 	}
 	if !strings.Contains(PanelWideReason, CategoryInvariant) {
 		t.Errorf("reason should name the category it keys on: %q", PanelWideReason)
+	}
+	if n := len(PanelWideReason); n >= 80 {
+		t.Errorf("reason is %d characters, want under 80 (the long form belongs in the doc block): %q", n, PanelWideReason)
+	}
+	// internal/localdebt asserts the stored record carries this prefix.
+	if !strings.HasPrefix(PanelWideReason, "panel-wide instruction:") {
+		t.Errorf("reason must start with %q: %q", "panel-wide instruction:", PanelWideReason)
 	}
 }

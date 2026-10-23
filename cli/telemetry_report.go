@@ -71,14 +71,18 @@ func newQualityReportCmd() *cobra.Command {
 	// quality-report at a fixture store without chdir.
 	addDebtStoreFlag(cmd)
 	cmd.Flags().String("format", "md", "output format: md or json")
+	addJSONFlag(cmd)
 	return cmd
 }
 
 func runQualityReport(cmd *cobra.Command, _ []string) error {
 	// Validate --format against the enum BEFORE any I/O: a bad value is a usage
 	// error (exit 2), never conflated with a read failure (exit 1). This mirrors
-	// runReport's format-first ordering.
-	format, _ := cmd.Flags().GetString("format")
+	// runReport's format-first ordering, and folds in --json the same way.
+	format, err := formatWithJSON(cmd)
+	if err != nil {
+		return err
+	}
 	if format != "md" && format != "json" {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are md, json", format))
 	}
@@ -137,6 +141,16 @@ func qualityReportRows(rows []localdebt.QualityRow) []qualityReportRow {
 		// This LOCAL report carries those counters as columns, so the same pair
 		// now renders `| 0 | 0 | 3 | 0 | 0.0% |` and the reader sees where the
 		// outcomes went (adjudicated by /clarifications 2026-09-22).
+		//
+		// A pair with NO outcome at all is a different shape: its only signal is
+		// an Epic 36.1 reconciler-error count, which this report has no column
+		// for, so it would render all zeros and read as a flawless reviewer.
+		// Leave it out: the reconciler counts are a verdict on the grouping, not
+		// on the reviewer, and the report's population stays what it was before
+		// they existed.
+		if r.DismissedCount+r.ConfirmedCount+r.UnreproducibleCount+r.AttemptsExhaustedCount == 0 {
+			continue
+		}
 		out = append(out, qualityReportRow{
 			Persona:                cell(r.Persona),
 			Model:                  cell(r.Model),

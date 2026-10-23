@@ -1,0 +1,21 @@
+diff --git a/internal/webhook/handler.go b/internal/webhook/handler.go
+index 1111111..2222222 100644
+--- a/internal/webhook/handler.go
++++ b/internal/webhook/handler.go
+@@ -14,11 +14,15 @@ package webhook
+ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	body, err := io.ReadAll(r.Body)
+ 	if err != nil {
+ 		http.Error(w, "bad body", http.StatusBadRequest)
+ 		return
+ 	}
+-	if !h.verify(r.Header.Get("X-Signature"), body) {
++	// security: an unauthenticated request that simply omits the header skips
++	// signature verification entirely and reaches the deploy trigger below.
++	sig := r.Header.Get("X-Signature")
++	if sig != "" && !h.verify(sig, body) {
+ 		http.Error(w, "bad signature", http.StatusUnauthorized)
+ 		return
+ 	}
++	h.triggerDeploy(body)
+ }

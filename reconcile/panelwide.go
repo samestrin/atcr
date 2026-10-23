@@ -39,19 +39,22 @@ import "strings"
 // (promoteByAuthority) is independent signal.
 
 // PanelWideReason is the short reason recorded on a reconciled finding whose
-// confidence was discounted because IsPanelWide held for its group.
-const PanelWideReason = "panel-wide instruction: reviewers filed one invariant finding in one file with near-identical evidence, so their agreement is not independent corroboration"
+// confidence was discounted because IsPanelWide held for its group. In full:
+// reviewers filed one invariant finding in one file with near-identical
+// evidence, so their agreement is not independent corroboration. It is kept
+// under 80 characters because it is appended to the problem text of the TD row.
+const PanelWideReason = "panel-wide instruction: invariant finding, one file, near-identical evidence"
 
 // IsPanelWide reports whether a merge group is in the panel-wide-instruction
 // class: two or more distinct reviewers, a modal category of CategoryInvariant,
-// every member in one file, and every pair of members quoting near-identical
-// evidence.
+// every member in one file, and every pair of members quoting near-identical,
+// non-empty evidence.
 //
 // Evidence is compared the way dedupe compares PROBLEM text: the token-set
 // Jaccard similarity of the lowercased alphanumeric words must reach
-// MergeThreshold for every pair. Two empty evidence fields count as identical
-// and one empty field against a quote counts as distinct, so a member that
-// quotes nothing never manufactures the class on its own. File paths are
+// MergeThreshold for every pair. A member whose evidence has no words quotes
+// no sibling branch, so it keeps the group out of the class: a group whose
+// members all quote nothing has no shared quote to discount. File paths are
 // compared after trimming surrounding space; the line is not compared, because
 // the group is already co-located within the cluster window.
 func IsPanelWide(group []Finding) bool {
@@ -68,6 +71,9 @@ func IsPanelWide(group []Finding) bool {
 			return false
 		}
 		toks[i] = tokenize(f.Evidence)
+		if len(toks[i]) == 0 {
+			return false
+		}
 	}
 	for i := range toks {
 		for j := i + 1; j < len(toks); j++ {

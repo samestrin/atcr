@@ -3,7 +3,6 @@ package reconcile
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/metrics"
 )
 
@@ -206,8 +206,7 @@ func gitRepoWithCaseAliases(t *testing.T, files map[string]string, aliases map[s
 	t.Helper()
 	root := gitRepoWithSources(t, files)
 	run := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
+		cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 		out, err := cmd.CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))

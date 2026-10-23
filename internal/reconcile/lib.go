@@ -55,21 +55,12 @@ const (
 	CategoryOutOfScope = reclib.CategoryOutOfScope
 )
 
-// UnresolvedReasonDocShield is a LOCAL COPY of the published module's constant
-// of the same name, held only while the go.mod pin lags the in-tree declaration
-// at reconcile/reconcile.go. It is not an alias: the pinned reconcile version
-// does not export the name yet, so aliasing it breaks `GOWORK=off go build ./...`
-// — the build CI (ci.yml, GOWORK=off for the whole Go job) and
-// .githooks/pre-push both run, and which go.work masks locally.
-//
-// When the reconcile module is released and the go.mod pin bumped
-// (docs/release-process.md), delete this constant and let callers use
-// reclib.UnresolvedReasonDocShield directly.
-//
-// TestDocShieldLocalCopy_MatchesInTree pins the value against the in-tree
-// declaration so the copy cannot silently diverge from the wire value written
-// into reconciled/unresolved.json.
-const UnresolvedReasonDocShield = "doc_shield"
+// UnresolvedReasonDocShield marks a finding routed because its PROBLEM anchors
+// were named only in a documentation-extension file, re-exported from the
+// library (it is a wire value in reconciled/unresolved.json).
+// TestDocShieldLocalCopy_MatchesInTree pins it to the in-tree declaration and
+// the wire value "doc_shield".
+const UnresolvedReasonDocShield = reclib.UnresolvedReasonDocShield
 
 // SeverityRank is the canonical severity rubric, re-exported from the library
 // (single source of truth — no second copy). It is copied defensively so an
@@ -136,6 +127,14 @@ type Result struct {
 	// Preserved, never deleted (AC4). Empty on every path but RunReconcile,
 	// which is the only one with a checked-out tree to resolve against.
 	Unresolved []JSONFinding
+	// Suppressed holds the findings a .atcr/ignore.yaml rule (Epic 40.0)
+	// matched: dropped from Findings/JSONFindings, so they stay out of
+	// findings.json, report.md and the gate, and kept here for the
+	// suppressed.json sidecar and the scorecard. Internal only: the published
+	// reconcile module and its Summary carry no suppressed field. Empty on
+	// every path but RunReconcile, the only one with a checkout to read
+	// rules from.
+	Suppressed []JSONFinding
 	Summary    Summary
 	// jsonFindings caches the path-validated findings.json records the ATCR I/O
 	// layer stamps after reconcile (Phase 2 Clarification Q1): the library Merged

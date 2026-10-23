@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/history"
@@ -304,6 +305,22 @@ type Record struct {
 	// wire shape.
 	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
 
+	// ReconcilerFeedback is a developer's verdict on the reconciler's DECISION
+	// behind this finding — it merged two issues, split one, or filed it under the
+	// wrong category (Epic 36.1) — as opposed to Status, which is the verdict on
+	// the finding itself. It is deliberately not a status value: statuses are the
+	// reviewer ground truth AggregateQualitySignal counts, so a complaint about the
+	// clustering must not move a finding's status, its settledness, or any
+	// quality-signal row.
+	//
+	// A writer appends it on a copy of the finding's effective record, status
+	// untouched. Such a record is a marker, not a sighting (isSighting), so the
+	// fold's occurrence count is unchanged by it. The write gate validates it
+	// (ReconcilerFeedback.validate). Additive within v3 like ConfidenceDiscount:
+	// an older v3 reader ignores the key, and omitempty keeps every unannotated
+	// record byte-identical to the pre-field wire shape.
+	ReconcilerFeedback *ReconcilerFeedback `json:"reconciler_feedback,omitempty"`
+
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`
 	Status        string        `json:"status,omitempty"`
@@ -317,6 +334,88 @@ type SourceReport struct {
 	Path    string `json:"path"`
 	Line    int    `json:"line,omitempty"`
 	Section string `json:"section,omitempty"`
+}
+
+// Reconciler-feedback kinds, the closed set ReconcilerFeedback.Kind may carry.
+// Kebab-case like the status and category vocabulary, since a user types them.
+const (
+	// FeedbackWrongMerge: the reconciler merged distinct issues into this finding.
+	FeedbackWrongMerge = "wrong-merge"
+	// FeedbackWrongSplit: the reconciler split one issue, so this finding and
+	// another (ReconcilerFeedback.With, when known) should have been one.
+	FeedbackWrongSplit = "wrong-split"
+	// FeedbackWrongCategory: the reconciler settled this finding's category wrongly.
+	FeedbackWrongCategory = "wrong-category"
+)
+
+// ReconcilerFeedback is the annotation Record.ReconcilerFeedback carries.
+//
+// No cluster id is persisted, so a decision is named by finding ids: the record's
+// own id, plus With for the partner finding of a wrong split.
+type ReconcilerFeedback struct {
+	Kind   string `json:"kind"`
+	With   string `json:"with,omitempty"`
+	Reason string `json:"reason"`
+}
+
+// IsKnownFeedbackKind reports whether kind is one of the Feedback* constants.
+// Unlike IsKnownStatus it does not fold case or whitespace: the store holds the
+// canonical spelling only, so every reader can compare against the constants.
+func IsKnownFeedbackKind(kind string) bool {
+	switch kind {
+	case FeedbackWrongMerge, FeedbackWrongSplit, FeedbackWrongCategory:
+		return true
+	default:
+		return false
+	}
+}
+
+// FeedbackKindTakesPartner reports whether a kind may name a partner finding.
+// Only a wrong split involves a second finding; a wrong merge or a wrong
+// category is about this finding alone.
+func FeedbackKindTakesPartner(kind string) bool {
+	return kind == FeedbackWrongSplit
+}
+
+// IsWellFormedFindingID reports whether id has the shape StampID produces:
+// history.FindingID's 16 lowercase hex characters.
+func IsWellFormedFindingID(id string) bool {
+	if len(id) != 16 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// validate is the write gate's check of an annotation on the record with id
+// selfID: a known kind, a non-blank reason, and a partner only on a kind that
+// takes one, well formed and not the record itself. It does not check that the
+// partner exists in the store; that is the writer's lookup to make.
+func (f ReconcilerFeedback) validate(selfID string) error {
+	if !IsKnownFeedbackKind(f.Kind) {
+		return fmt.Errorf("unknown kind %q (want %s, %s or %s)",
+			f.Kind, FeedbackWrongMerge, FeedbackWrongSplit, FeedbackWrongCategory)
+	}
+	if strings.TrimSpace(f.Reason) == "" {
+		return fmt.Errorf("empty reason")
+	}
+	if f.With == "" {
+		return nil
+	}
+	if !FeedbackKindTakesPartner(f.Kind) {
+		return fmt.Errorf("kind %q takes no partner finding, got %q", f.Kind, f.With)
+	}
+	if !IsWellFormedFindingID(f.With) {
+		return fmt.Errorf("partner %q is not a finding id (16 lowercase hex characters)", f.With)
+	}
+	if f.With == selfID {
+		return fmt.Errorf("partner %q is the finding itself", f.With)
+	}
+	return nil
 }
 
 // StampID sets ID to the stable content hash of the finding's location and problem

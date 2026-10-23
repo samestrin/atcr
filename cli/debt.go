@@ -29,14 +29,14 @@ func newDebtCmd() *cobra.Command {
 		Short: "Query, capture, and report on technical debt",
 		Long: "atcr debt reads and writes the local technical-debt store under\n" +
 			".atcr/debt/ (month-sharded, append-only JSONL) that atcr reconcile\n" +
-			"populates. Its subcommands — list, add, dashboard, resolve, compact, and\n" +
-			"backfill-justifications — operate on that one store, so an item filed by add is visible\n" +
+			"populates. Its subcommands — list, add, dashboard, resolve, recluster, compact,\n" +
+			"and backfill-justifications — operate on that one store, so an item filed by add is visible\n" +
 			"to list and closeable by resolve. Use --dir to point them at a store\n" +
 			"other than the current repo's.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtCompactCmd(), newDebtBackfillCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
 	return cmd
 }
 
@@ -682,11 +682,26 @@ func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 	for _, r := range recs {
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
 			debtIDCell(r.ID), cell(r.Severity), debtStatusBucket(r.Status), cell(r.EffectiveOrigin()), r.EstMinutes,
-			cell(debtLocation(r)), cell(r.Category), cell(truncate(r.Problem, 60))); err != nil {
+			cell(debtLocation(r)), cell(r.Category), cell(listProblem(r))); err != nil {
 			return err
 		}
 	}
 	return tw.Flush()
+}
+
+// listProblem is the Problem cell of a `debt` listing (renderDebtTable and
+// renderResolveList): Problem truncated to 60 runes, then the discount marker
+// RowProblem carries in the TD table, " (confidence discounted: <reason>)", with
+// the reason truncated to 40 runes. Truncating RowProblem whole would cut the
+// marker off any Problem of 60 runes or more, which is the row the reader most
+// needs it on; the marker is appended after the cut so it always shows. An
+// undiscounted row renders exactly as before the marker existed.
+func listProblem(r localdebt.Record) string {
+	p := truncate(r.Problem, 60)
+	if r.ConfidenceDiscount == "" {
+		return p
+	}
+	return p + " (confidence discounted: " + truncate(r.ConfidenceDiscount, 40) + ")"
 }
 
 // debtIDCell renders a record's id for a table or dashboard row. Every writer

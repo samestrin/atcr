@@ -68,7 +68,7 @@ carries neither and is read as "not measured", never as a measured zero.
 | `reviewer` | string | always (empty on aggregate) | Reviewer/persona name (e.g. `bruce`). |
 | `model` | string | always (empty on aggregate) | Model id the reviewer ran on (e.g. `claude-sonnet-4-6`). |
 | `role` | string | always (empty on aggregate) | Pipeline role. Constant `"reviewer"` for reconcile-derived records. |
-| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. **Also includes** each finding this reviewer raised alone that reconcile set aside as ambiguous (`ambiguous.json`) — a singleton the consensus filter removed, or one isolated as noise — because it was raised and is otherwise in no count. It is never corroborated, and it is also counted in `findings_ambiguous`. A finding in a two-finding gray-zone cluster is not counted again here: it is also in `findings.json` and is counted there. |
+| `findings_raised` | int | always | Findings this reviewer raised. Includes findings the Tier 4 content check routed out of the primary stream into `unresolved.json` — they are findings the reviewer raised, so they belong in the denominator, and leaving them out would let a reviewer that produced phantoms score as if it had not. They are therefore NOT all present in `findings.json`. **One exception:** a routed finding whose `unresolved_reason` is `doc_shield` is excluded — its subject WAS named in the tree, in a file classified as prose by its extension, so being routed is not by itself fabrication evidence. Those are counted in `findings_doc_shielded` instead. **Also includes** each finding this reviewer raised alone that reconcile set aside as ambiguous (`ambiguous.json`) — a singleton the consensus filter removed, or one isolated as noise — because it was raised and is otherwise in no count. It is never corroborated, and it is also counted in `findings_ambiguous`. A finding in a two-finding gray-zone cluster is not counted again here: it is also in `findings.json` and is counted there. **Also includes** each finding an `.atcr/ignore.yaml` rule suppressed (`suppressed.json`) — it was raised, so it stays in the denominator — though it is never corroborated and earns no `weighted_credit` (see [Ignore-suppressed findings](#ignore-suppressed-findings)). |
 | `findings_corroborated` | int | always | Of those, how many were corroborated (the finding carried 2+ distinct reviewers). A Tier-4-routed finding is NEVER corroborated, however many reviewers named it: agreement on a construct that is declared nowhere in the tracked tree is not corroboration. |
 | `findings_doc_shielded` | int | conditional | Routed findings this record deliberately did NOT charge to `findings_raised`, because the Tier 4 check routed them on the documentation-extension heuristic (`unresolved_reason: doc_shield`) rather than on a genuine absence. Omitted when zero. Read it alongside `corroboration_rate`: the exemption is driven by the reviewer's own finding text, so a rate of 1.00 with a nonzero count here is not the same claim as a rate of 1.00 without one. Likewise, a rate of 0.00 alongside a nonzero count here is the zero-denominator case (every finding was shielded), not a corroboration failure. Note the trust prior does NOT extend the carve-out: shielded counts join the trust rate's denominator. |
 | `findings_solo` | int | always | `findings_raised - findings_corroborated` — the arithmetic remainder, not "findings nobody else raised". Because a Tier-4-routed finding is never corroborated, two reviewers that independently named the same phantom each count it here. |
@@ -145,7 +145,7 @@ and Windows.)
 > **Do not commit this directory.** `~/.config/atcr/scorecard/` is local
 > monitoring data. It is outside the repository by design; never add it to git or
 > share it as-is. To share data publicly, use the anonymized
-> [`--export`](#public-export) path instead.
+> [`atcr leaderboard export`](#atcr-leaderboard-export---output-path) path instead.
 
 ### Cost is approximate
 
@@ -170,6 +170,9 @@ atcr scorecard 2026-06-14T10:00:00Z-abc123
 
 # By review directory path
 atcr scorecard ./.atcr/reviews/abc123
+
+# The same records as JSON
+atcr scorecard ./.atcr/reviews/abc123 --json
 ```
 
 Columns: `REVIEWER  MODEL  RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY`,
@@ -180,6 +183,10 @@ plus `VERIFIED  REFUTED  SURV%` when any record carries verification data, plus
 place this table reports them. It appears only when some record has one, and every
 row then shows a number (`0`, not a dash — the reviewer has a measurement and it is
 zero). See [Doc-shielded routings](#doc-shielded-routings).
+
+`--json` prints `run_id` and `reviewers`: one stored record per reviewer row of
+the table (a retried emit collapsed to its last write), sorted by reviewer. The
+exit codes below are unchanged; a run with no records still exits `1`.
 
 Behavior:
 - No records for the run → message + exit `1`.
@@ -200,7 +207,7 @@ ranked by corroboration rate (descending). Read-only. Filters compose with AND.
 atcr leaderboard
 
 # Windowed + filtered
-atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona bruce
+atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona=bruce
 ```
 
 Flags:
@@ -210,8 +217,9 @@ Flags:
 | `--since` | `30d` | Time window. `Nd` (days), `Nw` (weeks), `Nm` (30-day months). `N` is a positive integer. |
 | `--model` | _(all)_ | Model id filter (case-insensitive substring, matching `personas search --model`; a full exact id always matches). |
 | `--persona` | _(all)_ | Reviewer/persona filter: the whole name, compared case-insensitively (`Bruce` and `bruce` are one reviewer). |
-| `--export` | off | Emit anonymized public JSON instead of the table (see below). |
-| `--output` | _(stdout)_ | With `--export`: write JSON to this file (`0600`) instead of stdout. |
+| `--json` | off | Print the table's rows as a JSON array instead of the table (see below). |
+| `--export` | off | **Deprecated, hidden; removed in v0.6.0.** Same as [`atcr leaderboard export`](#atcr-leaderboard-export---output-path). |
+| `--output` | _(stdout)_ | **Deprecated, hidden; removed in v0.6.0.** With `--export`: same as `leaderboard export --output`. |
 
 Columns: `REVIEWER  MODEL  RUNS  RAISED  CORROBORATED  CORR%  COST  COST/CORR  LATENCY`,
 plus `DOC-SHIELDED` when any group has a nonzero doc-shield count, and
@@ -220,6 +228,15 @@ every run regardless of `raised_denominator`, so a reviewer's `RAISED` can mix
 definition-3 runs, which did not charge the ambiguous findings, with definition-4
 runs, which did; `AMBIGUOUS` is how much of `RAISED` is that charge.
 `COST/CORR` renders as `-` for a group with zero corroborated findings.
+
+`--json` prints the same rows, in the same order, as a JSON array with one object
+per table row: `reviewer`, `model`, `runs`, `findings_raised`,
+`findings_corroborated`, `corroboration_rate`, `total_cost_usd`,
+`cost_per_corroborated` (`null` where the table shows `-`), `avg_latency_ms`,
+`findings_doc_shielded` and `findings_ambiguous` (always present, `0` when the
+table would omit the column). The empty store prints `[]` on stdout and its
+message on stderr, exit `0`; the other outcomes below are unchanged. `--json`
+with the deprecated `--export` alias is a usage error (exit `2`).
 
 ### Doc-shielded routings
 
@@ -241,13 +258,28 @@ a 0.60 prior — and `DOC-SHIELDED` is what makes that difference readable.
 shapes separately, because "no symbol correspondence in the tracked tree" is false
 for a doc-shielded record — its subject IS in the tree.
 
+### Ignore-suppressed findings
+
+A finding an `.atcr/ignore.yaml` rule matched (see
+[technical-debt.md](technical-debt.md#ignoring-false-positives-atcr-ignore))
+leaves the reconciled primary stream for `suppressed.json`, but it was still
+**raised**, so it is charged to its reviewer's `findings_raised` denominator —
+leaving it out would let a repo's ignore file lift a lens's corroboration rate by
+deleting its findings from the denominator. It is never counted in
+`findings_corroborated` and earns no `weighted_credit`: the rule says the finding
+is not worth reporting, which says nothing about whether the reviewers who agreed
+on it were right. It carries no `unresolved_reason` charge either — suppression
+is not a Tier 4 routing decision. A reviewer whose every finding on a run was
+suppressed is still registered with outcome `findings`.
+
 Behavior:
 - Empty store (no data at all) → friendly message, exit `0`.
 - Data exists but nothing matches the filters → message naming the active window,
   exit `1`.
 - Invalid `--since` value → actionable error, exit `1`.
-- `--output` without `--export` → usage error (exit `2`, "--output requires
-  --export"); `--output` only routes the export document.
+- The deprecated `--output` alias without the deprecated `--export` alias → usage
+  error (exit `2`, "--output requires --export"); `--output` only routes the
+  export document.
 
 **Persona digest canonical form.** `scorecard.HashPersonaID` — the function
 behind every `persona_id_hash` — canonicalizes its input to
@@ -269,13 +301,17 @@ The canonical form and the reasoning behind it are specified in full under
 catalog personas live in `internal/scorecard/telemetry_test.go`
 (`TestHashPersonaID_PinnedPublishedPersonaDigests`).
 
-### `atcr leaderboard --export [--output path]`
+### `atcr leaderboard export [--output path]`
+
+`leaderboard export` takes the same `--since`, `--model` and `--persona` filters
+as `leaderboard`. It replaced `atcr leaderboard --export [--output path]`, which
+still works as a hidden deprecated alias until v0.6.0 and prints the same bytes.
 
 Emit the versioned, anonymized public submission document (the Epic 10.0
 format). Filters apply **before** anonymization. Output is deterministic
 (byte-identical for the same input + export time).
 
-**What "anonymized" means here:** `--export` anonymizes the *submitter* — run
+**What "anonymized" means here:** `leaderboard export` anonymizes the *submitter* — run
 IDs, cost, token counts, and local paths are scrubbed or omitted — while
 deliberately keeping `(persona, model)` as the public leaderboard's aggregation
 dimensions (a persona is a public catalog identity, not a user identity). This
@@ -286,13 +322,13 @@ deliberate; they are not the same guarantee.
 
 ```bash
 # Anonymized JSON to stdout (pipe to jq, a file, etc.)
-atcr leaderboard --export
+atcr leaderboard export
 
 # Anonymized JSON to a file
-atcr leaderboard --export --output /tmp/submission.json
+atcr leaderboard export --output /tmp/submission.json
 
 # Export a filtered slice
-atcr leaderboard --export --since 30d --model claude-sonnet-4-6
+atcr leaderboard export --since 30d --model claude-sonnet-4-6
 ```
 
 The document is the Epic 10.0 submission envelope. It is an **aggregate over the
@@ -343,7 +379,7 @@ Reviewers are aggregated by `(persona, model)` (role is dropped from the public
 schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
 `(model, persona)`. Output is deterministic (byte-identical for the same input +
 `submitted_at`). A no-match/empty result writes the canonical guidance to stderr
-and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
+and exits `1` (so a `leaderboard export | jq` pipeline never sees non-JSON on stdout).
 
 **Unpublishable identity → error, exit `1`.** A record whose `model` or `reviewer`
 carries a control (Cc) or format (Cf) rune is rejected before anything is written.
@@ -359,7 +395,7 @@ whose `model` or `reviewer` is non-blank in the store but scrubs away to nothing
 `"/models/mistral-7b.gguf"`, `"bedrock@us-east-1/claude"` and `"~/models/foo"`) is
 **dropped from the envelope** and named on stderr — it is never published as
 `model: ""`. It does not fail the export, because this shape occurs in ordinary
-history and `--export` reads the whole unrotated store, so one such record would
+history and `leaderboard export` reads the whole unrotated store, so one such record would
 otherwise take down an export that had succeeded the day before, clearable only by
 hand-editing a JSONL store. If every selected record is dropped, the ordinary
 no-records error is raised instead of an empty envelope. An identity that is already
@@ -378,6 +414,11 @@ report above so a kept record is not mistaken for a dropped one. An identity alr
 empty in the store is not warned about — that shape is ordinary history, and reporting
 it would name a large fraction of an unrotated store on every export.
 
+**The exit code does not reflect the blank-identity notice.** An export that kept
+a blank-identity record still exits `0`, deliberately: the record is published, the
+document is complete, and the notice is advice about the store, not a failed
+export. A scripted submitter that wants to catch it must read stderr.
+
 `benchmark export` applies the same rule as a **hard rejection** rather than a skip.
 The asymmetry is deliberate: it validates one just-produced run-result file, where
 the cost of failing is re-running that one command, and there is no unrelated history
@@ -389,7 +430,7 @@ whose envelope was clean. Both the error and the skip report name the offending
 record's `run_id` and quote the offending value, so the row can be located and
 repaired in the store.
 
-> **Suite vs production submissions.** `leaderboard --export` produces a
+> **Suite vs production submissions.** `leaderboard export` produces a
 > *production* submission from your local runs. The public board accepts only
 > *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
 > so cherry-picked production runs cannot game it — see
@@ -453,7 +494,7 @@ than growing a third aggregation.
 
   **This reduces the run count the `minRuns` floor sees**, and that floor was measured against unfiltered strict runs; the re-measurement is tracked as a known limit beside `DefaultTrustMinRuns` in `internal/scorecard/trust.go`.
 - **The filter is scoped to `TrustPriors`, exactly as `strictRuns` and
-  `unresolvedEraRuns` are.** `leaderboard --export` and `PublishedSet` do NOT
+  `unresolvedEraRuns` are.** `leaderboard export` and `PublishedSet` do NOT
   apply it: the leaderboard reports what actually happened across all runs, so a
   `failed` or `truncated` row still contributes to the exported
   `corroboration_rate` and `findings_raised_avg`. The trust prior is a
@@ -528,6 +569,19 @@ than growing a third aggregation.
   `LOW` finding is then sidecarred changes. Under `consensus: off` it reaches
   `findings.json` still carrying `LOW`, which is the only configuration in which
   the demotion is observable end-to-end.
+  **Which denominator produced each prior is recorded (epic 35.16.11.3.2).**
+  Beside the priors, `ResolveTrustPriorsForReview` returns a per-reviewer flag
+  that every call site threads into `reconcile.Options.OpportunityScoped`, and
+  reconcile echoes it as `opportunity_scoped` in `reconciled/summary.json`. It
+  has one entry per reviewer in the priors map: `true` for a persona with an
+  in-repo remit (scored over the opportunity-filtered denominator), `false` for
+  one of the five registry-only lenses (scored over the full one). It comes from
+  the same remit lookup as `ReasonNotOpportunityScoped`, so the summary and the
+  `not opportunity-scoped` annotation in `atcr personas list --scores` agree on
+  which lens is which. `true` means the lens is
+  eligible for the filter, not that every one of its runs was filtered; its
+  pre-era and unscopeable runs still count, as the explanation shows. The flag
+  is read off the remit table and never feeds the rate, so no score changes.
   **Trust follows the model, not just the persona.** On this reconcile path a persona's prior is computed only from its runs on the model it ran on in the review being reconciled, read from that review's pool summary (`sources/pool/summary.json`). A persona that switched models is absent from the map, which is the neutral baseline, until `DefaultTrustMinRuns` runs accumulate on the new model; its history on the old model does not carry over. A persona is also neutral when its model cannot be known: the review has no pool summary, the summary lists the persona on two different models, or the summary records no model for it. The summary records the model for every agent that completed, whether or not the provider reported token usage. The unmeasured count on the log line follows the same rule. `atcr personas list --scores` still reports each persona across all its models: it reads `TrustPriors`, not this function, and so does its "In use by reconcile" footer. That list therefore does not reflect the per-model rule, so the footer states the rule on the line beneath it. Two parts of the scoring stay per persona across models: the era decision (a persona's newest `raised_denominator`), which only matters across an era bump, and the ground-truth confirmation half, which is not wired in (TD-039).
   > **Scorecard rates are not comparable across consensus levels.** Reviewer
   > records are computed from the **post-filter** finding set (`res.Findings`)
@@ -625,9 +679,9 @@ writes records by default.
 
 The local store (`~/.config/atcr/scorecard/`) holds your real `run_id` and may
 carry your reviewer/model names — it is local and never shared. **Only the
-`--export` path produces a shareable document, and it is anonymized.**
+`leaderboard export` path produces a shareable document, and it is anonymized.**
 
-`--export` is **allowlist-based**: the public submission carries only the fields
+`leaderboard export` is **allowlist-based**: the public submission carries only the fields
 listed below. A field that is not on the allowlist cannot leak, because it is
 never copied into the public structure in the first place. The Epic 10.0 schema
 deliberately **shrank** the allowlist relative to the local store — the smaller
@@ -660,7 +714,7 @@ the surface, the less can leak.
 - Repository content, hostnames, usernames, and organization names — none are
   collected into a record in the first place
 
-> **This allowlist governs the production `leaderboard --export` envelope only.**
+> **This allowlist governs the production `leaderboard export` envelope only.**
 > A `benchmark export` submission is a different document, and since
 > `submission_schema` 2 it additionally publishes `suite_case_ids` and each row's
 > `reviewer_coverage.case_ids` — the suite's case ids, **scrubbed but otherwise
@@ -720,9 +774,9 @@ can diff it before sharing.
 
 ### Telemetry & Cloud Sync
 
-The `--export` allowlist above applies **only** to the local-store leaderboard
+The `leaderboard export` allowlist above applies **only** to the local-store leaderboard
 export. `atcr` has two other, **separate and additive** data paths, each with its
-own schema — neither weakens, replaces, or is governed by the `--export`
+own schema — neither weakens, replaces, or is governed by the `leaderboard export`
 guarantee above:
 
 - The **anonymous usage ping** — a background, fail-open `{event, lang, lines,
@@ -732,7 +786,7 @@ guarantee above:
   scorecard payload (a hashed Persona ID plus raw run metrics), authenticated
   with `ATCR_API_KEY`, that you request per run.
 
-These use a different schema from the `--export` record and are documented in
+These use a different schema from the `leaderboard export` record and are documented in
 full — including the exact fields, the opt-out mechanics, the Persona ID hashing
 guarantee, and the auth exit code — in **[docs/telemetry.md](telemetry.md)**.
 
@@ -745,7 +799,7 @@ There are **two independent version numbers**:
 - `schema_version` (`2`) is stamped on every **stored** record (the local JSONL
   store).
 - `submission_schema` (`2`) is stamped on every **public submission** envelope
-  (`leaderboard --export` and `benchmark export`).
+  (`leaderboard export` and `benchmark export`).
 
 They are decoupled on purpose: the local store format and the public submission
 format evolve separately, so bumping one never silently changes the other. When a
@@ -762,7 +816,7 @@ future epic changes either schema:
 35.16.6.8 changed it again (the doc-shielded routings came back out), neither time
 renaming, retyping, or removing a field — so neither integer moved. The
 discriminator is the per-record `raised_denominator` version instead, and both
-derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+derived surfaces — `TrustPriors` and `leaderboard export` — apply the same
 prefer-newest rule: a reviewer's records are kept at the newest definition that
 reviewer has. So a single submission is always computed under one definition, and
 an existing store never stops exporting.
@@ -779,7 +833,7 @@ producer stamps its own value, and the two are not on the same scale:
 
 | Producer | `raised_denominator` | What the row's `corroboration_rate` means |
 |---|---|---|
-| `leaderboard --export` | `1`, `2`, `3` or `4` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
+| `leaderboard export` | `1`, `2`, `3` or `4` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
 | `benchmark export` | `100` (`RaisedDenominatorBenchmarkSuite`) | category **recall** against the suite's planted defects |
 
 The gap between `4` and `100` is deliberate. A benchmark row is not a production
@@ -798,7 +852,7 @@ envelopes:
 
 | Producer | Envelope | Go type |
 |----------|----------|---------|
-| `atcr leaderboard --export` | production submission | `scorecard.ExportEnvelope` |
+| `atcr leaderboard export` | production submission | `scorecard.ExportEnvelope` |
 | `atcr benchmark export` | suite submission | `benchmark.Submission` |
 
 Because the constant is shared, **a bump made for one producer versions the other**.
@@ -813,7 +867,7 @@ Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
 indistinguishable from a full one.
 
 **The production envelope gained nothing at the bump itself.** Under version 2,
-`leaderboard --export` initially emitted the same key set it emitted under
+`leaderboard export` initially emitted the same key set it emitted under
 version 1 — no field of `ExportEnvelope` or `PublicRecord` was renamed, retyped,
 or removed, and the only change on the production path was the integer in
 `submission_schema`. (Epic 35.16.6.8 later added `raised_denominator` to

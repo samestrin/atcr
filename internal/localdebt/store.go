@@ -125,6 +125,13 @@ func appendLocked(dir string, rec Record) error {
 		return fmt.Errorf("appending localdebt record %q: unknown status %q "+
 			"(not a localdebt.Status* value; see IsKnownStatus)", rec.ID, rec.Status)
 	}
+	// The same gate for the reconciler-feedback annotation, for the same reason:
+	// past this point a malformed kind or partner is in an append-only store.
+	if rec.ReconcilerFeedback != nil {
+		if err := rec.ReconcilerFeedback.validate(rec.ID); err != nil {
+			return fmt.Errorf("appending localdebt record %q: invalid reconciler feedback: %w", rec.ID, err)
+		}
+	}
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir: %w", err)
 	}
@@ -630,7 +637,8 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // The winning record is returned with Occurrences and FirstSeen stamped from the
 // WHOLE id group, so the regression signal that re-openable resolution creates
 // survives compaction at O(1) size instead of O(history). See aggregateCounters
-// for the rule and why it is idempotent.
+// for the rule and why it is idempotent. It carries the group's newest
+// ReconcilerFeedback annotation the same way; see newestAnnotatedIndex.
 func FoldRecords(recs []Record) []Record {
 	folded, _ := foldWithGroups(recs)
 	return folded
@@ -648,9 +656,46 @@ func FoldRecords(recs []Record) []Record {
 func foldWithGroups(recs []Record) ([]Record, map[string][]Record) {
 	folded, byID := foldByID(recs)
 	for i := range folded {
-		aggregateCounters(&folded[i], byID[folded[i].ID])
+		group := byID[folded[i].ID]
+		aggregateCounters(&folded[i], group)
+		if j := newestAnnotatedIndex(group, func(r Record) bool { return r.ReconcilerFeedback != nil }); j >= 0 {
+			folded[i].ReconcilerFeedback = group[j].ReconcilerFeedback
+		}
 	}
 	return folded, byID
+}
+
+// newestAnnotatedIndex returns the position, within one id's group, of the newest
+// record carrying a reconciler-feedback annotation, or -1 when none does. The
+// fold stamps that record's annotation onto the effective record, the way
+// aggregateCounters stamps Occurrences, and FoldSummaries does the same with the
+// annotation's kind (Epic 36.1 F1).
+//
+// The annotation is a verdict on the id's GROUPING, not a state of one record, so
+// it cannot be left to whichever record wins the fold. `atcr debt recluster`
+// appends it on a copy of the effective record, and a later record without it —
+// above all reconcile re-detecting a resolved finding as a status-less sighting —
+// is newer, wins rule 2, and used to drop the developer's feedback from the
+// dashboard and the quality signal; compaction then discarded the annotated record
+// for good.
+//
+// Newest is latestIndex over the annotated records alone — the fold's own recency
+// rule, including its tie-breaks and its tolerance of an unorderable timestamp —
+// so a later recluster replaces an earlier one, as it did when the annotated
+// record was itself the effective one.
+func newestAnnotatedIndex[T foldable](group []T, annotated func(T) bool) int {
+	var idx []int
+	var marked []T
+	for i := range group {
+		if annotated(group[i]) {
+			idx = append(idx, i)
+			marked = append(marked, group[i])
+		}
+	}
+	if len(marked) == 0 {
+		return -1
+	}
+	return idx[latestIndex(marked)]
 }
 
 // aggregateCounters stamps eff with the id group's Occurrences and FirstSeen.
@@ -803,7 +848,15 @@ func aggregateCounters(eff *Record, group []Record) {
 // copies the folded record wholesale and so inherits Origin from a manually filed
 // item; a resolution always stamps ResolvedAt, and a filing never does, which
 // separates the two exactly.
+//
+// A record carrying ReconcilerFeedback is never a sighting, whatever its status
+// or origin: it is an annotated copy of the effective record, appended to record a
+// verdict on the reconciler, not a new detection. Counting it would report a
+// regression that never happened.
 func isSighting(r Record) bool {
+	if r.ReconcilerFeedback != nil {
+		return false
+	}
 	if r.Status == "" {
 		return true
 	}
@@ -1148,6 +1201,19 @@ func retainForCompaction(recs []Record) []Record {
 			latestClosedIdx = -1
 		}
 
+		// Every retained record that carries an annotation is given the id's newest
+		// one, which eff carries from the fold. The newest annotated record itself
+		// may be dropped here, and a retained record can be newer than eff (rule 1
+		// lets an older suppressing record win), so a retained record still holding
+		// an older verdict would otherwise win newestAnnotatedIndex after the rewrite.
+		// The annotation is replaced, never removed: removing it could make the
+		// record a sighting again (isSighting) and change the occurrence count.
+		carryAnnotation := func(r *Record) {
+			if r.ReconcilerFeedback != nil {
+				r.ReconcilerFeedback = eff.ReconcilerFeedback
+			}
+		}
+
 		// ORDER IS LOAD-BEARING TWICE OVER, and the two constraints point in
 		// opposite directions. Emitting trail, then donor, then eff satisfies both.
 		//
@@ -1175,6 +1241,7 @@ func retainForCompaction(recs []Record) []Record {
 		// the donor next to its comment or by grouping the two trail writes.
 		if trailIdx >= 0 {
 			trail := group[trailIdx]
+			carryAnnotation(&trail)
 			// A trail entry is not an occurrence: the id's aggregate counters live
 			// solely on the effective record, or a second carrier would let the fold
 			// count part of the history twice (aggregateCounters). Zeroing FirstSeen
@@ -1194,6 +1261,7 @@ func retainForCompaction(recs []Record) []Record {
 		// donor slot when it also carries a Model.
 		if latestClosedIdx >= 0 {
 			latest := group[latestClosedIdx]
+			carryAnnotation(&latest)
 			latest.Occurrences = 0
 			latest.FirstSeen = ""
 			latest.CountedThrough = ""
@@ -1201,6 +1269,7 @@ func retainForCompaction(recs []Record) []Record {
 		}
 		if donorIdx >= 0 {
 			donor := group[donorIdx]
+			carryAnnotation(&donor)
 			donor.Occurrences = 0
 			donor.FirstSeen = ""
 			donor.CountedThrough = ""
