@@ -321,6 +321,10 @@ The dashboard reports these as **Reconciler corrections**, apart from
 `Wontfix`, and the opt-in quality signal counts them on their own keys (see
 [docs/telemetry.md](telemetry.md#quality-signal-payload-schema)).
 
+The annotation belongs to the finding, not to one record: a finding keeps its
+newest annotation when reconcile detects it again, and when `atcr debt compact`
+folds its history. A later `recluster` on the same finding replaces it.
+
 An unknown id, an unknown `--kind`, a `--with` on a kind that takes no partner,
 or an empty `--reason` is a usage error (exit 2).
 

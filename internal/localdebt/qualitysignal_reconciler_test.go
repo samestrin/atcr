@@ -242,3 +242,44 @@ func TestCompact_KeepsTheAnnotationOfARedetectedFinding(t *testing.T) {
 		assert.Equal(t, FeedbackWrongMerge, FoldSummaries(sums)[0].ReconcilerFeedbackKind, "pass %d", pass)
 	}
 }
+
+// TestCompact_RetainedRecordsCarryTheNewestAnnotation: under rule 1 a retained
+// record can be newer than the effective one. Here an older wontfix wins the
+// fold, a newer resolved record (kept as trail and donor) holds an older
+// verdict, and the newest verdict sits on an open record compaction drops. The
+// fold must report the newest verdict before and after compaction.
+func TestCompact_RetainedRecordsCarryTheNewestAnnotation(t *testing.T) {
+	wontfix := attributed("f000000000000003", "2026-06-01T00:00:00Z", StatusWontfix, "bruce")
+	wontfix.ResolvedAt, wontfix.Justification = "2026-06-01T00:00:00Z", "hallucinated"
+	older := attributed("f000000000000003", "2026-06-03T00:00:00Z", StatusResolved, "bruce")
+	older.ResolvedAt, older.Justification = "2026-06-03T00:00:00Z", "fixed"
+	older.ReconcilerFeedback = &ReconcilerFeedback{Kind: FeedbackWrongMerge, Reason: "r"}
+	newest := annotated(attributed("f000000000000003", "2026-06-04T00:00:00Z", "", "bruce"),
+		"2026-06-04T00:00:00Z", ReconcilerFeedback{Kind: FeedbackWrongCategory, Reason: "r"})
+
+	dir := t.TempDir()
+	for _, r := range []Record{wontfix, older, newest} {
+		require.NoError(t, Append(dir, r))
+	}
+	before, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	folded := FoldRecords(before)
+	require.Len(t, folded, 1)
+	require.Equal(t, StatusWontfix, folded[0].Status, "rule 1: the wontfix wins")
+	require.Equal(t, FeedbackWrongCategory, folded[0].ReconcilerFeedback.Kind)
+	wantRows := AggregateQualitySignal(before)
+
+	_, err = Compact(dir, ReadOpts{})
+	require.NoError(t, err)
+	after, err := ReadAll(dir, ReadOpts{})
+	require.NoError(t, err)
+	got := FoldRecords(after)
+	require.Len(t, got, 1)
+	assert.Equal(t, StatusWontfix, got[0].Status)
+	require.NotNil(t, got[0].ReconcilerFeedback)
+	assert.Equal(t, FeedbackWrongCategory, got[0].ReconcilerFeedback.Kind, "an older verdict on a retained record must not win")
+	assert.Equal(t, wantRows, AggregateQualitySignal(after))
+	sums, err := ReadSummaries(dir, ReadOpts{})
+	require.NoError(t, err)
+	assert.Equal(t, FeedbackWrongCategory, FoldSummaries(sums)[0].ReconcilerFeedbackKind)
+}
