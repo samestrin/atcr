@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/personas"
@@ -995,7 +996,7 @@ func TestRefreshPersonas_BringsStaleAndEditedCopiesCurrent(t *testing.T) {
 	require.Len(t, registry.StalePersonas(roster, dirs), 2, "fixture must start with two stale copies")
 
 	var out bytes.Buffer
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 
 	assert.Contains(t, out.String(), "Refreshing 2 persona file(s)")
 	assert.Contains(t, out.String(), "  bruce.md\n")
@@ -1015,7 +1016,7 @@ func TestRefreshPersonas_BringsStaleAndEditedCopiesCurrent(t *testing.T) {
 
 	// A second run has nothing to do.
 	out.Reset()
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "nothing to refresh")
 }
 
@@ -1029,7 +1030,7 @@ func TestRefreshPersonas_RefreshesBaseAndUnstampedCopies(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(pdir, "_base.md"), []byte("OLD BASE"), 0o644))
 
 	var out bytes.Buffer
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "  _base.md (no stamp, edits unknown)")
 
 	base, err := personas.Base()
@@ -1056,7 +1057,7 @@ func TestRefreshPersonas_DryRunWritesNothing(t *testing.T) {
 	before := snapshot()
 
 	var out bytes.Buffer
-	require.NoError(t, runRefreshPersonas(dir, true, &out))
+	require.NoError(t, runRefreshPersonas(dir, true, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "Would refresh 2 persona file(s)")
 	assert.Contains(t, out.String(), "greta.md (edited by hand")
 	assert.Equal(t, before, snapshot())
@@ -1077,7 +1078,7 @@ func TestRefreshPersonas_ReplacesSymlinkLeavesTarget(t *testing.T) {
 	require.NoError(t, os.Remove(brucePath))
 	require.NoError(t, os.Symlink(external, brucePath))
 
-	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}))
+	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
 
 	assert.Equal(t, "EXTERNAL", readFile(t, external), "symlink target must be untouched")
 	info, err := os.Lstat(brucePath)
@@ -1109,7 +1110,7 @@ func TestRefreshPersonas_SymlinkIsNotReadThrough(t *testing.T) {
 
 			done := make(chan error, 1)
 			var out bytes.Buffer
-			go func() { done <- runRefreshPersonas(dir, true, &out) }()
+			go func() { done <- runRefreshPersonas(dir, true, &out, atomicfs.WriteFileAtomic) }()
 			select {
 			case err := <-done:
 				require.NoError(t, err)
@@ -1136,7 +1137,7 @@ func TestRefreshPersonas_FIFOCopyIsNotReadAndHasItsOwnNote(t *testing.T) {
 
 	done := make(chan error, 1)
 	var out bytes.Buffer
-	go func() { done <- runRefreshPersonas(dir, false, &out) }()
+	go func() { done <- runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic) }()
 	select {
 	case err := <-done:
 		require.NoError(t, err)
@@ -1164,13 +1165,13 @@ func TestRefreshPersonas_StampOnlyRefreshSaysSo(t *testing.T) {
 	stampBefore := readFile(t, registry.PersonaStampPath(pdir))
 
 	var out bytes.Buffer
-	require.NoError(t, runRefreshPersonas(dir, true, &out))
+	require.NoError(t, runRefreshPersonas(dir, true, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "would refresh the stamp for 2 file(s)")
 	assert.NotContains(t, out.String(), "nothing to refresh")
 	assert.Equal(t, stampBefore, readFile(t, registry.PersonaStampPath(pdir)), "a dry run writes nothing")
 
 	out.Reset()
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "refreshed the stamp for 2 file(s)")
 	assert.NotContains(t, out.String(), "nothing to refresh")
 	stamp, ok = registry.ReadPersonaStamp(pdir)
@@ -1181,7 +1182,7 @@ func TestRefreshPersonas_StampOnlyRefreshSaysSo(t *testing.T) {
 
 	// With the stamp now current, a re-run has nothing to do.
 	out.Reset()
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "nothing to refresh")
 	assert.NotContains(t, out.String(), "refreshed the stamp")
 }
@@ -1287,7 +1288,7 @@ func TestRefreshPersonas_OversizedCopyIsRefreshed(t *testing.T) {
 	require.NoError(t, os.WriteFile(brucePath, bytes.Repeat([]byte("a"), maxPersonaCopyBytes+1), 0o644))
 
 	var out bytes.Buffer
-	require.NoError(t, runRefreshPersonas(dir, false, &out))
+	require.NoError(t, runRefreshPersonas(dir, false, &out, atomicfs.WriteFileAtomic))
 	assert.Contains(t, out.String(), "  bruce.md (over 1 MiB, not read")
 	assert.NotContains(t, out.String(), "edited by hand", "an unread copy cannot be known to be hand-edited")
 	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, brucePath))
@@ -1300,24 +1301,21 @@ func TestRefreshPersonas_FailurePartwayKeepsStampAndRerunCompletes(t *testing.T)
 	dir, pdir := refreshFixture(t)
 	stampBefore := readFile(t, registry.PersonaStampPath(pdir))
 
-	orig := refreshWriteFile
-	t.Cleanup(func() { refreshWriteFile = orig })
-	refreshWriteFile = func(path string, data []byte) error {
+	failGreta := func(path string, data []byte) error {
 		if filepath.Base(path) == "greta.md" {
 			return os.ErrPermission
 		}
-		return orig(path, data)
+		return atomicfs.WriteFileAtomic(path, data)
 	}
 
-	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{}, failGreta)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "greta.md")
 	assert.Equal(t, embeddedPersona(t, "bruce"), readFile(t, filepath.Join(pdir, "bruce.md")), "bruce.md was written before the failure")
 	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")))
 	assert.Equal(t, stampBefore, readFile(t, registry.PersonaStampPath(pdir)), "stamp must be unchanged after a partial refresh")
 
-	refreshWriteFile = orig
-	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}))
+	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
 	stamp, ok := registry.ReadPersonaStamp(pdir)
 	require.True(t, ok)
 	for _, name := range []string{"bruce", "greta"} {
@@ -1330,7 +1328,7 @@ func TestRefreshPersonas_FailurePartwayKeepsStampAndRerunCompletes(t *testing.T)
 // and creates nothing.
 func TestRefreshPersonas_MissingDirIsNamedError(t *testing.T) {
 	dir := t.TempDir()
-	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not exist — run atcr init first")
 	assert.NoDirExists(t, filepath.Join(dir, ".atcr"))
@@ -1347,7 +1345,7 @@ func TestRefreshPersonas_ReadOnlyDirIsNamedErrorChangesNothing(t *testing.T) {
 	require.NoError(t, os.Chmod(pdir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(pdir, 0o755) })
 
-	err := runRefreshPersonas(dir, false, &bytes.Buffer{})
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "is not writable")
 	assert.Equal(t, "OLD BRUCE", readFile(t, filepath.Join(pdir, "bruce.md")))
@@ -1384,6 +1382,14 @@ func TestInit_RefreshPersonasCommandWiring(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, exitUsage, exitCode(err))
 
+	// --offline means nothing to a refresh (it never fetches), so it is
+	// rejected rather than silently ignored.
+	_, err = execute(t, "init", "--refresh-personas", "--offline")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--offline")
+	assert.Equal(t, "EDITED GRETA", readFile(t, filepath.Join(pdir, "greta.md")), "a rejected refresh writes nothing")
+
 	// Plain --force preserves the hand edit.
 	_, err = execute(t, "init", "--force", "--offline")
 	require.NoError(t, err)
@@ -1400,4 +1406,117 @@ func TestInit_RefreshPersonasCommandWiring(t *testing.T) {
 	assert.Equal(t, embeddedPersona(t, "greta"), readFile(t, filepath.Join(pdir, "greta.md")))
 	assert.Equal(t, "# custom\n", readFile(t, configPath))
 	assert.Equal(t, "custom/\n", readFile(t, gitignorePath))
+}
+
+// TestRefreshPersonas_OverlappingStampWriterKeepsItsEntries: another run that
+// writes the stamp while a refresh is mid-write (here, between the refresh's
+// first read of the stamp and its stamp write) does not lose its entries. The
+// refresh re-reads the stamp just before writing it and changes only the
+// entries for files it wrote.
+func TestRefreshPersonas_OverlappingStampWriterKeepsItsEntries(t *testing.T) {
+	dir, pdir := refreshFixture(t)
+	overlapped := false
+	otherWriter := func(path string, data []byte) error {
+		if !overlapped {
+			overlapped = true
+			stamp, ok := registry.ReadPersonaStamp(pdir)
+			require.True(t, ok)
+			stamp.Record("kai.md", []byte("KAI FROM THE OTHER RUN"))
+			stamp.Record("other.md", []byte("OTHER"))
+			require.NoError(t, registry.WritePersonaStamp(pdir, stamp))
+		}
+		return atomicfs.WriteFileAtomic(path, data)
+	}
+
+	require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, otherWriter))
+	require.True(t, overlapped, "the overlapping writer must have run")
+
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	assert.Equal(t, registry.HashPersonaContent([]byte("OTHER")), stamp.Files["other.md"], "an entry the other run added must survive")
+	assert.Equal(t, registry.HashPersonaContent([]byte("KAI FROM THE OTHER RUN")), stamp.Files["kai.md"], "an entry the other run changed, for a file this run did not write, must survive")
+	for _, name := range []string{"bruce", "greta"} {
+		assert.Equal(t, registry.HashPersonaContent([]byte(embeddedPersona(t, name))), stamp.Files[name+".md"], "the files this run wrote take its entries")
+	}
+}
+
+// TestWritePersonaStampMerged: the merge keeps every entry already on disk,
+// sets the given ones, and with no readable stamp writes just the given ones.
+func TestWritePersonaStampMerged(t *testing.T) {
+	pdir := t.TempDir()
+	onDisk := registry.NewPersonaStamp()
+	onDisk.Record("a.md", []byte("A"))
+	onDisk.Record("b.md", []byte("OLD B"))
+	require.NoError(t, registry.WritePersonaStamp(pdir, onDisk))
+
+	newB := registry.HashPersonaContent([]byte("NEW B"))
+	c := registry.HashPersonaContent([]byte("C"))
+	require.NoError(t, writePersonaStampMerged(pdir, map[string]string{"b.md": newB, "c.md": c}))
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	assert.Equal(t, map[string]string{"a.md": registry.HashPersonaContent([]byte("A")), "b.md": newB, "c.md": c}, stamp.Files)
+
+	require.NoError(t, os.WriteFile(registry.PersonaStampPath(pdir), []byte("not json"), 0o644))
+	require.NoError(t, writePersonaStampMerged(pdir, map[string]string{"c.md": c}))
+	stamp, ok = registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	assert.Equal(t, map[string]string{"c.md": c}, stamp.Files)
+}
+
+// probeFiles lists the .refresh-probe-* files in pdir.
+func probeFiles(t *testing.T, pdir string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(pdir, ".refresh-probe-*"))
+	require.NoError(t, err)
+	return matches
+}
+
+// TestRefreshPersonas_NoProbeFileLeftBehind: a refresh that writes leaves no
+// .refresh-probe-* file, whether it succeeds or fails partway, and removes one
+// a crashed earlier run left in the tracked directory. A dry run writes
+// nothing, so it leaves a leftover probe where it is.
+func TestRefreshPersonas_NoProbeFileLeftBehind(t *testing.T) {
+	t.Run("leftover from a crashed run is removed", func(t *testing.T) {
+		dir, pdir := refreshFixture(t)
+		leftover := filepath.Join(pdir, ".refresh-probe-123456")
+		require.NoError(t, os.WriteFile(leftover, nil, 0o600))
+
+		require.NoError(t, runRefreshPersonas(dir, true, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
+		assert.FileExists(t, leftover, "a dry run writes nothing")
+
+		require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
+		assert.Empty(t, probeFiles(t, pdir))
+	})
+	t.Run("failed write", func(t *testing.T) {
+		dir, pdir := refreshFixture(t)
+		failing := func(path string, data []byte) error { return os.ErrPermission }
+		require.Error(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, failing))
+		assert.Empty(t, probeFiles(t, pdir))
+	})
+}
+
+// TestRefreshPersonas_StampOnlyRefreshSkipsProbe: when no persona file needs
+// writing, the only write is the atomic stamp write, so the writability probe
+// is skipped: a read-only directory fails on the stamp itself, not on a probe.
+func TestRefreshPersonas_StampOnlyRefreshSkipsProbe(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires POSIX permissions and non-root user")
+	}
+	dir := t.TempDir()
+	initDir(t, dir)
+	pdir := filepath.Join(dir, ".atcr", "personas")
+	stamp, ok := registry.ReadPersonaStamp(pdir)
+	require.True(t, ok)
+	stamp.Record("bruce.md", []byte("OLD BRUCE"))
+	require.NoError(t, registry.WritePersonaStamp(pdir, stamp))
+	require.NoError(t, os.Chmod(pdir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(pdir, 0o755) })
+
+	err := runRefreshPersonas(dir, false, &bytes.Buffer{}, func(string, []byte) error {
+		t.Fatal("no persona file needs writing")
+		return nil
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "is not writable", "the probe must not run when no persona file needs writing")
+	assert.Contains(t, err.Error(), ".stamp.json")
 }
