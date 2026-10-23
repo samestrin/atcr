@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -879,6 +880,7 @@ func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
 	var mu sync.Mutex
 	var calls []personaDoneCall
 	var gretaBins []string
+	var hookErrs []error
 	p := &PreparedReview{Slots: slots}
 	p.onPersonaDone = func(agent string, idx []int, results []Result) {
 		mu.Lock()
@@ -887,8 +889,19 @@ func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
 		if agent == "greta" {
 			// The ledger hook runs first for the last bin, so chunks.json already
 			// holds every bin's outcome when the persona reports done.
-			for _, b := range readChunkRecord(t, poolDir, "greta").Bins {
-				gretaBins = append(gretaBins, b.Outcome)
+			// This runs on a worker goroutine, so failures are collected here
+			// and asserted on the test goroutine instead of using require.
+			data, rerr := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "greta", chunksFile))
+			var rec chunkRecord
+			if rerr == nil {
+				rerr = json.Unmarshal(data, &rec)
+			}
+			if rerr != nil {
+				hookErrs = append(hookErrs, rerr)
+			} else {
+				for _, b := range rec.Bins {
+					gretaBins = append(gretaBins, b.Outcome)
+				}
 			}
 		}
 		seen := map[string]bool{}
@@ -914,6 +927,7 @@ func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
+	require.NoError(t, errors.Join(hookErrs...), "reading chunks.json in the persona-done hook")
 	require.Len(t, calls, 3, "one callback per persona, all before the run returned")
 	got := map[string]personaDoneCall{}
 	for _, c := range calls {
