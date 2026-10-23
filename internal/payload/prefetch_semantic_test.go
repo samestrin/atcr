@@ -275,17 +275,64 @@ func TestWithSemanticRetriever_NilRetrieverIsInert(t *testing.T) {
 	require.Equal(t, PrefetchStatus{}, b.PrefetchStatus())
 }
 
+// Nilable non-pointer Retriever implementations, so the typed-nil test covers
+// every kind a nil can hide in, not only pointers.
+type (
+	funcRetriever  func(context.Context, []string, int) ([]semindex.Snippet, error)
+	mapRetriever   map[string]semindex.Snippet
+	sliceRetriever []semindex.Snippet
+	chanRetriever  chan semindex.Snippet
+)
+
+func (f funcRetriever) Retrieve(ctx context.Context, q []string, k int) ([]semindex.Snippet, error) {
+	return f(ctx, q, k)
+}
+
+func (mapRetriever) Retrieve(context.Context, []string, int) ([]semindex.Snippet, error) {
+	return nil, nil
+}
+
+func (sliceRetriever) Retrieve(context.Context, []string, int) ([]semindex.Snippet, error) {
+	return nil, nil
+}
+
+func (chanRetriever) Retrieve(context.Context, []string, int) ([]semindex.Snippet, error) {
+	return nil, nil
+}
+
 // Epic 80 T3: a nil *semindex.Client in a Retriever interface is not == nil, so
 // it must be caught by the option or the stage calls Retrieve on a nil client.
+// Epic 80 F1: the same holds for a nil func, map, slice or chan; a nil
+// funcRetriever would panic the review.
 func TestWithSemanticRetriever_TypedNilRetrieverIsInert(t *testing.T) {
-	dir, base, head := semanticRepo(t)
-	b := NewRangeBuilder(context.Background(), dir, base, head,
-		WithSemanticRetriever((*semindex.Client)(nil), 5))
+	for name, r := range map[string]semindex.Retriever{
+		"pointer": (*semindex.Client)(nil),
+		"func":    funcRetriever(nil),
+		"map":     mapRetriever(nil),
+		"slice":   sliceRetriever(nil),
+		"chan":    chanRetriever(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, base, head := semanticRepo(t)
+			b := NewRangeBuilder(context.Background(), dir, base, head,
+				WithSemanticRetriever(r, 5))
 
-	// require.Nil accepts a typed nil, so compare the interface itself.
-	require.True(t, b.g.retriever == nil, "a typed-nil retriever must leave the stage off")
-	require.Empty(t, b.prefetch())
-	require.Equal(t, PrefetchStatus{}, b.PrefetchStatus())
+			// require.Nil accepts a typed nil, so compare the interface itself.
+			require.True(t, b.g.retriever == nil, "a typed-nil retriever must leave the stage off")
+			require.Empty(t, b.prefetch())
+			require.Equal(t, PrefetchStatus{}, b.PrefetchStatus())
+		})
+	}
+}
+
+// A non-nil value of a nilable kind is a real retriever and keeps the stage on.
+func TestWithSemanticRetriever_NonNilFuncRetrieverStaysOn(t *testing.T) {
+	g := newGitRunner(context.Background(), t.TempDir())
+	WithSemanticRetriever(funcRetriever(func(context.Context, []string, int) ([]semindex.Snippet, error) {
+		return nil, nil
+	}), 5)(g)
+
+	require.NotNil(t, g.retriever)
 }
 
 func TestWithSemanticRetriever_TopKBelowOneIsRaisedToOne(t *testing.T) {
