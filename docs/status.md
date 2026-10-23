@@ -99,7 +99,7 @@ ignored.
 | `state` | string | `pending`, `done`, `failed` or `timeout`, from the persona's `status.json`; `pending` until that file exists. There is no `running` state: which persona a worker is serving is held only in memory, so a `pending` persona may already be mid-run. |
 | `chunks_done` | int | Bins that have finished (`ok`, `failed` or `timeout`) in the persona's `chunks.json`. |
 | `chunks_total` | int | Bins the persona planned, from its `chunks.json`. A persona with no `chunks.json` (a diff or single-chunk review) reads as one chunk: `0` of `1` until its `status.json` lands, then `1` of `1`. |
-| `last_activity_at` | string | The newer write time of the persona's `status.json` and `chunks.json`, in RFC 3339 UTC (`2026-10-22T14:33:40Z`). Absent while neither file exists. |
+| `last_activity_at` | string | The newer write time of the persona's `status.json` and `chunks.json`, in RFC 3339 UTC (`2026-10-22T14:33:40Z`). Absent while neither file exists. A write time up to 60 seconds in the future reads as now; one further ahead (a skewed clock, or files restored with their old timestamps) is ignored, so the field is absent if that is the only write. |
 
 A `status.json` or `chunks.json` that is corrupt, too large, not a regular file
 or outside the review folder (for example a symlink to somewhere else) is
@@ -119,6 +119,8 @@ the fan-out is presumed dead; `atcr review --resume` continues it.
 multi-bin `--all` / `--scope` review can pass this point while its bins are
 still finishing; check whether `last_activity_at` is still moving before
 resuming one.
+A file write time more than 60 seconds in the future does not count as
+activity, so it cannot hold a dead review at `in_progress`.
 
 ## Spotting a stalled review
 

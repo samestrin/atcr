@@ -158,6 +158,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ### Fixed
 
+- `atcr status` and `atcr reconcile` no longer treat a review as still running because one of its files carries a write time far in the future (a skewed clock, or files restored with their old timestamps). Such a dead review could read `in_progress` until the clock caught up, and never `stale`. A write time more than 60 seconds ahead is now ignored, and one up to 60 seconds ahead counts as now. See [docs/status.md](docs/status.md#stale). (epic 78)
 - `atcr reconcile` now writes `reconciled/findings.json` after every other reconciled file, so `atcr status` never reports `reconciled` while `report.md`, `summary.json` or a sidecar is still missing. If a write fails partway, `findings.json` is not published. (epic 81.0)
 - `atcr debt dashboard` prints a warning about a malformed line in the local debt store once instead of twice. With `--top` above 0 the dashboard reads the store a second time for its Top Priority rows, and that read repeated every warning the first one had printed. Other stderr notes, such as the count of selected items not found on the second read, still print. (technical debt, epic 79)
 - `atcr review` prints its "dropped N ungrounded finding(s) not present in the patch" warning once per reviewer. It was printed twice, because a reviewer's files are written as soon as it finishes and again at the end of the run. (epic 78)

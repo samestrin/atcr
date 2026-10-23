@@ -395,7 +395,9 @@ func maxUnitRequeueWait(p unitRetryPolicy) time.Duration {
 
 // readAgentProgress builds one AgentProgress row per roster persona and the
 // sorted names of those with a valid status.json, and the newest write time
-// across every row (zero while none has written). It visits only roster
+// across every row (zero while none has written). A write time is vetted by
+// believableActivity first, so a future-dated file cannot push the stale
+// deadline out of reach. It visits only roster
 // personas, each at its agentDirName, so a stray directory under raw/agent is
 // never read; a name agentDirName rejects, or a repeat, is left out. Each file
 // must stay inside the review tree once symlinks resolve (pathWithin, the guard
@@ -407,6 +409,7 @@ func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []st
 	rows := make([]AgentProgress, 0, len(roster))
 	var completed []string
 	var newest time.Time
+	now := nowFunc()
 	seen := make(map[string]bool, len(roster))
 	for _, name := range roster {
 		if seen[name] {
@@ -448,7 +451,7 @@ func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []st
 			}
 		}
 
-		if !last.IsZero() {
+		if last, ok := believableActivity(last, now); ok {
 			row.LastActivityAt = last.UTC().Format(time.RFC3339)
 			if last.After(newest) {
 				newest = last
@@ -458,6 +461,23 @@ func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []st
 	}
 	sort.Strings(completed)
 	return rows, completed, newest
+}
+
+// believableActivity vets a write time before it counts as activity. A time up
+// to staleGraceSecs ahead of now is writer/reader clock slop and counts as now;
+// one further ahead (writer clock skew, a restored artifact that kept its
+// timestamps) is not believable and is dropped, ok false, as is a zero time.
+// Clamping a far-future time to now would not do: every read would anchor the
+// deadline at its own now, and a dead review would stay in_progress until the
+// wall clock passed the bogus mtime.
+func believableActivity(t, now time.Time) (time.Time, bool) {
+	if t.IsZero() || t.After(now.Add(staleGraceSecs*time.Second)) {
+		return time.Time{}, false
+	}
+	if t.After(now) {
+		return now, true
+	}
+	return t, true
 }
 
 // agentStateFor maps a status.json (or chunks.json bin) outcome to its
