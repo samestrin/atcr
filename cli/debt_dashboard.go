@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -98,8 +99,14 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	// the same debtIsLiveStatus core the summaries were ranked with: a concurrent
 	// `debt resolve <id>` landing between the passes drops the row rather than
 	// listing settled work as top priority (hydrateDebtIDs notes the shortfall).
+	//
+	// Both passes warn through the same writer, so a malformed line in a shard
+	// pass 2 re-reads would print twice; the dedup writer drops the repeat while
+	// letting every distinct line through, the shortfall note included.
 	dir := debtStoreDir(cmd)
-	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
+	diag := newLineDedupWriter(cmd.ErrOrStderr())
+	defer diag.Flush()
+	opts := localdebt.ReadOpts{Writer: diag}
 	sums, err := localdebt.ReadSummaries(dir, opts)
 	if err != nil {
 		return fmt.Errorf("read local debt store: %w", err)
@@ -283,4 +290,44 @@ func checkDashboard(cmd *cobra.Command, resolved, display, content string) error
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Dashboard %s is up to date.\n", display)
 	return err
+}
+
+// lineDedupWriter passes each complete line through to w the first time it is
+// written and drops every later copy of it. A trailing fragment without a newline
+// is held until the line completes, or until Flush writes it out as is.
+type lineDedupWriter struct {
+	w       io.Writer
+	seen    map[string]bool
+	pending []byte
+}
+
+func newLineDedupWriter(w io.Writer) *lineDedupWriter {
+	return &lineDedupWriter{w: w, seen: make(map[string]bool)}
+}
+
+func (d *lineDedupWriter) Write(p []byte) (int, error) {
+	d.pending = append(d.pending, p...)
+	for {
+		i := bytes.IndexByte(d.pending, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		line := string(d.pending[:i+1])
+		d.pending = d.pending[i+1:]
+		if d.seen[line] {
+			continue
+		}
+		d.seen[line] = true
+		if _, err := io.WriteString(d.w, line); err != nil {
+			return len(p), err
+		}
+	}
+}
+
+// Flush writes any held fragment that never got its newline.
+func (d *lineDedupWriter) Flush() {
+	if len(d.pending) > 0 {
+		_, _ = d.w.Write(d.pending)
+		d.pending = nil
+	}
 }
