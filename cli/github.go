@@ -140,10 +140,20 @@ func runGithub(cmd *cobra.Command, args []string) error {
 		return &codedError{code: exitFailure, err: err} // present-but-malformed → exit 1
 	}
 
+	// The .atcr/ignore.yaml rules come from the reviewed checkout, so a PR can
+	// add one and empty findings.json; the check run states the suppressed
+	// count so that cannot read as a clean review. An unreadable sidecar fails
+	// the step rather than posting a check that silently omits the count.
+	suppressed, err := reconcile.ReadSuppressedFindings(reviewDir)
+	if err != nil {
+		return &codedError{code: exitFailure, err: err}
+	}
+
 	checkName, _ := cmd.Flags().GetString("check-name")
 	// BuildCheckOutput returns the gate conclusion and blocking-finding count it
 	// already computes, so there is no need to call Conclusion separately.
 	output, conclusion, failCount := ghaction.BuildCheckOutput(findings, failOn)
+	output = ghaction.NoteSuppressed(output, len(suppressed))
 
 	client := &ghaction.Client{APIURL: apiURL, Token: token}
 

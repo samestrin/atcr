@@ -512,6 +512,27 @@ func ReadReconciledFindings(reviewDir string) ([]JSONFinding, error) {
 	return findings, nil
 }
 
+// ReadSuppressedFindings loads reviewDir/reconciled/suppressed.json, the
+// findings .atcr/ignore.yaml rules dropped (Epic 40.0). A missing file (a
+// review reconciled before the sidecar existed) is (nil, nil); a present but
+// unparseable one is an error, so a consumer never reports zero suppressed
+// when it could not tell.
+func ReadSuppressedFindings(reviewDir string) ([]JSONFinding, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, SuppressedJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var findings []JSONFinding
+	if err := json.Unmarshal(data, &findings); err != nil {
+		return nil, fmt.Errorf("parsing reconciled %s: %w", SuppressedJSON, err)
+	}
+	return findings, nil
+}
+
 // ReadAmbiguousClusters loads reviewDir/reconciled/ambiguous.json — the gray-zone
 // sidecar the disagreement radar reads. A missing or empty file returns
 // (nil, nil): the radar degrades to a findings-only view rather than erroring,
