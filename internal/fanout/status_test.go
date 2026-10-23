@@ -1133,3 +1133,83 @@ func TestMaxUnitRequeueWait_RespectsBudgets(t *testing.T) {
 	p.circuitBudget = 60 * time.Second
 	assert.Equal(t, 75*time.Second, maxUnitRequeueWait(p), "a circuit wait over its own budget is never waited")
 }
+
+// --- Epic 78 fix F2: a future activity time cannot wedge the stale check ---
+
+// singleBinWindow is the stale window of a staleRun whose personas each have one
+// bin: the base timeout, the longest requeue wait and the grace margin.
+func singleBinWindow() time.Duration {
+	return time.Duration(600+staleGraceSecs)*time.Second + maxUnitRequeueWait(defaultUnitRetryPolicy())
+}
+
+// A status.json whose mtime is days ahead (writer clock skew, a restored
+// artifact that kept its timestamps) is not believable activity. Taken at face
+// value it would push the deadline days out, so a dead review would read
+// in_progress until the wall clock caught up and EnsureReviewComplete would
+// never return ErrReviewStale. Clamping it to now does not help either: the
+// anchor would then be now on every read until the clock passes the mtime.
+// It is ignored, so a run that started past its deadline reads stale.
+func TestReadReviewStatus_FarFutureActivityDoesNotWedgeStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Hour) // far past start + window
+	withNow(t, now)
+	dir, raw := staleRun(t, start, "skewed")
+	writeAgentStatus(t, raw, "skewed", StatusOK)
+	touchAt(t, filepath.Join(raw, "skewed", statusFile), now.Add(72*time.Hour))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status, "a mtime days in the future must not keep a dead run in_progress")
+
+	err = EnsureReviewComplete(dir, "run-7")
+	require.ErrorIs(t, err, ErrReviewStale)
+}
+
+// A future-dated file does not hide real activity beside it: a persona that
+// wrote a minute ago keeps the run in_progress, and once the window passes from
+// that write the run reads stale, the far-future mtime notwithstanding.
+func TestReadReviewStatus_FarFutureActivityBesideLiveWrite(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Hour)
+	withNow(t, now)
+	dir, raw := staleRun(t, start, "skewed", "live")
+	writeAgentStatus(t, raw, "skewed", StatusOK)
+	touchAt(t, filepath.Join(raw, "skewed", statusFile), now.Add(72*time.Hour))
+	writeAgentChunks(t, raw, "live", chunkOutcomePending)
+	last := now.Add(-time.Minute)
+	touchAt(t, filepath.Join(raw, "live", chunksFile), last)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "a persona wrote a minute ago: the run is live")
+
+	withNow(t, last.Add(singleBinWindow()+time.Second))
+	st, err = ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status, "the window has passed since the last believable write")
+}
+
+// A mtime a few seconds ahead is ordinary clock slop between the writer and
+// the reader, inside the grace margin: it counts as activity at now, so a
+// live run that just wrote is not misread as stale.
+func TestReadReviewStatus_SlightlyFutureActivityCountsAsNow(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	now := start.Add(2 * time.Hour)
+	withNow(t, now)
+	dir, raw := staleRun(t, start, "solo")
+	writeAgentChunks(t, raw, "solo", chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "solo", chunksFile), now.Add(30*time.Second))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+	require.Len(t, st.Agents, 1)
+	assert.Equal(t, now.Format(time.RFC3339), st.Agents[0].LastActivityAt, "slop ahead of now is clamped to now")
+
+	// Just past the grace margin ahead it is no longer believable.
+	touchAt(t, filepath.Join(raw, "solo", chunksFile), now.Add((staleGraceSecs+1)*time.Second))
+	st, err = ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status)
+	assert.Empty(t, st.Agents[0].LastActivityAt, "an unbelievable write is not reported as activity")
+}
