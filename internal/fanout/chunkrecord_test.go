@@ -402,21 +402,17 @@ func TestWorkLedger_PreAttemptsRecordReadsAsZeroAttempts(t *testing.T) {
 	assert.Equal(t, StatusOK, rec.Bins[0].Outcome)
 }
 
-// shed_files round-trips through chunks.json, and a record with none writes no
-// shed_files key, so a run that shed nothing is written exactly as before
-// (Epic 69 T1).
-func TestChunkRecord_ShedFilesRoundTripAndOmitEmpty(t *testing.T) {
-	rec := chunkRecord{SchemaVersion: chunksSchemaVersion, Agent: "greta", ShedFiles: []string{"big1", "big2"},
-		Bins: []chunkRecordBin{{Index: 0, Files: []string{"a.go"}, Outcome: StatusOK}}}
-	data, err := json.Marshal(rec)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"shed_files":["big1","big2"]`)
-	var back chunkRecord
-	require.NoError(t, json.Unmarshal(data, &back))
-	assert.Equal(t, rec, back)
+// A chunks.json written with the retired shed_files key (Epic 69 T1, removed in
+// Epic 78 T5) still decodes, and a record written now carries no such key.
+func TestChunkRecord_LegacyShedFilesKeyDecodesAndIsNotWritten(t *testing.T) {
+	legacy := `{"schema_version": 1, "agent": "greta", "shed_files": ["big1"],
+		"bins": [{"index": 0, "files": ["a.go"], "outcome": "ok"}]}`
+	var rec chunkRecord
+	require.NoError(t, json.Unmarshal([]byte(legacy), &rec))
+	assert.Equal(t, chunkRecord{SchemaVersion: 1, Agent: "greta",
+		Bins: []chunkRecordBin{{Index: 0, Files: []string{"a.go"}, Outcome: StatusOK}}}, rec)
 
-	rec.ShedFiles = nil
-	data, err = json.Marshal(rec)
+	data, err := json.Marshal(rec)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "shed_files")
 }
