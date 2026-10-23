@@ -19,6 +19,12 @@ import (
 // refused to send like any other retriever failure.
 const semanticDegradeSecretGuard semindex.Class = "secret-guard-blocked"
 
+// semanticDegradeConfig is the failure class of an enabled similarity block
+// whose client semindex.New refused to build (credentials in a URL, an insecure
+// scheme, a missing collection). It is a fanout class, not a semindex one, so
+// internal/semindex stays untouched.
+const semanticDegradeConfig semindex.Class = "config-invalid"
+
 // secretQueryLabel names the outbound similarity queries in a secret_guard
 // warning. They belong to no payload file.
 const secretQueryLabel = "similarity query"
@@ -30,7 +36,9 @@ const secretQueryLabel = "similarity query"
 // Anything short of an explicit `enabled: true` returns nil BEFORE anything
 // else happens: no client is constructed, no host is resolved and nothing is
 // logged, so a config-free run is the run built before the tier existed. A
-// client the config cannot build fails open the same way, with a warning.
+// client the config cannot build fails open with a warning and a retriever that
+// fails every query with class semanticDegradeConfig, so the manifest records
+// why the tier produced nothing.
 func semanticRetrieverOption(ctx context.Context, cfg *ReviewConfig, repo string) payload.RangeOption {
 	sp := cfg.Settings.ResolvedSemanticPrefetch()
 	if !sp.Enabled {
@@ -52,7 +60,15 @@ func semanticRetrieverOption(ctx context.Context, cfg *ReviewConfig, repo string
 		}
 	}
 	log.FromContext(ctx).Warn("semantic retrieval not configured; continuing without similarity snippets", "error", err.Error())
-	return nil
+	return payload.WithSemanticRetriever(failingRetriever{err: err}, sp.TopK)
+}
+
+// failingRetriever stands in for a client that could not be built. Every
+// Retrieve fails with a *semindex.Error of class semanticDegradeConfig.
+type failingRetriever struct{ err error }
+
+func (f failingRetriever) Retrieve(context.Context, []string, int) ([]semindex.Snippet, error) {
+	return nil, &semindex.Error{Class: semanticDegradeConfig, Stage: "config", Err: f.err}
 }
 
 // guardedRetriever scans every similarity query under the secret_guard policy
