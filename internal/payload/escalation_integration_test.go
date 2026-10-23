@@ -335,7 +335,8 @@ func TestScopeRuleForPayload_MixedPayloadWidensOnlyTheNamedFiles(t *testing.T) {
 		"=== FILE: b.go ===\npackage p\n" +
 		"diff --git a/c.go b/c.go\n@@ -1 +1 @@\n-x\n+y\n" +
 		"=== FILE: d.go (renamed from old/d.go) ===\npackage p\n" +
-		"=== FILE: b.go ===\npackage p\n"
+		"=== FILE: b.go ===\npackage p\n" +
+		"=== FILE:  ===\npackage p\n"
 
 	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
 		rule := ScopeRuleForPayload(mode, mixed)
@@ -343,7 +344,8 @@ func TestScopeRuleForPayload_MixedPayloadWidensOnlyTheNamedFiles(t *testing.T) {
 		require.NotEqual(t, ScopeRule(ModeFiles), rule, "mode %q: a mixed payload must not get the payload-wide files rule", mode)
 		require.True(t, strings.HasPrefix(rule, scopeChangedOnlyBase), "mode %q: the narrow rule must lead", mode)
 		require.NotContains(t, rule, scopeFilesBase, "mode %q", mode)
-		require.Contains(t, rule, "applies only to `b.go`, `d.go`,", "mode %q: escalated files named once each, in payload order", mode)
+		require.Contains(t, rule, "applies only to `b.go`, `d.go`, the files rendered in full", "mode %q: escalated files named once each, in payload order", mode)
+		require.NotContains(t, rule, "``", "mode %q: a header with no readable path adds no name", mode)
 		require.NotContains(t, rule, "`a.go`", "mode %q: a diff-rendered sibling keeps the narrow rule", mode)
 		require.NotContains(t, rule, "`c.go`", "mode %q: a diff-rendered sibling keeps the narrow rule", mode)
 		require.NotContains(t, rule, "old/d.go", "mode %q: a rename names its new path only", mode)
