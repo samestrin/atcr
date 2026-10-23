@@ -2033,8 +2033,9 @@ const similaritySymbolUnnamed = "unnamed"
 // reason, when its file changed in this diff (the payload already shows it), is
 // excluded by the ignore filter, cannot be read at HEAD (untracked or gone), is
 // over the analyze ceiling, names a span HEAD does not have or one longer than
-// maxSnippetLines, holds Content that no longer matches HEAD (stale), or overlaps a region a reference snippet or an
-// earlier hit already shows (AC8). Only kept snippets become groundable.
+// maxSnippetLines, holds Content that no longer matches HEAD (stale), or
+// overlaps a region a reference snippet or an earlier hit already shows (AC8).
+// Only kept snippets become groundable.
 //
 // A nil retriever, or a change with no queryable symbol, makes no call. A
 // failed call, of any error class, fails open to zero snippets and returns its
