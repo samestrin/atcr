@@ -43,9 +43,10 @@ const (
 // Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds
 // until the fan-out writes summary.json, then completed (≥1 agent ok) or failed
 // (all agents failed). stale is an inferred terminal state (Epic 1.5): summary
-// is absent AND the effective timeout (plus a grace margin) has elapsed, so the
-// fan-out is presumed dead rather than still running. stale is honestly labeled
-// as inferred, not observed — a poll loop treats it as terminal.
+// is absent AND nothing has been written for longer than a bin may run (plus a
+// grace margin, see staleByDeadline), so the fan-out is presumed dead rather
+// than still running. stale is honestly labeled as inferred, not observed — a
+// poll loop treats it as terminal.
 const (
 	RunInProgress = "in_progress"
 	RunCompleted  = "completed"
@@ -169,9 +170,9 @@ type AgentProgress struct {
 // manifest surfaces as os.ErrNotExist (the caller maps it to "review not
 // found"); a present-but-corrupt manifest is a parse error (AC 04-04 Edge Case
 // 6 — never a partial garbage result). summary.json is the completion signal:
-// absent means the fan-out is still running (in_progress) — or, once its
-// effective deadline has elapsed, stale; present means completed (≥1 agent
-// succeeded) or failed (every agent failed).
+// absent means the fan-out is still running (in_progress) — or, once it has
+// gone quiet past its deadline (staleByDeadline), stale; present means
+// completed (≥1 agent succeeded) or failed (every agent failed).
 //
 // Read-pair invariant (TD-023). The manifest and summary are read in two steps,
 // manifest-first, while a background fan-out may be writing both. This is
@@ -213,7 +214,8 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		AgentCount:    len(m.Roster),
 		AgentsPending: len(m.Roster),
 	}
-	st.Agents, st.CompletedAgents = readAgentProgress(reviewDir, m.Roster)
+	var lastActivity time.Time
+	st.Agents, st.CompletedAgents, lastActivity = readAgentProgress(reviewDir, m.Roster)
 
 	// Cap the summary read to prevent an unexpectedly large file from allocating
 	// an unbounded heap slice (item TD: reviewdir.go:340). Any read problem
@@ -237,18 +239,18 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if serr != nil {
 		// No completion signal. The pair is read manifest-first then summary
 		// (Task 4 read invariant); a genuinely absent summary means the fan-out
-		// is either still running or dead. Infer stale when the manifest's
-		// effective deadline (StartedAt + timeout_secs + grace) has passed —
-		// otherwise it is honestly still in_progress. Any read error (absent
-		// file, permission denied, I/O error) is treated the same way: past the
-		// deadline the review is presumed dead regardless of why the completion
-		// signal is unreadable; within the window it stays in_progress.
+		// is either still running or dead. Infer stale when nothing has been
+		// written for longer than a bin may run (staleByDeadline) — otherwise it
+		// is honestly still in_progress. Any read error (absent file, permission
+		// denied, I/O error) is treated the same way: past the deadline the
+		// review is presumed dead regardless of why the completion signal is
+		// unreadable; within the window it stays in_progress.
 		st.AgentsDone = len(st.CompletedAgents)
 		st.AgentsPending = st.AgentCount - st.AgentsDone
 		if st.AgentsPending < 0 {
 			st.AgentsPending = 0
 		}
-		if staleByDeadline(m) {
+		if staleByDeadline(m, st.Agents, lastActivity) {
 			st.Status = RunStale
 			st.CurrentStage = RunStale
 		} else {
@@ -319,15 +321,34 @@ func postFanoutStage(reviewDir string, stages []string) string {
 	return StageReviewed
 }
 
-// staleByDeadline reports whether a summary-less review has exceeded its
+// staleByDeadline reports whether a summary-less review has gone quiet past its
 // inferred deadline. It returns false when the deadline is unknowable — a zero
 // StartedAt or an absent timeout_secs (old manifests, zero value) — so those
 // reviews keep reporting in_progress rather than being guessed dead.
-func staleByDeadline(m payload.Manifest) bool {
+//
+// The deadline runs from the newest activity, not from StartedAt alone: a
+// multi-bin run legitimately outlives StartedAt + timeout_secs, because its bins
+// resolve one after another and each one rewrites the persona's chunks.json (or
+// status.json). lastActivity is the newest of those writes across the roster,
+// and StartedAt stands in until the first one lands. The window is the longest
+// a single unit may run without writing: the base timeout scaled by the
+// persona's chunk count (scaledTimeoutSecs, the budget unitDeadline gives each
+// leased unit), taken over the roster, plus the grace margin. A unit that failed
+// retryably writes chunks.json at the requeue and then waits a backoff before
+// its next lease starts a fresh unit deadline, so the longest such wait
+// (maxUnitRequeueWait) is added too: a provider-wide rate limit can quiet every
+// lane at once, leaving no other write to move the anchor.
+func staleByDeadline(m payload.Manifest, rows []AgentProgress, lastActivity time.Time) bool {
 	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
 		return false
 	}
-	totalSecs := m.TimeoutSecs + staleGraceSecs
+	windowSecs := m.TimeoutSecs
+	for _, r := range rows {
+		if secs := scaledTimeoutSecs(m.TimeoutSecs, r.ChunksTotal); secs > windowSecs {
+			windowSecs = secs
+		}
+	}
+	totalSecs := windowSecs + int(maxUnitRequeueWait(defaultUnitRetryPolicy())/time.Second) + staleGraceSecs
 	if totalSecs < 0 {
 		// int overflow: timeout is beyond representation; deadline is effectively
 		// infinite, so the review cannot be stale.
@@ -339,22 +360,53 @@ func staleByDeadline(m payload.Manifest) bool {
 		// Same conclusion — deadline is effectively infinite.
 		return false
 	}
-	deadline := m.StartedAt.Add(d)
-	return nowFunc().After(deadline)
+	anchor := m.StartedAt
+	if lastActivity.After(anchor) {
+		anchor = lastActivity
+	}
+	return nowFunc().After(anchor.Add(d))
+}
+
+// maxUnitRequeueWait is the longest single wait p lets a requeued unit sit
+// between two leases: the largest backoff hop either budget admits, whether a
+// retryable failure's (rate limit or outage class, doubled per attempt, the sum
+// capped by p.budget) or an open breaker's (p.circuitWait, capped by
+// p.circuitBudget).
+func maxUnitRequeueWait(p unitRetryPolicy) time.Duration {
+	var longest, spent [2]time.Duration
+	for attempt := 1; attempt < p.maxAttempts; attempt++ {
+		for k, c := range [2]failureClass{failureRateLimit, failureServer} {
+			d := p.backoff(c, attempt)
+			if spent[k]+d > p.budget {
+				continue
+			}
+			spent[k] += d
+			if d > longest[k] {
+				longest[k] = d
+			}
+		}
+	}
+	out := max(longest[0], longest[1])
+	if p.circuitWait <= p.circuitBudget && p.circuitWait > out {
+		out = p.circuitWait
+	}
+	return out
 }
 
 // readAgentProgress builds one AgentProgress row per roster persona and the
-// sorted names of those with a valid status.json. It visits only roster
+// sorted names of those with a valid status.json, and the newest write time
+// across every row (zero while none has written). It visits only roster
 // personas, each at its agentDirName, so a stray directory under raw/agent is
 // never read; a name agentDirName rejects, or a repeat, is left out. Each file
 // must stay inside the review tree once symlinks resolve (pathWithin, the guard
 // resume applies), so a symlinked file, persona dir or raw/agent dir that
 // leaves it is refused; an escaping, unreadable, oversized or corrupt file is
 // skipped and its persona reads as if the file were absent.
-func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []string) {
+func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []string, time.Time) {
 	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
 	rows := make([]AgentProgress, 0, len(roster))
 	var completed []string
+	var newest time.Time
 	seen := make(map[string]bool, len(roster))
 	for _, name := range roster {
 		if seen[name] {
@@ -398,11 +450,14 @@ func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []st
 
 		if !last.IsZero() {
 			row.LastActivityAt = last.UTC().Format(time.RFC3339)
+			if last.After(newest) {
+				newest = last
+			}
 		}
 		rows = append(rows, row)
 	}
 	sort.Strings(completed)
-	return rows, completed
+	return rows, completed, newest
 }
 
 // agentStateFor maps a status.json (or chunks.json bin) outcome to its
@@ -557,9 +612,10 @@ type AgentStatus struct {
 	// a silent lane: a thinking-declared reviewer answering NO FINDINGS in fewer
 	// than 50 tokens out on more than 10k tokens in — more likely a skipped review
 	// than a finished one (Epic 35.16.11.2.2.8 T1). A persona is wholly silent when
-	// it reaches ChunkCount. A fit signal for `atcr benchmark`, not an outcome:
-	// ReviewerOutcome does not read it. omitempty keeps the common status.json
-	// unchanged.
+	// it reaches ChunkCount; a record with no chunk_count (a single-shot persona)
+	// counts as one chunk, so one silent chunk makes it wholly silent. A fit
+	// signal for `atcr benchmark`, not an outcome: ReviewerOutcome does not read
+	// it. omitempty keeps the common status.json unchanged.
 	SilentChunks int `json:"silent_chunks,omitempty"`
 
 	// Salvaged records that the client promoted reasoning into Content because the
