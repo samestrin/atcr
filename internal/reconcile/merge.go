@@ -90,7 +90,10 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 // as its first quote, q. Any other member keeps its evidence whole; for a
 // multi-reviewer member that is the prefixed concatenation, which rarely matches
 // a quote, so the union reads as independent and keeps its reviewer-count
-// confidence: the same accepted false negative IsPanelWide documents.
+// confidence: the same accepted false negative IsPanelWide documents. A member
+// with no reviewers (a hand-built or old findings.json record) still yields one
+// entry with an empty Reviewer: it adds no voice to the distinct-reviewer count,
+// but its file and evidence are tested, so it cannot drop out of the test.
 func panelWideMembers(group []JSONFinding) []Finding {
 	var out []Finding
 	for _, f := range group {
@@ -98,7 +101,11 @@ func panelWideMembers(group []JSONFinding) []Finding {
 		if f.ConfidenceDiscount != "" && len(f.Reviewers) >= 2 {
 			evidence = firstQuote(evidence, f.Reviewers)
 		}
-		for _, r := range f.Reviewers {
+		reviewers := f.Reviewers
+		if len(reviewers) == 0 {
+			reviewers = []string{""}
+		}
+		for _, r := range reviewers {
 			out = append(out, Finding{Reviewer: r, File: f.File, Category: f.Category, Evidence: evidence})
 		}
 	}
