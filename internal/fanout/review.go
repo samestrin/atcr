@@ -1673,6 +1673,14 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// option-construction chokepoint, so the resume path (resume.go) inherits it
 	// without its own threading.
 	opts = append(opts, payload.WithMaxPrefetchBytes(cfg.Settings.ResolvedMaxPrefetchBytes()))
+	// Optional similarity retriever (Epic 35.16.12.1), built here because payload
+	// must not import registry. nil unless context_prefetch.semantic is enabled,
+	// so a config-free run adds no option at all. One RangeBuilder memoizes the
+	// pre-fetch section, so the queries are retrieved once and every mode, and
+	// with it every agent, shares one snippet set and one ordering.
+	if opt := semanticRetrieverOption(ctx, cfg, repo); opt != nil {
+		opts = append(opts, opt)
+	}
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
 	out := map[string]modePayload{}
 	for _, mode := range neededModes(cfg) {
