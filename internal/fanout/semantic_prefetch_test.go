@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/semindex"
@@ -433,4 +436,65 @@ func TestSemanticQueryGuard_BlockPassesCleanQueries(t *testing.T) {
 	assert.Equal(t, 1, inner.calls, "clean queries must be retrieved")
 	assert.Equal(t, clean, inner.queries, "clean queries are sent unchanged")
 	assert.Empty(t, stderr)
+}
+
+// closedPortURL returns a loopback URL nothing listens on: the listener is
+// bound for a free port and closed again, so a dial is refused.
+func closedPortURL(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+	return "http://" + addr
+}
+
+// readSemanticManifest decodes a finished review's manifest.json, raw and typed.
+func readSemanticManifest(t *testing.T, dir string) ([]byte, payload.Manifest) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	require.NoError(t, err)
+	var m payload.Manifest
+	require.NoError(t, json.Unmarshal(raw, &m))
+	return raw, m
+}
+
+// Epic 35.16.12.1 T3 (AC2, AC4): an endpoint configured but unreachable still
+// completes the review, ships zero similarity snippets, counts the failure once
+// and records one degrade reason in the manifest.
+func TestSemanticPrefetch_ClosedPortCompletesWithOneDegradeReason(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := semanticFanoutRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+	enableSemantic(cfg, closedPortURL(t))
+	counter := metrics.DefaultRegistry.Counter(semindex.UnreachableMetric)
+	before := counter.Value()
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Summary.Succeeded, "the review completes normally")
+
+	assert.Equal(t, int64(1), counter.Value()-before, "one failed retrieval is counted once")
+	raw, m := readSemanticManifest(t, res.Dir)
+	require.NotNil(t, m.Prefetch)
+	assert.Equal(t, string(semindex.ClassUnreachable), m.Prefetch.DegradeReason)
+	assert.Equal(t, 1, strings.Count(string(raw), `"degrade_reason"`), "one degrade reason is recorded")
+	rendered, err := os.ReadFile(filepath.Join(res.Dir, "payload", "blocks.txt"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(rendered), "similarity to", "zero similarity snippets ship")
+}
+
+func TestSemanticPrefetch_OffRunManifestHasNoDegradeReason(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := semanticFanoutRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	raw, m := readSemanticManifest(t, res.Dir)
+	require.NotNil(t, m.Prefetch, "PRECONDITION: the run had a range to prefetch from")
+	assert.NotContains(t, string(raw), "degrade_reason")
 }
