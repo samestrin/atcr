@@ -498,6 +498,10 @@ finding's **file** and **category** plus a **match** regex-quoted from its
 problem text, whose `(symbol) ` anchor keeps the rule on the same symbol after
 the line moves.
 
+The derived `file` is the finding's path with each glob metacharacter turned
+into a one-character class, so a path such as `app/[id]/page.tsx` is written as
+`app/[[]id]/page.tsx` and matches only itself, not `app/i/page.tsx`.
+
 ### The `.atcr/ignore.yaml` format
 
 ```yaml
@@ -541,7 +545,10 @@ a bad rule silently match too much or never match:
 - Decoding is strict: a typo'd or unsupported key such as `line:` is an error.
   There is deliberately **no line field** — a line number drifts with every edit
   above the finding.
-- An invalid `file` glob fails reconcile loudly at load, not silently at match.
+- `file` must parse as a glob: `atcr ignore` will not write a malformed one such
+  as `a[.go`, and one written by hand fails the whole file at load, not
+  silently at match. A backslash cannot escape a metacharacter (it is folded to
+  a slash); write a literal `[`, `*` or `?` as `[[]`, `[*]` or `[?]`.
 
 ### What a match does
 
