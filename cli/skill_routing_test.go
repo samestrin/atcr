@@ -77,7 +77,7 @@ func TestSkillRoutingTableMatchesRegistry(t *testing.T) {
 
 // skillSubcommandOwners matches SKILL.md's one sentence naming the top-level
 // commands that own subcommands, capturing the backticked list.
-var skillSubcommandOwners = regexp.MustCompile("Top-level commands that own subcommands \\(([^)]*)\\)")
+var skillSubcommandOwners = regexp.MustCompile(`Top-level commands that own subcommands \(([^)]*)\)`)
 
 // TestSkillSubcommandOwnersMatchRegistry (epic 35.22 T7) — SKILL.md tells the
 // agent which commands expose subcommands through `atcr <command> --help` and
