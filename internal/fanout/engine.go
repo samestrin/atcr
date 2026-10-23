@@ -1499,7 +1499,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 		// over, by decision (TD-018): a truncated salvage with zero findings was
 		// already routed to the backup by the truncation gate when failover is on,
 		// and a stop-reason salvage is a finished reply, scored, not retried. Pinned,
-		// both halves, by TestInvokeSlot_SalvagedSentinelShapedReply_IsNotACleanReview;
+		// both halves, by TestInvokeSlot_SalvagedSentinelShapedReply_IsCleanOnlyOnAStopReasonSalvage;
 		// the untouched backup by TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage.
 		if r.Status == StatusOK && r.Content != "" && r.ParsedFindingCount() == 0 {
 			if r.Salvaged && !r.SalvagedOnStop {
