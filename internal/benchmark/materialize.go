@@ -325,9 +325,11 @@ func commitAll(ctx context.Context, root string, expectedFiles int, commitArgs [
 
 // gitCmd builds a hardened git command rooted at root. Every git subprocess in
 // this package goes through gitexec — the package invariant that no bare
-// exec.Command("git", ...) exists outside it.
+// exec.Command("git", ...) exists outside it. root is a repository this package
+// creates, so it is pinned: an inherited GIT_DIR (git exports one into every
+// hook) beats -C and would send init/add/commit into the caller's repository.
 func gitCmd(ctx context.Context, root string, args ...string) *exec.Cmd {
-	return gitexec.CommandContextFn(ctx, append([]string{"-C", root}, args...)...)
+	return gitexec.PinRepo(gitexec.CommandContextFn(ctx, append([]string{"-C", root}, args...)...), root)
 }
 
 // maxGitErrorOutput bounds how much of git's combined output is folded into an
