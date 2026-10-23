@@ -416,3 +416,21 @@ func TestSemanticRetrieverOption_UnbuildableClientFailsOpen(t *testing.T) {
 	assert.Contains(t, buf.String(), "semantic retrieval not configured")
 	assert.Contains(t, buf.String(), "collection is required")
 }
+
+// block skips retrieval only when the queries or the scan are dirty: clean
+// queries under a working scanner pass through unchanged, or block would
+// silently yield zero similarity snippets on every run.
+func TestSemanticQueryGuard_BlockPassesCleanQueries(t *testing.T) {
+	hideGitleaks(t)
+	inner := &recordingRetriever{}
+	g := &guardedRetriever{policy: secretGuardBlock, inner: inner}
+	clean := []string{"func ReadStore(path string) (string, error)", "func ReadCache(key string) (string, error)"}
+	var err error
+	stderr := captureStderr(t, func() {
+		_, err = g.Retrieve(context.Background(), clean, 3)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.calls, "clean queries must be retrieved")
+	assert.Equal(t, clean, inner.queries, "clean queries are sent unchanged")
+	assert.Empty(t, stderr)
+}
