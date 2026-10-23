@@ -64,7 +64,8 @@ func (r IgnoreRule) label(i int) string {
 
 // validate enforces the AC6 guardrails on the rule at index i: a reason, a
 // file or package scope, no escape from the repo via ".." or an absolute
-// path, and a match that compiles as RE2 (Go's regexp, so a PCRE-only
+// path, a file that parses as a glob (so a rule the writer persists cannot
+// fail the next reconcile's NewIgnoreMatcher), and a match that compiles as RE2 (Go's regexp, so a PCRE-only
 // construct is rejected here rather than silently never matching).
 func (r IgnoreRule) validate(i int) error {
 	if strings.TrimSpace(r.Reason) == "" {
@@ -76,6 +77,13 @@ func (r IgnoreRule) validate(i int) error {
 	for _, p := range []struct{ key, val string }{{"file", r.File}, {"package", r.Package}} {
 		if err := checkRulePath(p.val); err != nil {
 			return fmt.Errorf("%s: %s %w", r.label(i), p.key, err)
+		}
+	}
+	if f := strings.TrimSpace(r.File); f != "" {
+		for _, seg := range strings.Split(cleanIgnorePath(f), "/") {
+			if _, err := path.Match(seg, ""); err != nil {
+				return fmt.Errorf("%s: file is not a valid glob: %w", r.label(i), err)
+			}
 		}
 	}
 	if r.catchAllScope() && r.Match == "" && strings.TrimSpace(r.Category) == "" {

@@ -70,6 +70,11 @@ func TestParseIgnore_RejectsInvalidRules(t *testing.T) {
 			wantErrs: []string{"rule 1", `file "x.go"`, "match"},
 		},
 		{
+			name:     "malformed file glob",
+			yaml:     "rules:\n  - file: \"a[.go\"\n    reason: intentional\n",
+			wantErrs: []string{"rule 1", `file "a[.go"`, "glob"},
+		},
+		{
 			name:     "unknown key (typo) is rejected, not silently dropped",
 			yaml:     "rules:\n  - file: x.go\n    line: 12\n    reason: intentional\n",
 			wantErrs: []string{"line"},
@@ -301,6 +306,11 @@ func TestAppendIgnoreRule_CreatesThenAppends(t *testing.T) {
 	}
 	if err := AppendIgnoreRule(path, IgnoreRule{File: "../x.go", Reason: "no"}); err == nil {
 		t.Fatal("AppendIgnoreRule accepted a .. path")
+	}
+	// A malformed glob would pass the path checks and then fail every later
+	// reconcile in NewIgnoreMatcher, so the writer refuses it up front.
+	if err := AppendIgnoreRule(path, IgnoreRule{File: "a[.go", Reason: "no"}); err == nil {
+		t.Fatal("AppendIgnoreRule accepted a malformed glob")
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {

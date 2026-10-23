@@ -1,7 +1,6 @@
 package reconcile
 
 import (
-	"fmt"
 	"path"
 	"regexp"
 	"strings"
@@ -32,8 +31,8 @@ type compiledIgnoreRule struct {
 }
 
 // NewIgnoreMatcher validates and compiles rules. A rule the T1 validator
-// rejects, or whose file glob is malformed, is an error naming the rule, so a
-// bad rule fails reconcile loudly instead of silently never matching.
+// rejects (which includes a malformed file glob) is an error naming the rule,
+// so a bad rule fails reconcile loudly instead of silently never matching.
 func NewIgnoreMatcher(rules []IgnoreRule) (*IgnoreMatcher, error) {
 	m := &IgnoreMatcher{rules: make([]compiledIgnoreRule, 0, len(rules))}
 	for i, r := range rules {
@@ -46,11 +45,6 @@ func NewIgnoreMatcher(rules []IgnoreRule) (*IgnoreMatcher, error) {
 		}
 		if f := strings.TrimSpace(r.File); f != "" {
 			c.file = strings.Split(cleanIgnorePath(f), "/")
-			for _, seg := range c.file {
-				if _, err := path.Match(seg, ""); err != nil {
-					return nil, fmt.Errorf("%s: file is not a valid glob: %w", r.label(i), err)
-				}
-			}
 		}
 		if p := strings.TrimSpace(r.Package); p != "" {
 			c.pkg = cleanIgnorePath(p)
@@ -99,6 +93,26 @@ func (m *IgnoreMatcher) Match(f JSONFinding) (IgnoreRule, bool) {
 // that needs one is rare enough to scope by package instead.
 func cleanIgnorePath(p string) string {
 	return path.Clean(strings.ReplaceAll(strings.TrimSpace(p), `\`, "/"))
+}
+
+// EscapeIgnoreGlob returns a rule File that matches the literal path p and
+// nothing else. Backslash escapes cannot work here (cleanIgnorePath folds them
+// to slashes), so each glob metacharacter becomes a one-character class:
+// `app/[id]/page.tsx` is written as `app/[[]id]/page.tsx`. `]` and `-` are
+// only special inside a class, so they stay as they are.
+func EscapeIgnoreGlob(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		switch r {
+		case '*', '?', '[':
+			b.WriteByte('[')
+			b.WriteRune(r)
+			b.WriteByte(']')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // normalizeIgnoreCategory mirrors reconcile/merge.go, which lowercases and

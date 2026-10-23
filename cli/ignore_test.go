@@ -211,8 +211,17 @@ func TestIgnore_RegisteredAndListedInHelp(t *testing.T) {
 // TestIgnore_RoundTripSuppressesOnNextReconcile is the end-to-end success
 // criterion: reconcile a fixture review, `atcr ignore` the finding by the id
 // stamped into findings.json, and the next RunReconcile drops it into
-// Result.Suppressed while the other finding stays.
+// Result.Suppressed while the other finding stays. The bracketed paths carry
+// glob metacharacters: `app/[id]/page.tsx` must not be read as a character
+// class that never matches itself, and `a[.go` must not be written as a
+// malformed glob that fails every later reconcile.
 func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
+	for _, target := range []string{"internal/mem/pool.go", "app/[id]/page.tsx", "a[.go", "w/*?x.go"} {
+		t.Run(target, func(t *testing.T) { ignoreRoundTrip(t, target) })
+	}
+}
+
+func ignoreRoundTrip(t *testing.T, targetFile string) {
 	root := t.TempDir()
 	git := func(args ...string) {
 		out, err := fixtureGit(root, args...).CombinedOutput()
@@ -222,7 +231,7 @@ func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
 	git("config", "user.email", "t@t.t")
 	git("config", "user.name", "t")
 	files := map[string]string{
-		"internal/mem/pool.go": "package mem\n\nfunc Get() { _ = unsafe.Pointer(nil) }\n",
+		targetFile:             "package mem\n\nfunc Get() { _ = unsafe.Pointer(nil) }\n",
 		"internal/store/db.go": "package store\n\nfunc Open() {}\n",
 	}
 	for rel, body := range files {
@@ -237,7 +246,7 @@ func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
 	src := filepath.Join(reviewDir, "sources", "greta", "findings.txt")
 	require.NoError(t, os.MkdirAll(filepath.Dir(src), 0o755))
 	require.NoError(t, os.WriteFile(src, []byte("# atcr-findings/v1\n"+
-		"HIGH|internal/mem/pool.go:3|`Get` uses unsafe.Pointer|drop it|security|10|ev|greta\n"+
+		"HIGH|"+targetFile+":3|`Get` uses unsafe.Pointer|drop it|security|10|ev|greta\n"+
 		"LOW|internal/store/db.go:3|`Open` is slow|cache it|perf|5|ev|greta\n"), 0o644))
 	require.NoError(t, fanout.WriteLatest(root, "r1"))
 
@@ -257,11 +266,11 @@ func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
 	require.NoError(t, err)
 	var target string
 	for _, f := range js {
-		if f.File == "internal/mem/pool.go" {
+		if f.File == targetFile {
 			target = f.ID
 		}
 	}
-	require.NotEmpty(t, target, "findings.json carries the pool.go finding's stamped id")
+	require.NotEmpty(t, target, "findings.json carries the target finding's stamped id")
 
 	t.Chdir(root)
 	out, err := runIgnore(t, target, "--reason", "this package needs unsafe for the mmap view")
@@ -269,7 +278,7 @@ func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
 
 	second := reconcileOnce()
 	require.Len(t, second.Suppressed, 1, "the ignored finding is suppressed")
-	assert.Equal(t, "internal/mem/pool.go", second.Suppressed[0].File)
+	assert.Equal(t, targetFile, second.Suppressed[0].File)
 	require.Len(t, second.Findings, 1, "the other finding stays")
 	assert.Equal(t, "internal/store/db.go", second.Findings[0].File)
 	js, err = reconcile.ReadReconciledFindings(reviewDir)
