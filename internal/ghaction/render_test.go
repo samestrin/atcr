@@ -222,3 +222,19 @@ func TestBuildCheckOutput(t *testing.T) {
 		assert.Contains(t, out.Text, "0 of 1 findings shown")
 	})
 }
+
+// TestNoteSuppressed is the F2 check-run half: when .atcr/ignore.yaml dropped
+// findings, the check-run title and summary say how many, so a reviewer who
+// sees a green check with no findings knows rules removed some. A zero count
+// leaves the output untouched.
+func TestNoteSuppressed(t *testing.T) {
+	base, _, _ := BuildCheckOutput(nil, "high")
+
+	assert.Equal(t, base, NoteSuppressed(base, 0), "nothing suppressed: output unchanged")
+
+	got := NoteSuppressed(base, 3)
+	assert.Contains(t, got.Title, "3 suppressed")
+	assert.Contains(t, got.Summary, "3 finding(s) suppressed by .atcr/ignore.yaml")
+	assert.Contains(t, got.Summary, reconcile.SuppressedJSON)
+	assert.Equal(t, base.Text, got.Text)
+}

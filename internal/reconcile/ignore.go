@@ -64,7 +64,8 @@ func (r IgnoreRule) label(i int) string {
 
 // validate enforces the AC6 guardrails on the rule at index i: a reason, a
 // file or package scope, no escape from the repo via ".." or an absolute
-// path, and a match that compiles as RE2 (Go's regexp, so a PCRE-only
+// path, a file that parses as a glob (so a rule the writer persists cannot
+// fail the next reconcile's NewIgnoreMatcher), and a match that compiles as RE2 (Go's regexp, so a PCRE-only
 // construct is rejected here rather than silently never matching).
 func (r IgnoreRule) validate(i int) error {
 	if strings.TrimSpace(r.Reason) == "" {
@@ -78,12 +79,41 @@ func (r IgnoreRule) validate(i int) error {
 			return fmt.Errorf("%s: %s %w", r.label(i), p.key, err)
 		}
 	}
+	if f := strings.TrimSpace(r.File); f != "" {
+		for _, seg := range strings.Split(cleanIgnorePath(f), "/") {
+			if _, err := path.Match(seg, ""); err != nil {
+				return fmt.Errorf("%s: file is not a valid glob: %w", r.label(i), err)
+			}
+		}
+	}
+	if r.catchAllScope() && r.Match == "" && strings.TrimSpace(r.Category) == "" {
+		return fmt.Errorf("%s: a catch-all scope needs a match or category to narrow it", r.label(i))
+	}
 	if r.Match != "" {
 		if _, err := regexp.Compile(r.Match); err != nil {
 			return fmt.Errorf("%s: match does not compile: %w", r.label(i), err)
 		}
 	}
 	return nil
+}
+
+// catchAllScope reports whether every scope the rule sets names no particular
+// file or package: a file glob made only of `*` and `**` segments (or "."),
+// and a package of "." (the repo root). ignore.yaml is read from the reviewed
+// checkout, so without this a pull request could add one such rule and drop
+// every finding with the gate still green.
+func (r IgnoreRule) catchAllScope() bool {
+	if f := strings.TrimSpace(r.File); f != "" {
+		for _, seg := range strings.Split(cleanIgnorePath(f), "/") {
+			if seg != "*" && seg != "**" && seg != "." {
+				return false
+			}
+		}
+	}
+	if p := strings.TrimSpace(r.Package); p != "" && cleanIgnorePath(p) != "." {
+		return false
+	}
+	return true
 }
 
 // checkRulePath rejects a path that could reach outside the repository.

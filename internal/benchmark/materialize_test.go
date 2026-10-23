@@ -47,7 +47,7 @@ func boolPtr(b bool) *bool { return &b }
 
 func gitOut(t *testing.T, root string, args ...string) string {
 	t.Helper()
-	cmd := gitexec.CommandContextFn(context.Background(), append([]string{"-C", root}, args...)...)
+	cmd := gitexec.FixtureCommandContext(context.Background(), root, args...)
 	out, err := cmd.Output()
 	require.NoError(t, err, "git %s", strings.Join(args, " "))
 	return string(out)
@@ -212,6 +212,38 @@ func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 
 	diff := gitOut(t, mc.Root, "diff", "--name-only", mc.BaseSHA, mc.HeadSHA)
 	assert.Equal(t, "pkg/example.py\n", diff, "base..head must be exactly the case's change")
+}
+
+// Git exports GIT_DIR (and, in pre-commit, GIT_INDEX_FILE) into a hook's
+// environment, and both beat `git -C`. MaterializeCase builds its own repository,
+// so an inherited value must not send its init/add/commit into the caller's
+// repository (Epic 45.0: the suite run from pre-push moved HEAD this way).
+func TestMaterializeCase_InheritedGitDirLeavesTheOuterRepoUntouched(t *testing.T) {
+	outer := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.name=o", "-c", "user.email=o@o.invalid", "commit", "-q", "--allow-empty", "-m", "outer"},
+	} {
+		out, err := gitexec.FixtureCommandContext(context.Background(), outer, args...).CombinedOutput()
+		require.NoError(t, err, "outer git %v: %s", args, out)
+	}
+	before := gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)")
+	index := filepath.Join(outer, ".git", "index")
+	indexBefore, _ := os.ReadFile(index)
+
+	c := materializableCase(t)
+	t.Setenv("GIT_DIR", filepath.Join(outer, ".git"))
+	t.Setenv("GIT_INDEX_FILE", index)
+	mc, err := MaterializeCase(context.Background(), c, t.TempDir())
+	require.NoError(t, err)
+
+	assert.Equal(t, before, gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)"),
+		"the inherited GIT_DIR's refs moved")
+	assert.Equal(t, "false\n", gitOut(t, outer, "config", "core.bare"))
+	indexAfter, _ := os.ReadFile(index)
+	assert.Equal(t, indexBefore, indexAfter, "the inherited GIT_INDEX_FILE was written")
+	assert.Equal(t, mc.HeadSHA, strings.TrimSpace(gitOut(t, mc.Root, "rev-parse", "HEAD")),
+		"the case repository holds its own commits")
 }
 
 // The diff is the only thing that changes the tree, so the head working tree must

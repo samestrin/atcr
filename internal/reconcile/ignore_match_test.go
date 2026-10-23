@@ -171,10 +171,12 @@ func TestIgnoreMatcher_ScopeAndOptionalFields(t *testing.T) {
 	if _, ok := mustMatcher(t, IgnoreRule{Package: "pkg/", Reason: "r"}).Match(f); !ok {
 		t.Error("a trailing slash on package should not change its meaning")
 	}
-	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Reason: "r"}).Match(JSONFinding{File: "main.go"}); !ok {
+	// package "." alone is a catch-all scope (F2), so a category narrows it;
+	// both findings carry that category, leaving the package the only variable.
+	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Category: "style", Reason: "r"}).Match(JSONFinding{File: "main.go", Category: "style"}); !ok {
 		t.Error(`package "." should cover a repo-root file`)
 	}
-	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Reason: "r"}).Match(f); ok {
+	if _, ok := mustMatcher(t, IgnoreRule{Package: ".", Category: "style", Reason: "r"}).Match(f); ok {
 		t.Error(`package "." must not cover a file in a subdirectory`)
 	}
 	if _, ok := mustMatcher(t, IgnoreRule{File: "pkg/a.go", Category: " Style ", Reason: "r"}).Match(f); !ok {
@@ -212,8 +214,10 @@ func TestIgnoreMatcher_NoRules(t *testing.T) {
 		t.Error("an empty matcher matched")
 	}
 	// path.Clean("") is ".", which must not let a file-less finding fall
-	// into a repo-root package or a catch-all glob.
-	for _, r := range []IgnoreRule{{Package: ".", Reason: "r"}, {File: "**", Reason: "r"}} {
+	// into a repo-root package or a catch-all glob. Each rule carries a match
+	// the Problem satisfies (a bare catch-all scope is rejected, F2), so the
+	// missing file is the only reason left for it not to match.
+	for _, r := range []IgnoreRule{{Package: ".", Match: "x", Reason: "r"}, {File: "**", Match: "x", Reason: "r"}} {
 		if _, ok := mustMatcher(t, r).Match(JSONFinding{Problem: "x"}); ok {
 			t.Errorf("rule %+v matched a finding with no file", r)
 		}
@@ -247,5 +251,36 @@ func TestNewIgnoreMatcher_RejectsBadRules(t *testing.T) {
 				t.Errorf("%s: error %q does not mention %q", c.name, err, w)
 			}
 		}
+	}
+}
+
+// TestEscapeIgnoreGlob_MatchesOnlyTheLiteralPath pins that an escaped path is
+// a valid rule that covers that exact file and no sibling an unescaped glob
+// would also have reached.
+func TestEscapeIgnoreGlob_MatchesOnlyTheLiteralPath(t *testing.T) {
+	for _, c := range []struct{ path, sibling string }{
+		{"app/[id]/page.tsx", "app/i/page.tsx"},
+		{"a[.go", "a.go"},
+		{"w/*.go", "w/a.go"},
+		{"w/?.go", "w/a.go"},
+		{"**/x.go", "deep/dir/x.go"},
+		{"lib/a-]b^.go", "lib/a-]c^.go"},
+		{"plain/file.go", "plain/other.go"},
+	} {
+		rule := IgnoreRule{File: EscapeIgnoreGlob(c.path), Reason: "r"}
+		m, err := NewIgnoreMatcher([]IgnoreRule{rule})
+		if err != nil {
+			t.Errorf("%s: escaped rule %q rejected: %v", c.path, rule.File, err)
+			continue
+		}
+		if _, ok := m.Match(JSONFinding{File: c.path}); !ok {
+			t.Errorf("%s: escaped rule %q does not match its own path", c.path, rule.File)
+		}
+		if _, ok := m.Match(JSONFinding{File: c.sibling}); ok {
+			t.Errorf("%s: escaped rule %q also matches %s", c.path, rule.File, c.sibling)
+		}
+	}
+	if got, want := EscapeIgnoreGlob("app/[id]/page.tsx"), "app/[[]id]/page.tsx"; got != want {
+		t.Errorf("EscapeIgnoreGlob = %q, want %q", got, want)
 	}
 }
