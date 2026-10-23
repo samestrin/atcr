@@ -1081,3 +1081,47 @@ func TestReadReviewStatus_ActivityStaleBoundaryIsExclusive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, RunInProgress, st.Status)
 }
+
+// A unit that failed retryably flushes chunks.json at the requeue, then waits a
+// backoff before it is leased again, and the new lease gets a full unit
+// deadline. A rate limit that quiets every lane at once leaves no other write
+// to move the anchor, so the longest wait (300s for the third rate-limit hop)
+// plus one unit deadline must still read live.
+func TestReadReviewStatus_RequeuedBinWaitingOutBackoffIsNotStale(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	requeuedAt := start.Add(time.Hour)
+	// Past the unit window (600+60) but inside the longest backoff + unit
+	// deadline + grace (300+600+60).
+	withNow(t, requeuedAt.Add(900*time.Second))
+	dir, raw := staleRun(t, start, "solo", "other")
+	writeAgentChunks(t, raw, "solo", chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "solo", chunksFile), requeuedAt)
+	writeAgentChunks(t, raw, "other", StatusOK, chunkOutcomePending)
+	touchAt(t, filepath.Join(raw, "other", chunksFile), requeuedAt.Add(-time.Minute))
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "a requeued unit may still be waiting out its backoff")
+
+	err = EnsureReviewComplete(dir, "run-7")
+	require.ErrorIs(t, err, ErrReviewInProgress)
+	assert.NotContains(t, err.Error(), "--resume", "a live run must not be resumed")
+}
+
+// The longest single wait between a requeue and the next lease is the largest
+// hop either retry budget allows: the third rate-limit backoff by default.
+func TestMaxUnitRequeueWait_DefaultPolicy(t *testing.T) {
+	assert.Equal(t, rateLimitBackoff<<(unitMaxAttempts-2), maxUnitRequeueWait(defaultUnitRetryPolicy()))
+}
+
+// A hop the summed budget refuses is never waited, and the circuit wait counts
+// when it is the longest.
+func TestMaxUnitRequeueWait_RespectsBudgets(t *testing.T) {
+	p := unitRetryPolicy{
+		maxAttempts: 4, budget: 100 * time.Second, backoff: unitBackoff,
+		circuitWait: 90 * time.Second, circuitBudget: 30 * time.Minute,
+	}
+	assert.Equal(t, 90*time.Second, maxUnitRequeueWait(p), "75s fits the budget, 150s does not; the 90s circuit wait is longer")
+	p.circuitBudget = 60 * time.Second
+	assert.Equal(t, 75*time.Second, maxUnitRequeueWait(p), "a circuit wait over its own budget is never waited")
+}
