@@ -47,9 +47,12 @@ func newInitCmd() *cobra.Command {
 				if force {
 					return usageError(errors.New("--refresh-personas cannot be combined with --force"))
 				}
+				if offline {
+					return usageError(errors.New("--refresh-personas cannot be combined with --offline; a refresh never fetches"))
+				}
 				// A refresh touches only the built-in persona copies: no
 				// config.yaml, no .gitignore, no community fetch.
-				return runRefreshPersonas(".", dryRun, out)
+				return runRefreshPersonas(".", dryRun, out, atomicfs.WriteFileAtomic)
 			}
 			if dryRun {
 				return usageError(errors.New("--dry-run requires --refresh-personas"))
@@ -78,10 +81,6 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
-// refreshWriteFile writes one refreshed persona file. It is a variable so a test
-// can fail a write partway through a refresh.
-var refreshWriteFile = atomicfs.WriteFileAtomic
-
 // runRefreshPersonas brings every built-in persona copy under dir's
 // .atcr/personas (`_base.md` included) back to the embedded content (Epic
 // 35.16.16). It first lists each copy that differs from the embedded one,
@@ -90,12 +89,13 @@ var refreshWriteFile = atomicfs.WriteFileAtomic
 // config.yaml, .gitignore and community personas are never touched. Git is the
 // undo: the generated .atcr/.gitignore keeps personas/ tracked.
 //
-// Each file is written by an atomic temp-file write and rename, so a symlinked
+// Each file is written by writeFile (atomicfs.WriteFileAtomic in production; a
+// test passes one that fails partway), an atomic temp-file write and rename, so a symlinked
 // copy is replaced by a regular file and its target is left untouched. The
 // stamp is written last, so a run that fails partway leaves the stamp as it was
 // and a re-run finishes the job. A missing .atcr/personas or one that cannot be
 // written to is a named error, raised before any file changes.
-func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
+func runRefreshPersonas(dir string, dryRun bool, out io.Writer, writeFile func(path string, data []byte) error) error {
 	personasDir := filepath.Join(dir, ".atcr", "personas")
 	info, err := os.Stat(personasDir)
 	switch {
@@ -113,10 +113,10 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		edited        bool // read, and differs from its stamp entry
 		stamped       bool
 	}
-	stamp, hadStamp := registry.ReadPersonaStamp(personasDir)
-	if !hadStamp {
-		stamp = registry.NewPersonaStamp()
-	}
+	stamp, _ := registry.ReadPersonaStamp(personasDir)
+	// recorded holds the stamp entries this run sets; only these are merged
+	// into the stamp as it is on disk when the run writes it.
+	recorded := map[string]string{}
 	stampFixed := 0 // current copies whose stamp entry this run corrects
 	var todo []refresh
 	base, err := builtins.Base()
@@ -155,7 +155,7 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 			// Already current. Record it so a re-run after an interrupted
 			// refresh leaves an accurate entry for a file the first run wrote.
 			if stampHash != embeddedHash {
-				stamp.Record(f.file, []byte(f.content))
+				recorded[f.file] = embeddedHash
 				stampFixed++
 			}
 			continue
@@ -200,26 +200,26 @@ func runRefreshPersonas(dir string, dryRun bool, out io.Writer) error {
 		}
 	}
 
-	// Prove the directory is writable before changing anything, so a
-	// read-only directory fails with every file and the stamp as they were.
-	probe, err := os.CreateTemp(personasDir, ".refresh-probe-*")
-	if err != nil {
-		return fmt.Errorf("cannot refresh personas: %s is not writable: %w", personasDir, err)
+	// Prove the directory is writable before changing any persona file, so a
+	// read-only directory fails with every file and the stamp as they were. A
+	// stamp-only refresh skips the probe: its one write is atomic on its own.
+	if len(todo) > 0 {
+		if err := probeWritable(personasDir); err != nil {
+			return err
+		}
 	}
-	_ = probe.Close()
-	_ = os.Remove(probe.Name())
 
 	for _, f := range todo {
 		// The rename replaces the directory entry itself, so a symlink becomes
 		// a regular file and its target is never written through.
 		path := filepath.Join(personasDir, f.file)
-		if err := refreshWriteFile(path, []byte(f.content)); err != nil {
+		if err := writeFile(path, []byte(f.content)); err != nil {
 			return fmt.Errorf("failed to write %s: %w", path, err)
 		}
-		stamp.Record(f.file, []byte(f.content))
+		recorded[f.file] = registry.HashPersonaContent([]byte(f.content))
 	}
-	if err := registry.WritePersonaStamp(personasDir, stamp); err != nil {
-		return fmt.Errorf("failed to write %s: %w", registry.PersonaStampPath(personasDir), err)
+	if err := writePersonaStampMerged(personasDir, recorded); err != nil {
+		return err
 	}
 	if len(todo) > 0 {
 		_, _ = fmt.Fprintf(out, "Refreshed %d persona file(s); review the changes with git diff\n", len(todo))
@@ -460,11 +460,9 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		}
 	}
 
-	stamp, hadStamp := registry.ReadPersonaStamp(personasDir)
-	if !hadStamp {
-		stamp = registry.NewPersonaStamp()
-	}
-	stamped := false
+	// recorded holds the stamp entries for the persona files this run writes;
+	// they are merged into the stamp as it is on disk when it is written.
+	recorded := map[string]string{}
 
 	var created []string
 	// write creates path with content. preserve marks a persona file, which is
@@ -504,8 +502,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		}
 		created = append(created, path)
 		if preserve {
-			stamp.Record(filepath.Base(path), []byte(content))
-			stamped = true
+			recorded[filepath.Base(path)] = registry.HashPersonaContent([]byte(content))
 		}
 		return nil
 	}
@@ -535,9 +532,9 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 			return err
 		}
 	}
-	if stamped {
-		if err := registry.WritePersonaStamp(personasDir, stamp); err != nil {
-			return fmt.Errorf("failed to write %s: %w", registry.PersonaStampPath(personasDir), err)
+	if len(recorded) > 0 {
+		if err := writePersonaStampMerged(personasDir, recorded); err != nil {
+			return err
 		}
 	}
 
@@ -546,5 +543,54 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		_, _ = fmt.Fprintf(out, "  created %s\n", path)
 	}
 	_, _ = fmt.Fprintln(out, "Next: define providers and agents in ~/.config/atcr/registry.yaml (see docs/registry.md)")
+	return nil
+}
+
+// writePersonaStampMerged writes the persona stamp with entries (file name to
+// content hash) set. It re-reads the stamp just before the write and keeps every
+// entry on disk that entries does not set, so a run that wrote the stamp while
+// this one was writing its files keeps its entries. There is no lock: two writes
+// that land in the same instant can still race, but the window is the read and
+// rename of one small file, not a whole run. A stamp that cannot be read is
+// rebuilt from entries alone, as a first write would be.
+func writePersonaStampMerged(personasDir string, entries map[string]string) error {
+	stamp, ok := registry.ReadPersonaStamp(personasDir)
+	if !ok {
+		stamp = registry.NewPersonaStamp()
+	}
+	for name, hash := range entries {
+		stamp.Files[name] = hash
+	}
+	if err := registry.WritePersonaStamp(personasDir, stamp); err != nil {
+		return fmt.Errorf("failed to write %s: %w", registry.PersonaStampPath(personasDir), err)
+	}
+	return nil
+}
+
+// refreshProbePrefix starts the name of the temp file the refresh creates to
+// prove .atcr/personas is writable; os.CreateTemp ends it with random digits.
+const refreshProbePrefix = ".refresh-probe-"
+
+// probeWritable proves personasDir is writable by creating and removing a temp
+// file in it. It first removes any probe file a run that died mid-probe left in
+// the tracked directory (only names os.CreateTemp could have made: the prefix
+// and then digits), and the removal of its own is deferred, so it leaves none
+// behind on any return.
+func probeWritable(personasDir string) error {
+	leftovers, _ := filepath.Glob(filepath.Join(personasDir, refreshProbePrefix+"*"))
+	for _, path := range leftovers {
+		suffix := strings.TrimPrefix(filepath.Base(path), refreshProbePrefix)
+		if suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+			_ = os.Remove(path)
+		}
+	}
+	probe, err := os.CreateTemp(personasDir, refreshProbePrefix+"*")
+	if err != nil {
+		return fmt.Errorf("cannot refresh personas: %s is not writable: %w", personasDir, err)
+	}
+	defer func() { _ = os.Remove(probe.Name()) }()
+	if err := probe.Close(); err != nil {
+		return fmt.Errorf("cannot refresh personas: %w", err)
+	}
 	return nil
 }

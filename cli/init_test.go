@@ -1484,8 +1484,11 @@ func TestRefreshPersonas_NoProbeFileLeftBehind(t *testing.T) {
 		require.NoError(t, runRefreshPersonas(dir, true, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
 		assert.FileExists(t, leftover, "a dry run writes nothing")
 
+		notOurs := filepath.Join(pdir, ".refresh-probe-notes")
+		require.NoError(t, os.WriteFile(notOurs, []byte("mine"), 0o644))
+
 		require.NoError(t, runRefreshPersonas(dir, false, &bytes.Buffer{}, atomicfs.WriteFileAtomic))
-		assert.Empty(t, probeFiles(t, pdir))
+		assert.Equal(t, []string{notOurs}, probeFiles(t, pdir), "only a name os.CreateTemp could have made is removed")
 	})
 	t.Run("failed write", func(t *testing.T) {
 		dir, pdir := refreshFixture(t)
