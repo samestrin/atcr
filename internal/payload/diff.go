@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/semindex"
 )
 
 // changeKind classifies a file's change between base and head.
@@ -224,6 +225,14 @@ type gitRunner struct {
 	// `g.changedFileCeiling` and the const never read as the same identifier —
 	// the same separation maxPrefetchBytes keeps from DefaultMaxPrefetchBytes.
 	changedFileCeiling int
+
+	// retriever is the optional similarity index (Epic 35.16.12.1), applied via
+	// WithSemanticRetriever. nil — the default — means the similarity stage of
+	// buildPrefetch does nothing: no query is built and no call is made, so a
+	// config-free run is byte-identical to one built before the tier existed.
+	// semanticTopK is the top_k passed to every Retrieve call.
+	retriever    semindex.Retriever
+	semanticTopK int
 
 	// state holds the whole-range caches for the current base..head pair.
 	// Access only via forRange, which resets state when the range changes.
