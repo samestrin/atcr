@@ -500,3 +500,40 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 	assert.Contains(t, fn[cut:cut+end], "THE CHARGE RULE ANSWERS THAT RECORD",
 		"opportunityDisposition must answer the reverted zero-raised-keep attempt, not only record it")
 }
+
+// TestDocs_ReviewerCategoriesRiderPointerIsLive pins the reviewerCategories doc
+// comment's pointer for the TD-036 doc-shield residual. It used to send the
+// reader to "epic 35.16.11.3 ... (its task 7 rider)", but that epic completed
+// and its riders moved to 35.16.11.3.1_scorecard-trust-riders.md, which also
+// completed without taking the residual. The comment must name the plan the
+// riders actually landed in and say plainly that nothing owns the residual, so
+// no reader goes looking for a task that will never deliver it.
+func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "scorecard", "scorecard.go"))
+	require.NoError(t, err)
+	lines := strings.Split(string(src), "\n")
+	fn := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "func reviewerCategories(") {
+			fn = i
+			break
+		}
+	}
+	require.Positive(t, fn, "reviewerCategories not found")
+	start := fn
+	for start > 0 && strings.HasPrefix(lines[start-1], "//") {
+		start--
+	}
+	require.Less(t, start, fn, "reviewerCategories has no doc comment")
+	comment := strings.Join(lines[start:fn], "\n")
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(comment, "//", " ")), " ")
+
+	assert.Contains(t, flat, "35.16.11.3.1_scorecard-trust-riders.md",
+		"the comment must point at the completed riders plan, not the parent epic")
+	assert.Contains(t, flat, "TD-036",
+		"the comment must still name the residual it is talking about")
+	assert.Contains(t, flat, "unowned",
+		"the comment must say the residual is unowned, since no plan took it")
+	assert.NotContains(t, flat, "its task 7 rider",
+		"the stale pointer at the parent epic's task 7 rider must be gone")
+}
