@@ -47,6 +47,22 @@ func TestRun_CreatesTheStoreDirectoryOwnerOnly(t *testing.T) {
 	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
 
+// MkdirAll leaves an existing directory's mode alone, so a store directory made
+// earlier with a looser umask is tightened to owner-only as well.
+func TestRun_TightensAnExistingStoreDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits do not apply on Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "debt")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755))
+	var stderr bytes.Buffer
+	require.Equal(t, 0, run([]string{"-dir", dir, "-n", "1"}, &stderr), stderr.String())
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
 func TestRun_UsageErrors(t *testing.T) {
 	for name, args := range map[string][]string{
 		"no dir":     {},
