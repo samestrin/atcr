@@ -257,6 +257,22 @@ findings and the gray-zone sidecar — the disagreement-radar handoff queue Epic
 [disagreement-radar.md](disagreement-radar.md), along with the
 `atcr report --disagreements` view and the `report.md` radar section.
 
+## Companion artifact: `suppressed.json`
+
+`reconciled/suppressed.json` holds the findings an `.atcr/ignore.yaml` rule
+matched on this run (see
+[technical-debt.md](technical-debt.md#ignoring-false-positives-atcr-ignore)).
+It is the same reconciled-stream record shape as `findings.json`, plus one
+extra key: `suppressed_by`, the ignore rule that matched, carrying the rule's
+`file`/`package`, `category`, `match` and `reason`. The key is set only on
+suppressed records, so `findings.json` itself never carries it.
+
+The file is written on every reconcile — `[]` when no rule matched — so an
+absent file means "produced before this artifact existed", never "nothing was
+suppressed". Suppressed findings leave the primary stream entirely: they are in
+neither `findings.json` nor `findings.txt`, and `report.md` lists only their
+count and the distinct rule reasons in its `## Suppressed Findings` footer.
+
 ## Evolution policy
 
 The version header is in force from day one. **Evolution is additive-only within a major version:** new optional columns may be appended and new optional JSON fields may be added, but existing column positions, the severity enum, and the extraction regex never change under `v1`. Any breaking change increments the version (`atcr-findings/v2`), and the header gate guarantees old consumers reject it loudly rather than misparsing.

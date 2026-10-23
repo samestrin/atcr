@@ -474,6 +474,87 @@ persona names trimmed and lower-cased). It then prints `GATE MET` when at least
 and `GATE NOT MET: n of 10 personas at 20` otherwise. `--report` cannot be
 combined with `--td`.
 
+## Ignoring false positives (`atcr ignore`)
+
+`atcr debt resolve --status wontfix` closes a backlog item that is already in
+the store. `atcr ignore` is the earlier lever: it stops a known false positive
+from being **reported** at all, by every future `atcr reconcile` on this
+checkout.
+
+```bash
+atcr ignore 8421025ce7cde4d3 --reason "sanitizer-bound test fixture, never shipped"
+atcr ignore 8421025ce7cde4d3 --reason "..." --review 2026-10-20-abcdef
+```
+
+The command reads a review's `reconciled/findings.json` (the latest review by
+default; `--review` picks another id or directory), finds the finding with the
+given id, and appends one rule for it to `.atcr/ignore.yaml`. `--reason` is
+required — say why the finding is a false positive. Re-running it on a finding
+an identical rule already covers is a no-op that says so.
+
+The derived rule never stores the finding's id or line: both drift with every
+edit above the finding (the id hashes file, line and problem). It keys on the
+finding's **file** and **category** plus a **match** regex-quoted from its
+problem text, whose `(symbol) ` anchor keeps the rule on the same symbol after
+the line moves.
+
+### The `.atcr/ignore.yaml` format
+
+```yaml
+rules:
+  - file: internal/store/cache.go          # repo-relative path or glob; ** spans segments
+    category: performance                  # optional; narrows the rule to one category
+    match: Unbounded map grows without eviction  # optional RE2 regex on the problem text
+    reason: bounded by the caller's pool   # required
+  - package: internal/legacy               # alternative scope: one package directory
+    reason: vendored code, frozen upstream
+```
+
+One document, one `rules:` list. Each rule carries:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `reason` | always | Why the finding is a false positive. `report.md` lists it beside the suppressed count, so a rule nobody can justify cannot hide a finding silently. |
+| `file` | one of `file`/`package` | Repo-relative, slash-separated path or glob. `*` never crosses a `/`; `**` matches zero or more whole segments. |
+| `package` | one of `file`/`package` | A package directory (`.` for the repo root), matched exactly, not as a prefix. |
+| `category` | no | Narrows the rule to one finding category, compared case-insensitively. |
+| `match` | no | An RE2 regex tested unanchored against the finding's problem text. |
+
+A rule covers a finding when **every** field it sets holds. Rules are matched in
+file order; the first match wins. A finding with no file never matches — every
+rule is scoped by file or package. Hand-written rules are welcome: `atcr ignore`
+edits through the YAML node tree, so comments survive, and the write is atomic.
+
+### Guardrails
+
+The file is validated as a whole on every read — by `atcr ignore` before it
+appends and by `atcr reconcile` before it applies the rules — and **any invalid
+rule rejects the whole file** with an error naming the rule, rather than letting
+a bad rule silently match too much or never match:
+
+- `reason` is mandatory on every rule.
+- Every rule needs a `file` or `package` scope; a rule cannot be repo-wide.
+- Paths must stay inside the repository: no absolute paths, no `..` segment, and
+  backslashes are folded to slashes first so `..\x.go` is caught too.
+- `match` must compile as RE2 (Go's `regexp`): a PCRE-only construct is an
+  error, not a rule that never fires.
+- Decoding is strict: a typo'd or unsupported key such as `line:` is an error.
+  There is deliberately **no line field** — a line number drifts with every edit
+  above the finding.
+- An invalid `file` glob fails reconcile loudly at load, not silently at match.
+
+### What a match does
+
+On the next `atcr reconcile`, a matched finding leaves the primary stream:
+`reconciled/findings.json` and `findings.txt` no longer carry it, and it lands
+in [`reconciled/suppressed.json`](findings-format.md#companion-artifact-suppressedjson)
+with the rule recorded in its `suppressed_by` field. `report.md` ends with a
+`## Suppressed Findings` footer counting them and listing each distinct reason.
+The scorecard still charges each suppressed finding to its reviewer's
+`findings_raised` — a rule says the finding is not worth reporting, not that the
+reviewer was wrong to raise it — but it is never corroborated and earns no
+`weighted_credit` (see [scorecard.md](scorecard.md#ignore-suppressed-findings)).
+
 ## End to end
 
 ```console
