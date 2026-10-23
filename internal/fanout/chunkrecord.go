@@ -181,6 +181,9 @@ type chunkLedger struct {
 	// mergedEarlyDirs holds the persona dirs whose replayed bins the per-persona
 	// early write already merged (markMergedEarly), under mu.
 	mergedEarlyDirs map[string]bool
+	// priors holds, per persona dir, the findings and review.md the interrupted
+	// run left, as the first writeMergedAgent read them (priorFor), under mu.
+	priors map[string]priorArtifacts
 	// failed is the first write failure (writeErr). A failed write may leave no
 	// record at all, which a coverage reader would take for "binned nothing", so
 	// it is kept for the review result instead of only being logged.
