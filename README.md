@@ -93,15 +93,15 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr config` | Update project configuration in `.atcr/config.yaml` via `atcr config set <telemetry\|quality_signal> <true\|false>` |
 | `atcr serve` | Run the MCP stdio server over the same engine |
 | `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column. Also warns on stderr — and as `stale_personas` in `--json` — when a persona copy under `.atcr/personas/` has fallen behind the embedded one, naming the file, the agents it serves (the selected agents under `--agents`, the roster agents otherwise; a copy an agent reaches only through an explicit `persona:` ref is checked too), whether it was hand edited, and the fix (`atcr init --refresh-personas`); a damaged `.atcr/personas/.stamp.json` adds one note naming the file and the refresh command (`persona_stamp_damaged` in `--json`); the exit code is unchanged |
-| `atcr history` | Query the per-package finding-history ledger in `.atcr/history/`: trend counts by severity over a `--since` window and optional `--package` prefix; `--prune <horizon>` deletes whole monthly shards past a retention horizon — see [docs/history.md](docs/history.md) |
+| `atcr history` | Query the per-package finding-history ledger in `.atcr/history/`: trend counts by severity over a `--since` window and optional `--package` prefix; `--prune <horizon>` deletes whole monthly shards past a retention horizon; `--json` prints the table as JSON — see [docs/history.md](docs/history.md) |
 | `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 | `atcr debt` | Query, capture, and report on technical debt in the `.atcr/debt/` store (`list` / `add` / `dashboard` / `resolve` / `compact`, all over that one store); `resolve --status wontfix --reason "<text>"` dismisses a false-positive finding so it stops resurfacing — see [docs/technical-debt.md](docs/technical-debt.md) |
 | `atcr ignore` | Suppress a reconciled finding in future reconciles: `atcr ignore <finding-id> --reason "<why>"` appends a rule (file + category + a match quoted from the problem text, never the drifting id or line) to `.atcr/ignore.yaml`; matched findings move to `reconciled/suppressed.json` and a `report.md` footer — see [docs/technical-debt.md](docs/technical-debt.md#ignoring-false-positives-atcr-ignore) |
 | `atcr audit-report` | Render a one-page markdown compliance report for a PR's review runs from the append-only `.atcr/audit.log.jsonl` ledger (`--pr <n>`) |
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
-| `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
-| `atcr quality-report` | Render the aggregate persona+model dismissed/confirmed prompt-quality signal (distinct from `atcr report`; content-free — persona, model, and counts only) |
-| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate |
+| `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run; `--json` prints its records as JSON — see [docs/scorecard.md](docs/scorecard.md) |
+| `atcr quality-report` | Render the aggregate persona+model dismissed/confirmed prompt-quality signal (distinct from `atcr report`; content-free — persona, model, and counts only); `--json` is the same as `--format json` |
+| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate; `--json` prints the table's rows, and `atcr leaderboard export [--output <file>]` prints the anonymized public submission document — see [docs/scorecard.md](docs/scorecard.md) |
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas; `submit` contributes a locally-tuned persona back upstream as a PR — see [docs/personas-authoring.md](docs/personas-authoring.md) |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
@@ -109,6 +109,8 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr version` | Print the atcr version |
 
 **Command-group nouns are singular** — `benchmark`, `config`, `debt`, and `skill` follow the git/docker/kubectl/gh convention of a singular noun for a group holding subcommands, and any new group keeps that rule. `models` and `personas` are **grandfathered** plurals: they shipped plural, and renaming them would break every scripted and documented invocation for a consistency win no user feels, so they stay. (`debt` is a mass noun and `config` names one file — neither could be pluralized anyway.)
+
+**Reporting commands share one heading and one `--json` flag.** `atcr --help` lists `audit-report`, `history`, `leaderboard`, `quality-report`, `report` and `scorecard` under `Reporting Commands`, and the heading also names `debt dashboard`; no command was renamed or moved (see [the decision record](docs/decisions/2026-10-22-reporting-entry-point-shape.md)). Every command that prints a report takes `--json` for machine-readable output, except `audit-report`, which has none yet — see [docs/agentic-consumption.md](docs/agentic-consumption.md#the---json-convention).
 
 Key flags:
 
@@ -118,7 +120,7 @@ Key flags:
 - `atcr init --refresh-personas` / `--dry-run` — bring stale persona copies under `.atcr/personas/` back to the embedded content (see [Keeping personas current](#keeping-personas-current)); `--refresh-personas` cannot be combined with `--force`, and `--dry-run` requires `--refresh-personas`
 - `atcr diff-smell --rev <rev>` (default `HEAD`) / `--staged` / `--diff <path>` (or `--diff -` for stdin) — name exactly one source / `--repo-root <path>` / `--json` (payload-only stdout) / `--fail-on hard|soft|none` (opt-in gate; exits **0** on every verdict without it). Note the values are diff-smell **verdicts**, not the finding **severities** `atcr review` / `atcr reconcile` take
 - `atcr audit-report --pr <n>` (required — render the compliance report for that PR's recorded review runs; a PR with no recorded runs exits non-zero)
-- `atcr report --format md|json|checklist|sarif|axi|pipe` (`pipe` is the deprecated legacy AXI encoder) / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+- `atcr report --format md|json|checklist|sarif|axi|pipe` (`pipe` is the deprecated legacy AXI encoder) / `--json` (the same as `--format json`; with any other `--format` it is a usage error, exit 2) / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
 - `atcr doctor` / `--json` / `--max-tokens <n>` (default 8192 — the same default the review fan-out applies, so an undeclared agent is probed at the cap `atcr review` will use) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
 Environment variables:

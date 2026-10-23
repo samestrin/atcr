@@ -145,7 +145,7 @@ and Windows.)
 > **Do not commit this directory.** `~/.config/atcr/scorecard/` is local
 > monitoring data. It is outside the repository by design; never add it to git or
 > share it as-is. To share data publicly, use the anonymized
-> [`--export`](#public-export) path instead.
+> [`atcr leaderboard export`](#atcr-leaderboard-export---output-path) path instead.
 
 ### Cost is approximate
 
@@ -170,6 +170,9 @@ atcr scorecard 2026-06-14T10:00:00Z-abc123
 
 # By review directory path
 atcr scorecard ./.atcr/reviews/abc123
+
+# The same records as JSON
+atcr scorecard ./.atcr/reviews/abc123 --json
 ```
 
 Columns: `REVIEWER  MODEL  RAISED  CORROBORATED  SOLO  CORR%  COST  LATENCY`,
@@ -180,6 +183,10 @@ plus `VERIFIED  REFUTED  SURV%` when any record carries verification data, plus
 place this table reports them. It appears only when some record has one, and every
 row then shows a number (`0`, not a dash — the reviewer has a measurement and it is
 zero). See [Doc-shielded routings](#doc-shielded-routings).
+
+`--json` prints `run_id` and `reviewers`: one stored record per reviewer row of
+the table (a retried emit collapsed to its last write), sorted by reviewer. The
+exit codes below are unchanged; a run with no records still exits `1`.
 
 Behavior:
 - No records for the run → message + exit `1`.
@@ -229,7 +236,7 @@ per table row: `reviewer`, `model`, `runs`, `findings_raised`,
 `findings_doc_shielded` and `findings_ambiguous` (always present, `0` when the
 table would omit the column). The empty store prints `[]` on stdout and its
 message on stderr, exit `0`; the other outcomes below are unchanged. `--json`
-with `--export` is a usage error (exit `2`).
+with the deprecated `--export` alias is a usage error (exit `2`).
 
 ### Doc-shielded routings
 
@@ -270,8 +277,9 @@ Behavior:
 - Data exists but nothing matches the filters → message naming the active window,
   exit `1`.
 - Invalid `--since` value → actionable error, exit `1`.
-- `--output` without `--export` → usage error (exit `2`, "--output requires
-  --export"); `--output` only routes the export document.
+- The deprecated `--output` alias without the deprecated `--export` alias → usage
+  error (exit `2`, "--output requires --export"); `--output` only routes the
+  export document.
 
 **Persona digest canonical form.** `scorecard.HashPersonaID` — the function
 behind every `persona_id_hash` — canonicalizes its input to
@@ -303,7 +311,7 @@ Emit the versioned, anonymized public submission document (the Epic 10.0
 format). Filters apply **before** anonymization. Output is deterministic
 (byte-identical for the same input + export time).
 
-**What "anonymized" means here:** `--export` anonymizes the *submitter* — run
+**What "anonymized" means here:** `leaderboard export` anonymizes the *submitter* — run
 IDs, cost, token counts, and local paths are scrubbed or omitted — while
 deliberately keeping `(persona, model)` as the public leaderboard's aggregation
 dimensions (a persona is a public catalog identity, not a user identity). This
@@ -371,7 +379,7 @@ Reviewers are aggregated by `(persona, model)` (role is dropped from the public
 schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
 `(model, persona)`. Output is deterministic (byte-identical for the same input +
 `submitted_at`). A no-match/empty result writes the canonical guidance to stderr
-and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
+and exits `1` (so a `leaderboard export | jq` pipeline never sees non-JSON on stdout).
 
 **Unpublishable identity → error, exit `1`.** A record whose `model` or `reviewer`
 carries a control (Cc) or format (Cf) rune is rejected before anything is written.
@@ -387,7 +395,7 @@ whose `model` or `reviewer` is non-blank in the store but scrubs away to nothing
 `"/models/mistral-7b.gguf"`, `"bedrock@us-east-1/claude"` and `"~/models/foo"`) is
 **dropped from the envelope** and named on stderr — it is never published as
 `model: ""`. It does not fail the export, because this shape occurs in ordinary
-history and `--export` reads the whole unrotated store, so one such record would
+history and `leaderboard export` reads the whole unrotated store, so one such record would
 otherwise take down an export that had succeeded the day before, clearable only by
 hand-editing a JSONL store. If every selected record is dropped, the ordinary
 no-records error is raised instead of an empty envelope. An identity that is already
@@ -422,7 +430,7 @@ whose envelope was clean. Both the error and the skip report name the offending
 record's `run_id` and quote the offending value, so the row can be located and
 repaired in the store.
 
-> **Suite vs production submissions.** `leaderboard --export` produces a
+> **Suite vs production submissions.** `leaderboard export` produces a
 > *production* submission from your local runs. The public board accepts only
 > *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
 > so cherry-picked production runs cannot game it — see
@@ -486,7 +494,7 @@ than growing a third aggregation.
 
   **This reduces the run count the `minRuns` floor sees**, and that floor was measured against unfiltered strict runs; the re-measurement is tracked as a known limit beside `DefaultTrustMinRuns` in `internal/scorecard/trust.go`.
 - **The filter is scoped to `TrustPriors`, exactly as `strictRuns` and
-  `unresolvedEraRuns` are.** `leaderboard --export` and `PublishedSet` do NOT
+  `unresolvedEraRuns` are.** `leaderboard export` and `PublishedSet` do NOT
   apply it: the leaderboard reports what actually happened across all runs, so a
   `failed` or `truncated` row still contributes to the exported
   `corroboration_rate` and `findings_raised_avg`. The trust prior is a
@@ -671,9 +679,9 @@ writes records by default.
 
 The local store (`~/.config/atcr/scorecard/`) holds your real `run_id` and may
 carry your reviewer/model names — it is local and never shared. **Only the
-`--export` path produces a shareable document, and it is anonymized.**
+`leaderboard export` path produces a shareable document, and it is anonymized.**
 
-`--export` is **allowlist-based**: the public submission carries only the fields
+`leaderboard export` is **allowlist-based**: the public submission carries only the fields
 listed below. A field that is not on the allowlist cannot leak, because it is
 never copied into the public structure in the first place. The Epic 10.0 schema
 deliberately **shrank** the allowlist relative to the local store — the smaller
@@ -706,7 +714,7 @@ the surface, the less can leak.
 - Repository content, hostnames, usernames, and organization names — none are
   collected into a record in the first place
 
-> **This allowlist governs the production `leaderboard --export` envelope only.**
+> **This allowlist governs the production `leaderboard export` envelope only.**
 > A `benchmark export` submission is a different document, and since
 > `submission_schema` 2 it additionally publishes `suite_case_ids` and each row's
 > `reviewer_coverage.case_ids` — the suite's case ids, **scrubbed but otherwise
@@ -766,9 +774,9 @@ can diff it before sharing.
 
 ### Telemetry & Cloud Sync
 
-The `--export` allowlist above applies **only** to the local-store leaderboard
+The `leaderboard export` allowlist above applies **only** to the local-store leaderboard
 export. `atcr` has two other, **separate and additive** data paths, each with its
-own schema — neither weakens, replaces, or is governed by the `--export`
+own schema — neither weakens, replaces, or is governed by the `leaderboard export`
 guarantee above:
 
 - The **anonymous usage ping** — a background, fail-open `{event, lang, lines,
@@ -778,7 +786,7 @@ guarantee above:
   scorecard payload (a hashed Persona ID plus raw run metrics), authenticated
   with `ATCR_API_KEY`, that you request per run.
 
-These use a different schema from the `--export` record and are documented in
+These use a different schema from the `leaderboard export` record and are documented in
 full — including the exact fields, the opt-out mechanics, the Persona ID hashing
 guarantee, and the auth exit code — in **[docs/telemetry.md](telemetry.md)**.
 
@@ -791,7 +799,7 @@ There are **two independent version numbers**:
 - `schema_version` (`2`) is stamped on every **stored** record (the local JSONL
   store).
 - `submission_schema` (`2`) is stamped on every **public submission** envelope
-  (`leaderboard --export` and `benchmark export`).
+  (`leaderboard export` and `benchmark export`).
 
 They are decoupled on purpose: the local store format and the public submission
 format evolve separately, so bumping one never silently changes the other. When a
@@ -808,7 +816,7 @@ future epic changes either schema:
 35.16.6.8 changed it again (the doc-shielded routings came back out), neither time
 renaming, retyping, or removing a field — so neither integer moved. The
 discriminator is the per-record `raised_denominator` version instead, and both
-derived surfaces — `TrustPriors` and `leaderboard --export` — apply the same
+derived surfaces — `TrustPriors` and `leaderboard export` — apply the same
 prefer-newest rule: a reviewer's records are kept at the newest definition that
 reviewer has. So a single submission is always computed under one definition, and
 an existing store never stops exporting.
@@ -825,7 +833,7 @@ producer stamps its own value, and the two are not on the same scale:
 
 | Producer | `raised_denominator` | What the row's `corroboration_rate` means |
 |---|---|---|
-| `leaderboard --export` | `1`, `2`, `3` or `4` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
+| `leaderboard export` | `1`, `2`, `3` or `4` — the definition its records were computed under | corroboration: the share of findings a second reviewer also raised |
 | `benchmark export` | `100` (`RaisedDenominatorBenchmarkSuite`) | category **recall** against the suite's planted defects |
 
 The gap between `4` and `100` is deliberate. A benchmark row is not a production
@@ -844,7 +852,7 @@ envelopes:
 
 | Producer | Envelope | Go type |
 |----------|----------|---------|
-| `atcr leaderboard --export` | production submission | `scorecard.ExportEnvelope` |
+| `atcr leaderboard export` | production submission | `scorecard.ExportEnvelope` |
 | `atcr benchmark export` | suite submission | `benchmark.Submission` |
 
 Because the constant is shared, **a bump made for one producer versions the other**.
@@ -859,7 +867,7 @@ Version 2 was bumped for the **benchmark** side. `benchmark.Submission` gained
 indistinguishable from a full one.
 
 **The production envelope gained nothing at the bump itself.** Under version 2,
-`leaderboard --export` initially emitted the same key set it emitted under
+`leaderboard export` initially emitted the same key set it emitted under
 version 1 — no field of `ExportEnvelope` or `PublicRecord` was renamed, retyped,
 or removed, and the only change on the production path was the integer in
 `submission_schema`. (Epic 35.16.6.8 later added `raised_denominator` to
