@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/astgroup"
+	"github.com/samestrin/atcr/internal/semindex"
 )
 
 // Context-aware pre-fetching (Epic 35.16.8).
@@ -1721,7 +1722,21 @@ type PrefetchStatus struct {
 	// make impossible. The ordinary shape is false, so omitempty keeps an
 	// unrevoked manifest byte-identical to earlier versions'.
 	GroundingRevoked bool `json:"grounding_revoked,omitempty"`
+	// DegradeReason names why a CONFIGURED similarity retriever failed (Epic
+	// 35.16.12.1): the *semindex.Error class, or semanticDegradeUnclassified
+	// for any other error. The stage then fails open to zero similarity
+	// snippets, so without this a configured-but-unreachable index and a run
+	// that never configured one would ship byte-identical manifests. It is
+	// separate from Failed, which reports the REFERENCE lookup. Empty when no
+	// retriever is configured or the call succeeded, and omitempty keeps those
+	// manifests byte-identical to earlier versions'.
+	DegradeReason string `json:"degrade_reason,omitempty"`
 }
+
+// semanticDegradeUnclassified is the DegradeReason for a retriever error that
+// is not a *semindex.Error, so the field never records an empty reason for a
+// failure that happened.
+const semanticDegradeUnclassified = "unclassified"
 
 // looksLikeTestFile reports whether rel is a test file, enabling the AC6
 // mock-cue scan for it. The forms cover the FILENAME conventions of the
@@ -1875,13 +1890,14 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	// whose symbols nothing references is exactly the resemblance-only case the
 	// tier exists for (AC9), so a reference pass that found no hit, or broke,
 	// must not end the pass here as it once did.
-	simSnips, simDrops := g.similaritySnippets(head, symbols, changedPaths, snips)
+	simSnips, simDrops, degrade := g.similaritySnippets(head, symbols, changedPaths, snips)
 	snips = append(snips, simSnips...)
 	preDrops = append(preDrops, simDrops...)
 	if len(snips) == 0 && len(preDrops) == 0 {
 		// A broken lookup is still reported as one: it and a clean no-match both
-		// ship empty context, but only the first is a malfunction.
-		return "", nil, PrefetchStatus{Failed: lookupFailed}
+		// ship empty context, but only the first is a malfunction. A failed
+		// retriever is reported the same way, by its own field.
+		return "", nil, PrefetchStatus{Failed: lookupFailed, DegradeReason: degrade}
 	}
 
 	// Reserve the retrieval-stage ledger's bytes BEFORE capping. Those lines are
@@ -1896,7 +1912,7 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 	dropped := mergeDrops(preDrops, capDrops)
 	section = renderPrefetchSection(kept, dropped)
 	if section == "" {
-		return "", nil, PrefetchStatus{Failed: lookupFailed}
+		return "", nil, PrefetchStatus{Failed: lookupFailed, DegradeReason: degrade}
 	}
 
 	// Only KEPT snippets become groundable. A shed snippet was never shown, so
@@ -1918,7 +1934,8 @@ func (g *gitRunner) buildPrefetch(base, head string) (section string, spans map[
 		Truncated: len(capDrops) > 0,
 		// A broken reference lookup next to a delivered similarity section: the
 		// section is real, and so is the malfunction.
-		Failed: lookupFailed,
+		Failed:        lookupFailed,
+		DegradeReason: degrade,
 	}
 }
 
@@ -2020,23 +2037,24 @@ const similaritySymbolUnnamed = "unnamed"
 // earlier hit already shows (AC8). Only kept snippets become groundable.
 //
 // A nil retriever, or a change with no queryable symbol, makes no call. A
-// failed call fails open to zero snippets.
-func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, changedPaths map[string]bool, ref []PrefetchSnippet) ([]PrefetchSnippet, []PrefetchDrop) {
+// failed call, of any error class, fails open to zero snippets and returns its
+// degrade reason; any hits returned alongside the error are discarded.
+func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, changedPaths map[string]bool, ref []PrefetchSnippet) ([]PrefetchSnippet, []PrefetchDrop, string) {
 	if g.retriever == nil {
-		return nil, nil
+		return nil, nil, ""
 	}
 	queries := semanticQueries(symbols)
 	if len(queries) == 0 {
-		return nil, nil
+		return nil, nil, ""
 	}
 	hits, err := g.retriever.Retrieve(g.ctx, queries, g.semanticTopK)
 	if err != nil {
 		g.log().Debug("payload: similarity retrieval failed; review proceeds without similarity snippets",
 			"queries", len(queries), "error", err)
-		return nil, nil
+		return nil, nil, semanticDegradeReason(err)
 	}
 	if len(hits) == 0 {
-		return nil, nil
+		return nil, nil, ""
 	}
 
 	emitted := make(map[string][][2]int, len(ref))
@@ -2112,7 +2130,18 @@ func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, cha
 			Body: body, Tier: PrefetchTierSimilarity,
 		})
 	}
-	return out, dropped
+	return out, dropped, ""
+}
+
+// semanticDegradeReason maps a retriever error to its DegradeReason: the
+// *semindex.Error class wherever it sits in the chain, else
+// semanticDegradeUnclassified.
+func semanticDegradeReason(err error) string {
+	var se *semindex.Error
+	if errors.As(err, &se) && se.Class != "" {
+		return string(se.Class)
+	}
+	return semanticDegradeUnclassified
 }
 
 // headBlob returns path's content at head only when path is a tracked BLOB
