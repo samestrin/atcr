@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -404,8 +403,9 @@ func TestSemanticQueryGuard_ScannerFailure(t *testing.T) {
 	})
 }
 
-// An enabled block that semindex.New rejects fails open: no option, so the run
-// proceeds without the tier, and a warning says why.
+// An enabled block that semindex.New rejects still fails open, and the failure
+// is not stderr-only: the option carries a retriever that fails with a
+// *semindex.Error of class semanticDegradeConfig, so the manifest records it.
 func TestSemanticRetrieverOption_UnbuildableClientFailsOpen(t *testing.T) {
 	var buf bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
@@ -415,9 +415,38 @@ func TestSemanticRetrieverOption_UnbuildableClientFailsOpen(t *testing.T) {
 	}
 	require.True(t, cfg.Settings.ResolvedSemanticPrefetch().Enabled, "PRECONDITION: the block is enabled")
 
-	assert.Nil(t, semanticRetrieverOption(ctx, cfg, t.TempDir()))
+	assert.NotNil(t, semanticRetrieverOption(ctx, cfg, t.TempDir()), "the failing retriever rides an option")
 	assert.Contains(t, buf.String(), "semantic retrieval not configured")
 	assert.Contains(t, buf.String(), "collection is required")
+}
+
+func TestFailingRetriever_ReturnsConfigClassError(t *testing.T) {
+	cause := errors.New("boom")
+	snips, err := failingRetriever{err: cause}.Retrieve(context.Background(), []string{"q"}, 3)
+	assert.Nil(t, snips)
+	var se *semindex.Error
+	require.ErrorAs(t, err, &se)
+	assert.Equal(t, semanticDegradeConfig, se.Class)
+	assert.Equal(t, "config", se.Stage)
+	assert.Equal(t, cause, se.Err)
+}
+
+// A URL with credentials (and an insecure scheme) is rejected by semindex.New;
+// the review still completes and the manifest names the config class.
+func TestSemanticPrefetch_ConstructionErrorRecordsDegradeReason(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := semanticFanoutRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+	enableSemantic(cfg, "http://user:pass@127.0.0.1:1")
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Summary.Succeeded, "the review completes normally")
+
+	_, m := readSemanticManifest(t, res.Dir)
+	require.NotNil(t, m.Prefetch)
+	assert.Equal(t, string(semanticDegradeConfig), m.Prefetch.DegradeReason)
 }
 
 // block skips retrieval only when the queries or the scan are dirty: clean
@@ -438,17 +467,6 @@ func TestSemanticQueryGuard_BlockPassesCleanQueries(t *testing.T) {
 	assert.Empty(t, stderr)
 }
 
-// closedPortURL returns a loopback URL nothing listens on: the listener is
-// bound for a free port and closed again, so a dial is refused.
-func closedPortURL(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := ln.Addr().String()
-	require.NoError(t, ln.Close())
-	return "http://" + addr
-}
-
 // readSemanticManifest decodes a finished review's manifest.json, raw and typed.
 func readSemanticManifest(t *testing.T, dir string) ([]byte, payload.Manifest) {
 	t.Helper()
@@ -467,7 +485,7 @@ func TestSemanticPrefetch_ClosedPortCompletesWithOneDegradeReason(t *testing.T) 
 	repo, base, head := semanticFanoutRepo(t)
 	srv := mockProvider(t)
 	cfg := twoAgentConfig(srv.URL)
-	enableSemantic(cfg, closedPortURL(t))
+	enableSemantic(cfg, "http://127.0.0.1:1") // port 1 is never listened on
 	counter := metrics.DefaultRegistry.Counter(semindex.UnreachableMetric)
 	before := counter.Value()
 
