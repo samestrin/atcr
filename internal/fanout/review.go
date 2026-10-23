@@ -1403,7 +1403,7 @@ func writeEarlyAgent(poolDir string, r Result, changed payload.ChangedLines, chu
 		chunks.markMergedEarly(dir)
 		return nil
 	}
-	return writeAgentArtifacts(poolDir, dir, r, findingsFor(r, changed))
+	return writeAgentArtifacts(poolDir, dir, r, earlyFindingsFor(r, changed))
 }
 
 // composeSlotDone folds the non-nil per-slot hooks into the engine's single
