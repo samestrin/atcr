@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -216,9 +215,7 @@ func TestIgnore_RegisteredAndListedInHelp(t *testing.T) {
 func TestIgnore_RoundTripSuppressesOnNextReconcile(t *testing.T) {
 	root := t.TempDir()
 	git := func(args ...string) {
-		c := exec.Command("git", args...)
-		c.Dir = root
-		out, err := c.CombinedOutput()
+		out, err := fixtureGit(root, args...).CombinedOutput()
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
 	git("init", "-q")
