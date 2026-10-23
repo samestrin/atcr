@@ -25,9 +25,7 @@ const maxChunksBytes = 16 << 20
 // "Reviewed" is the index's predicate: a bin whose outcome is ok and that did
 // not contribute nothing (a lane that refused its content never read the
 // files). A re-packed bin covers only the files its server kept. pending,
-// failed, timeout and deferred bins are planned but not reviewed. A record's
-// shed_files (dropped by the byte budget before binning) are in scope and
-// covered only if another persona's bin reviewed them (Epic 69 T1).
+// failed, timeout and deferred bins are planned but not reviewed.
 type Coverage struct {
 	BinsReviewed int
 	BinsPlanned  int
@@ -71,10 +69,6 @@ func ReadCoverage(reviewDir string) (cov Coverage, ok bool, err error) {
 			return Coverage{}, false, err
 		}
 		ok = true
-		// A shed file is in scope but no bin carries it, so no bin covers it.
-		for _, f := range rec.ShedFiles {
-			inScope[f] = struct{}{}
-		}
 		for _, b := range rec.Bins {
 			cov.BinsPlanned++
 			for _, f := range b.Files {
