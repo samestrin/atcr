@@ -187,22 +187,7 @@ func TestSemanticPrefetch_ConfigFreeRunMakesNoRequestAndIsUnchanged(t *testing.T
 	assert.NotContains(t, string(freePayload), "similarity to", "no similarity snippet may appear")
 
 	assert.Equal(t, string(freePayload), string(offPayload), "rendered payloads must be byte-identical")
-	assert.Equal(t, string(normalizeManifest(t, freeManifest)), string(normalizeManifest(t, offManifest)),
-		"manifests must be byte-identical")
-}
-
-// normalizeManifest blanks the per-run output location, the only field two
-// prepares into different temp dirs can legitimately differ on.
-func normalizeManifest(t *testing.T, b []byte) []byte {
-	t.Helper()
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(b, &m))
-	for _, k := range []string{"output_dir", "review_dir", "dir"} {
-		delete(m, k)
-	}
-	out, err := json.Marshal(m)
-	require.NoError(t, err)
-	return out
+	assert.Equal(t, string(freeManifest), string(offManifest), "manifests must be byte-identical")
 }
 
 func TestSemanticPrefetch_EnabledRetrievesOnceForEveryAgent(t *testing.T) {
@@ -213,9 +198,10 @@ func TestSemanticPrefetch_EnabledRetrievesOnceForEveryAgent(t *testing.T) {
 	// Two agents on two payload modes, so two mode payloads are built from the
 	// one range.
 	kai := cfg.Registry.Agents["kai"]
-	kai.Payload = "full"
+	kai.Payload = "files"
 	cfg.Registry.Agents["kai"] = kai
 	enableSemantic(cfg, idx.srv.URL)
+	ct := countDefaultTransport(t)
 
 	payloads, rb, err := buildPayloads(context.Background(), cfg, repo, base, head, false)
 	require.NoError(t, err)
@@ -224,6 +210,8 @@ func TestSemanticPrefetch_EnabledRetrievesOnceForEveryAgent(t *testing.T) {
 	idx.mu.Lock()
 	assert.Equal(t, 1, idx.embeds, "one query set is embedded once per fan-out")
 	assert.Equal(t, 1, idx.queries, "each query is searched once per fan-out")
+	assert.Equal(t, int64(2), ct.n.Load(),
+		"the counter the config-free test reads at zero must see every retrieval request")
 	require.Len(t, idx.inputs, 1)
 	assert.Equal(t, []string{"func ReadStore(path string) (string, error)"}, idx.inputs[0])
 	idx.mu.Unlock()
@@ -305,37 +293,50 @@ func TestSemanticQueryGuard_EachPolicyOnACredentialLiteral(t *testing.T) {
 	}
 }
 
-func TestSemanticQueryGuard_BlockFailsOpenInAReview(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	repo, base, head := semanticFanoutRepo(t)
-	// The changed declaration itself holds the credential.
+func TestSemanticQueryGuard_PoliciesEndToEnd(t *testing.T) {
+	hideGitleaks(t)
+	repo, base, _ := semanticFanoutRepo(t)
+	// The changed declaration header itself holds the credential, as a parameter
+	// name, so it lands in the outbound query text.
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "store.go"),
-		[]byte("package p\n\nfunc ReadStore(path string) (string, error) { const k = \""+guardAWSKey+"\"\n\treturn \"\", nil\n}\n"), 0o644))
+		[]byte("package p\n\nfunc ReadStore("+guardAWSKey+" string) (string, error) {\n\treturn \"\", nil\n}\n"), 0o644))
 	fanoutGit(t, repo, "add", "-A")
 	fanoutGit(t, repo, "commit", "-q", "-m", "plant")
-	head = fanoutGit(t, repo, "rev-parse", "HEAD")
-	idx := newFakeIndex(t, repo)
+	head := fanoutGit(t, repo, "rev-parse", "HEAD")
 
-	cfg := twoAgentConfig("http://unused")
-	enableSemantic(cfg, idx.srv.URL)
-	cfg.Settings.SecretGuard = secretGuardRedact
-	_, _, err := buildPayloads(context.Background(), cfg, repo, base, head, false)
-	require.NoError(t, err)
-	idx.mu.Lock()
-	require.Equal(t, 1, idx.embeds, "PRECONDITION: redact still retrieves")
+	run := func(t *testing.T, policy string) (*fakeIndex, map[string]modePayload) {
+		t.Helper()
+		idx := newFakeIndex(t, repo)
+		cfg := twoAgentConfig("http://unused")
+		enableSemantic(cfg, idx.srv.URL)
+		cfg.Settings.SecretGuard = policy
+		var (
+			payloads map[string]modePayload
+			err      error
+		)
+		captureStderr(t, func() {
+			payloads, _, err = buildPayloads(context.Background(), cfg, repo, base, head, false)
+		})
+		require.NoError(t, err, "no policy aborts the payload build")
+		require.NotEmpty(t, payloads)
+		return idx, payloads
+	}
+
+	idx, _ := run(t, secretGuardWarn)
+	require.Len(t, idx.inputs, 1)
+	require.Contains(t, strings.Join(idx.inputs[0], "\n"), guardAWSKey,
+		"PRECONDITION: warn sends the query, credential and all")
+
+	idx, _ = run(t, secretGuardRedact)
+	require.Len(t, idx.inputs, 1, "redact still retrieves")
 	assert.NotContains(t, strings.Join(idx.inputs[0], "\n"), guardAWSKey, "redact must not send the credential")
-	idx.mu.Unlock()
+	assert.Contains(t, strings.Join(idx.inputs[0], "\n"), payload.SecretPlaceholder)
 
-	idx2 := newFakeIndex(t, repo)
-	enableSemantic(cfg, idx2.srv.URL)
-	cfg.Settings.SecretGuard = secretGuardBlock
-	var payloads map[string]modePayload
-	captureStderr(t, func() {
-		payloads, _, err = buildPayloads(context.Background(), cfg, repo, base, head, false)
-	})
-	require.NoError(t, err, "block skips retrieval; it does not abort the payload build")
-	require.NotEmpty(t, payloads)
-	idx2.mu.Lock()
-	assert.Zero(t, idx2.embeds+idx2.queries, "block must send nothing to the index")
-	idx2.mu.Unlock()
+	idx, payloads := run(t, secretGuardBlock)
+	assert.Zero(t, idx.embeds+idx.queries, "block must send nothing to the index")
+	for mode, mp := range payloads {
+		for _, e := range mp.Entries {
+			assert.NotContainsf(t, e.Body, "similarity to", "mode %s: block yields zero similarity snippets", mode)
+		}
+	}
 }
