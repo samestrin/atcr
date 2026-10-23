@@ -95,12 +95,14 @@ func runIgnoreCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// ruleForFinding derives the ignore rule for f: scoped to its file and
-// category, matching its Problem text literally (regexp.QuoteMeta, so a
-// parenthesised symbol anchor or a `*` in the prose is not a live regex).
+// ruleForFinding derives the ignore rule for f: scoped to its file (glob-
+// escaped, so a path like `app/[id]/page.tsx` matches itself rather than
+// reading as a character class) and category, matching its Problem text
+// literally (regexp.QuoteMeta, so a parenthesised symbol anchor or a `*` in
+// the prose is not a live regex).
 func ruleForFinding(f reconcile.JSONFinding, reason string) reconcile.IgnoreRule {
 	return reconcile.IgnoreRule{
-		File:     f.File,
+		File:     reconcile.EscapeIgnoreGlob(f.File),
 		Category: f.Category,
 		Match:    regexp.QuoteMeta(f.Problem),
 		Reason:   reason,
