@@ -222,8 +222,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		if rep.PersonaStampDamaged {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-				"doctor: note — %s is damaged (it does not parse or has no \"files\" object), so "+
-					"persona copies were checked as if unstamped; run `atcr init --refresh-personas` to rewrite it\n",
+				"doctor: note — %s is damaged (it is not a regular file, is over 1 MiB, cannot be read, "+
+					"does not parse or has no \"files\" object), so persona copies were checked as if unstamped; "+
+					"run `atcr init --refresh-personas` to rewrite it (it also brings every built-in persona copy "+
+					"under .atcr/personas back to the embedded content, edited ones included, not only the ones doctor listed)\n",
 				registry.PersonaStampPath(personaDirs.Project))
 		}
 		// Named by agent AND model, since the mismatch belongs to the model behind the
@@ -361,7 +363,9 @@ func filterRoster(proj *registry.ProjectConfig, names []string) (*registry.Proje
 // `.atcr/personas/` by name, the agents it serves, whether it was hand edited
 // (a refresh would overwrite the edit) or carries no stamp (so whether it was
 // edited is unknown), and the command that brings it up to date. scope names
-// which agents the scan covered ("roster agents" or "selected agents").
+// which agents the scan covered ("roster agents" or "selected agents"). The
+// refresh is wider than that scope — it rewrites every built-in copy that
+// differs (cli/init.go runRefreshPersonas) — so the warning says so.
 func stalePersonaWarning(stale []doctor.StalePersona, scope string) string {
 	files := make([]string, 0, len(stale))
 	for _, sp := range stale {
@@ -376,7 +380,8 @@ func stalePersonaWarning(stale []doctor.StalePersona, scope string) string {
 	}
 	return fmt.Sprintf("doctor: WARNING — stale persona files: these copies under %s "+
 		"serve the %s and have fallen behind the personas built into this atcr, so reviews run the older prompt; "+
-		"run `atcr init --refresh-personas` to update them (it overwrites edited copies; "+
+		"run `atcr init --refresh-personas` to update them (it overwrites every built-in persona copy "+
+		"that differs from the embedded one, edited ones included, not only the ones listed here; "+
 		"add --dry-run to preview): %s\n",
 		filepath.Join(".atcr", "personas"), scope, strings.Join(files, ", "))
 }

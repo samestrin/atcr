@@ -112,10 +112,14 @@ jobs:
         # which disables Go's test cache. Coverage is only consumed by the
         # post-merge upload, so PRs get -race WITHOUT it and stay cached.
         #
-        # -timeout 20m because internal/astgroup runs ~5x slower under -race and
+        # -timeout 40m because internal/astgroup runs ~5x slower under -race and
         # overruns Go's 10m default, which surfaces as a panic rather than a
         # useful failure. Both paths get it: the post-merge job runs the same
-        # suite with coverage on top and is strictly slower.
+        # suite with coverage on top. 20m was too tight: on 2026-10-23 the
+        # package alone took 699s to 1085s (runs 39885742585 to 39962071942,
+        # PR and push alike), and a slow runner or a stalled module download
+        # in TestCrossCompileZeroCGO tipped it over (run 38602398566). 40m is
+        # about twice the slowest measured run.
         #
         # The "rest" shard's package list is computed here, not hardcoded,
         # specifically so it always equals "everything minus the two named
@@ -129,9 +133,9 @@ jobs:
           echo "packages under test:"
           echo "$pkgs"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            go test -race -timeout 20m $pkgs
+            go test -race -timeout 40m $pkgs
           else
-            go test -v -race -timeout 20m -coverprofile=coverage-${{ matrix.name }}.out $pkgs
+            go test -v -race -timeout 40m -coverprofile=coverage-${{ matrix.name }}.out $pkgs
           fi
 
       - name: Surface reconcile release-lag skip
