@@ -2032,8 +2032,8 @@ const similaritySymbolUnnamed = "unnamed"
 // HEAD's text, never the indexed Content. A hit is dropped, with a ledger
 // reason, when its file changed in this diff (the payload already shows it), is
 // excluded by the ignore filter, cannot be read at HEAD (untracked or gone), is
-// over the analyze ceiling, names a span HEAD does not have, holds Content that
-// no longer matches HEAD (stale), or overlaps a region a reference snippet or an
+// over the analyze ceiling, names a span HEAD does not have or one longer than
+// maxSnippetLines, holds Content that no longer matches HEAD (stale), or overlaps a region a reference snippet or an
 // earlier hit already shows (AC8). Only kept snippets become groundable.
 //
 // A nil retriever, or a change with no queryable symbol, makes no call. A
@@ -2113,9 +2113,17 @@ func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, cha
 			drop(dropReasonOutOfRange)
 			continue
 		}
+		// Dropped, not clamped to maxSnippetLines: the stale compare below is
+		// against the whole indexed chunk, which a clamped body could never
+		// match. Checked before the slice so an oversized span builds no body.
+		if h.EndLine-h.StartLine+1 > maxSnippetLines {
+			drop(dropReasonOversized)
+			continue
+		}
 		body := strings.Join(f.lines[h.StartLine-1:h.EndLine], "\n")
-		// An index chunk without Content offers nothing to compare, and the body
-		// shown is HEAD's either way.
+		// An index chunk without Content cannot be checked for staleness at all:
+		// semindex.Snippet carries no content hash to fall back on. It is shown
+		// unchecked, which is safe because the body is HEAD's either way.
 		if h.Content != "" && normalizeChunk(h.Content) != normalizeChunk(body) {
 			drop(dropReasonStale)
 			continue
