@@ -172,14 +172,21 @@ func WithSemanticRetriever(r semindex.Retriever, topK int) RangeOption {
 	}
 }
 
-// isNilRetriever reports whether r is nil or holds a nil pointer. It is local
-// because localdebt's isTypedNil is unexported and takes an io.Writer.
+// isNilRetriever reports whether r is nil or holds a typed nil of any nilable
+// kind (pointer, func, map, slice, chan, unsafe pointer); calling Retrieve on
+// a nil func panics. An interface value's dynamic type is never itself an
+// interface, so reflect.Interface cannot occur here. It is local because
+// localdebt's isTypedNil is unexported and takes an io.Writer.
 func isNilRetriever(r semindex.Retriever) bool {
 	if r == nil {
 		return true
 	}
-	v := reflect.ValueOf(r)
-	return v.Kind() == reflect.Pointer && v.IsNil()
+	switch v := reflect.ValueOf(r); v.Kind() {
+	case reflect.Pointer, reflect.Func, reflect.Map, reflect.Slice, reflect.Chan, reflect.UnsafePointer:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one
