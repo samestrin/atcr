@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/samestrin/atcr/internal/semindex"
@@ -155,13 +156,30 @@ func WithMaxPrefetchBytes(n int64) RangeOption {
 //
 // The caller builds r (internal/fanout, from the registry's resolved
 // context_prefetch.semantic settings), because payload must not import
-// registry. A nil r leaves the stage off, and WithMaxPrefetchBytes(0) still
-// disables it together with the reference pass.
+// registry. A nil r leaves the stage off, and so does a typed nil such as
+// (*semindex.Client)(nil), which is not == nil inside the interface and would
+// otherwise be called. WithMaxPrefetchBytes(0) still disables the stage
+// together with the reference pass. A topK below 1 is raised to 1, because
+// semindex.Client rejects it and the stage would degrade on every run.
 func WithSemanticRetriever(r semindex.Retriever, topK int) RangeOption {
 	return func(g *gitRunner) {
+		if isNilRetriever(r) {
+			g.retriever = nil
+			return
+		}
 		g.retriever = r
-		g.semanticTopK = topK
+		g.semanticTopK = max(topK, 1)
 	}
+}
+
+// isNilRetriever reports whether r is nil or holds a nil pointer. It is local
+// because localdebt's isTypedNil is unexported and takes an io.Writer.
+func isNilRetriever(r semindex.Retriever) bool {
+	if r == nil {
+		return true
+	}
+	v := reflect.ValueOf(r)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // NewRangeBuilder returns a RangeBuilder for repo's base..head range, sharing one

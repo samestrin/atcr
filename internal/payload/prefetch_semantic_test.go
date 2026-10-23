@@ -275,6 +275,36 @@ func TestWithSemanticRetriever_NilRetrieverIsInert(t *testing.T) {
 	require.Equal(t, PrefetchStatus{}, b.PrefetchStatus())
 }
 
+// Epic 80 T3: a nil *semindex.Client in a Retriever interface is not == nil, so
+// it must be caught by the option or the stage calls Retrieve on a nil client.
+func TestWithSemanticRetriever_TypedNilRetrieverIsInert(t *testing.T) {
+	dir, base, head := semanticRepo(t)
+	b := NewRangeBuilder(context.Background(), dir, base, head,
+		WithSemanticRetriever((*semindex.Client)(nil), 5))
+
+	// require.Nil accepts a typed nil, so compare the interface itself.
+	require.True(t, b.g.retriever == nil, "a typed-nil retriever must leave the stage off")
+	require.Empty(t, b.prefetch())
+	require.Equal(t, PrefetchStatus{}, b.PrefetchStatus())
+}
+
+func TestWithSemanticRetriever_TopKBelowOneIsRaisedToOne(t *testing.T) {
+	for _, topK := range []int{0, -3} {
+		t.Run(fmt.Sprint(topK), func(t *testing.T) {
+			dir, base, head := semanticRepo(t)
+			fake := &fakeRetriever{hits: []semindex.Snippet{similarHit()}}
+			g := newGitRunner(context.Background(), dir)
+			WithSemanticRetriever(fake, topK)(g)
+
+			_, _, st := g.buildPrefetch(base, head)
+
+			require.Equal(t, 1, fake.calls)
+			require.Equal(t, 1, fake.topK, "topK<1 must reach Retrieve as 1")
+			require.Empty(t, st.DegradeReason)
+		})
+	}
+}
+
 func keys(m map[string][]LineRange) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
