@@ -275,15 +275,18 @@ func (l *chunkLedger) binCounts(dir string) (total, ok int) {
 // all of its bins. The prior review.md is kept ahead of the fresh output so the
 // replayed findings keep their justification text. Status and
 // unreviewed_chunks are recomputed from the union record, not taken from the
-// resumed bins alone. Must run before the prior artifacts are overwritten.
+// resumed bins alone. The first call for dir must run before the prior
+// artifacts are overwritten; a later call (an early write that failed partway,
+// retried by writeResumedAgents) rebuilds from the same prior artifacts, so it
+// never merges the first call's output a second time (Epic 78 T4).
 func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLines, l *chunkLedger, carried map[string]bool) error {
 	agentDir := filepath.Join(poolDir, poolRawAgentDir, dir)
-	prior, err := readPriorFindings(agentDir)
+	prior, err := l.priorFor(dir, agentDir, r.Agent)
 	if err != nil {
-		return fmt.Errorf("replaying reviewed bins for '%s': %w", r.Agent, err)
+		return err
 	}
 	var union []stream.Finding
-	for _, f := range prior {
+	for _, f := range prior.findings {
 		if carried[path.Clean(f.File)] {
 			union = append(union, f)
 		}
@@ -294,14 +297,12 @@ func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLine
 	fr := findingsResult{Findings: findings, Dropped: dropped, Truncated: truncated, Ungrounded: ungrounded}
 
 	content := agentReviewContent(r)
-	if old, err := readFileLimited(filepath.Join(agentDir, reviewFile), maxAgentFileBytes); err == nil && len(old) > 0 {
+	if old := prior.review; old != "" {
 		if content == "" {
-			content = string(old)
+			content = old
 		} else {
-			content = string(old) + "\n" + chunkBoundaryLine + "\n" + content
+			content = old + "\n" + chunkBoundaryLine + "\n" + content
 		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("replaying review.md for '%s': %w", r.Agent, err)
 	}
 
 	st := statusFor(r, fr)
@@ -319,6 +320,40 @@ func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLine
 	st.UnreviewedFiles += g.unreviewed
 	st.DeferredFiles += g.deferred
 	return writeAgentFiles(poolDir, dir, r.Agent, content, fr.Findings, &st)
+}
+
+// priorArtifacts is one persona's findings and review.md as the interrupted run
+// left them.
+type priorArtifacts struct {
+	findings []stream.Finding
+	review   string
+}
+
+// priorFor returns dir's prior artifacts, read from agentDir by the first call
+// and kept on the ledger for every later one: by then a merge may already have
+// rewritten the files, and re-reading them would replay that merge's fresh
+// output as prior work.
+func (l *chunkLedger) priorFor(dir, agentDir, agent string) (priorArtifacts, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if p, ok := l.priors[dir]; ok {
+		return p, nil
+	}
+	findings, err := readPriorFindings(agentDir)
+	if err != nil {
+		return priorArtifacts{}, fmt.Errorf("replaying reviewed bins for '%s': %w", agent, err)
+	}
+	p := priorArtifacts{findings: findings}
+	if old, err := readFileLimited(filepath.Join(agentDir, reviewFile), maxAgentFileBytes); err == nil {
+		p.review = string(old)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return priorArtifacts{}, fmt.Errorf("replaying review.md for '%s': %w", agent, err)
+	}
+	if l.priors == nil {
+		l.priors = make(map[string]priorArtifacts)
+	}
+	l.priors[dir] = p
+	return p, nil
 }
 
 // readPriorFindings reads a persona's findings as the interrupted run left them
