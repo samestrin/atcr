@@ -59,48 +59,87 @@ var scanSecrets = payload.ScanPayloadContext
 // guardSecrets has no run handle, and `atcr serve` and the MCP server keep one
 // process alive across reviews, so a run is inferred: within a run each agent
 // asks for a given set of segments once, so the same agent asking again starts
-// a new run, which warns afresh and retries a scan that failed. A scan that
-// succeeded depends only on the text and the scanner, so it is reused across
-// runs (and across one agent's chunks, which share a scope constraint) until it
-// expires. secretScanTTL bounds how long a result or a
-// suppressed warning outlives its run when the next run's panel shares no
-// agent, and secretScanCacheCap bounds the memory a long process holds.
+// a new run, which warns afresh and retries a scan that failed. An entry keeps
+// every live run, so two reviews interleaved in one process each claim their
+// own. A scan that succeeded depends only on the text and the scanner, so it
+// is reused across runs (and across one agent's chunks, which share a scope
+// constraint) until it expires. Agents that miss while a scan of the same text
+// is running wait for it rather than start their own. secretScanTTL bounds how
+// long a result or a suppressed warning outlives its run when the next run's
+// panel shares no agent; secretScanCacheCap bounds the entries a long process
+// holds, evicting one at a time (an expired one, else the least recently
+// used), and secretScanRunCap the runs one entry remembers.
 var (
 	secretScanNow      = time.Now
 	secretScanTTL      = 5 * time.Minute
 	secretScanCacheCap = 256
+	secretScanRunCap   = 8
 )
 
-// runSeen is a cache entry's run: when it began and which agents it served.
+// runSeen is one run: when it began and which agents it served.
 type runSeen struct {
 	at     time.Time
 	agents map[string]bool
 }
 
-// claim records agent against the entry and reports whether the entry may be
-// reused: false when it expired, or when perRun and agent already used it.
-func (r *runSeen) claim(agent string, now time.Time, perRun bool) bool {
-	if now.Sub(r.at) >= secretScanTTL || (perRun && r.agents[agent]) {
+// cacheEntry is a cached scan, or a printed warning, and the live runs that
+// used it, oldest first.
+type cacheEntry struct {
+	runs []runSeen
+	used uint64 // secretScanCache.tick at the last use; the lowest is evicted
+
+	// Scans only. pending is set while a scan runs; done is closed when it ends.
+	pending bool
+	done    chan struct{}
+	hits    []payload.SecretHit
+	err     error
+}
+
+// live drops the runs that expired and reports whether any is left.
+func (e *cacheEntry) live(now time.Time) bool {
+	kept := e.runs[:0]
+	for _, r := range e.runs {
+		if now.Sub(r.at) < secretScanTTL {
+			kept = append(kept, r)
+		}
+	}
+	e.runs = kept
+	return len(kept) > 0
+}
+
+// claim records agent against the entry and reports whether it may be reused:
+// false when every run expired, or when perRun and agent already used every
+// live run.
+func (e *cacheEntry) claim(agent string, now time.Time, perRun bool) bool {
+	if !e.live(now) {
 		return false
 	}
-	r.agents[agent] = true
-	return true
+	if !perRun {
+		e.runs[len(e.runs)-1].agents[agent] = true
+		return true
+	}
+	for _, r := range e.runs {
+		if !r.agents[agent] {
+			r.agents[agent] = true
+			return true
+		}
+	}
+	return false
 }
 
-func newRunSeen(agent string, now time.Time) runSeen {
-	return runSeen{at: now, agents: map[string]bool{agent: true}}
-}
-
-type cachedScanResult struct {
-	runSeen
-	hits []payload.SecretHit
-	err  error
+// begin starts a run for agent, keeping the live runs other agents still use.
+func (e *cacheEntry) begin(agent string, now time.Time) {
+	if len(e.runs) >= secretScanRunCap {
+		e.runs = e.runs[1:]
+	}
+	e.runs = append(e.runs, runSeen{at: now, agents: map[string]bool{agent: true}})
 }
 
 var secretScanCache struct {
 	sync.Mutex
-	scans  map[string]*cachedScanResult
-	warned map[string]*runSeen
+	tick   uint64
+	scans  map[string]*cacheEntry
+	warned map[string]*cacheEntry
 }
 
 // resetSecretScanCache forgets every cached scan and warning; tests call it
@@ -118,6 +157,41 @@ func secretScanCacheLen() int {
 	return len(secretScanCache.scans) + len(secretScanCache.warned)
 }
 
+// touch marks e as just used. The caller holds the lock.
+func touch(e *cacheEntry) {
+	secretScanCache.tick++
+	e.used = secretScanCache.tick
+}
+
+// insert adds e under key to m, which it allocates when nil, evicting one entry
+// first when m is full: an expired one if there is one, else the least recently
+// used. A scan still running is never evicted, so its waiters are not joined by
+// a second scan of the same text. The caller holds the lock.
+func insert(m *map[string]*cacheEntry, key string, e *cacheEntry, now time.Time) {
+	if *m == nil {
+		*m = make(map[string]*cacheEntry)
+	}
+	if len(*m) >= secretScanCacheCap {
+		victim, oldest := "", ^uint64(0)
+		for k, o := range *m {
+			if o.pending {
+				continue
+			}
+			if !o.live(now) {
+				victim = k
+				break
+			}
+			if o.used < oldest {
+				victim, oldest = k, o.used
+			}
+		}
+		if victim != "" {
+			delete(*m, victim)
+		}
+	}
+	(*m)[key] = e
+}
+
 // scannerIdentity names what a scan result depends on besides the text: the
 // gitleaks binary PATH resolves (or none, for the built-in ruleset) and the
 // environment that points gitleaks at a config.
@@ -131,27 +205,49 @@ func textDigest(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// cachedScan returns the scan of text for agent, reusing a cached result. A
-// scan error is cached with its hits for the rest of the run, so block fails
-// closed for every agent that shares the text, not only the first.
+// errSecretScanAborted is cached when the scanner panics, so the agents
+// waiting on that scan fail closed instead of waiting forever.
+var errSecretScanAborted = fmt.Errorf("%w: the scanner panicked", payload.ErrSecretScanFailed)
+
+// cachedScan returns the scan of text for agent, reusing a cached result or
+// waiting for a scan of the same text already running. A scan error is cached
+// with its hits for the rest of the run, so block fails closed for every agent
+// that shares the text, not only the first.
 func cachedScan(agent, scanner, text string) ([]payload.SecretHit, error) {
 	key := scanner + "\x00" + textDigest(text)
 	c := &secretScanCache
 	c.Lock()
-	if e := c.scans[key]; e != nil && e.claim(agent, secretScanNow(), e.err != nil) {
+	e := c.scans[key]
+	for e != nil && e.pending {
+		done := e.done
 		c.Unlock()
+		<-done
+		c.Lock()
+		e = c.scans[key]
+	}
+	now := secretScanNow()
+	if e != nil && e.claim(agent, now, e.err != nil) {
+		touch(e)
+		defer c.Unlock()
 		return e.hits, e.err
 	}
+	if e == nil {
+		e = &cacheEntry{}
+		insert(&c.scans, key, e, now)
+	}
+	e.begin(agent, now)
+	touch(e)
+	e.pending, e.done = true, make(chan struct{})
 	c.Unlock()
 
-	hits, err := scanSecrets(context.Background(), text, nil)
-
-	c.Lock()
-	defer c.Unlock()
-	if c.scans == nil || len(c.scans) >= secretScanCacheCap {
-		c.scans = make(map[string]*cachedScanResult)
-	}
-	c.scans[key] = &cachedScanResult{runSeen: newRunSeen(agent, secretScanNow()), hits: hits, err: err}
+	hits, err := []payload.SecretHit(nil), errSecretScanAborted
+	defer func() {
+		c.Lock()
+		defer c.Unlock()
+		e.hits, e.err, e.pending = hits, err, false
+		close(e.done)
+	}()
+	hits, err = scanSecrets(context.Background(), text, nil)
 	return hits, err
 }
 
@@ -168,14 +264,17 @@ func firstWarning(agent, policy, scanner string, segs []guardSegment) bool {
 	c.Lock()
 	defer c.Unlock()
 	now := secretScanNow()
-	if e := c.warned[key]; e != nil && e.claim(agent, now, true) {
+	e := c.warned[key]
+	if e != nil && e.claim(agent, now, true) {
+		touch(e)
 		return false
 	}
-	if c.warned == nil || len(c.warned) >= secretScanCacheCap {
-		c.warned = make(map[string]*runSeen)
+	if e == nil {
+		e = &cacheEntry{}
+		insert(&c.warned, key, e, now)
 	}
-	r := newRunSeen(agent, now)
-	c.warned[key] = &r
+	e.begin(agent, now)
+	touch(e)
 	return true
 }
 
