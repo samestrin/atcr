@@ -182,12 +182,12 @@ func ScopeRule(mode PayloadMode) string {
 // agent will actually receive, accounting for per-file escalation (Epic 35.1).
 //
 // A persona prompt carries exactly one {{.ScopeRule}}, but escalation means one
-// payload can mix modes. If ANY file in this payload was rendered as a full
-// file, its unchanged regions are in front of the reviewer, so the payload gets
-// the wider files-mode rule. Telling a reviewer to stay on the diff while
-// handing it whole files is the failure mode worth avoiding; the reverse (the
-// wider rule over a mostly-diff payload) merely permits findings the grounding
-// gate already filters.
+// payload can mix modes. Scope is resolved per file (Epic 48.0): the payload
+// keeps its mode's rule, and when some files in it were rendered as full files
+// a sentence naming them is added, so the wider files-mode allowance covers
+// those files only and their diff-rendered siblings stay on the narrow rule.
+// Before 48.0 one escalated file widened the whole payload. A files-mode
+// payload is unchanged: every file in it is a full file.
 //
 // The decision is made from the text rather than from []FileEntry because the
 // chunked review path splits a payload into text chunks before rendering, and a
@@ -196,17 +196,66 @@ func ScopeRule(mode PayloadMode) string {
 // every content line carries a +/-/space prefix, so a header can never appear at
 // column 0 unless a file really was rendered in files mode.
 func ScopeRuleForPayload(mode PayloadMode, text string) string {
-	if containsFilesHeader(text) {
+	if mode == ModeFiles {
 		return scopeFilesFull
 	}
-	return ScopeRule(mode)
+	paths, found := filesModePaths(text)
+	if !found {
+		return ScopeRule(mode)
+	}
+	return scopeChangedOnlyBase + " " + mixedScopeSentence(paths) + " " + categoryVocabularyRule
 }
 
-// containsFilesHeader reports whether text has a files-mode header at the start
-// of any line.
-func containsFilesHeader(text string) bool {
-	if strings.HasPrefix(text, filesHeaderPrefix) {
-		return true
+// mixedScopeSentence names the files-mode files of a mixed payload as the only
+// ones the wider rule applies to. It sits between the narrow rule and the
+// vocabulary, so the vocabulary's "as described above" still points at both.
+// An escalated file whose header yields no path is still covered by the
+// header reference, which is why the sentence is never dropped for want of a
+// name.
+func mixedScopeSentence(paths []string) string {
+	named := ""
+	if len(paths) > 0 {
+		quoted := make([]string, len(paths))
+		for i, p := range paths {
+			quoted[i] = "`" + p + "`"
+		}
+		named = strings.Join(quoted, ", ") + ", "
 	}
-	return strings.Contains(text, "\n"+filesHeaderPrefix)
+	return "This payload mixes modes. The wider files-mode rule applies only to " + named +
+		"the files rendered in full under a `=== FILE:` header: for those files alone, unchanged regions " +
+		"are visible and you may note a pre-existing issue in them separately with CATEGORY `" +
+		reconcile.CategoryOutOfScope + "`. Every other file in this payload is a diff and keeps the rule above."
+}
+
+// filesModePaths returns the paths of the files-mode headers at the start of a
+// line in text, in payload order and each once, and whether any such header
+// was found. A header whose path cannot be read counts as found but adds no
+// name.
+func filesModePaths(text string) ([]string, bool) {
+	var paths []string
+	found := false
+	seen := map[string]bool{}
+	// Jump between column-0 headers rather than splitting every line: this runs
+	// per agent per payload chunk, and payloads run to megabytes.
+	for off := 0; off < len(text); {
+		i := off
+		if off > 0 || !strings.HasPrefix(text, filesHeaderPrefix) {
+			j := strings.Index(text[off:], "\n"+filesHeaderPrefix)
+			if j < 0 {
+				break
+			}
+			i = off + j + 1
+		}
+		end := strings.IndexByte(text[i:], '\n')
+		if end < 0 {
+			end = len(text) - i
+		}
+		found = true
+		if p := filesModeHeaderPath(text[i : i+end]); p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+		off = i + end
+	}
+	return paths, found
 }
