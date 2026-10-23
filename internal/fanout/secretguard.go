@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/samestrin/atcr/internal/payload"
 )
@@ -42,6 +43,21 @@ func secretGuardPolicy(cfg *ReviewConfig) string {
 	return secretGuardWarn
 }
 
+// scanSecrets is the scanner guardSecrets runs; a variable so tests can count
+// its invocations.
+var scanSecrets = payload.ScanPayloadContext
+
+// resetSecretScanCache forgets every cached scan; tests call it for isolation.
+func resetSecretScanCache() {}
+
+var (
+	secretScanNow      = time.Now
+	secretScanTTL      = 5 * time.Minute
+	secretScanCacheCap = 256
+)
+
+func secretScanCacheLen() int { return 0 }
+
 // guardSegment is one piece of text bound for a provider. file names it in a
 // warning or block error; mode, when set, says the text is a rendered payload
 // whose per-file markers locate each hit's file.
@@ -74,7 +90,7 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 		if s.text == "" {
 			continue
 		}
-		hits, err := payload.ScanPayloadContext(context.Background(), s.text, nil)
+		hits, err := scanSecrets(context.Background(), s.text, nil)
 		if err != nil {
 			scanErr = err
 		}
