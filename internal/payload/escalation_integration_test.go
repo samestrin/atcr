@@ -327,13 +327,43 @@ func skeletonBlockOf(t *testing.T, body string) string {
 
 func fileHeaderPrefixForTest() string { return "=== FILE: " }
 
-// A payload holding any full-file body must carry the wider files-mode scope
-// rule, even when the run's configured mode is diff or blocks (Epic 35.1).
-func TestScopeRuleForPayload_EscalatedFileWidensTheRule(t *testing.T) {
+// A mixed payload keeps the narrow rule for its diff-rendered files and names
+// the escalated (`=== FILE:`-headed) files as the only ones the wider rule
+// covers (Epic 48.0). Before 48.0 one escalated file widened the whole payload.
+func TestScopeRuleForPayload_MixedPayloadWidensOnlyTheNamedFiles(t *testing.T) {
+	mixed := "diff --git a/a.go b/a.go\n@@ -1 +1 @@\n-x\n+y\n" +
+		"=== FILE: b.go ===\npackage p\n" +
+		"diff --git a/c.go b/c.go\n@@ -1 +1 @@\n-x\n+y\n" +
+		"=== FILE: d.go (renamed from old/d.go) ===\npackage p\n" +
+		"=== FILE: b.go ===\npackage p\n" +
+		"=== FILE:  ===\npackage p\n"
+
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		rule := ScopeRuleForPayload(mode, mixed)
+
+		require.NotEqual(t, ScopeRule(ModeFiles), rule, "mode %q: a mixed payload must not get the payload-wide files rule", mode)
+		require.True(t, strings.HasPrefix(rule, scopeChangedOnlyBase), "mode %q: the narrow rule must lead", mode)
+		require.NotContains(t, rule, scopeFilesBase, "mode %q", mode)
+		require.Contains(t, rule, "applies only to `b.go`, `d.go`, the files rendered in full", "mode %q: escalated files named once each, in payload order", mode)
+		require.NotContains(t, rule, "``", "mode %q: a header with no readable path adds no name", mode)
+		require.NotContains(t, rule, "`a.go`", "mode %q: a diff-rendered sibling keeps the narrow rule", mode)
+		require.NotContains(t, rule, "`c.go`", "mode %q: a diff-rendered sibling keeps the narrow rule", mode)
+		require.NotContains(t, rule, "old/d.go", "mode %q: a rename names its new path only", mode)
+		require.True(t, strings.HasSuffix(rule, categoryVocabularyRule), "mode %q: the vocabulary still closes the rule", mode)
+	}
+}
+
+// The per-file sentence is assembled once per payload: a single escalated file
+// reads as one name, not a list.
+func TestScopeRuleForPayload_SingleEscalatedFile(t *testing.T) {
 	escalated := "diff --git a/a.go b/a.go\n@@ -1 +1 @@\n-x\n+y\n=== FILE: b.go ===\npackage p\n"
 
-	require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(ModeDiff, escalated))
-	require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(ModeBlocks, escalated))
+	rule := ScopeRuleForPayload(ModeDiff, escalated)
+	require.Equal(t, scopeChangedOnlyBase+" "+mixedScopeSentence([]string{"b.go"})+" "+categoryVocabularyRule, rule)
+	require.Contains(t, rule, "applies only to `b.go`,")
+
+	// A header on the payload's first line, with no trailing newline, is found too.
+	require.Contains(t, ScopeRuleForPayload(ModeBlocks, "=== FILE: e.go ==="), "applies only to `e.go`,")
 }
 
 func TestScopeRuleForPayload_PlainDiffKeepsTheNarrowRule(t *testing.T) {
