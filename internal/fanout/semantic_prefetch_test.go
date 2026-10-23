@@ -1,9 +1,11 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/semindex"
@@ -339,4 +342,77 @@ func TestSemanticQueryGuard_PoliciesEndToEnd(t *testing.T) {
 			assert.NotContainsf(t, e.Body, "similarity to", "mode %s: block yields zero similarity snippets", mode)
 		}
 	}
+}
+
+// A gitleaks that fails leaves the scan untrusted. block must then fail closed
+// even on clean queries, while warn and redact proceed on the built-in rules,
+// as the payload guard does (TestSecretGuard_ScannerFailure).
+func TestSemanticQueryGuard_ScannerFailure(t *testing.T) {
+	failingGitleaks := func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "gitleaks"), []byte("#!/bin/sh\nexit 2\n"), 0o755))
+		t.Setenv("PATH", dir)
+	}
+	leaky := `func Connect(key string = "` + guardAWSKey + `") error`
+	clean := "func ReadStore(path string) (string, error)"
+
+	t.Run("block fails closed on clean queries", func(t *testing.T) {
+		failingGitleaks(t)
+		inner := &recordingRetriever{}
+		g := &guardedRetriever{policy: secretGuardBlock, inner: inner}
+		var err error
+		stderr := captureStderr(t, func() {
+			_, err = g.Retrieve(context.Background(), []string{clean}, 3)
+		})
+		require.Error(t, err)
+		var se *semindex.Error
+		require.True(t, errors.As(err, &se))
+		assert.Equal(t, semanticDegradeSecretGuard, se.Class)
+		assert.Zero(t, inner.calls, "an untrusted scan must send nothing")
+		assert.Contains(t, stderr, "using the built-in ruleset")
+		assert.Contains(t, stderr, "could not be checked")
+	})
+	t.Run("warn proceeds on the built-in rules", func(t *testing.T) {
+		failingGitleaks(t)
+		inner := &recordingRetriever{}
+		g := &guardedRetriever{policy: secretGuardWarn, inner: inner}
+		var err error
+		stderr := captureStderr(t, func() {
+			_, err = g.Retrieve(context.Background(), []string{leaky, clean}, 3)
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{leaky, clean}, inner.queries, "warn sends the queries unchanged")
+		assert.Contains(t, stderr, "using the built-in ruleset")
+		assert.Contains(t, stderr, "aws-access-token", "the built-in rules still found the key")
+		assert.NotContains(t, stderr, guardAWSKey)
+	})
+	t.Run("redact proceeds on the built-in rules", func(t *testing.T) {
+		failingGitleaks(t)
+		inner := &recordingRetriever{}
+		g := &guardedRetriever{policy: secretGuardRedact, inner: inner}
+		var err error
+		captureStderr(t, func() {
+			_, err = g.Retrieve(context.Background(), []string{leaky, clean}, 3)
+		})
+		require.NoError(t, err)
+		require.Len(t, inner.queries, 2)
+		assert.NotContains(t, inner.queries[0], guardAWSKey)
+		assert.Contains(t, inner.queries[0], payload.SecretPlaceholder)
+	})
+}
+
+// An enabled block that semindex.New rejects fails open: no option, so the run
+// proceeds without the tier, and a warning says why.
+func TestSemanticRetrieverOption_UnbuildableClientFailsOpen(t *testing.T) {
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.SemanticPrefetch = registry.SemanticPrefetch{
+		Enabled: true, Endpoint: "http://127.0.0.1:1", EmbeddingEndpoint: "http://127.0.0.1:1", // no collection
+	}
+	require.True(t, cfg.Settings.ResolvedSemanticPrefetch().Enabled, "PRECONDITION: the block is enabled")
+
+	assert.Nil(t, semanticRetrieverOption(ctx, cfg, t.TempDir()))
+	assert.Contains(t, buf.String(), "semantic retrieval not configured")
+	assert.Contains(t, buf.String(), "collection is required")
 }
