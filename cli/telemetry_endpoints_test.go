@@ -728,6 +728,32 @@ func TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied(t 
 	assert.Contains(t, ignoredLine, embedderUsage, "the line must name the destination actually used")
 }
 
+// TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel: the "flag
+// ignored" line has the same silence risk as the applied one, so it must also
+// survive ATCR_LOG_LEVEL=warn and =error.
+func TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
+	for _, level := range []string{"warn", "error"} {
+		t.Run(level, func(t *testing.T) {
+			isolate(t)
+			t.Setenv("ATCR_TELEMETRY", "0")
+			t.Setenv("ATCR_LOG_LEVEL", level)
+
+			const embedderUsage = "https://embedder.test/usage"
+			client := telemetry.NewWithQualitySignal(embedderUsage, "")
+			root := NewRootCmdWithClient(client)
+			root.SetArgs([]string{"--telemetry-endpoint", "https://collector.internal/usage", "version"})
+			var stderr bytes.Buffer
+			root.SetOut(io.Discard)
+			root.SetErr(&stderr)
+			require.NoError(t, root.ExecuteContext(context.Background()), "stderr: %s", stderr.String())
+			client.Wait()
+
+			assert.Contains(t, stderr.String(), telemetryOverrideIgnoredLogMsg, "ATCR_LOG_LEVEL=%s must not silence the ignored-flag audit line", level)
+			assert.Contains(t, stderr.String(), embedderUsage)
+		})
+	}
+}
+
 // TestNewRootCmdWithClient_TelemetryEndpointRejectsPlaintextRemote: the flag is
 // validated on the embedder tree too, so a plaintext non-loopback value is a
 // usage error that stops the run before anything transmits.

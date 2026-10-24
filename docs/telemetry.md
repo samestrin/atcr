@@ -223,6 +223,9 @@ redirect, and names the endpoint actually used:
 level=INFO msg="usage telemetry endpoint override ignored: the embedder's client is authoritative" endpoint=https://embedder.example/usage
 ```
 
+Like the line above, it is written at every `ATCR_LOG_LEVEL` and follows
+`--log-format`.
+
 Both the audit line and the notice print the endpoint through
 `displayTelemetryEndpoint`, which keeps only the scheme and host (with any port):
 **the path, userinfo, query strings, and fragments are dropped**, so a credential
