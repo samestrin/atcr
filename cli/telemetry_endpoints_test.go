@@ -649,6 +649,79 @@ func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	assert.Contains(t, stderr.String(), defaultTelemetryEndpoint)
 }
 
+// TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied: an
+// embedder's client is authoritative, so a valid --telemetry-endpoint on that
+// tree must not redirect the ping, and the audit log must not claim a redirect
+// that did not happen. It records the ignored flag on a distinct line instead,
+// naming the destination the ping really goes to.
+func TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	t.Setenv("ATCR_TELEMETRY", "1")
+	initGitRepoWithChange(t)
+	srv := mockFindingsServer(t)
+	writeBackendContractConfig(t, srv.URL)
+
+	_, hits := recordingTransport(t)
+
+	const embedderUsage = "https://embedder.test/usage"
+	const override = "https://collector.internal/usage"
+	client := telemetry.NewWithQualitySignal(embedderUsage, "")
+	root := NewRootCmdWithClient(client)
+	root.SetArgs([]string{"review", "--base", "HEAD^", "--head", "HEAD", "--telemetry-endpoint", override})
+	var stderr bytes.Buffer
+	root.SetOut(io.Discard)
+	root.SetErr(&stderr)
+	err := root.ExecuteContext(context.Background())
+	client.Wait()
+	require.NotEqual(t, exitUsage, exitCode(err), "a valid --telemetry-endpoint must not be a usage error; stderr: %s", stderr.String())
+
+	var sawEmbedderPing int
+	for _, h := range hits() {
+		assert.NotEqual(t, override, h.URL, "the embedder's client must not be redirected by --telemetry-endpoint")
+		if h.URL == embedderUsage {
+			sawEmbedderPing++
+		}
+	}
+	assert.Equal(t, 1, sawEmbedderPing, "the usage ping must still reach the embedder's endpoint")
+
+	errOut := stderr.String()
+	assert.NotContains(t, errOut, telemetryOverrideLogMsg, "the log must not claim a redirect that was not applied")
+	var ignoredLine string
+	for _, line := range strings.Split(errOut, "\n") {
+		if strings.Contains(line, telemetryOverrideIgnoredLogMsg) {
+			ignoredLine = line
+		}
+	}
+	require.NotEmpty(t, ignoredLine, "the ignored flag must be recorded; stderr: %s", errOut)
+	assert.Contains(t, ignoredLine, embedderUsage, "the line must name the destination actually used")
+}
+
+// TestNewRootCmdWithClient_TelemetryEndpointRejectsPlaintextRemote: the flag is
+// validated on the embedder tree too, so a plaintext non-loopback value is a
+// usage error that stops the run before anything transmits.
+func TestNewRootCmdWithClient_TelemetryEndpointRejectsPlaintextRemote(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	_, hits := recordingTransport(t)
+
+	client := telemetry.NewWithQualitySignal("https://embedder.test/usage", "")
+	root := NewRootCmdWithClient(client)
+	root.SetArgs([]string{"--telemetry-endpoint=http://collector.internal/usage", "version"})
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	err := root.ExecuteContext(context.Background())
+	client.Wait()
+
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--telemetry-endpoint")
+	assert.Empty(t, stdout.String(), "the subcommand must not run after a rejected --telemetry-endpoint")
+	assert.NotContains(t, stderr.String(), telemetryOverrideLogMsg)
+	assert.Empty(t, hits(), "a rejected --telemetry-endpoint must transmit nothing")
+}
+
 // TestDisplayTelemetryEndpoint pins the scrubbing both the startup log and the
 // first-run notice rely on: scheme, host and path survive; userinfo, query and
 // fragment never do; and a value url.Parse rejects reveals nothing at all.
