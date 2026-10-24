@@ -640,9 +640,9 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedEvenWhenOptedOut(t *testing.T)
 // every level, and keep honoring --log-format.
 func TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
 	for _, tc := range []struct{ level, format, want string }{
-		{"warn", "text", `endpoint=https://collector.internal/usage`},
-		{"error", "text", `endpoint=https://collector.internal/usage`},
-		{"error", "json", `"endpoint":"https://collector.internal/usage"`},
+		{"warn", "text", `endpoint=https://collector.internal`},
+		{"error", "text", `endpoint=https://collector.internal`},
+		{"error", "json", `"endpoint":"https://collector.internal"`},
 	} {
 		t.Run(tc.level+"/"+tc.format, func(t *testing.T) {
 			isolate(t)
@@ -658,6 +658,7 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
 			require.Equal(t, 0, code, "stderr: %s", stderr.String())
 			assert.Contains(t, stderr.String(), telemetryOverrideLogMsg, "ATCR_LOG_LEVEL=%s must not silence the redirect audit line", tc.level)
 			assert.Contains(t, stderr.String(), tc.want)
+			assert.NotContains(t, stderr.String(), "/usage", "only the scheme and host are printed")
 		})
 	}
 }
@@ -725,7 +726,8 @@ func TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied(t 
 		}
 	}
 	require.NotEmpty(t, ignoredLine, "the ignored flag must be recorded; stderr: %s", errOut)
-	assert.Contains(t, ignoredLine, embedderUsage, "the line must name the destination actually used")
+	assert.Contains(t, ignoredLine, "endpoint=https://embedder.test", "the line must name the destination actually used")
+	assert.NotContains(t, ignoredLine, "/usage", "only the scheme and host are printed")
 }
 
 // TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel: the "flag
@@ -749,7 +751,8 @@ func TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel(t *testing.T)
 			client.Wait()
 
 			assert.Contains(t, stderr.String(), telemetryOverrideIgnoredLogMsg, "ATCR_LOG_LEVEL=%s must not silence the ignored-flag audit line", level)
-			assert.Contains(t, stderr.String(), embedderUsage)
+			assert.Contains(t, stderr.String(), "endpoint=https://embedder.test")
+			assert.NotContains(t, stderr.String(), "/usage", "only the scheme and host are printed")
 		})
 	}
 }

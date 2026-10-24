@@ -220,7 +220,7 @@ to the client's own endpoint. The startup line says so instead of claiming a
 redirect, and names the endpoint actually used:
 
 ```
-level=INFO msg="usage telemetry endpoint override ignored: the embedder's client is authoritative" endpoint=https://embedder.example/usage
+level=INFO msg="usage telemetry endpoint override ignored: the embedder's client is authoritative" endpoint=https://embedder.example
 ```
 
 Like the line above, it is written at every `ATCR_LOG_LEVEL` and follows
