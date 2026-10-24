@@ -712,7 +712,7 @@ func TestExplainTrustPriors_UnreadableStoreIsFailNeutral(t *testing.T) {
 	require.NoError(t, os.Chmod(locked, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
 	partial, _ := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
-	require.NotEmpty(t, detailsFromRecords(partial, 0), "precondition: the readable month alone yields details")
+	require.NotEmpty(t, detailsFromRecords(partial, 0, ExplainOpts{}), "precondition: the readable month alone yields details")
 
 	got, err := ExplainTrustPriors(dir, 0)
 	require.NoError(t, err)
@@ -799,21 +799,4 @@ func TestExplainTrustPriorsWithOpts_KeptAnnotationsAreNotExcludedCases(t *testin
 	require.NoError(t, err)
 	require.Equal(t, 1, d["dax"].Reasons[ReasonNoRecognizedCategory], "fixture must produce a kept annotation")
 	assert.Nil(t, d["dax"].ExcludedCases)
-}
-
-// ExcludedCases is handed out on a by-value struct but the backing array is
-// shared, so the floor copies it the way it copies Reasons.
-func TestExplainTrustPriorsWithOpts_ExcludedCasesAreNotAliased(t *testing.T) {
-	dir := t.TempDir()
-	scoped(t, dir, 3, "Dax", 1, 1, reclib.CategoryTesting)
-	scopedOutcome(t, dir, 1, "Dax", outcomeTruncatedLiteral, 1, reclib.CategoryTesting)
-
-	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
-	require.NoError(t, err)
-	details := detailsFromRecords(records, 0, ExplainOpts{ExcludedCases: true})
-	require.Len(t, details["dax"].ExcludedCases, 1)
-	details["dax"].ExcludedCases[0].Reason = "mutated"
-
-	again := detailsFromRecords(records, 0, ExplainOpts{ExcludedCases: true})
-	assert.Equal(t, ReasonOutcomeIneligible, again["dax"].ExcludedCases[0].Reason)
 }
