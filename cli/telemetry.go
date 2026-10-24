@@ -87,10 +87,17 @@ func ValidateTelemetryEndpoint(endpoint string) error {
 	}
 }
 
-// telemetryOverrideLogMsg is the startup audit log message written whenever
-// --telemetry-endpoint is given, so an operator (or anyone reading CI logs) can
-// see where this process sends the usage ping.
+// telemetryOverrideLogMsg is the startup audit log message written when
+// --telemetry-endpoint is given AND applied (runMain, which builds the client
+// itself), so an operator (or anyone reading CI logs) can see where this process
+// sends the usage ping.
 const telemetryOverrideLogMsg = "usage telemetry endpoint overridden"
+
+// telemetryOverrideIgnoredLogMsg is written instead when --telemetry-endpoint is
+// given on a NewRootCmdWithClient tree: the embedder's client is authoritative,
+// so the flag is validated but not applied, and the line names the destination
+// the ping really goes to rather than claiming a redirect.
+const telemetryOverrideIgnoredLogMsg = "usage telemetry endpoint override ignored: the embedder's client is authoritative"
 
 // displayTelemetryEndpoint renders an endpoint for the startup audit log and the
 // first-run notice: scheme, host and path only. Userinfo, query and fragment are

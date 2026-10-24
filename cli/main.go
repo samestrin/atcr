@@ -133,9 +133,9 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	// nil on paths that never reach it (--help, --version, a rejected flag);
 	// drainTelemetry is nil-safe.
 	var telemetryClient *telemetry.Client
-	root := newRootCmd(func(usageOverride string) *telemetry.Client {
+	root := newRootCmd(func(usageOverride string) (*telemetry.Client, bool) {
 		telemetryClient = newProcessTelemetryClient(usageOverride)
-		return telemetryClient
+		return telemetryClient, true
 	})
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -391,16 +391,18 @@ func newProcessTelemetryClient(usageOverride string) *telemetry.Client {
 // The supplied client is authoritative: --telemetry-endpoint is still validated
 // (a bad value is a usage error on every tree), but it does not replace the
 // destinations of a client the embedder chose. Only runMain, which builds the
-// client itself, honors the override.
+// client itself, honors the override. A given flag is logged here as ignored,
+// never as overridden.
 func NewRootCmdWithClient(telemetryClient *telemetry.Client) *cobra.Command {
-	return newRootCmd(func(string) *telemetry.Client { return telemetryClient })
+	return newRootCmd(func(string) (*telemetry.Client, bool) { return telemetryClient, false })
 }
 
 // newRootCmd builds the command tree. resolveClient is called exactly once, from
 // the root PersistentPreRunE, with the validated --telemetry-endpoint value (""
-// when the flag is absent), and returns the client the tree injects into every
-// subcommand's context.
-func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cobra.Command {
+// when the flag is absent). It returns the client the tree injects into every
+// subcommand's context, and whether that client honors a non-empty override, so
+// the audit log never claims a redirect that did not happen.
+func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Client, overrideApplied bool)) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
@@ -459,13 +461,18 @@ func newRootCmd(resolveClient func(usageOverride string) *telemetry.Client) *cob
 					return usageError(err)
 				}
 			}
-			telemetryClient := resolveClient(usageOverride)
-			// Audit the redirect: whenever the flag is given, log the destination the
-			// client will actually use, so a redirected ping is never silent. Read
-			// from the client, not the flag, because an embedder's client is
-			// authoritative and may not honor the override.
+			telemetryClient, overrideApplied := resolveClient(usageOverride)
+			// Audit the flag: whenever it is given, log the destination the client
+			// will actually use, so a redirected ping is never silent. Read from the
+			// client, not the flag. Only a resolver that applied the override may
+			// say "overridden"; an embedder's client is authoritative, so on that
+			// tree the line says the flag was ignored instead.
 			if usageOverride != "" {
-				log.FromContext(cmd.Context()).Info(telemetryOverrideLogMsg,
+				msg := telemetryOverrideIgnoredLogMsg
+				if overrideApplied {
+					msg = telemetryOverrideLogMsg
+				}
+				log.FromContext(cmd.Context()).Info(msg,
 					"endpoint", displayTelemetryEndpoint(telemetryClient.UsageEndpoint()))
 			}
 			// Disclose the default-on usage ping once per repository, before any
