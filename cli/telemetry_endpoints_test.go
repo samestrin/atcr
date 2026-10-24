@@ -634,6 +634,34 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedEvenWhenOptedOut(t *testing.T)
 	assert.NotContains(t, stderr.String(), "anonymous usage ping to", "an opted-out user is not shown the notice")
 }
 
+// TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel: ATCR_LOG_LEVEL=warn
+// and =error are legal (and common in CI), and a leveled Info line would be
+// dropped under them, making the redirect silent. The audit line must survive
+// every level, and keep honoring --log-format.
+func TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
+	for _, tc := range []struct{ level, format, want string }{
+		{"warn", "text", `endpoint=https://collector.internal/usage`},
+		{"error", "text", `endpoint=https://collector.internal/usage`},
+		{"error", "json", `"endpoint":"https://collector.internal/usage"`},
+	} {
+		t.Run(tc.level+"/"+tc.format, func(t *testing.T) {
+			isolate(t)
+			t.Setenv("ATCR_TELEMETRY", "0")
+			t.Setenv("ATCR_LOG_LEVEL", tc.level)
+
+			origArgs := os.Args
+			t.Cleanup(func() { os.Args = origArgs })
+			os.Args = []string{"atcr", "--log-format", tc.format, "--telemetry-endpoint", "https://collector.internal/usage", "version"}
+
+			var stderr bytes.Buffer
+			code := runMain(context.Background(), io.Discard, &stderr)
+			require.Equal(t, 0, code, "stderr: %s", stderr.String())
+			assert.Contains(t, stderr.String(), telemetryOverrideLogMsg, "ATCR_LOG_LEVEL=%s must not silence the redirect audit line", tc.level)
+			assert.Contains(t, stderr.String(), tc.want)
+		})
+	}
+}
+
 // TestRunMain_NoTelemetryEndpointOverrideLogsNothing: the non-override path is
 // unchanged (AC4) — no audit line, and the notice still names the compiled-in
 // destination, scrubbed to scheme and host like any other endpoint.
