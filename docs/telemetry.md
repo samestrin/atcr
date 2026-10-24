@@ -210,6 +210,16 @@ records where the process *would* send — and it is never written on the
 non-override path. When the first-run notice is shown, it names the **effective**
 destination, not the compiled-in `atcr.dev` one.
 
+**Embedded trees do not apply the flag.** A tree built with
+`cli.NewRootCmdWithClient(client)` keeps the client its embedder supplied: the
+flag is still validated (a bad value is still exit `2`), but the ping keeps going
+to the client's own endpoint. The startup line says so instead of claiming a
+redirect, and names the endpoint actually used:
+
+```
+level=INFO msg="usage telemetry endpoint override ignored: the embedder's client is authoritative" endpoint=https://embedder.example/usage
+```
+
 Both the audit line and the notice print the endpoint through
 `displayTelemetryEndpoint`, which keeps only the scheme, host, and path:
 **userinfo, query strings, and fragments are dropped**, so a credential or token
