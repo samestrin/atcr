@@ -575,8 +575,8 @@ func TestRunMain_TelemetryEndpointFlagRejectsUnsafeValues(t *testing.T) {
 // TestRunMain_TelemetryEndpointOverrideIsLoggedAndDisclosed is the T2 success
 // criterion: with --telemetry-endpoint set, the startup audit log and the
 // one-time first-run notice both name the overridden host and never the
-// compiled-in atcr.dev one. The value carries userinfo and a query string to
-// prove neither surface echoes a credential.
+// compiled-in atcr.dev one. The value carries userinfo, a token in the path and
+// a query string to prove neither surface echoes a credential.
 func TestRunMain_TelemetryEndpointOverrideIsLoggedAndDisclosed(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")
@@ -584,7 +584,7 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedAndDisclosed(t *testing.T) {
 
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
-	os.Args = []string{"atcr", "--telemetry-endpoint=https://op:s3cret@collector.internal/usage?token=t0k", "version"}
+	os.Args = []string{"atcr", "--telemetry-endpoint=https://op:s3cret@collector.internal/ingest/p4thk3y?token=t0k", "version"}
 
 	var stdout, stderr bytes.Buffer
 	code := runMain(context.Background(), &stdout, &stderr)
@@ -603,12 +603,14 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedAndDisclosed(t *testing.T) {
 	require.NotEmpty(t, logLine, "an overridden destination must be logged at startup; stderr: %s", errOut)
 	require.NotEmpty(t, notice, "the first-run notice must still be shown; stderr: %s", errOut)
 	for name, line := range map[string]string{"startup log": logLine, "first-run notice": notice} {
-		assert.Contains(t, line, "https://collector.internal/usage", "%s must name the effective destination", name)
+		assert.Contains(t, line, "https://collector.internal", "%s must name the effective destination", name)
 		assert.NotContains(t, line, "atcr.dev", "%s must not name the compiled-in destination", name)
 	}
 	assert.NotContains(t, errOut, "atcr.dev", "nothing on stderr may name the compiled-in destination once overridden")
 	assert.NotContains(t, errOut, "s3cret", "userinfo must never be echoed")
 	assert.NotContains(t, errOut, "t0k", "the query string must never be echoed")
+	assert.NotContains(t, errOut, "p4thk3y", "a token in the path must never be echoed")
+	assert.NotContains(t, errOut, "/ingest", "no part of the path may be echoed")
 	assert.Empty(t, hits(), "version sends no usage ping")
 }
 
@@ -621,19 +623,20 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedEvenWhenOptedOut(t *testing.T)
 
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
-	os.Args = []string{"atcr", "--telemetry-endpoint", "https://collector.internal/usage", "version"}
+	os.Args = []string{"atcr", "--telemetry-endpoint", "https://collector.internal/ingest/p4thk3y", "version"}
 
 	var stderr bytes.Buffer
 	code := runMain(context.Background(), io.Discard, &stderr)
 	require.Equal(t, 0, code, "stderr: %s", stderr.String())
 	assert.Contains(t, stderr.String(), telemetryOverrideLogMsg)
-	assert.Contains(t, stderr.String(), "https://collector.internal/usage")
+	assert.Contains(t, stderr.String(), "endpoint=https://collector.internal\n")
+	assert.NotContains(t, stderr.String(), "p4thk3y", "a token in the path must never be echoed")
 	assert.NotContains(t, stderr.String(), "anonymous usage ping to", "an opted-out user is not shown the notice")
 }
 
 // TestRunMain_NoTelemetryEndpointOverrideLogsNothing: the non-override path is
 // unchanged (AC4) — no audit line, and the notice still names the compiled-in
-// destination.
+// destination, scrubbed to scheme and host like any other endpoint.
 func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")
@@ -646,7 +649,7 @@ func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	code := runMain(context.Background(), io.Discard, &stderr)
 	require.Equal(t, 0, code, "stderr: %s", stderr.String())
 	assert.NotContains(t, stderr.String(), telemetryOverrideLogMsg)
-	assert.Contains(t, stderr.String(), defaultTelemetryEndpoint)
+	assert.Contains(t, stderr.String(), "anonymous usage ping to https://atcr.dev when")
 }
 
 // TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied: an
@@ -723,13 +726,17 @@ func TestNewRootCmdWithClient_TelemetryEndpointRejectsPlaintextRemote(t *testing
 }
 
 // TestDisplayTelemetryEndpoint pins the scrubbing both the startup log and the
-// first-run notice rely on: scheme, host and path survive; userinfo, query and
-// fragment never do; and a value url.Parse rejects reveals nothing at all.
+// first-run notice rely on: only scheme and host (with port) survive; path,
+// userinfo, query and fragment never do, because collectors commonly carry a
+// key in the path; and a value url.Parse rejects reveals nothing at all.
 func TestDisplayTelemetryEndpoint(t *testing.T) {
 	cases := map[string]string{
-		"https://collector.internal/usage":                       "https://collector.internal/usage",
-		"  https://op:s3cret@collector.internal/usage?t=1#frag ": "https://collector.internal/usage",
-		"http://127.0.0.1:9000/usage":                            "http://127.0.0.1:9000/usage",
+		"https://collector.internal/usage":                       "https://collector.internal",
+		"https://collector.internal/ingest/s3cretk3y":            "https://collector.internal",
+		"https://collector.internal":                             "https://collector.internal",
+		"  https://op:s3cret@collector.internal/usage?t=1#frag ": "https://collector.internal",
+		"http://127.0.0.1:9000/usage":                            "http://127.0.0.1:9000",
+		"http://[::1]:9000/ingest/k":                             "http://[::1]:9000",
 		"https://[::1":                                           "",
 		"":                                                       "",
 	}
