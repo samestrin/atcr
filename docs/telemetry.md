@@ -63,11 +63,12 @@ or call `cli.Main`, which runs the same full lifecycle the binary does.
 ### First-run notice
 
 The first time you run `atcr` in a repository with the ping enabled, it prints a
-short notice on **stderr** naming the destination and the opt-out, so the
-default-on behavior is disclosed in the binary itself rather than only here:
+short notice on **stderr** naming the destination host (scheme and host only,
+never the URL path) and the opt-out, so the default-on behavior is disclosed in
+the binary itself rather than only here:
 
 ```
-atcr sends an anonymous usage ping to https://atcr.dev/api/v1/telemetry when a review or reconcile completes.
+atcr sends an anonymous usage ping to https://atcr.dev when a review or reconcile completes.
 It carries no source code, file paths, or findings — see docs/telemetry.md.
 To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.
 (This notice is shown once per repository.)
@@ -202,7 +203,7 @@ The opt-out surfaces are unaffected: `ATCR_TELEMETRY=0` or
 in a headless CI run:
 
 ```
-level=INFO msg="usage telemetry endpoint overridden" endpoint=https://collector.internal/usage
+level=INFO msg="usage telemetry endpoint overridden" endpoint=https://collector.internal
 ```
 
 The line is written **whether or not the consent gate permits sending** — it
@@ -211,9 +212,10 @@ non-override path. When the first-run notice is shown, it names the **effective*
 destination, not the compiled-in `atcr.dev` one.
 
 Both the audit line and the notice print the endpoint through
-`displayTelemetryEndpoint`, which keeps only the scheme, host, and path:
-**userinfo, query strings, and fragments are dropped**, so a credential or token
-embedded in an operator URL is never echoed to stderr.
+`displayTelemetryEndpoint`, which keeps only the scheme and host (with any port):
+**the path, userinfo, query strings, and fragments are dropped**, so a credential
+or token embedded in an operator URL — including one in the path, such as
+`https://collector.internal/ingest/<key>` — is never echoed to stderr.
 
 ---
 

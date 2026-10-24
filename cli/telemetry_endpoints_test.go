@@ -623,19 +623,20 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedEvenWhenOptedOut(t *testing.T)
 
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
-	os.Args = []string{"atcr", "--telemetry-endpoint", "https://collector.internal/usage", "version"}
+	os.Args = []string{"atcr", "--telemetry-endpoint", "https://collector.internal/ingest/p4thk3y", "version"}
 
 	var stderr bytes.Buffer
 	code := runMain(context.Background(), io.Discard, &stderr)
 	require.Equal(t, 0, code, "stderr: %s", stderr.String())
 	assert.Contains(t, stderr.String(), telemetryOverrideLogMsg)
-	assert.Contains(t, stderr.String(), "https://collector.internal/usage")
+	assert.Contains(t, stderr.String(), "endpoint=https://collector.internal\n")
+	assert.NotContains(t, stderr.String(), "p4thk3y", "a token in the path must never be echoed")
 	assert.NotContains(t, stderr.String(), "anonymous usage ping to", "an opted-out user is not shown the notice")
 }
 
 // TestRunMain_NoTelemetryEndpointOverrideLogsNothing: the non-override path is
 // unchanged (AC4) — no audit line, and the notice still names the compiled-in
-// destination.
+// destination, scrubbed to scheme and host like any other endpoint.
 func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")
@@ -648,7 +649,7 @@ func TestRunMain_NoTelemetryEndpointOverrideLogsNothing(t *testing.T) {
 	code := runMain(context.Background(), io.Discard, &stderr)
 	require.Equal(t, 0, code, "stderr: %s", stderr.String())
 	assert.NotContains(t, stderr.String(), telemetryOverrideLogMsg)
-	assert.Contains(t, stderr.String(), defaultTelemetryEndpoint)
+	assert.Contains(t, stderr.String(), "anonymous usage ping to https://atcr.dev when")
 }
 
 // TestDisplayTelemetryEndpoint pins the scrubbing both the startup log and the

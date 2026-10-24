@@ -93,8 +93,9 @@ func ValidateTelemetryEndpoint(endpoint string) error {
 const telemetryOverrideLogMsg = "usage telemetry endpoint overridden"
 
 // displayTelemetryEndpoint renders an endpoint for the startup audit log and the
-// first-run notice: scheme, host and path only. Userinfo, query and fragment are
-// dropped because an operator URL may carry a password or token in them, and
+// first-run notice: scheme and host (with port) only. Path, userinfo, query and
+// fragment are dropped because an operator URL may carry a password or token in
+// any of them (collectors commonly key the path, as in /ingest/<key>), and
 // neither surface may echo a credential to stderr. An unparseable value reveals
 // nothing.
 func displayTelemetryEndpoint(endpoint string) string {
@@ -102,7 +103,7 @@ func displayTelemetryEndpoint(endpoint string) string {
 	if err != nil {
 		return ""
 	}
-	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 }
 
 // telemetryEnabled is the strict OR-disables combining function (Story 2): the
