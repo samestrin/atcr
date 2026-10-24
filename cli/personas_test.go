@@ -1379,12 +1379,17 @@ func TestPersonasListJSON_ScoresGoldenParsesAndMatchesTheTableRowCount(t *testin
 // true if the loader runs.
 func withPersonasPairs(t *testing.T, data personasPairData, called *bool) {
 	t.Helper()
+	withPersonasPairsErr(t, data, nil, called)
+}
+
+func withPersonasPairsErr(t *testing.T, data personasPairData, loadErr error, called *bool) {
+	t.Helper()
 	old := personasPairs
 	personasPairs = func() (personasPairData, error) {
 		if called != nil {
 			*called = true
 		}
-		return data, nil
+		return data, loadErr
 	}
 	t.Cleanup(func() { personasPairs = old })
 }
@@ -1473,7 +1478,7 @@ func TestPersonasList_PairsEmptyStatePrintsTheEmptyLine(t *testing.T) {
 	assert.Contains(t, out, "No persona pair clears the floors")
 	assert.Contains(t, out, "/tmp/sc")
 	assert.NotContains(t, out, "PAIR\t")
-	assert.Empty(t, pairsTableRows(t, strings.ReplaceAll(out, "No persona pair", "")), out)
+	assert.NotContains(t, out, "bruce|kai", "a pair under the floors renders no row")
 }
 
 func TestPersonasList_PairsJSONIsItsOwnArray(t *testing.T) {
@@ -1560,4 +1565,16 @@ func TestPersonasListHelpContainsPairsFlag(t *testing.T) {
 	out, err := execute(t, "personas", "list", "--help")
 	require.NoError(t, err)
 	assert.Contains(t, out, "--pairs")
+}
+
+func TestPersonasList_PairsLoadErrorNamesTheUnderlyingError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairsErr(t, personasPairData{}, errors.New("no home dir"), nil)
+
+	out, stderr, err := executeSplit(t, "personas", "list", "--pairs")
+	require.NoError(t, err, "an unresolvable store degrades to the empty state")
+	assert.Contains(t, stderr, "no home dir")
+	assert.Contains(t, out, "No persona pair clears the floors")
+	assert.Contains(t, out, "could not be resolved: no home dir")
 }
