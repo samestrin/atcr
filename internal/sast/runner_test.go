@@ -127,3 +127,32 @@ func TestRunnerInterface(t *testing.T) {
 	assert.Equal(t, "fake", r.Name())
 	assert.Len(t, got, 1)
 }
+
+func TestParseSARIF_SymlinkedRootAndInRootLinkKept(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "pkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(real, "pkg", "a.go"), nil, 0o644))
+	// An in-root link to an in-root file is safe and must be kept.
+	require.NoError(t, os.Symlink(filepath.Join(real, "pkg", "a.go"), filepath.Join(real, "alias.go")))
+	// The scan root itself is reached through a symlink.
+	rootLink := filepath.Join(base, "root-link")
+	require.NoError(t, os.Symlink(real, rootLink))
+
+	doc := `{"version":"2.1.0","runs":[{"results":[
+		{"ruleId":"r","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"pkg/a.go"},"region":{"startLine":3}}}]},
+		{"ruleId":"r","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"alias.go"},"region":{"startLine":4}}}]}
+	]}]}`
+	findings, dropped, err := ParseSARIF(strings.NewReader(doc), rootLink)
+	require.NoError(t, err)
+	assert.Zero(t, dropped)
+	assert.Equal(t, []Finding{
+		{File: "pkg/a.go", Line: 3, Rule: "r", Message: "m"},
+		{File: "alias.go", Line: 4, Rule: "r", Message: "m"},
+	}, findings)
+}
+
+func TestParseSARIF_MissingRootIsError(t *testing.T) {
+	_, _, err := ParseSARIF(strings.NewReader(`{"version":"2.1.0","runs":[]}`), filepath.Join(t.TempDir(), "nope"))
+	require.Error(t, err)
+}
