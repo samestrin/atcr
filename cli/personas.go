@@ -79,6 +79,31 @@ func loadPersonasScores(_ io.Writer) (personasScoreData, error) {
 	return data, nil
 }
 
+// personasPairData carries the per-pair disagreement tallies for
+// `personas list --pairs`, keyed by scorecard.PairKey, plus the scorecard path
+// read, which the empty-state line names.
+type personasPairData struct {
+	tallies map[string]scorecard.PairTally
+	path    string
+}
+
+// personasPairs loads the pair tallies from the scorecard store. A package var
+// so tests inject a fake without filesystem access, and so the other list modes
+// can be verified never to call it.
+var personasPairs = loadPersonasPairs
+
+// loadPersonasPairs reads the pair tallies via scorecard.PairDisagreements,
+// whose read is best-effort: a missing or unreadable store yields an empty map,
+// which renders the empty-state line rather than an error.
+func loadPersonasPairs() (personasPairData, error) {
+	dir, err := scorecard.DefaultDir()
+	if err != nil {
+		return personasPairData{}, err
+	}
+	tallies, _ := scorecard.PairDisagreements(dir)
+	return personasPairData{tallies: tallies, path: dir}, nil
+}
+
 // personasDir resolves the community personas directory. A package var so tests
 // can point it at a temp directory.
 var personasDir = commpersonas.PersonasDir
@@ -234,6 +259,9 @@ func newPersonasListCmd() *cobra.Command {
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
 				return listPersonasWithScores(cmd, dir)
 			}
+			if pairs, _ := cmd.Flags().GetBool("pairs"); pairs {
+				return listPersonaPairs(cmd, dir)
+			}
 			// Show all three resolver tiers (project > community > built-in).
 			projectDir := filepath.Join(".atcr", "personas")
 			metas, listErr := commpersonas.ListTiers(projectDir, dir)
@@ -248,8 +276,110 @@ func newPersonasListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("scores", false, "show each persona's corroboration rate from past review runs (n/a when no run history)")
+	cmd.Flags().Bool("pairs", false, "show persona pairs that clear the pair floors, with their disagreement rate and a DROP-CANDIDATE marker")
+	// Each mode's --json is its own array; both on one stdout would not parse.
+	cmd.MarkFlagsMutuallyExclusive("scores", "pairs")
 	addJSONFlag(cmd)
 	return cmd
+}
+
+// listPersonaPairs renders the read-only pair section: one row per pair that
+// clears the floors (PairTally.Sufficient), ordered by key. A pair whose member
+// is not in the persona roster is omitted without error (AC 05-02 Edge Case 2):
+// a renamed or removed persona's history stays in the store, and a row naming a
+// lens the panel can no longer run is advice nobody can act on.
+func listPersonaPairs(cmd *cobra.Command, dir string) error {
+	data, err := personasPairs()
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
+	}
+	projectDir := filepath.Join(".atcr", "personas")
+	metas, listErr := commpersonas.ListTiers(projectDir, dir)
+	if listErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
+	}
+	pairs := resolvablePairs(data.tallies, metas)
+	if boolFlag(cmd, "json") {
+		return renderPairsJSON(cmd.OutOrStdout(), pairs)
+	}
+	if len(pairs) == 0 {
+		if err != nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No persona pair clears the floors (scorecard data location could not be resolved: %v)\n", err)
+			return nil
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No persona pair clears the floors in the scorecard store at %s\n", data.path)
+		return nil
+	}
+	return renderPairs(cmd.OutOrStdout(), pairs)
+}
+
+// personaPair is one renderable pair: its key and its tally.
+type personaPair struct {
+	key   string
+	tally scorecard.PairTally
+}
+
+// resolvablePairs keeps the sufficient pairs whose two members both name a
+// persona in the roster, ordered by key. Names match case-insensitively, the
+// way PairKey normalizes them.
+func resolvablePairs(tallies map[string]scorecard.PairTally, metas []commpersonas.PersonaMeta) []personaPair {
+	roster := make(map[string]bool, len(metas))
+	for _, m := range metas {
+		roster[strings.ToLower(strings.TrimSpace(m.Name))] = true
+	}
+	out := make([]personaPair, 0, len(tallies))
+	for key, t := range tallies {
+		if !t.Sufficient {
+			continue
+		}
+		if !roster[strings.ToLower(strings.TrimSpace(t.A))] || !roster[strings.ToLower(strings.TrimSpace(t.B))] {
+			continue
+		}
+		out = append(out, personaPair{key: key, tally: t})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out
+}
+
+// renderPairs writes the PAIR/CASES/RATE/MARKER table.
+func renderPairs(w io.Writer, pairs []personaPair) error {
+	rows := make([]string, len(pairs))
+	for i, p := range pairs {
+		marker := ""
+		if p.tally.DropCandidate {
+			marker = "DROP-CANDIDATE"
+		}
+		rows[i] = fmt.Sprintf("%s\t%d\t%.1f%%\t%s",
+			sanitizeCell(p.key), p.tally.Cases, p.tally.DisagreementRate()*100, marker)
+	}
+	return writeTable(w, "PAIR\tCASES\tRATE\tMARKER", rows)
+}
+
+// pairJSON is one row of `personas list --pairs --json`: the table's columns,
+// with the rate's numerator and denominator alongside it.
+type pairJSON struct {
+	Key              string  `json:"key"`
+	A                string  `json:"a"`
+	B                string  `json:"b"`
+	Cases            int     `json:"cases"`
+	Agreed           int     `json:"agreed"`
+	Disagreed        int     `json:"disagreed"`
+	DisagreementRate float64 `json:"disagreement_rate"`
+	DropCandidate    bool    `json:"drop_candidate"`
+}
+
+// renderPairsJSON writes the rows renderPairs prints as a JSON array, [] rather
+// than null when there are none.
+func renderPairsJSON(w io.Writer, pairs []personaPair) error {
+	rows := make([]pairJSON, 0, len(pairs))
+	for _, p := range pairs {
+		rows = append(rows, pairJSON{
+			Key: p.key, A: p.tally.A, B: p.tally.B, Cases: p.tally.Cases,
+			Agreed: p.tally.Agreed, Disagreed: p.tally.Disagreed,
+			DisagreementRate: p.tally.DisagreementRate(), DropCandidate: p.tally.DropCandidate,
+		})
+	}
+	return encodePersonasJSON(w, rows)
 }
 
 // listPersonasWithScores renders the persona table with a CORROBORATION column,
