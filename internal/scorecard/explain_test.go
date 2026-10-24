@@ -718,3 +718,102 @@ func TestExplainTrustPriors_UnreadableStoreIsFailNeutral(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// TD-044's data half: the walk keeps each excluded record's (run id, reason)
+// when asked, so a drill-down can list the cases behind the Excluded total. One
+// record per dropping cause the epic names, on one lens, beside enough counted
+// runs to clear the floor.
+func TestExplainTrustPriorsWithOpts_ExcludedCasesNameEachDroppedRecord(t *testing.T) {
+	dir := t.TempDir()
+	era := func(r Record) Record {
+		r.RaisedIncludesUnresolved = true
+		r.RaisedDenominator = RaisedDenominatorCurrent
+		return r
+	}
+	for i := 0; i < 3; i++ {
+		r := era(reviewer_(runIDAt(time.Now(), fmt.Sprintf("good-%03d", i)), "Dax", "m1", 1, 1))
+		r.CategoriesRaised = []string{reclib.CategoryTesting}
+		require.NoError(t, Append(dir, r))
+	}
+
+	lenientID := runIDAt(time.Now(), "lenient")
+	lenient := era(reviewer_(lenientID, "Dax", "m1", 1, 1))
+	lenient.CategoriesRaised = []string{reclib.CategoryTesting}
+	lenient.ConsensusLevel = reclib.ConsensusOff
+	require.NoError(t, Append(dir, lenient))
+
+	truncID := runIDAt(time.Now(), "trunc")
+	trunc := era(reviewer_(truncID, "Dax", "m1", 1, 0))
+	trunc.CategoriesRaised = []string{reclib.CategoryTesting}
+	trunc.Outcome = outcomeTruncatedLiteral
+	require.NoError(t, Append(dir, trunc))
+
+	// Left unstamped: an absent raised_denominator is era 1, older than dax's
+	// newest, so the era link drops it.
+	oldID := runIDAt(time.Now(), "olderaz")
+	old := reviewer_(oldID, "Dax", "m1", 1, 1)
+	old.CategoriesRaised = []string{reclib.CategoryTesting}
+	require.NoError(t, Append(dir, old))
+
+	plain, err := ExplainTrustPriors(dir, 0)
+	require.NoError(t, err)
+	withCases, err := ExplainTrustPriorsWithOpts(dir, 0, ExplainOpts{ExcludedCases: true})
+	require.NoError(t, err)
+
+	got := withCases["dax"].ExcludedCases
+	assert.ElementsMatch(t, []ExcludedCase{
+		{RunID: lenientID, Reason: ReasonConsensusNotStrict},
+		{RunID: truncID, Reason: ReasonOutcomeIneligible},
+		{RunID: oldID, Reason: ReasonSupersededEra},
+	}, got)
+	for _, c := range got {
+		assert.Contains(t, ScoreReasons(), c.Reason, "a drill-down label must come from the closed vocabulary")
+		assert.True(t, ReasonExcludes(c.Reason), "only dropped records belong in ExcludedCases")
+	}
+	assert.Len(t, got, withCases["dax"].Excluded, "one case per excluded record")
+
+	// The opt-in changes nothing else, and off means nil.
+	assert.Nil(t, plain["dax"].ExcludedCases)
+	off, err := ExplainTrustPriorsWithOpts(dir, 0, ExplainOpts{})
+	require.NoError(t, err)
+	assert.Nil(t, off["dax"].ExcludedCases)
+	for _, d := range []map[string]PersonaScoreDetail{withCases, off} {
+		assert.Equal(t, plain["dax"].Counted, d["dax"].Counted)
+		assert.Equal(t, plain["dax"].Excluded, d["dax"].Excluded)
+		assert.Equal(t, plain["dax"].Reasons, d["dax"].Reasons)
+		assert.Equal(t, plain["dax"].Raised, d["dax"].Raised)
+	}
+	assert.Equal(t, 3, plain["dax"].Counted)
+	assert.Equal(t, 3, plain["dax"].Excluded)
+}
+
+// A kept-and-annotated record (TD-032's no-recognized-category) is not an
+// exclusion, so it must not appear in the drill-down even though it has a
+// Reasons entry.
+func TestExplainTrustPriorsWithOpts_KeptAnnotationsAreNotExcludedCases(t *testing.T) {
+	dir := t.TempDir()
+	scoped(t, dir, 3, "Dax", 1, 1, reclib.CategoryTesting)
+	scoped(t, dir, 1, "Dax", 1, 1, "not-a-category")
+
+	d, err := ExplainTrustPriorsWithOpts(dir, 0, ExplainOpts{ExcludedCases: true})
+	require.NoError(t, err)
+	require.Equal(t, 1, d["dax"].Reasons[ReasonNoRecognizedCategory], "fixture must produce a kept annotation")
+	assert.Nil(t, d["dax"].ExcludedCases)
+}
+
+// ExcludedCases is handed out on a by-value struct but the backing array is
+// shared, so the floor copies it the way it copies Reasons.
+func TestExplainTrustPriorsWithOpts_ExcludedCasesAreNotAliased(t *testing.T) {
+	dir := t.TempDir()
+	scoped(t, dir, 3, "Dax", 1, 1, reclib.CategoryTesting)
+	scopedOutcome(t, dir, 1, "Dax", outcomeTruncatedLiteral, 1, reclib.CategoryTesting)
+
+	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
+	require.NoError(t, err)
+	details := detailsFromRecords(records, 0, ExplainOpts{ExcludedCases: true})
+	require.Len(t, details["dax"].ExcludedCases, 1)
+	details["dax"].ExcludedCases[0].Reason = "mutated"
+
+	again := detailsFromRecords(records, 0, ExplainOpts{ExcludedCases: true})
+	assert.Equal(t, ReasonOutcomeIneligible, again["dax"].ExcludedCases[0].Reason)
+}
