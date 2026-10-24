@@ -49,6 +49,12 @@ func execTransmitting(t *testing.T, args ...string) (code int, stdout, stderr st
 	return exitCode(err), outBuf.String(), errBuf.String()
 }
 
+// defaultNoticeMarker is what the first-run notice prints for the compiled-in
+// destination. The notice shows scheme and host only, never the path, so the
+// full defaultTelemetryEndpoint never appears on stderr; asserting its absence
+// would pass whether or not the notice fired.
+const defaultNoticeMarker = "anonymous usage ping to https://atcr.dev when"
+
 // TestTelemetryDisclosure_PrintsOnceThenPersists is the core contract: the first
 // command in a repo with telemetry enabled prints the notice on stderr, and the
 // second prints nothing because the first persisted the fact.
@@ -57,13 +63,13 @@ func TestTelemetryDisclosure_PrintsOnceThenPersists(t *testing.T) {
 	t.Setenv("ATCR_TELEMETRY", "1")
 
 	_, _, errOut := execTransmitting(t, "version")
-	assert.Contains(t, errOut, defaultTelemetryEndpoint,
+	assert.Contains(t, errOut, defaultNoticeMarker,
 		"the first run must name the destination it transmits to")
 	assert.Contains(t, errOut, "ATCR_TELEMETRY=0",
 		"the notice must name the opt-out, not merely announce the collection")
 
 	_, _, errOut2 := execTransmitting(t, "version")
-	assert.NotContains(t, errOut2, defaultTelemetryEndpoint,
+	assert.NotContains(t, errOut2, defaultNoticeMarker,
 		"the notice is one-time per repo: a second run must stay quiet")
 }
 
@@ -80,14 +86,14 @@ func TestTelemetryDisclosure_CreatesConfigWhenAbsent(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "precondition: this repo has no config file")
 
 	_, _, errOut := execTransmitting(t, "version")
-	require.Contains(t, errOut, defaultTelemetryEndpoint, "first run must disclose")
+	require.Contains(t, errOut, defaultNoticeMarker, "first run must disclose")
 
 	data, err := os.ReadFile(cfg)
 	require.NoError(t, err, "the disclosure must create .atcr/config.yaml, not skip persisting")
 	assert.Contains(t, string(data), "telemetry_notice_shown")
 
 	_, _, errOut2 := execTransmitting(t, "version")
-	assert.NotContains(t, errOut2, defaultTelemetryEndpoint,
+	assert.NotContains(t, errOut2, defaultNoticeMarker,
 		"a created config must actually suppress the second notice")
 }
 
@@ -99,14 +105,14 @@ func TestTelemetryDisclosure_SilentWhenOptedOut(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "0")
 		_, _, errOut := execTransmitting(t, "version")
-		assert.NotContains(t, errOut, defaultTelemetryEndpoint)
+		assert.NotContains(t, errOut, defaultNoticeMarker)
 	})
 	t.Run("config opt-out", func(t *testing.T) {
 		isolate(t)
 		t.Setenv("ATCR_TELEMETRY", "1")
 		writeAtcrConfig(t, "agents: [bruce]\ntelemetry: false\n")
 		_, _, errOut := execTransmitting(t, "version")
-		assert.NotContains(t, errOut, defaultTelemetryEndpoint)
+		assert.NotContains(t, errOut, defaultNoticeMarker)
 	})
 }
 
@@ -119,7 +125,7 @@ func TestTelemetryDisclosure_PreservesSiblingConfigKeys(t *testing.T) {
 	writeAtcrConfig(t, "agents: [bruce]\npayload_mode: blocks\n")
 
 	_, _, errOut := execTransmitting(t, "version")
-	require.Contains(t, errOut, defaultTelemetryEndpoint)
+	require.Contains(t, errOut, defaultNoticeMarker)
 
 	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
 	require.NoError(t, err)
@@ -182,7 +188,7 @@ func TestTelemetryDisclosure_DoesNotBreakStrictRosterLoad(t *testing.T) {
 
 	// First run: emits the notice and persists the key.
 	_, _, errOut := execTransmitting(t, "review", "--base", "HEAD^", "--head", "HEAD")
-	require.Contains(t, errOut, defaultTelemetryEndpoint, "precondition: the notice fired and wrote the key")
+	require.Contains(t, errOut, "anonymous usage ping to https://telemetry.test when", "precondition: the notice fired and wrote the key")
 
 	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
 	require.NoError(t, err)
