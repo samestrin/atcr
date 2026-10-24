@@ -208,7 +208,9 @@ level=INFO msg="usage telemetry endpoint overridden" endpoint=https://collector.
 
 The line is written **whether or not the consent gate permits sending** — it
 records where the process *would* send — and it is never written on the
-non-override path. When the first-run notice is shown, it names the **effective**
+non-override path. `ATCR_LOG_LEVEL` does not suppress it: it is still written at
+`warn` and `error`, so a CI run that quiets logging still records the redirect.
+It follows `--log-format`, so `--log-format json` writes it as a JSON record. When the first-run notice is shown, it names the **effective**
 destination, not the compiled-in `atcr.dev` one.
 
 **Embedded trees do not apply the flag.** A tree built with
