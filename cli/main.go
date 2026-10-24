@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -466,13 +467,15 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 			// will actually use, so a redirected ping is never silent. Read from the
 			// client, not the flag. Only a resolver that applied the override may
 			// say "overridden"; an embedder's client is authoritative, so on that
-			// tree the line says the flag was ignored instead.
+			// tree the line says the flag was ignored instead. Both lines go through
+			// auditLogger, not the leveled context logger: ATCR_LOG_LEVEL=warn or
+			// =error (common in CI) would drop an Info line and make it silent.
 			if usageOverride != "" {
 				msg := telemetryOverrideIgnoredLogMsg
 				if overrideApplied {
 					msg = telemetryOverrideLogMsg
 				}
-				log.FromContext(cmd.Context()).Info(msg,
+				auditLogger(cmd).Info(msg,
 					"endpoint", displayTelemetryEndpoint(telemetryClient.UsageEndpoint()))
 			}
 			// Disclose the default-on usage ping once per repository, before any
@@ -730,4 +733,18 @@ func setupLogger(cmd *cobra.Command) error {
 	logger = log.WithRedactor(logger, log.NewRedactor(""))
 	cmd.SetContext(log.NewContext(cmd.Context(), logger))
 	return nil
+}
+
+// auditLogger returns a logger for lines no log level may suppress, such as the
+// telemetry-redirect audit line. It writes to the same sink in the same
+// --log-format as the root logger, with the same secret redaction, but is fixed
+// at info so ATCR_LOG_LEVEL=warn or =error cannot drop it. Call it only after
+// setupLogger, which has already validated the format.
+func auditLogger(cmd *cobra.Command) *slog.Logger {
+	format, _ := cmd.Flags().GetString("log-format")
+	logger, err := log.New("info", format, cmd.ErrOrStderr())
+	if err != nil {
+		return log.FromContext(cmd.Context())
+	}
+	return log.WithRedactor(logger, log.NewRedactor(""))
 }

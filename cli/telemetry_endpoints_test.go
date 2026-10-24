@@ -634,6 +634,35 @@ func TestRunMain_TelemetryEndpointOverrideIsLoggedEvenWhenOptedOut(t *testing.T)
 	assert.NotContains(t, stderr.String(), "anonymous usage ping to", "an opted-out user is not shown the notice")
 }
 
+// TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel: ATCR_LOG_LEVEL=warn
+// and =error are legal (and common in CI), and a leveled Info line would be
+// dropped under them, making the redirect silent. The audit line must survive
+// every level, and keep honoring --log-format.
+func TestRunMain_TelemetryEndpointOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
+	for _, tc := range []struct{ level, format, want string }{
+		{"warn", "text", `endpoint=https://collector.internal`},
+		{"error", "text", `endpoint=https://collector.internal`},
+		{"error", "json", `"endpoint":"https://collector.internal"`},
+	} {
+		t.Run(tc.level+"/"+tc.format, func(t *testing.T) {
+			isolate(t)
+			t.Setenv("ATCR_TELEMETRY", "0")
+			t.Setenv("ATCR_LOG_LEVEL", tc.level)
+
+			origArgs := os.Args
+			t.Cleanup(func() { os.Args = origArgs })
+			os.Args = []string{"atcr", "--log-format", tc.format, "--telemetry-endpoint", "https://collector.internal/usage", "version"}
+
+			var stderr bytes.Buffer
+			code := runMain(context.Background(), io.Discard, &stderr)
+			require.Equal(t, 0, code, "stderr: %s", stderr.String())
+			assert.Contains(t, stderr.String(), telemetryOverrideLogMsg, "ATCR_LOG_LEVEL=%s must not silence the redirect audit line", tc.level)
+			assert.Contains(t, stderr.String(), tc.want)
+			assert.NotContains(t, stderr.String(), "/usage", "only the scheme and host are printed")
+		})
+	}
+}
+
 // TestRunMain_NoTelemetryEndpointOverrideLogsNothing: the non-override path is
 // unchanged (AC4) — no audit line, and the notice still names the compiled-in
 // destination, scrubbed to scheme and host like any other endpoint.
@@ -697,7 +726,35 @@ func TestNewRootCmdWithClient_TelemetryEndpointIsNotAppliedNorLoggedAsApplied(t 
 		}
 	}
 	require.NotEmpty(t, ignoredLine, "the ignored flag must be recorded; stderr: %s", errOut)
-	assert.Contains(t, ignoredLine, embedderUsage, "the line must name the destination actually used")
+	assert.Contains(t, ignoredLine, "endpoint=https://embedder.test", "the line must name the destination actually used")
+	assert.NotContains(t, ignoredLine, "/usage", "only the scheme and host are printed")
+}
+
+// TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel: the "flag
+// ignored" line has the same silence risk as the applied one, so it must also
+// survive ATCR_LOG_LEVEL=warn and =error.
+func TestNewRootCmdWithClient_IgnoredOverrideIsLoggedAtAnyLogLevel(t *testing.T) {
+	for _, level := range []string{"warn", "error"} {
+		t.Run(level, func(t *testing.T) {
+			isolate(t)
+			t.Setenv("ATCR_TELEMETRY", "0")
+			t.Setenv("ATCR_LOG_LEVEL", level)
+
+			const embedderUsage = "https://embedder.test/usage"
+			client := telemetry.NewWithQualitySignal(embedderUsage, "")
+			root := NewRootCmdWithClient(client)
+			root.SetArgs([]string{"--telemetry-endpoint", "https://collector.internal/usage", "version"})
+			var stderr bytes.Buffer
+			root.SetOut(io.Discard)
+			root.SetErr(&stderr)
+			require.NoError(t, root.ExecuteContext(context.Background()), "stderr: %s", stderr.String())
+			client.Wait()
+
+			assert.Contains(t, stderr.String(), telemetryOverrideIgnoredLogMsg, "ATCR_LOG_LEVEL=%s must not silence the ignored-flag audit line", level)
+			assert.Contains(t, stderr.String(), "endpoint=https://embedder.test")
+			assert.NotContains(t, stderr.String(), "/usage", "only the scheme and host are printed")
+		})
+	}
 }
 
 // TestNewRootCmdWithClient_TelemetryEndpointRejectsPlaintextRemote: the flag is
