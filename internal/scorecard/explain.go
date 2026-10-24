@@ -153,6 +153,29 @@ type PersonaScoreDetail struct {
 	// that raised nothing renders the same 0.0% as one that raised many findings
 	// and had none corroborated.
 	Raised int
+
+	// ExcludedCases lists each record the chain dropped, one entry per record,
+	// in walk order (TD-044's per-record drill-down). It is filled only when the
+	// caller opts in through ExplainOpts.ExcludedCases and is nil otherwise, so
+	// the totals surface pays nothing for it. Every Reason is a member of
+	// ScoreReasons() that satisfies ReasonExcludes — the kept-and-annotated
+	// labels never appear here — so len(ExcludedCases) equals Excluded.
+	ExcludedCases []ExcludedCase
+}
+
+// ExcludedCase is one dropped record as the drill-down names it: the run it
+// came from and the ScoreReasons() label of the link that dropped it. There is
+// no second vocabulary; Reason is always one of the four excluding labels.
+type ExcludedCase struct {
+	RunID  string
+	Reason string
+}
+
+// ExplainOpts selects the optional parts of the explanation. The zero value is
+// ExplainTrustPriors' own output.
+type ExplainOpts struct {
+	// ExcludedCases fills PersonaScoreDetail.ExcludedCases.
+	ExcludedCases bool
 }
 
 // ExplainTrustPriors reads the same store TrustPriors reads, over the same
@@ -169,6 +192,13 @@ type PersonaScoreDetail struct {
 // Like TrustPriors this is best-effort: a missing or unreadable store yields an
 // empty map and a nil error.
 func ExplainTrustPriors(dir string, minRuns int) (map[string]PersonaScoreDetail, error) {
+	return ExplainTrustPriorsWithOpts(dir, minRuns, ExplainOpts{})
+}
+
+// ExplainTrustPriorsWithOpts is ExplainTrustPriors with the optional parts of
+// the explanation selected by opts. It exists beside, not instead of,
+// ExplainTrustPriors because D4 pinned that name and signature.
+func ExplainTrustPriorsWithOpts(dir string, minRuns int, opts ExplainOpts) (map[string]PersonaScoreDetail, error) {
 	records, err := ReadSince(dir, 0, time.Now(), ReadOpts{Writer: io.Discard})
 	if err != nil {
 		// Fail neutral on a truncated store, exactly as trustPriorsSince does:
@@ -176,14 +206,14 @@ func ExplainTrustPriors(dir string, minRuns int) (map[string]PersonaScoreDetail,
 		// missing for an I/O reason and call it a scoring decision.
 		return map[string]PersonaScoreDetail{}, nil
 	}
-	return detailsFromRecords(records, minRuns), nil
+	return detailsFromRecords(records, minRuns, opts), nil
 }
 
 // detailsFromRecords is ExplainTrustPriors' post-read body: the
 // link-by-link walk, the per-record disposition notes and the floor, over an
 // already-read record slice. Split out so TrustPriorsAndDetails can feed it the
 // same records the rates fold reads, instead of re-reading the store.
-func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDetail {
+func detailsFromRecords(records []Record, minRuns int, opts ExplainOpts) map[string]PersonaScoreDetail {
 
 	// The chain is walked link by link rather than in one keptForTrust call
 	// because the QUESTION here is which link dropped a record, and a single
@@ -216,8 +246,10 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 	// lazily so a label that never fired stays ABSENT rather than present at
 	// zero — the same absence-not-zero rule TrustPriors applies to a below-floor
 	// lens, and what lets a renderer tell "never happened" from "measured zero".
-	note := func(reviewer, reason string) {
-		key := normalizeReviewerName(reviewer)
+	// The opted-in ExcludedCases entry is appended here, beside the Excluded
+	// increment, so the slice and the total cannot drift apart.
+	note := func(r Record, reason string) {
+		key := normalizeReviewerName(r.Reviewer)
 		d := details[key]
 		if d.Reasons == nil {
 			d.Reasons = map[string]int{}
@@ -225,6 +257,9 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 		d.Reasons[reason]++
 		if ReasonExcludes(reason) {
 			d.Excluded++
+			if opts.ExcludedCases {
+				d.ExcludedCases = append(d.ExcludedCases, ExcludedCase{RunID: r.RunID, Reason: reason})
+			}
 		}
 		details[key] = d
 	}
@@ -264,7 +299,7 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 			continue
 		}
 		if !consensusLevelStrict(r) {
-			note(r.Reviewer, ReasonConsensusNotStrict)
+			note(r, ReasonConsensusNotStrict)
 		}
 	}
 
@@ -273,7 +308,7 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 			continue
 		}
 		if !outcomeEligible(r) {
-			note(r.Reviewer, ReasonOutcomeIneligible)
+			note(r, ReasonOutcomeIneligible)
 		}
 	}
 
@@ -285,7 +320,7 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 			continue
 		}
 		if eraSuperseded(r, newestEra) {
-			note(r.Reviewer, ReasonSupersededEra)
+			note(r, ReasonSupersededEra)
 		}
 	}
 
@@ -303,7 +338,7 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 		// explanation says so (epic acceptance criterion 7) rather than leaving
 		// the five registry-only lenses silently different from the mapped nine.
 		if _, mapped := remitFor(r.Reviewer); !mapped {
-			note(r.Reviewer, ReasonNotOpportunityScoped)
+			note(r, ReasonNotOpportunityScoped)
 			count(r)
 			continue
 		}
@@ -315,9 +350,9 @@ func detailsFromRecords(records []Record, minRuns int) map[string]PersonaScoreDe
 		}
 		switch opportunityDisposition(r, unions[r.RunID]) {
 		case dispOutOfRemit:
-			note(r.Reviewer, ReasonNotInOpportunitySet)
+			note(r, ReasonNotInOpportunitySet)
 		case dispUnscopeable:
-			note(r.Reviewer, ReasonNoRecognizedCategory)
+			note(r, ReasonNoRecognizedCategory)
 			count(r)
 		default:
 			count(r)

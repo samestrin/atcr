@@ -669,7 +669,7 @@ func TrustPriorsAndDetails(dir string, minRuns int) (map[string]float64, map[str
 		// different truncation point.
 		return map[string]float64{}, map[string]PersonaScoreDetail{}, nil
 	}
-	return ratesFromRecords(records, minRuns, nil, 0, time.Now(), nil), detailsFromRecords(records, minRuns), nil
+	return ratesFromRecords(records, minRuns, nil, 0, time.Now(), nil), detailsFromRecords(records, minRuns, ExplainOpts{}), nil
 }
 
 // ratesFromRecords is trustPriorsSince's post-read body: the filter chain,
