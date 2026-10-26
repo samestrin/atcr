@@ -19,8 +19,14 @@ var testfiles embed.FS
 // (security, performance, Go idioms), with the style reviewer last.
 var names = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "ingrid", "otto"}
 
+// ThreatMapperName is the embedded threat-model mapper persona (Epic 37.0). It
+// is not a reviewer: it stays out of names, so Names, Get, `atcr init` and the
+// review panel never see it, and only internal/threatmap loads it.
+const ThreatMapperName = "threat_mapper"
+
 // expectedEmbeddedFiles returns the set of .md files that must be present in the
-// embedded persona directory: one per registered persona plus the shared base.
+// embedded persona directory: one per registered persona, the shared base, and
+// the threat mapper.
 //
 // POINTER: internal/scorecard's compiled-in personaRemit table is grounded in
 // these files' ## Focus blocks (cited by heading, not line numbers, so a
@@ -35,6 +41,7 @@ func expectedEmbeddedFiles() map[string]struct{} {
 		want[n+".md"] = struct{}{}
 	}
 	want["_base.md"] = struct{}{}
+	want[ThreatMapperName+".md"] = struct{}{}
 	return want
 }
 
@@ -56,11 +63,11 @@ func init() {
 		got[e.Name()] = struct{}{}
 	}
 	if len(got) != len(want) {
-		panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md %v", got, want))
+		panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md and %s.md %v", got, ThreatMapperName, want))
 	}
 	for name := range got {
 		if _, ok := want[name]; !ok {
-			panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md %v", got, want))
+			panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md and %s.md %v", got, ThreatMapperName, want))
 		}
 	}
 
@@ -113,6 +120,15 @@ func Base() (string, error) {
 	data, err := files.ReadFile("_base.md")
 	if err != nil {
 		return "", fmt.Errorf("internal error: embedded persona _base not found: %w", err)
+	}
+	return string(data), nil
+}
+
+// ThreatMapper returns the embedded threat-model mapper persona template.
+func ThreatMapper() (string, error) {
+	data, err := files.ReadFile(ThreatMapperName + ".md")
+	if err != nil {
+		return "", fmt.Errorf("internal error: embedded persona %s not found: %w", ThreatMapperName, err)
 	}
 	return string(data), nil
 }

@@ -350,3 +350,39 @@ HIGH|b.go:2|absurd minutes|fix|correctness|99999999999|ev`
 	assert.Equal(t, 0, findings[0].EstMinutes, "-5 clamps to the 0 floor")
 	assert.Equal(t, maxModelEstMinutes, findings[1].EstMinutes, "99999999999 clamps to the ceiling")
 }
+
+func TestParseSiblingLocation(t *testing.T) {
+	cases := map[string]string{
+		"sibling: internal/auth/validate.go:42": "internal/auth/validate.go:42",
+		"Found by kai; sibling: a/b.go:7":       "a/b.go:7",
+		"quoted arm / sibling: x.go:3 / more":   "x.go:3",
+		"no declaration here":                   "",
+		"":                                      "",
+		"sibling: nofile":                       "",
+		"sibling: a.go:abc":                     "",
+		"sibling: a.go:0":                       "",
+		"sibling: a.go:-4":                      "",
+		"sibling: :12":                          "",
+		"the sibling: a.go:5 mention":           "a.go:5",
+		"nonsibling: a.go:5":                    "",
+	}
+	for in, want := range cases {
+		if got := ParseSiblingLocation(in); got != want {
+			t.Errorf("ParseSiblingLocation(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseModelOutput_StampsSiblingLocation(t *testing.T) {
+	in := "HIGH|a.go:1|p|f|c|5|arm differs; sibling: b.go:9\nLOW|a.go:2|p|f|c|5|plain evidence\nLOW|a.go:3|p|f|c|5|sibling: b.go:oops\n"
+	got := ParseModelOutput([]byte(in))
+	if len(got) != 3 {
+		t.Fatalf("got %d findings, want 3", len(got))
+	}
+	if got[0].SiblingLocation != "b.go:9" {
+		t.Errorf("declared sibling = %q", got[0].SiblingLocation)
+	}
+	if got[1].SiblingLocation != "" || got[2].SiblingLocation != "" {
+		t.Errorf("undeclared/malformed must stay empty: %q %q", got[1].SiblingLocation, got[2].SiblingLocation)
+	}
+}
