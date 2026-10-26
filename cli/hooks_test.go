@@ -224,6 +224,117 @@ func TestObserverAdapter_NoMessagesStaysNil(t *testing.T) {
 	assert.Nil(t, obs.got[0].Messages)
 }
 
+// --- the review-complete adapter -------------------------------------------
+
+type recordingReviewObserver struct {
+	got []ReviewReport
+}
+
+func (r *recordingReviewObserver) OnReviewComplete(_ context.Context, rep ReviewReport) {
+	r.got = append(r.got, rep)
+}
+
+// TestReviewObserverAdapter_ConvertsEveryField is the review-report twin of
+// TestObserverAdapter_ConvertsEveryField.
+func TestReviewObserverAdapter_ConvertsEveryField(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	sev := map[string]int{"HIGH": 2, "LOW": 1}
+
+	reviewObserverAdapter{observer: obs}.OnReviewComplete(context.Background(), hookobs.ReviewReport{
+		RunID:              "2026-10-26_feat-x",
+		ReviewDir:          "out/feat-x",
+		Base:               "abc123",
+		Head:               "def456",
+		PRNumber:           569,
+		Partial:            true,
+		AgentsTotal:        3,
+		AgentsSucceeded:    2,
+		AgentsFailed:       1,
+		Reconciled:         true,
+		Findings:           3,
+		FindingsBySeverity: sev,
+	})
+
+	require.Len(t, obs.got, 1)
+	assert.Equal(t, ReviewReport{
+		RunID:              "2026-10-26_feat-x",
+		ReviewDir:          "out/feat-x",
+		Base:               "abc123",
+		Head:               "def456",
+		PRNumber:           569,
+		Partial:            true,
+		AgentsTotal:        3,
+		AgentsSucceeded:    2,
+		AgentsFailed:       1,
+		Reconciled:         true,
+		Findings:           3,
+		FindingsBySeverity: map[string]int{"HIGH": 2, "LOW": 1},
+	}, obs.got[0])
+
+	// The map is the consumer's own copy: writing to it must not reach back.
+	obs.got[0].FindingsBySeverity["HIGH"] = 99
+	assert.Equal(t, 2, sev["HIGH"], "the adapter must copy FindingsBySeverity, not share it")
+}
+
+// TestReviewObserverAdapter_FieldCountsMatch fails the moment the internal and
+// exported report drift, as TestObserverAdapter_FieldCountsMatch does.
+func TestReviewObserverAdapter_FieldCountsMatch(t *testing.T) {
+	assert.Equal(t,
+		reflect.TypeOf(hookobs.ReviewReport{}).NumField(),
+		reflect.TypeOf(ReviewReport{}).NumField(),
+		"hookobs.ReviewReport and cli.ReviewReport have drifted — map the new field in reviewObserverAdapter")
+}
+
+// TestReviewObserverAdapter_NilSeverityStaysNil: an unreconciled review has no
+// counts, and the adapter must not invent an empty map for it.
+func TestReviewObserverAdapter_NilSeverityStaysNil(t *testing.T) {
+	obs := &recordingReviewObserver{}
+
+	reviewObserverAdapter{observer: obs}.OnReviewComplete(context.Background(), hookobs.ReviewReport{RunID: "r"})
+
+	require.Len(t, obs.got, 1)
+	assert.Nil(t, obs.got[0].FindingsBySeverity)
+}
+
+// TestWithHooks_ReviewCompleteRegisteredFires: a registered observer is reached
+// through the carrier with the converted report.
+func TestWithHooks_ReviewCompleteRegisteredFires(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	ctx := withHooks(context.Background(), Hooks{ReviewComplete: obs}, &bytes.Buffer{})
+
+	hookobs.ReviewComplete(ctx, hookobs.ReviewReport{RunID: "r1", PRNumber: 7})
+
+	require.Len(t, obs.got, 1)
+	assert.Equal(t, "r1", obs.got[0].RunID)
+	assert.Equal(t, 7, obs.got[0].PRNumber)
+}
+
+// TestWithHooks_ZeroHooksAttachesNoReviewObserver: a zero Hooks must leave the
+// review slot untouched. A review observer already on ctx stands in for "what
+// was there before"; if withHooks attached anything (even an adapter around a
+// nil observer) it would shadow this one and the call would not arrive.
+func TestWithHooks_ZeroHooksAttachesNoReviewObserver(t *testing.T) {
+	var stderr bytes.Buffer
+	below := &recordingReviewObserver{}
+	base := hookobs.WithReviewObserver(context.Background(), reviewObserverAdapter{observer: below}, &stderr)
+
+	ctx := withHooks(base, Hooks{}, &stderr)
+
+	require.NotPanics(t, func() { hookobs.ReviewComplete(ctx, hookobs.ReviewReport{RunID: "r"}) })
+	assert.Len(t, below.got, 1, "a zero Hooks must not attach a review observer")
+	assert.Empty(t, stderr.String())
+}
+
+// TestWithHooks_ModelOnlyAttachesNoReviewObserver: registering only the model
+// observer must not attach a review observer either.
+func TestWithHooks_ModelOnlyAttachesNoReviewObserver(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := withHooks(context.Background(), Hooks{ModelInvocation: &recordingObserver{}}, &stderr)
+
+	require.NotPanics(t, func() { hookobs.ReviewComplete(ctx, hookobs.ReviewReport{RunID: "r"}) })
+	assert.Empty(t, stderr.String(), "no review observer means nothing to call and nothing to report")
+}
+
 // --- production wiring -----------------------------------------------------
 
 // TestNewCompleter_InstallsDecoratorWhenHookRegistered covers the function the
