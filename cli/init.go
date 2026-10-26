@@ -437,6 +437,15 @@ func fileExists(path string) bool {
 // written last, after the files it describes. A workspace with no stamp is never
 // retro-stamped: a run that writes no persona file leaves a missing stamp missing.
 func runInit(dir string, force bool, out, errOut io.Writer) error {
+	return runInitRoster(dir, force, builtins.Names(), builtins.Get, out, errOut)
+}
+
+// runInitRoster is runInit with the roster and its persona prompts supplied by
+// the caller: roster is written to config.yaml and each name's prompt, read
+// from personaText, is scaffolded under .atcr/personas. `atcr init` passes the
+// embedded built-ins; `atcr quickstart --preset local` passes the local
+// community personas, whose prompts are embedded too.
+func runInitRoster(dir string, force bool, roster []string, personaText func(string) (string, error), out, errOut io.Writer) error {
 	targets := initTargets(dir)
 	var existing []string
 	for _, path := range targets {
@@ -519,7 +528,6 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return nil
 	}
 
-	roster := builtins.Names()
 	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster), false); err != nil {
 		return err
 	}
@@ -536,7 +544,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return err
 	}
 	for _, name := range roster {
-		content, err := builtins.Get(name)
+		content, err := personaText(name)
 		if err != nil {
 			return err
 		}
