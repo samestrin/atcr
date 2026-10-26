@@ -27,7 +27,7 @@ type quickstartOpts struct {
 	dir            string
 	force          bool
 	open           bool
-	fetchCommunity bool // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
+	fetchCommunity bool   // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
 	preset         string // "" for the synthetic cloud funnel, presetLocal for the local-model setup
 	in             io.Reader
 	out            io.Writer
