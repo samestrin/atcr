@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -297,6 +298,119 @@ func fromContext(ctx context.Context) (state, bool) {
 	}
 	s, ok := ctx.Value(ctxKey{}).(state)
 	return s, ok
+}
+
+// ReviewReport is the summary of one completed review. It mirrors the exported
+// cli.ReviewReport; cli converts between the two. It lives here, below cli,
+// because internal/mcp fires it too and cannot import cli.
+type ReviewReport struct {
+	// RunID is the review id; ReviewDir is the directory its artifacts were
+	// written to. They diverge under --output-dir.
+	RunID     string
+	ReviewDir string
+	// Base and Head are the resolved range SHAs; PRNumber is 0 when the review
+	// was not run for a pull request.
+	Base     string
+	Head     string
+	PRNumber int
+	// Partial and the Agents counts come from the fan-out summary: Partial is
+	// true when at least one agent failed but at least one succeeded.
+	Partial         bool
+	AgentsTotal     int
+	AgentsSucceeded int
+	AgentsFailed    int
+	// Reconciled is true when the in-process reconcile ran, and only then are
+	// Findings and FindingsBySeverity filled from its result. A false value
+	// means "not counted", not "no findings".
+	Reconciled         bool
+	Findings           int
+	FindingsBySeverity map[string]int
+}
+
+// ReviewObserver receives one call per completed review. Like Observer it has
+// no error return: it reports on a review, it cannot change it. Implementations
+// must be safe for concurrent use, since `atcr serve` runs reviews in parallel.
+type ReviewObserver interface {
+	OnReviewComplete(context.Context, ReviewReport)
+}
+
+// reviewState is what travels on the context for the review observer. It uses
+// its own key so attaching it and attaching the model observer (NewContext)
+// cannot erase each other, whichever order the caller does them in.
+type reviewState struct {
+	observer ReviewObserver
+	stderr   io.Writer
+	stderrMu *sync.Mutex
+}
+
+type reviewKey struct{}
+
+// WithReviewObserver returns ctx carrying obs, to be fired by ReviewComplete. A
+// nil observer is stored as-is and ReviewComplete treats it as "no observation",
+// so callers need not branch.
+//
+// When ctx already carries a model observer over the same stderr writer, its
+// lock is reused, so a review-hook panic report and a model-hook panic report
+// cannot interleave on the one writer.
+func WithReviewObserver(ctx context.Context, obs ReviewObserver, stderr io.Writer) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	mu := &sync.Mutex{}
+	if s, ok := fromContext(ctx); ok && s.stderrMu != nil && sameWriter(s.stderr, stderr) {
+		mu = s.stderrMu
+	}
+	return context.WithValue(ctx, reviewKey{}, reviewState{observer: obs, stderr: stderr, stderrMu: mu})
+}
+
+// sameWriter reports whether a and b are the same writer. Interface == panics
+// when the dynamic type is not comparable (a struct value holding a slice, say),
+// so such a writer is treated as distinct rather than allowed to crash the run.
+func sameWriter(a, b io.Writer) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ta := reflect.TypeOf(a)
+	if ta != reflect.TypeOf(b) || !ta.Comparable() {
+		return false
+	}
+	return a == b
+}
+
+// reviewFromContext returns the review observer attached to ctx, if any.
+func reviewFromContext(ctx context.Context) (reviewState, bool) {
+	if ctx == nil {
+		return reviewState{}, false
+	}
+	s, ok := ctx.Value(reviewKey{}).(reviewState)
+	return s, ok
+}
+
+// ReviewComplete reports one completed review to the observer on ctx, if any.
+// It does nothing when no observer, or a nil one, is attached. A consumer panic
+// is recovered and reported on stderr exactly as emit does for model calls: a
+// broken hook must never change the outcome of the review it is observing.
+func ReviewComplete(ctx context.Context, rep ReviewReport) {
+	s, ok := reviewFromContext(ctx)
+	if !ok || s.observer == nil {
+		return
+	}
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		// Nil-guarded and serialized for the same reasons as in emit.
+		if s.stderr == nil {
+			return
+		}
+		if s.stderrMu != nil {
+			s.stderrMu.Lock()
+			defer s.stderrMu.Unlock()
+		}
+		_, _ = fmt.Fprintf(s.stderr, "atcr: review-complete hook panicked, continuing without it: %v\n", r)
+	}()
+	s.observer.OnReviewComplete(ctx, rep)
 }
 
 // Client is the completer capability set the fan-out engine selects between by

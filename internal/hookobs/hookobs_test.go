@@ -1183,3 +1183,17 @@ func TestWithReviewObserver_SharesStderrLockWithModelObserver(t *testing.T) {
 	rs, _ := reviewFromContext(ctx)
 	assert.Same(t, ms.stderrMu, rs.stderrMu)
 }
+
+// sliceWriter is a value-type writer whose dynamic type is not comparable, so
+// comparing two interfaces holding it with == would panic at runtime.
+type sliceWriter struct{ buf []byte }
+
+func (w sliceWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestWithReviewObserver_UncomparableStderrDoesNotPanic(t *testing.T) {
+	ctx := NewContext(context.Background(), &recordingObserver{}, sliceWriter{})
+	assert.NotPanics(t, func() {
+		ctx = WithReviewObserver(ctx, &recordingReviewObserver{}, sliceWriter{})
+	})
+	ReviewComplete(ctx, sampleReport())
+}
