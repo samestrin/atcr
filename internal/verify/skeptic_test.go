@@ -221,3 +221,42 @@ func TestBuildSkepticPromptWithSentinel_FixFullyStrippedOmitsLabel(t *testing.T)
 	got := buildSkepticPromptWithSentinel(f, nil, "finding-abc12345")
 	assert.NotContains(t, got, "**Fix:**")
 }
+
+func TestBuildSkepticPromptWithSentinel_OWASPLLMTop10Block(t *testing.T) {
+	t.Parallel()
+	got := buildSkepticPromptWithSentinel(sampleFinding(), sampleEntries(), "finding-abc12345")
+
+	blockIdx := strings.Index(got, "### OWASP LLM Top 10\n")
+	require.Greater(t, blockIdx, strings.Index(got, "</finding-abc12345>"),
+		"OWASP block must sit after the untrusted finding block")
+	specIdx := strings.Index(got, "Return a JSON object and nothing else:")
+	require.Greater(t, specIdx, blockIdx, "OWASP block must precede the verdict spec")
+	block := got[blockIdx:specIdx]
+
+	for _, c := range []string{
+		"LLM01 Prompt Injection",
+		"LLM02 Sensitive Information Disclosure",
+		"LLM03 Supply Chain",
+		"LLM04 Data and Model Poisoning",
+		"LLM05 Improper Output Handling",
+		"LLM06 Excessive Agency",
+		"LLM07 System Prompt Leakage",
+		"LLM08 Vector and Embedding Weaknesses",
+		"LLM09 Misinformation",
+		"LLM10 Unbounded Consumption",
+	} {
+		assert.Contains(t, block, "- "+c+": ", "OWASP block must name %s", c)
+	}
+}
+
+func TestBuildSkepticPromptWithSentinel_VerdictSpecUnchanged(t *testing.T) {
+	t.Parallel()
+	const spec = "Return a JSON object and nothing else:\n" +
+		"```json\n" +
+		`{"verdict": "confirmed|refuted|unverifiable", "reasoning": "..."}` +
+		"\n```\n\n" +
+		"Use `unverifiable` if you cannot determine the verdict, and explain why in the reasoning.\n"
+	got := buildSkepticPromptWithSentinel(sampleFinding(), sampleEntries(), "finding-abc12345")
+	assert.True(t, strings.HasSuffix(got, spec), "verdict spec must close the prompt byte-for-byte unchanged")
+	assert.Equal(t, 1, strings.Count(got, "Return a JSON object and nothing else:"))
+}

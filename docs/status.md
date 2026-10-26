@@ -4,6 +4,17 @@
 no argument it reads the review `.atcr/latest` points at. The `atcr_status` MCP
 tool returns the same document, from the same reader.
 
+After the JSON, the command prints the usual next steps on stderr, so stdout
+stays one JSON document:
+
+```
+Next: atcr report <id>
+Next: atcr review --resume <id>
+```
+
+The `review --resume` line appears only while `agents_pending` is above zero.
+`<id>` is a placeholder for the review id. The MCP tool does not add these lines.
+
 It reads only files the review has already written, so it never claims more
 than is on disk: a persona still working shows as `pending`, and a stage that is
 running shows as the stage before it. It can be polled at any interval while a
