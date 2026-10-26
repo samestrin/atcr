@@ -136,12 +136,6 @@ var awaitingRepin = map[string]string{
 	// T3
 	"internal/fanout/chunker.go": "T3",
 	"docs/payload-modes.md":      "T3",
-
-	// T5
-	"internal/doctor/run.go":                            "T5",
-	"internal/hookobs/hookobs.go":                       "T5",
-	"internal/hookobs/hookobs_test.go":                  "T5",
-	"internal/registry/config_thinking_enabled_test.go": "T5",
 }
 
 var (
