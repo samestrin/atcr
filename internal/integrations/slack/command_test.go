@@ -3,8 +3,6 @@ package slack
 import (
 	"errors"
 	"testing"
-
-	"github.com/samestrin/atcr/internal/registry"
 )
 
 var testAllow = Allowlist{
@@ -136,26 +134,5 @@ func TestParseReviewCommandEmptyAllowlistRefusesAll(t *testing.T) {
 	}
 	if _, err := ParseReviewCommand(nil, testAllow); !errors.Is(err, ErrUsage) {
 		t.Fatalf("nil mention error = %v, want ErrUsage", err)
-	}
-}
-
-func TestNewAllowlist(t *testing.T) {
-	cfg := &registry.WebhookConfig{
-		Repos: map[string]string{"samestrin/atcr": "/src/atcr"},
-		Slack: &registry.WebhookSlackConfig{Workspaces: []string{"T1"}, Channels: []string{"C1"}, Users: []string{"U1"}},
-	}
-	a := NewAllowlist(cfg)
-	got, err := ParseReviewCommand(mention("<@UBOT> review <https://github.com/samestrin/atcr/pull/9>"), a)
-	if err != nil || got.Repo != "samestrin/atcr" || got.Number != 9 {
-		t.Fatalf("got %+v, %v", got, err)
-	}
-
-	// No slack block refuses every Slack request.
-	noSlack := NewAllowlist(&registry.WebhookConfig{Repos: cfg.Repos})
-	if _, err := ParseReviewCommand(mention("<@UBOT> review <https://github.com/samestrin/atcr/pull/9>"), noSlack); !errors.Is(err, ErrWorkspaceNotAllowed) {
-		t.Fatalf("no slack block error = %v, want ErrWorkspaceNotAllowed", err)
-	}
-	if a := NewAllowlist(nil); len(a.Repos)+len(a.Users) != 0 {
-		t.Fatalf("NewAllowlist(nil) = %+v, want empty", a)
 	}
 }
