@@ -480,6 +480,10 @@ type Result struct {
 	// status.json reports. The bulk path never sets it — it already carries the real
 	// value in Truncation.
 	DiffTruncation payload.Truncation
+	// ThreatMapDropped is the run's threat-map drop list (Epic 37.0), stamped
+	// onto each merged result by runEngine and published as status.json
+	// threat_map_dropped. nil when the run did not map.
+	ThreatMapDropped []string
 
 	// servedChunkFiles is the baseline coverage tag of the chain member that
 	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It

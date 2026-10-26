@@ -150,6 +150,9 @@ type ProjectConfig struct {
 	// index; nil, blank, or anything short of `enabled: true` means OFF. Each set
 	// field overrides the registry tier's.
 	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
+	// ThreatMap is the optional `threat_map` block (Epic 37.0): the agent the
+	// --threat-map phase calls. Overrides the registry tier. See ThreatMapConfig.
+	ThreatMap *ThreatMapConfig `yaml:"threat_map,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
