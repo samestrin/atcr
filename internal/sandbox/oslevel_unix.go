@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -136,21 +138,34 @@ var sandboxGetrlimit = syscall.Getrlimit
 // missing sandbox binary would read as the workload's exit. If the tool
 // vanishes between this check and the exec, the shell's own error names $0,
 // which carries sandboxLimitDiagnosticPrefix, so the run is still a fault.
-func applySandboxResourceLimits(cmd *exec.Cmd, cfg OSLevelConfig) {
-	if !sandboxMemoryLimitEnforced || cmd.Err != nil {
+//
+// With a non-nil cg (linux, epic 35.24 T3) the wrapper joins that cgroup
+// instead of setting the rlimit: it writes its own pid to cg's cgroup.procs
+// and then execs, so the tool and everything it forks are counted by the
+// cgroup's memory.max and pids.max from their first instruction. The rlimit
+// is not set as well, so the cgroup is the one mechanism that enforces and
+// T5's integration test can tell which one did. The procs path travels as a
+// positional parameter, like the tool's argv, and a failed join exits
+// sandboxLimitExitCode without running the tool, as a failed ulimit does.
+func applySandboxResourceLimits(cmd *exec.Cmd, cfg OSLevelConfig, cg *sandboxCgroup) {
+	if (cg == nil && !sandboxMemoryLimitEnforced) || cmd.Err != nil {
 		return
 	}
 	if _, err := exec.LookPath(cmd.Path); err != nil {
 		return
 	}
-	maxBytes := cfg.MaxMemoryBytes
-	if maxBytes <= 0 {
-		maxBytes = DefaultOSLevelConfig().MaxMemoryBytes
+	var args []string
+	if cg != nil {
+		args = []string{sandboxLimitShell, "-c", sandboxCgroupScript(), sandboxLimitArgv0, cg.procsPath(), cmd.Path}
+	} else {
+		maxBytes := cfg.MaxMemoryBytes
+		if maxBytes <= 0 {
+			maxBytes = DefaultOSLevelConfig().MaxMemoryBytes
+		}
+		args = []string{sandboxLimitShell, "-c", sandboxLimitScript(sandboxMemoryLimitKiB(maxBytes)), sandboxLimitArgv0, cmd.Path}
 	}
-	script := sandboxLimitScript(sandboxMemoryLimitKiB(maxBytes))
-	args := append([]string{sandboxLimitShell, "-c", script, sandboxLimitArgv0, cmd.Path}, cmd.Args[1:]...)
 	cmd.Path = sandboxLimitShell
-	cmd.Args = args
+	cmd.Args = append(args, cmd.Args[1:]...)
 }
 
 // sandboxMemoryLimitKiB converts the configured cap to the KiB ulimit takes,
@@ -175,6 +190,183 @@ func sandboxMemoryLimitKiB(maxBytes int64) uint64 {
 func sandboxLimitScript(kib uint64) string {
 	return fmt.Sprintf(`ulimit %s %d || { echo "%s cannot set the memory limit (%s %d KiB)" >&2; exit %d; }; exec "$@"`,
 		sandboxMemoryUlimitFlag, kib, sandboxLimitDiagnosticPrefix, sandboxMemoryUlimitFlag, kib, sandboxLimitExitCode)
+}
+
+// sandboxCgroupScript is the wrapper's -c program when the run has a cgroup:
+// $1 is the cgroup's procs file, and the tool's argv follows it.
+func sandboxCgroupScript() string {
+	return fmt.Sprintf(`echo "$$" > "$1" || { echo "%s cannot join the run's cgroup ($1)" >&2; exit %d; }; shift; exec "$@"`,
+		sandboxLimitDiagnosticPrefix, sandboxLimitExitCode)
+}
+
+// sandboxCgroupMount is where the cgroup v2 hierarchy is mounted; the path in
+// /proc/self/cgroup is relative to it.
+const sandboxCgroupMount = "/sys/fs/cgroup"
+
+// sandboxCgroupControllers are the controllers a run's cgroup needs: memory
+// for memory.max and pids for pids.max. Both must already be enabled in the
+// root's cgroup.subtree_control. atcr does not enable them itself: that would
+// change the host's cgroup tree beyond the run, and cgroup v2 refuses it
+// anyway while the root holds a process, as a root holding atcr does.
+var sandboxCgroupControllers = []string{"memory", "pids"}
+
+// sandboxCgroup is one run's cgroup v2 directory, a child of the cgroup root.
+type sandboxCgroup struct {
+	dir string
+}
+
+func (cg *sandboxCgroup) procsPath() string { return filepath.Join(cg.dir, "cgroup.procs") }
+
+// sandboxRmdir is syscall.Rmdir: a cgroup directory is removed with rmdir
+// while its interface files are still listed, which os.RemoveAll cannot do.
+// Tests replace it, because a fake cgroup root holds regular files.
+var sandboxRmdir = syscall.Rmdir
+
+// sandboxCgroupWrite writes one cgroup interface file. Tests replace it to
+// make a single limit fail to apply.
+var sandboxCgroupWrite = func(path, value string) error {
+	return os.WriteFile(path, []byte(value), 0o644)
+}
+
+// sandboxCgroupRemoveBudget bounds how long remove waits for a cgroup whose
+// killed processes have not finished exiting. rmdir answers EBUSY until the
+// last one is gone, which a SIGKILL makes a matter of milliseconds.
+var sandboxCgroupRemoveBudget = time.Second
+
+// discoverSandboxCgroupRoot finds the cgroup atcr itself runs in, the only one
+// it can expect to have been delegated. goos is the host kernel: cgroups are
+// linux-only.
+func discoverSandboxCgroupRoot(goos string) (string, error) {
+	if goos != "linux" {
+		return "", fmt.Errorf("cgroup v2 is linux-only, not %s", goos)
+	}
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", err
+	}
+	rel, ok := parseCgroupV2Path(raw)
+	if !ok {
+		return "", errors.New("/proc/self/cgroup has no cgroup v2 entry")
+	}
+	return filepath.Join(sandboxCgroupMount, rel), nil
+}
+
+// parseCgroupV2Path returns the unified hierarchy's path from a
+// /proc/<pid>/cgroup listing: the "0::<path>" line, which a hybrid host lists
+// next to its v1 hierarchies.
+func parseCgroupV2Path(raw []byte) (string, bool) {
+	for _, line := range strings.Split(string(raw), "\n") {
+		if rel, ok := strings.CutPrefix(line, "0::"); ok && strings.HasPrefix(rel, "/") {
+			return rel, true
+		}
+	}
+	return "", false
+}
+
+// newSandboxCgroup creates a run's cgroup under root and writes its caps:
+// memory.max from MaxMemoryBytes, memory.swap.max 0 so the memory cap is not
+// served from swap instead (best effort: the file exists only where the
+// kernel accounts swap), and pids.max from MaxProcs. Non-positive caps (a
+// struct-literal backend) get the defaults: 0 in either file would refuse the
+// tool outright.
+//
+// It returns an error, and leaves nothing behind, when root is not a cgroup v2
+// directory, does not delegate both controllers, is not writable, or a cap
+// cannot be written: a cgroup without its cap reads as protection and is not.
+func newSandboxCgroup(root string, cfg OSLevelConfig) (*sandboxCgroup, error) {
+	if _, err := os.Stat(filepath.Join(root, "cgroup.controllers")); err != nil {
+		return nil, fmt.Errorf("%s is not a cgroup v2 directory: %w", root, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "cgroup.subtree_control"))
+	if err != nil {
+		return nil, err
+	}
+	enabled := strings.Fields(string(raw))
+	var missing []string
+	for _, c := range sandboxCgroupControllers {
+		if !slices.Contains(enabled, c) {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%s does not delegate the %s controller(s) to its children", root, strings.Join(missing, ", "))
+	}
+	if err := syscall.Access(filepath.Join(root, "cgroup.procs"), 2 /* W_OK */); err != nil {
+		return nil, fmt.Errorf("cannot move processes under %s: %w", root, err)
+	}
+	dir, err := os.MkdirTemp(root, "atcr-run-*")
+	if err != nil {
+		return nil, err
+	}
+	cg := &sandboxCgroup{dir: dir}
+	def := DefaultOSLevelConfig()
+	maxBytes, maxProcs := cfg.MaxMemoryBytes, cfg.MaxProcs
+	if maxBytes <= 0 {
+		maxBytes = def.MaxMemoryBytes
+	}
+	if maxProcs <= 0 {
+		maxProcs = def.MaxProcs
+	}
+	for _, limit := range []struct{ file, value string }{
+		{"memory.max", strconv.FormatInt(maxBytes, 10)},
+		{"pids.max", strconv.Itoa(maxProcs)},
+	} {
+		if err := sandboxCgroupWrite(filepath.Join(dir, limit.file), limit.value); err != nil {
+			_ = cg.remove()
+			return nil, fmt.Errorf("cannot set %s: %w", limit.file, err)
+		}
+	}
+	_ = sandboxCgroupWrite(filepath.Join(dir, "memory.swap.max"), "0")
+	return cg, nil
+}
+
+// remove kills whatever is still in the cgroup and removes it. The kill
+// (cgroup.kill, linux 5.14+, best effort) reaches what reapSandboxProcessGroup
+// cannot: a descendant that left the process group and outlived a clean exit
+// is still in the cgroup. rmdir answers EBUSY until the last killed process
+// has exited, so it is retried within sandboxCgroupRemoveBudget; any other
+// error is returned at once.
+func (cg *sandboxCgroup) remove() error {
+	_ = sandboxCgroupWrite(filepath.Join(cg.dir, "cgroup.kill"), "1")
+	deadline := time.Now().Add(sandboxCgroupRemoveBudget)
+	for {
+		err := sandboxRmdir(cg.dir)
+		if err == nil || !errors.Is(err, syscall.EBUSY) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// openSandboxCgroup picks the mechanism that enforces this run's caps and logs
+// it: a per-run cgroup under b.cgroupRoot (or, unset, the cgroup atcr runs in)
+// where the host delegates one, otherwise T2's rlimit wrapper, which caps
+// memory per process and leaves the PID cap unenforced. The fallback is a
+// notice, not a refusal: whether an operator-set cap may run without its
+// mechanism is Preflight's decision (epic 35.24 T4). A nil return means the
+// fallback.
+func (b *OSLevelBackend) openSandboxCgroup(logger *slog.Logger, cfg OSLevelConfig, logCmd string) *sandboxCgroup {
+	root := b.cgroupRoot
+	var err error
+	if root == "" {
+		root, err = discoverSandboxCgroupRoot(runtime.GOOS)
+	}
+	var cg *sandboxCgroup
+	if err == nil {
+		cg, err = newSandboxCgroup(root, cfg)
+	}
+	if err == nil {
+		logger.Info("sandbox exec resource caps", "backend", osLevelBackendName, "command", logCmd,
+			"mechanism", "cgroup", "cgroup", cg.dir)
+		return cg
+	}
+	mechanism, unenforced := "rlimit", "pids"
+	if !sandboxMemoryLimitEnforced {
+		mechanism, unenforced = "none", "memory, pids"
+	}
+	logger.Info("sandbox exec resource caps: cgroup v2 unavailable, falling back", "backend", osLevelBackendName,
+		"command", logCmd, "mechanism", mechanism, "unenforced", unenforced, "reason", err)
+	return nil
 }
 
 // reapSandboxProcessGroup SIGKILLs whatever is left of the sandboxed process
