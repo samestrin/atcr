@@ -374,7 +374,8 @@ func runResume(cmd *cobra.Command, anchor string) error {
 
 	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
 	// produces a fresh reconciliation, mirroring the in-process one-shot path).
-	if _, _, err := resumeReconcile(ctx, cmd, result.Dir, consensusLevel); err != nil {
+	reconciledTotal, bySeverity, err := resumeReconcile(ctx, cmd, result.Dir, consensusLevel)
+	if err != nil {
 		return err
 	}
 	recordHistory(ctx, histRoot, result.Dir, req.StartedAt)
@@ -384,6 +385,13 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	if axiWerr != nil {
 		return axiWerr
 	}
+	// Report the completed resume to a registered ReviewComplete hook (Epic 41.0),
+	// mirroring runReview: after the ledgers, and before the coverage gate, which
+	// judges a completed review rather than undoing it. The AllComplete path above
+	// does no new review work and, like the ledgers, does not fire it.
+	hookobs.ReviewComplete(ctx, withReconciledCounts(
+		newReviewReport(result, req.PRNumber, req.Range.Base, req.Range.Head),
+		reconciledTotal, bySeverity))
 	// --require-coverage runs last, after every artifact, ledger and the summary.
 	if requireCoverage {
 		return coverageGate(cmd.ErrOrStderr(), cov, coveragePct)
@@ -476,9 +484,5 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir, consensusLeve
 	// Break the reconciled findings down by severity so the already-complete
 	// resume payload's findings_<severity> columns describe the same data
 	// findings_total does (TD: cli/resume.go:254).
-	bySeverity := make(map[string]int64, len(severityOrder))
-	for _, f := range rec.Findings {
-		bySeverity[reconcile.NormalizeSeverity(f.Severity)]++
-	}
-	return rec.Summary.TotalFindings, bySeverity, nil
+	return rec.Summary.TotalFindings, findingsBySeverity(rec), nil
 }
