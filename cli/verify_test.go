@@ -601,3 +601,20 @@ func (b *nameOnlyBackend) Preflight(context.Context) error { return nil }
 func (b *nameOnlyBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
 	return sandbox.RunResult{}, errors.New("nameOnlyBackend does not execute")
 }
+
+// TestVerifyCmd_NextLinesOnStderr: after a successful run, `atcr verify` names
+// `atcr report <id>` as the next step on stderr, and stdout carries only its
+// pre-existing result line (Epic 42.0 T4).
+func TestVerifyCmd_NextLinesOnStderr(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "HIGH",
+	}})
+	code, stdout, stderr := execCmdSplit(t, "verify", "r")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, fmt.Sprintf("verified 0 finding(s): 0 confirmed, 0 refuted, 1 unverifiable -> %s\n",
+		filepath.Join(".atcr", "reviews", "r", "reconciled")), stdout)
+	assert.NotContains(t, stdout, "Next:")
+	assert.Contains(t, stderr, "Next: atcr report <id>\n")
+}
