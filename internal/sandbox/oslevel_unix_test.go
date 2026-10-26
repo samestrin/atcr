@@ -552,7 +552,7 @@ func TestApplySandboxResourceLimits_ChildStartsWithTheLimitAndKeepsItsPid(t *tes
 	cfg := DefaultOSLevelConfig()
 	cfg.MaxMemoryBytes = 300 * 1024 * 1024
 
-	cmd := exec.Command(tool)
+	cmd := exec.CommandContext(context.Background(), tool)
 	configureSandboxProcessGroup(cmd)
 	applySandboxResourceLimits(cmd, cfg)
 	var out strings.Builder
@@ -661,4 +661,49 @@ func TestOSLevelBackendRun_StartsTheToolUnderTheMemoryCap(t *testing.T) {
 	_, _, soft, hard := parseLimitsReport(t, res.Output)
 	assert.Equal(t, "262144", soft)
 	assert.Equal(t, "262144", hard)
+}
+
+func TestOSLevelBackendRun_AStructLiteralBackendGetsTheDefaultMemoryCap(t *testing.T) {
+	// A backend built without NewOSLevelBackend has MaxMemoryBytes 0. It must
+	// run under the default cap, not without one and not under a 1 KiB one
+	// that would refuse the tool's first allocation.
+	var seen OSLevelConfig
+	b := &OSLevelBackend{cfg: OSLevelConfig{ToolPath: writeFakeOSLevel(t, limitsReport)}}
+	captureContainmentCfg(t, &seen)
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+	_, _, soft, hard := parseLimitsReport(t, res.Output)
+	want := strconv.FormatInt(DefaultOSLevelConfig().MaxMemoryBytes/1024, 10)
+	assert.Equal(t, want, soft)
+	assert.Equal(t, want, hard)
+}
+
+func TestApplySandboxResourceLimits_LeavesAnUnexecutableToolUnwrapped(t *testing.T) {
+	// A missing or non-executable sandbox binary must keep failing at Start,
+	// with no process created, rather than become a shell's exit 127.
+	notExec := filepath.Join(t.TempDir(), "not-executable")
+	require.NoError(t, os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644))
+	for _, tool := range []string{"/nonexistent/os-sandbox-binary-xyz", notExec, t.TempDir()} {
+		cmd := exec.Command(tool, "arg")
+		applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+		assert.Equal(t, tool, cmd.Path, tool)
+		assert.Equal(t, []string{tool, "arg"}, cmd.Args, tool)
+	}
+}
+
+func TestSandboxLimitScript_AToolThatVanishedBeforeExecIsAFault(t *testing.T) {
+	// The tool passed the pre-wrap check and was then removed: the shell's own
+	// exec error names $0, so the run is classified as a fault, not as the
+	// workload's exit 127.
+	cmd := exec.Command(sandboxLimitShell, "-c", sandboxLimitScript(512*1024), sandboxLimitArgv0,
+		"/nonexistent/os-sandbox-binary-xyz")
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "output: %s", out)
+	for _, goos := range []string{"darwin", "linux"} {
+		isFault, reason := classifyToolExit(goos, ee.ExitCode(), string(out))
+		assert.True(t, isFault, "%s: exit %d output %q", goos, ee.ExitCode(), out)
+		assert.Contains(t, reason, sandboxLimitDiagnosticPrefix, goos)
+	}
 }

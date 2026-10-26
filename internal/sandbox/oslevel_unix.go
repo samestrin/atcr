@@ -57,6 +57,110 @@ func configureSandboxProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
+// sandboxLimitShell runs the rlimit wrapper. The path is absolute so atcr's
+// own PATH cannot substitute another binary, as for psParents' /bin/ps.
+const sandboxLimitShell = "/bin/sh"
+
+// sandboxLimitArgv0 is the wrapper's $0. Every shell prefixes its own errors
+// (a failed exec included) with "$0:", which is sandboxLimitDiagnosticPrefix.
+const sandboxLimitArgv0 = "atcr-sandbox-limits"
+
+// sandboxMemoryRlimit is the rlimit MaxMemoryBytes sets, and
+// sandboxMemoryUlimitFlag the ulimit option that sets it (KiB, in every
+// /bin/sh atcr meets: dash, bash, zsh and busybox ash).
+//
+// RLIMIT_DATA rather than RLIMIT_AS: address-space limits count reservations,
+// and the Go toolchain reserves far more than it commits, so an RLIMIT_AS at
+// the 512 MiB default can fail an ordinary `go build` (the plan's Risks). On
+// linux RLIMIT_DATA counts private writable mappings, anonymous mmap included,
+// since kernel 4.7. On darwin whether either limit stops an over-allocation is
+// unmeasured: epic 35.24 T5 measures both on the integration-macos job and
+// changes this pair if RLIMIT_AS is the one that holds.
+const (
+	sandboxMemoryRlimit     = syscall.RLIMIT_DATA
+	sandboxMemoryUlimitFlag = "-d"
+)
+
+// sandboxGetrlimit is syscall.Getrlimit; tests replace it to present an
+// inherited limit the host cannot be made to have.
+var sandboxGetrlimit = syscall.Getrlimit
+
+// applySandboxResourceLimits rewrites cmd to start under the memory cap:
+//
+//	/bin/sh -c 'ulimit -d <KiB> || ...; exec "$@"' atcr-sandbox-limits <tool> <args...>
+//
+// syscall.SysProcAttr has no rlimit field, and setting the limit on atcr itself
+// around the spawn would leak into every concurrent run, so a shell sets it in
+// the child and then execs the sandbox tool. exec keeps the pid: the process
+// cmd.Process names, the group configureSandboxProcessGroup creates and the
+// root the cancel path's descendant walk starts from are all still the tool.
+// The wrapper sits OUTSIDE sandbox-exec/bwrap, so the containment profile and
+// argv are unchanged, and the limit is inherited by everything inside.
+//
+// Only the memory cap is applied, on every unix host. MaxProcs is never set as
+// RLIMIT_NPROC: that limit counts every process (on linux, every thread) of
+// the invoking user across the host, not one run's tree, so a cap of 256
+// refuses every fork for a user whose desktop already runs that many, and it
+// bounds nothing per run. The board ruled it out on darwin (EST-1340, Q2); on
+// linux the PID cap is cgroup pids.max (epic 35.24 T3).
+//
+// The limit is an integer formatted by atcr, never operator text, and the
+// tool's argv travels as "$@" rather than inside the -c string, so nothing
+// here is parsed as shell syntax. If the wrapper cannot set the limit it does
+// not exec the tool: it exits sandboxLimitExitCode with a
+// sandboxLimitDiagnosticPrefix line, which classifyToolExit reports as a
+// sandbox fault rather than as the workload's exit.
+//
+// A non-positive MaxMemoryBytes (a struct-literal backend NewOSLevelBackend
+// never floored) gets the default cap, never none and never a 1 KiB one.
+//
+// A tool that cannot be executed is left unwrapped, so cmd.Start fails with
+// the original error and no process is created at all, exactly as before the
+// wrapper existed. Wrapped, the shell would instead start and exit 127, and a
+// missing sandbox binary would read as the workload's exit. If the tool
+// vanishes between this check and the exec, the shell's own error names $0,
+// which carries sandboxLimitDiagnosticPrefix, so the run is still a fault.
+func applySandboxResourceLimits(cmd *exec.Cmd, cfg OSLevelConfig) {
+	if cmd.Err != nil {
+		return
+	}
+	if _, err := exec.LookPath(cmd.Path); err != nil {
+		return
+	}
+	maxBytes := cfg.MaxMemoryBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultOSLevelConfig().MaxMemoryBytes
+	}
+	script := sandboxLimitScript(sandboxMemoryLimitKiB(maxBytes))
+	args := append([]string{sandboxLimitShell, "-c", script, sandboxLimitArgv0, cmd.Path}, cmd.Args[1:]...)
+	cmd.Path = sandboxLimitShell
+	cmd.Args = args
+}
+
+// sandboxMemoryLimitKiB converts the configured cap to the KiB ulimit takes,
+// rounding down so the cap never exceeds it, with a floor of 1 because
+// `ulimit -d 0` would refuse the tool's first allocation. A lower limit atcr
+// already runs under wins: the child would inherit it anyway, and raising it
+// would either fail (a hard limit) or loosen what the operator's shell set (a
+// soft one). An unreadable inherited limit leaves the configured cap; if that
+// is above the hard limit the wrapper fails closed.
+func sandboxMemoryLimitKiB(maxBytes int64) uint64 {
+	limit := uint64(maxBytes)
+	var cur syscall.Rlimit
+	if err := sandboxGetrlimit(sandboxMemoryRlimit, &cur); err == nil && uint64(cur.Cur) < limit {
+		limit = uint64(cur.Cur)
+	}
+	return max(limit/1024, 1)
+}
+
+// sandboxLimitScript is the wrapper's -c program for a memory cap of kib KiB.
+// Neither -H nor -S is given, so every shell sets both: the workload cannot
+// raise the soft limit back up to an unbounded hard one.
+func sandboxLimitScript(kib uint64) string {
+	return fmt.Sprintf(`ulimit %s %d || { echo "%s cannot set the memory limit (%s %d KiB)" >&2; exit %d; }; exec "$@"`,
+		sandboxMemoryUlimitFlag, kib, sandboxLimitDiagnosticPrefix, sandboxMemoryUlimitFlag, kib, sandboxLimitExitCode)
+}
+
 // reapSandboxProcessGroup SIGKILLs whatever is left of the sandboxed process
 // group after cmd.Run has returned, on EVERY exit path rather than only on
 // cancellation. runWith calls it before its deferred os.RemoveAll(scratchDir):

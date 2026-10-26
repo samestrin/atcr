@@ -1237,6 +1237,10 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// forever on an already-expired deadline. Both mirror the same pattern in
 	// internal/verify/localvalidate.go:100-105.
 	configureSandboxProcessGroup(cmd)
+	// Start the tool under the memory cap. On unix this wraps the argv in a
+	// /bin/sh that sets the rlimit and execs the tool in place, so the pid and
+	// the group set up above are unchanged; see applySandboxResourceLimits.
+	applySandboxResourceLimits(cmd, runCfg)
 	cmd.WaitDelay = osLevelWaitGrace
 	if spec.Script != "" {
 		// The script is stdin DATA to `sh -s`, never argv and never inside a
@@ -1579,6 +1583,20 @@ const (
 	sandboxExecUsagePrefix = "Usage: sandbox-exec"
 )
 
+// sandboxLimitDiagnosticPrefix and sandboxLimitExitCode are what the unix
+// rlimit wrapper (applySandboxResourceLimits) prints and exits with when it
+// cannot set a resource limit. It then never execs the sandbox tool, so the
+// exit is atcr's own fault on both platforms, never a workload result. 125 is
+// the code env(1) and timeout(1) use for their own failures, outside
+// sandbox-exec's sysexits set. The prefix is also the wrapper shell's "$0:",
+// so the shell's own error for an exec that failed (exit 126 or 127) carries
+// it too; classifyToolExit therefore matches the prefix at any exit code. A
+// workload printing it spoofs a fault, the safe direction, as for "bwrap: ".
+const (
+	sandboxLimitDiagnosticPrefix = "atcr-sandbox-limits:"
+	sandboxLimitExitCode         = 125
+)
+
 // sandboxExecFaultCodes are the sysexits values sandbox-exec returns for its own
 // failures (64 EX_USAGE, 65 EX_DATAERR, 71 EX_OSERR). A workload could in
 // principle exit with one of these itself and be misclassified as a fault — that
@@ -1645,6 +1663,9 @@ func classifyToolExit(goos string, exitCode int, output string) (bool, string) {
 	}
 	if exitCode >= signalExitBase {
 		return true, fmt.Sprintf("process killed by signal %d (exit %d)", exitCode-signalExitBase, exitCode)
+	}
+	if strings.Contains(output, sandboxLimitDiagnosticPrefix) {
+		return true, fmt.Sprintf("resource-limit wrapper failed before the sandbox tool ran (exit %d): %s", exitCode, strings.TrimSpace(output))
 	}
 	switch goos {
 	case "linux":
