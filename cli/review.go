@@ -114,6 +114,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
+	cmd.Flags().Bool(threatMapFlag, false, "before the review, ask the threat_map.agent (a cheap mapper using the threat_mapper persona) which changed files are security relevant, and send only those to the reviewers; the rest are listed in each status.json as threat_map_dropped. If the mapper fails, every file is reviewed. Git-range reviews only")
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
 	cmd.Flags().String("scope", "", "review every non-ignored, git-tracked file under this repo-root-relative directory as a scoped baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit/--all)")
 	cmd.Flags().String("dir", "", "deprecated alias for --scope")
@@ -363,6 +364,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if cmd.Flags().Changed("force") {
 			return usageError(errors.New("--resume and --force are mutually exclusive"))
 		}
+		// A resume reuses the original run's threat map from its manifest and never
+		// re-maps (Epic 37.0), so the flag has nothing to change here.
+		if boolFlag(cmd, threatMapFlag) {
+			return usageError(errors.New("--threat-map cannot be combined with --resume: a resume reuses the threat map recorded by the original run"))
+		}
 		// --sync-cloud is not wired into the resume recovery flow, and this return
 		// is upstream of both resolveSyncCloud and the result==nil warning below —
 		// so without this notice the flag is dropped in total silence, whether or
@@ -542,6 +548,11 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		}
 		return usageError(errors.New("--all cannot be combined with --auto-fix: a full-repository baseline scan has no diff range to derive an auto-fix base branch from"))
 	}
+	// The threat-map phase (Epic 37.0) scopes a git-range review; a baseline scan
+	// has no change set to map.
+	if baseline && boolFlag(cmd, threatMapFlag) {
+		return usageError(errors.New("--threat-map applies to git-range reviews only; it cannot be combined with --all or --scope"))
+	}
 	res := &gitrange.Resolution{}
 	if !baseline {
 		res, err = gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
@@ -581,6 +592,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 			return err // refuse-without-backend / preflight failure (exit 2)
 		}
 	}
+	threatMapper, err := threatMapperFromFlags(ctx, cmd, cfg)
+	if err != nil {
+		return err
+	}
 
 	now := time.Now()
 	req := fanout.ReviewRequest{
@@ -612,6 +627,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// (AC 05-03 EC1). Read unconditionally; only the baseline prepare paths consume
 		// it, so it is an inert no-op on a diff-range review (AC 04-04 S2).
 		Fresh: reviewNoFileCacheRequested(cmd),
+		// --threat-map (Epic 37.0): nil unless the flag is set.
+		ThreatMapper: threatMapper,
 	}
 
 	// Run the two review phases separately so build-phase failures (persona

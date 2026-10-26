@@ -63,7 +63,7 @@ func TestParseModelOutput_RepairCorpus(t *testing.T) {
 			for _, o := range wantObjs {
 				file, line := splitFileLine(o.FileLine)
 				want = append(want, Finding{Severity: NormalizeSeverity(o.Severity), File: file, Line: line,
-					Problem: o.Problem, Fix: o.Fix, Category: o.Category, EstMinutes: int(o.EstMinutes), Evidence: o.Evidence})
+					Problem: o.Problem, Fix: o.Fix, Category: o.Category, CanonicalCategory: CanonicalCategory(o.Category), EstMinutes: int(o.EstMinutes), Evidence: o.Evidence})
 			}
 
 			reply := "Here is my review.\n\n```json\n" + string(in)

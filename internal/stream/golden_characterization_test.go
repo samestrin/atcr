@@ -50,12 +50,12 @@ func TestGolden_ParseSource_PerSource(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []Finding{
-		{Severity: "CRITICAL", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", EstMinutes: 15, Evidence: "expiresAt unread", Reviewer: "greta"},
+		{Severity: "CRITICAL", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", CanonicalCategory: "security", EstMinutes: 15, Evidence: "expiresAt unread", Reviewer: "greta"},
 		// Trailing '|' is padding, not a leaked column.
-		{Severity: "HIGH", File: "cmd/main.go", Line: 88, Problem: "goroutine leak", Fix: "add WaitGroup", Category: "concurrency", EstMinutes: 30, Evidence: "no wg.Wait", Reviewer: "kai"},
+		{Severity: "HIGH", File: "cmd/main.go", Line: 88, Problem: "goroutine leak", Fix: "add WaitGroup", Category: "concurrency", CanonicalCategory: "concurrency", EstMinutes: 30, Evidence: "no wg.Wait", Reviewer: "kai"},
 		// No ":LINE" keeps the whole column as File with Line 0; a non-integer EST_MINUTES becomes 0.
-		{Severity: "MEDIUM", File: "pkg/x.go", Line: 0, Problem: "no line number", Fix: "add one", Category: "correctness", EstMinutes: 0, Evidence: "ev2", Reviewer: "otto"},
-		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "lint", Reviewer: "dax"},
+		{Severity: "MEDIUM", File: "pkg/x.go", Line: 0, Problem: "no line number", Fix: "add one", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 0, Evidence: "ev2", Reviewer: "otto"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", CanonicalCategory: "style", EstMinutes: 2, Evidence: "lint", Reviewer: "dax"},
 	}, res.Findings)
 
 	// Line counts every physical line, including the header, comment, and blank.
@@ -72,10 +72,10 @@ func TestGolden_ParseReconciled_Reconciled(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []Finding{
-		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection", Fix: "parametrize input", Category: "security", EstMinutes: 30, Evidence: "pool repro", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection", Fix: "parametrize input", Category: "security", CanonicalCategory: "security", EstMinutes: 30, Evidence: "pool repro", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
 		// REVIEWERS entries are trimmed.
-		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires", Fix: "guard it", Category: "security", EstMinutes: 15, Evidence: "seen twice", Reviewers: []string{"greta", "kai"}, Confidence: "MEDIUM"},
-		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "lint", Reviewers: []string{"dax"}, Confidence: "LOW"},
+		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires", Fix: "guard it", Category: "security", CanonicalCategory: "security", EstMinutes: 15, Evidence: "seen twice", Reviewers: []string{"greta", "kai"}, Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import", Fix: "remove it", Category: "style", CanonicalCategory: "style", EstMinutes: 2, Evidence: "lint", Reviewers: []string{"dax"}, Confidence: "LOW"},
 	}, res.Findings)
 
 	assert.Equal(t, []SkippedRow{{
@@ -102,12 +102,12 @@ func TestGolden_ParseReconciled_ReconcileFixture(t *testing.T) {
 	assert.Empty(t, res.Skipped)
 
 	assert.Equal(t, []Finding{
-		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection in query builder", Fix: "parametrize input", Category: "security", EstMinutes: 30, Evidence: "[greta] pool repro / [host] host low (disagreement: LOW vs CRITICAL)", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
-		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires here", Fix: "guard it", Category: "security", EstMinutes: 15, Evidence: "[greta] pool saw it / [host] host also", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
-		{Severity: "HIGH", File: "legacy.go", Line: 7, Problem: "preexisting smell outside the diff", Fix: "n/a", Category: "out-of-scope", EstMinutes: 0, Evidence: "pool oos", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
-		{Severity: "MEDIUM", File: "pay.go", Line: 10, Problem: "session token expires without refresh check", Fix: "add refresh", Category: "security", EstMinutes: 20, Evidence: "pool note", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
-		{Severity: "MEDIUM", File: "pay.go", Line: 12, Problem: "session token expires without bound", Fix: "cap it", Category: "security", EstMinutes: 20, Evidence: "host note", Reviewers: []string{"host"}, Confidence: "MEDIUM"},
-		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import lingers in file", Fix: "remove it", Category: "style", EstMinutes: 2, Evidence: "pool lint", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+		{Severity: "CRITICAL", File: "db.go", Line: 100, Problem: "sql injection in query builder", Fix: "parametrize input", Category: "security", CanonicalCategory: "security", EstMinutes: 30, Evidence: "[greta] pool repro / [host] host low (disagreement: LOW vs CRITICAL)", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires here", Fix: "guard it", Category: "security", CanonicalCategory: "security", EstMinutes: 15, Evidence: "[greta] pool saw it / [host] host also", Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+		{Severity: "HIGH", File: "legacy.go", Line: 7, Problem: "preexisting smell outside the diff", Fix: "n/a", Category: "out-of-scope", CanonicalCategory: "out-of-scope", EstMinutes: 0, Evidence: "pool oos", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+		{Severity: "MEDIUM", File: "pay.go", Line: 10, Problem: "session token expires without refresh check", Fix: "add refresh", Category: "security", CanonicalCategory: "security", EstMinutes: 20, Evidence: "pool note", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
+		{Severity: "MEDIUM", File: "pay.go", Line: 12, Problem: "session token expires without bound", Fix: "cap it", Category: "security", CanonicalCategory: "security", EstMinutes: 20, Evidence: "host note", Reviewers: []string{"host"}, Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "util.go", Line: 5, Problem: "unused import lingers in file", Fix: "remove it", Category: "style", CanonicalCategory: "style", EstMinutes: 2, Evidence: "pool lint", Reviewers: []string{"greta"}, Confidence: "MEDIUM"},
 	}, res.Findings)
 }
 
@@ -117,9 +117,9 @@ func TestGolden_ParseModelOutput_ModelOutput(t *testing.T) {
 	// The comment, the prose line, the fenced example row, and the bare "HIGH|"
 	// contribute nothing. Reviewer is always empty.
 	assert.Equal(t, []Finding{
-		{Severity: "HIGH", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", EstMinutes: 15, Evidence: "expiresAt unread"},
+		{Severity: "HIGH", File: "src/auth.go", Line: 42, Problem: "token never expires", Fix: "check expiry", Category: "security", CanonicalCategory: "security", EstMinutes: 15, Evidence: "expiresAt unread"},
 		// TD-016: a model-supplied 8th field folds into EVIDENCE, never Reviewer.
-		{Severity: "MEDIUM", File: "db.go", Line: 7, Problem: "query built by concat", Fix: "use params", Category: "security", EstMinutes: 20, Evidence: "see line 7/mallory"},
+		{Severity: "MEDIUM", File: "db.go", Line: 7, Problem: "query built by concat", Fix: "use params", Category: "security", CanonicalCategory: "security", EstMinutes: 20, Evidence: "see line 7/mallory"},
 		// A short row is padded.
 		{Severity: "LOW", File: "util.go", Line: 5, Problem: "short row"},
 	}, got)

@@ -111,3 +111,11 @@ func TestTrimToPathsKeepsExemptionSentinel(t *testing.T) {
 	assert.Equal(t, 1, ReviewableCount(kept))
 	assert.True(t, kept[0].shedExempt)
 }
+
+// The mapper is shown real files only: the synthetic sections are skipped,
+// while a repository file named after a sentinel is a file like any other.
+func TestReviewablePathsSkipsSyntheticSections(t *testing.T) {
+	in := []FileEntry{newClaimLedgerEntry("CLAIMS"), {Path: "b.go"}, newPrefetchEntry("CTX"), {Path: ClaimLedgerPath}, {Path: "a.go"}}
+	assert.Equal(t, []string{"b.go", ClaimLedgerPath, "a.go"}, ReviewablePaths(in))
+	assert.Empty(t, ReviewablePaths(nil))
+}
