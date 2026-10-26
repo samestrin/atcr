@@ -51,6 +51,45 @@ func writeAuditRecord(stderr io.Writer, ctx context.Context, auditPath, reviewDi
 	return n
 }
 
+// newReviewReport builds the ReviewComplete payload for a finished fan-out,
+// shared by `atcr review` and `atcr resume` so the two cannot drift on which
+// summary fields they report. Reconciled stays false until withReconciledCounts
+// fills the finding counts.
+func newReviewReport(result *fanout.ReviewResult, pr int, base, head string) hookobs.ReviewReport {
+	return hookobs.ReviewReport{
+		RunID:           result.ID,
+		ReviewDir:       result.Dir,
+		Base:            base,
+		Head:            head,
+		PRNumber:        pr,
+		Partial:         result.Summary.Partial,
+		AgentsTotal:     result.Summary.Total,
+		AgentsSucceeded: result.Summary.Succeeded,
+		AgentsFailed:    result.Summary.Failed,
+	}
+}
+
+// withReconciledCounts returns rep with the in-process reconcile's finding
+// counts filled and Reconciled set.
+func withReconciledCounts(rep hookobs.ReviewReport, total int, bySeverity map[string]int64) hookobs.ReviewReport {
+	rep.Reconciled = true
+	rep.Findings = total
+	rep.FindingsBySeverity = make(map[string]int, len(bySeverity))
+	for sev, n := range bySeverity {
+		rep.FindingsBySeverity[sev] = int(n)
+	}
+	return rep
+}
+
+// findingsBySeverity counts the reconciled findings per normalized severity.
+func findingsBySeverity(rec reconcile.Result) map[string]int64 {
+	bySeverity := make(map[string]int64, len(severityOrder))
+	for _, f := range rec.Findings {
+		bySeverity[reconcile.NormalizeSeverity(f.Severity)]++
+	}
+	return bySeverity
+}
+
 // reviewReverifyRequested reports whether the verify stage should re-verify
 // findings that already carry a verdict: the intent-named --reverify, or the
 // deprecated polysemous --fresh resolving by context (--fresh + --verify).
@@ -869,6 +908,17 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
+	// The review is complete and its ledgers are written, so report it to a
+	// registered ReviewComplete hook (Epic 41.0). When the in-process reconcile
+	// runs below, the call waits for it so the report carries its finding counts;
+	// otherwise it fires here. The gates after it (--fail-on, --require-coverage)
+	// judge a completed review, so a gate failure does not withdraw the call.
+	report := newReviewReport(result, req.PRNumber, req.Range.Base, req.Range.Head)
+	reconcileInline := threshold != "" || verifyFlag || debateFlag || autoFix
+	if !reconcileInline {
+		hookobs.ReviewComplete(ctx, report)
+	}
+
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
 	// them for inspection (AC 03-02 Error Scenario 3).
@@ -879,7 +929,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// error and short-circuits before this line. The FailureMarker correction in
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
-	if threshold != "" || verifyFlag || debateFlag || autoFix {
+	if reconcileInline {
 		trustPriors, opportunityScoped, unmeasured := scorecard.ResolveTrustPriorsForReview(result.Dir)
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reclib.Options{
 			ReconciledAt:      time.Now(),
@@ -930,6 +980,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		if !axiMode {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 		}
+		// Fired before --verify/--debate/--auto-fix: those stages act on the
+		// completed review, and a failure in one of them does not undo it.
+		hookobs.ReviewComplete(ctx, withReconciledCounts(report, rec.Summary.TotalFindings, findingsBySeverity(rec)))
 
 		// --verify chains the adversarial verify stage after the single reconcile
 		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
