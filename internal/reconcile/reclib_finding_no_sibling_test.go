@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -11,7 +12,28 @@ import (
 // slices or maps) and returns every field whose name contains "sibling"
 // (case-insensitive) or whose json tag contains "sibling".
 func siblingFields(t reflect.Type) []string {
-	return nil
+	var found []string
+	seen := map[reflect.Type]bool{}
+	var walk func(reflect.Type)
+	walk = func(t reflect.Type) {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct || seen[t] {
+			return
+		}
+		seen[t] = true
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if strings.Contains(strings.ToLower(f.Name), "sibling") ||
+				strings.Contains(strings.ToLower(f.Tag.Get("json")), "sibling") {
+				found = append(found, t.Name()+"."+f.Name)
+			}
+			walk(f.Type)
+		}
+	}
+	walk(t)
+	return found
 }
 
 // TestReclibFinding_HasNoSiblingLocationField pins AC4 of Epic 35.16.15: the
