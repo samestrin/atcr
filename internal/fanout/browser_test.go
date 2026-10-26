@@ -14,7 +14,7 @@ type fakeBrowserBackend struct {
 	result BrowserResult
 }
 
-func (f *fakeBrowserBackend) Name() string                      { return f.name }
+func (f *fakeBrowserBackend) Name() string                        { return f.name }
 func (f *fakeBrowserBackend) Preflight(ctx context.Context) error { return nil }
 func (f *fakeBrowserBackend) Run(ctx context.Context, run BrowserRun) (BrowserResult, error) {
 	return f.result, nil
