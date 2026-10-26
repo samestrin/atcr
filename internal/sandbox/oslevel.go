@@ -133,6 +133,29 @@ type OSLevelConfig struct {
 	// itself. atcr — or the operator — warms it outside the sandbox, and every
 	// run afterwards reads it.
 	ModuleCacheDir string
+	// MaxMemoryBytes caps the memory one run may use, mirroring
+	// DockerConfig.Memory (docker --memory) and defaulting to the same 512 MiB.
+	//
+	// Zero does NOT mean unbounded. NewOSLevelBackend floors zero and negative
+	// values to the default, exactly as it floors Timeout, MaxOutputBytes and
+	// MaxConcurrent, so a struct-literal config cannot hand model-authored code
+	// the host's whole memory by omission. There is deliberately no value that
+	// turns the cap off.
+	MaxMemoryBytes int64
+	// MaxMemoryBytesSet reports that MaxMemoryBytes came from the operator
+	// (sandbox.memory) rather than from DefaultOSLevelConfig. Preflight refuses
+	// a host that cannot enforce an operator-set cap but only warns for a
+	// default, and the value alone cannot tell the two apart: an operator may
+	// write down exactly the default. NewOSLevelBackend clears it when it floors
+	// the value, because the run then gets the default, not the operator's cap.
+	MaxMemoryBytesSet bool
+	// MaxProcs caps the number of processes one run may have, mirroring
+	// DockerConfig.PidsLimit (docker --pids-limit) and defaulting to the same
+	// 256. Zero means the default, never unbounded, as for MaxMemoryBytes.
+	MaxProcs int
+	// MaxProcsSet reports that MaxProcs came from the operator
+	// (sandbox.pids_limit); see MaxMemoryBytesSet.
+	MaxProcsSet bool
 }
 
 // defaultOSLevelModuleCacheDir returns the persistent, atcr-owned dependency
@@ -162,6 +185,8 @@ func DefaultOSLevelConfig() OSLevelConfig {
 		MaxOutputBytes: 64 * 1024,
 		MaxConcurrent:  4,
 		ModuleCacheDir: defaultOSLevelModuleCacheDir(),
+		MaxMemoryBytes: 512 * 1024 * 1024,
+		MaxProcs:       256,
 	}
 }
 
@@ -249,6 +274,14 @@ func NewOSLevelBackend(cfg OSLevelConfig) *OSLevelBackend {
 	}
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = def.MaxConcurrent
+	}
+	if cfg.MaxMemoryBytes <= 0 {
+		cfg.MaxMemoryBytes = def.MaxMemoryBytes
+		cfg.MaxMemoryBytesSet = false
+	}
+	if cfg.MaxProcs <= 0 {
+		cfg.MaxProcs = def.MaxProcs
+		cfg.MaxProcsSet = false
 	}
 	return &OSLevelBackend{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
 }
