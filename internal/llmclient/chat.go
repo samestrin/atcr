@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -90,6 +91,58 @@ type Message struct {
 	Reasoning        json.RawMessage `json:"reasoning,omitempty"`
 	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
 	ThinkingBlocks   json.RawMessage `json:"thinking_blocks,omitempty"`
+
+	// Parts is multimodal content (text and images). It has no key of its own:
+	// when set, it is sent as the content array in place of Content, so a
+	// message sets one or the other, never both. A message without Parts
+	// marshals exactly as it did before Parts existed.
+	Parts []ContentPart `json:"-"`
+}
+
+// ErrContentAndParts is returned when a Message sets both Content and Parts:
+// the wire has one content key, so which one to send would be a guess.
+var ErrContentAndParts = errors.New("message sets both content and parts")
+
+// MarshalJSON sends Parts as the content array when set, and the message
+// unchanged otherwise.
+func (m Message) MarshalJSON() ([]byte, error) {
+	type alias Message
+	if m.Parts == nil {
+		return json.Marshal(alias(m))
+	}
+	if m.Content != nil {
+		return nil, ErrContentAndParts
+	}
+	// The outer Content shadows alias's Content key at the shallower depth.
+	return json.Marshal(struct {
+		alias
+		Content []ContentPart `json:"content"`
+	}{alias(m), m.Parts})
+}
+
+// ContentPart is one OpenAI-style content part: a "text" part carries Text,
+// an "image_url" part carries ImageURL. Build them with TextPart and
+// ImageURLPart.
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL is an image_url part's payload. URL is an http(s) URL or a data:
+// URL such as "data:image/png;base64,...".
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
+// TextPart is a text content part.
+func TextPart(text string) ContentPart {
+	return ContentPart{Type: "text", Text: text}
+}
+
+// ImageURLPart is an image_url content part for url.
+func ImageURLPart(url string) ContentPart {
+	return ContentPart{Type: "image_url", ImageURL: &ImageURL{URL: url}}
 }
 
 // ChatResponse is the engine-facing result of one Chat turn: the assistant
@@ -278,6 +331,11 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	key, err := resolveKey(inv)
 	if err != nil {
 		return nil, err
+	}
+	for i, m := range messages {
+		if m.Content != nil && m.Parts != nil {
+			return nil, fmt.Errorf("message %d: %w", i, ErrContentAndParts)
+		}
 	}
 	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	req := chatToolRequest{

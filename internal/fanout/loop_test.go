@@ -162,10 +162,11 @@ func TestToolLoop_ThinkingOnEveryTurnAndReasoningResent(t *testing.T) {
 }
 
 // reasoningKeys are the reasoning members an llmclient.Message can carry: every
-// json key besides the four plain chat members. Read from the struct so a new
+// json key besides the four plain chat members and the unserialized "-" (Parts,
+// sent as content by Message.MarshalJSON). Read from the struct so a new
 // member is covered by the role-isolation tests without an edit here.
 var reasoningKeys = func() []string {
-	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true, "-": true}
 	var keys []string
 	typ := reflect.TypeOf(llmclient.Message{})
 	for i := 0; i < typ.NumField(); i++ {
