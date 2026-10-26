@@ -156,6 +156,9 @@ type ProjectConfig struct {
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+	// SAST is the optional deterministic scanner block (Epic 50.0). nil means
+	// off: no scanner runs and no SAST block reaches a reviewer.
+	SAST *SASTConfig `yaml:"sast,omitempty"`
 	// AutoFix is the optional `--auto-fix` backend block (Sprint 17.0). nil means
 	// the config-derived pieces inherit their defaults; it never enables the flow
 	// on its own (validateAutoFixBackend gates that).
