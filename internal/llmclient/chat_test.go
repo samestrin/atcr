@@ -167,7 +167,8 @@ func TestMessage_ContentAndPartsMarshalErrors(t *testing.T) {
 }
 
 // Epic 36.0 T1: the parts array reaches the wire through Chat, and the other
-// messages in the same request keep their plain-string content.
+// messages in the same request keep their plain-string content. The image
+// needs SupportsVision since T3.
 func TestChat_PartsReachRequestBody(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +184,7 @@ func TestChat_PartsReachRequestBody(t *testing.T) {
 		{Role: "user", Parts: []ContentPart{TextPart("look"), ImageURLPart("data:image/png;base64,AAAA")}},
 	}
 	_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
-		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1", SupportsVision: true,
 	}, msgs, nil)
 	require.NoError(t, err)
 	assert.Equal(t, `{"model":"m1","messages":[`+
@@ -213,6 +214,78 @@ func TestChat_ContentAndPartsBothSetErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "message 1:")
 	assert.Nil(t, resp)
 	assert.Zero(t, calls.Load(), "no request may be sent")
+}
+
+// Epic 36.0 T3: an image sent to an invocation not declared SupportsVision is
+// refused with ErrVisionNotDeclared, and no request reaches the server.
+func TestChat_ImageWithoutVisionRefused(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	sys := "you verify UIs"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, []Message{
+		{Role: "system", Content: &sys},
+		{Role: "user", Parts: []ContentPart{TextPart("look"), ImageURLPart("data:image/png;base64,AAAA")}},
+	}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrVisionNotDeclared)
+	assert.Contains(t, err.Error(), "message 1:")
+	assert.Nil(t, resp)
+	assert.Zero(t, calls.Load(), "no request may be sent")
+}
+
+// Epic 36.0 T3: the vision refusal comes before key resolution, so an unset
+// key env var does not mask it.
+func TestChat_ImageWithoutVisionRefusedBeforeKey(t *testing.T) {
+	_, err := fastRetry(http.DefaultClient).Chat(context.Background(), Invocation{
+		BaseURL: "http://127.0.0.1:0", APIKeyEnv: "ATCR_T3_UNSET_KEY", Model: "m1",
+	}, []Message{{Role: "user", Parts: []ContentPart{ImageURLPart("https://example.test/a.png")}}}, nil)
+	assert.ErrorIs(t, err, ErrVisionNotDeclared)
+}
+
+// Epic 36.0 T3: with SupportsVision set, the image is sent in one request.
+func TestChat_ImageWithVisionSent(t *testing.T) {
+	var calls atomic.Int32
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1", SupportsVision: true,
+	}, []Message{{Role: "user", Parts: []ContentPart{TextPart("look"), ImageURLPart("data:image/png;base64,AAAA")}}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), calls.Load())
+	assert.Contains(t, string(gotBody), `{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}`)
+}
+
+// Epic 36.0 T3: text-only parts carry no image, so an undeclared invocation
+// still sends them.
+func TestChat_TextPartsWithoutVisionSent(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, []Message{{Role: "user", Parts: []ContentPart{TextPart("look")}}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), calls.Load())
 }
 
 // AC 01-01 Edge Case 1: empty/nil tools slice is omitted from the request.
