@@ -94,7 +94,7 @@ carries neither and is read as "not measured", never as a measured zero.
 
 > **The weighted-credit score is not wired into review yet, and its own constants are provisional and unmeasured.** `weighted_credit` is written to every record, but the trust priors reconcile consumes are still the plain `corroboration_rate`. The weighted rate sits on a different scale from that rate, and reconcile's exemption and demotion thresholds were calibrated against the old one — switching the input without re-deriving them would demote much of the panel. Both the isolated-finding weight and the minimum number of closed debt outcomes needed before a confirmation rate is trusted carry a dated note and a named re-measurement trigger in `internal/scorecard/trust.go`. Treat any weighted number as provisional until that measurement exists.
 
-> **The pair surface's two thresholds are provisional and unmeasured.** The sufficiency floor (`20` co-eligible cases) and the drop-candidate threshold (`0.05`) were set by analogy and by argument, not from a live store — there was none to measure when they were written. Both carry a dated note and a named re-measurement trigger in `internal/scorecard/pairtally.go`. Read a "drop candidate" verdict as a prompt to look, never as a measured finding, until that measurement exists.
+> **The pair surface's two thresholds are provisional and unmeasured.** The sufficiency floor (`20` co-eligible cases) and the drop-candidate threshold (`0.05`) were set by analogy and by argument, not from a live store — there was none to measure when they were written. Both carry a dated note and a named re-measurement trigger in `internal/scorecard/pairtally.go`. Read a "drop candidate" verdict as a prompt to look, never as a measured finding, until that measurement exists. Until epic 35.16.19 the tallies these thresholds gate were computed but unreachable — no surface rendered them. They are now readable on a live store through [`atcr personas list --pairs`](#atcr-personas-list---pairs); until era-marked pairs accumulate, that flag prints its empty-state line, which is the honest state of the store.
 
 **Conditional verification fields.** `findings_verified`, `findings_refuted`, and
 `survived_skeptic_rate` are included only when the run had a readable, well-formed
@@ -435,6 +435,89 @@ repaired in the store.
 > *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
 > so cherry-picked production runs cannot game it — see
 > [`docs/benchmark.md`](benchmark.md).
+
+### `atcr personas list --pairs`
+
+Render the pair surface: the cross-run disagreement tallies behind
+`pair_signals` / `pair_era`, folded by `scorecard.PairDisagreements`. Read-only.
+`--pairs` is mutually exclusive with `--scores` — each mode's `--json` is its
+own array, and both on one stdout would not parse.
+
+```bash
+atcr personas list --pairs
+# PAIR         CASES  RATE   MARKER
+# greta|pace   23     3.1%   DROP-CANDIDATE
+# bruce|dax    31     18.2%
+```
+
+Columns: `PAIR` (the canonical pair key — both members lower-cased and
+alphabetically joined with `|`), `CASES` (runs on which both members survived
+the trust filter chain — the pair's *opportunity* axis), `RATE` (the share of
+the pair's shared findings they split on, `disagreed / (agreed + disagreed)`,
+rendered as `XX.X%`), and `MARKER` (`DROP-CANDIDATE` when the pair is
+sufficient and its rate is at or below the drop-candidate threshold — see the
+provisional-thresholds note above; empty otherwise).
+
+A row renders only when the pair is **sufficient** — at least `minPairCases`
+(20) co-eligible cases AND at least 20 shared findings (the second axis is the
+scarcer one; a pair co-eligible on a hundred runs that connected on one finding
+is the most *independent* pair in the store, not a redundant one) — AND both
+members still resolve against the persona roster. A pair whose member was
+renamed or removed is omitted without error: its history stays in the store,
+and a row naming a lens the panel can no longer run is advice nobody can act
+on.
+
+When no sufficient pair exists the command prints its empty state instead:
+
+```
+No persona pair clears the floors in the scorecard store at <path>
+```
+
+`--json` prints the rows as a JSON array (`[]` when empty), one object per row:
+`key`, `a`, `b`, `cases`, `agreed`, `disagreed`, `disagreement_rate`,
+`drop_candidate` — the table's columns plus the rate's numerator and
+denominator. The empty-state line is a table-mode courtesy; with `--json`
+stdout is only the array.
+
+The read is best-effort: a missing or unreadable store yields the empty state,
+never an error. A partially corrupt month file is folded with the unreadable
+lines skipped, and losing a disagreement-bearing run can push a pair toward the
+drop-candidate side — the store's read contract, inherited by this surface.
+
+### `atcr personas list --scores --detail <name>`
+
+The per-record drill-down behind the `--scores` table's `N excluded` figure:
+one line per case the trust filter chain dropped for the named lens, with the
+reason label that dropped it.
+
+```bash
+atcr personas list --scores --detail bruce
+# RUN ID                                   REASON
+# 2026-06-14T10:00:00Z-abc123-1f2e3d4c     outcome-ineligible
+# 2026-06-15T09:30:00Z-def456-2a3b4c5d     consensus-not-strict
+```
+
+Columns: `RUN ID` and `REASON`, where REASON is always one of the excluding
+members of `scorecard.ScoreReasons()` — `outcome-ineligible` (the lens never
+got a fair attempt: a timeout, a truncated or unparseable response, a failed
+call), `consensus-not-strict` (the run's consensus level was not strict, so it
+never enters a corroboration rate), `superseded-era` (the record was computed
+under a `raised_denominator` definition older than — or unreadable to — the
+lens's newest), or `category-not-in-opportunity-set` (the lens raised nothing
+on a case outside its remit). The two *kept-and-annotated* labels
+(`no-recognized-category`, `not opportunity-scoped: no in-repo persona
+definition`) never appear here: this surface lists only records the chain
+dropped, so the line count equals the `CASES` cell's excluded figure. Lines are
+sorted by run id, then reason.
+
+`--detail` requires `--scores` (without it, usage error, exit `2`) and a
+non-empty name. The name is matched case-insensitively against the lens's
+scorecard history first and the persona roster second; a name on neither is a
+usage error (exit `2`). A known lens with nothing excluded prints
+`No excluded cases for <name>` rather than an empty table.
+
+`--json` prints the same rows as a JSON array (`[]` when empty), one object per
+row: `run_id`, `reason`.
 
 ### `scorecard.TrustPriors` (Go API)
 
