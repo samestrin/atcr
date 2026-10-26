@@ -1002,3 +1002,60 @@ func TestLoadProjectConfig_WebhookRejectsBadShape(t *testing.T) {
 		})
 	}
 }
+
+// Epic 36.0 T2: supports_vision decodes onto AgentConfig, defaults to false, and
+// is declared per agent like supports_function_calling — a fallback never takes
+// its primary's value.
+func TestRegistry_SupportsVisionDecodes(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  declared:
+    provider: p
+    model: m
+    supports_vision: true
+    fallback: falls-back
+  omitted:
+    provider: p
+    model: m
+  falls-back:
+    provider: p
+    model: m
+`))
+	require.NoError(t, err)
+	assert.True(t, reg.Agents["declared"].SupportsVision, "supports_vision: true parsed")
+	assert.False(t, reg.Agents["omitted"].SupportsVision, "an absent field defaults to false")
+	assert.False(t, reg.Agents["falls-back"].SupportsVision,
+		"supports_vision is declared per agent, never inherited by a fallback from its primary")
+}
+
+// A non-boolean supports_vision gets the same field-named error as the other
+// agent bool fields, not yaml's generic "cannot unmarshal".
+func TestRegistry_SupportsVisionBadType(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  myagent:
+    provider: p
+    model: m
+    supports_vision: "yes please"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "agent 'myagent': supports_vision must be a boolean")
+}
+
+// supports_vision is machine-local like response_format: whether a model
+// accepts image parts is a fact about the endpoint the consumer resolves, so a
+// community persona declaring it fails load.
+func TestValidateCommunityPersonaYAML_RejectsSupportsVision(t *testing.T) {
+	const y = "name: sample\nprovider: openrouter\nmodel: anthropic/claude-opus-4.8\nsupports_vision: true\n"
+	err := ValidateCommunityPersonaYAML("sample", []byte(y))
+	require.Error(t, err, "a published supports_vision declaration must be rejected")
+	assert.Contains(t, err.Error(), "supports_vision",
+		"the error must name the offending key so the persona author can remove it")
+	assert.Contains(t, err.Error(), "sample", "the error must name the persona")
+}
