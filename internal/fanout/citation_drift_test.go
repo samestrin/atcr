@@ -133,9 +133,6 @@ var citationScope = []struct {
 // own lines, and an unlisted file fails on any problem. Groups are kept apart
 // so parallel deletions merge cleanly. Once it is empty, delete it.
 var awaitingRepin = map[string]string{
-	// T2
-	"internal/payload/claims.go": "T2",
-
 	// T3
 	"internal/fanout/chunker.go": "T3",
 	"docs/payload-modes.md":      "T3",
