@@ -292,3 +292,29 @@ func TestPrepareReview_ThreatMap_RefusedOutsideGitRange(t *testing.T) {
 	_, err = PrepareReviewFromDiff(context.Background(), cfg, req, "diff --git a/x b/x\n")
 	assert.ErrorIs(t, err, ErrThreatMapNeedsRange)
 }
+
+// cancellingMapper cancels the run while it maps, as a Ctrl-C during the call
+// would, and returns the context error.
+type cancellingMapper struct{ cancel context.CancelFunc }
+
+func (m cancellingMapper) Map(ctx context.Context, _ []string) ([]string, error) {
+	m.cancel()
+	return nil, ctx.Err()
+}
+
+// An interrupt is not a mapper failure: recording it as one would make a later
+// resume review every file unscoped. The preparation aborts instead, before any
+// review directory is scaffolded.
+func TestPrepareReview_ThreatMap_InterruptAbortsInsteadOfFailingOpen(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := threatMapRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := reviewReq(repo, repo, base, head)
+	req.ThreatMapper = cancellingMapper{cancel: cancel}
+
+	_, err := PrepareReview(ctx, cfg, req)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NoDirExists(t, filepath.Join(repo, ".atcr", "reviews"), "nothing is scaffolded for an interrupted map")
+}

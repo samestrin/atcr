@@ -1733,7 +1733,10 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 	// counts against the budget and is never reported as a budget shed. The
 	// drops are recorded on their own (ThreatMapRecord.Dropped, status.json
 	// threat_map_dropped), apart from Truncation.FilesDropped.
-	record, keep := scope.resolve(ctx, reviewablePaths(built))
+	record, keep, err := scope.resolve(ctx, reviewablePaths(built))
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	if keep != nil {
 		dropped := map[string]bool{}
 		for mode, entries := range built {

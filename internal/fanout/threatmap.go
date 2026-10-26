@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -37,21 +38,28 @@ type threatScope struct {
 // set to trim with (nil = keep every file). A resume reuses the recorded keep
 // set and never calls the mapper. A mapper error is logged and recorded, and
 // every file is kept.
-func (s threatScope) resolve(ctx context.Context, paths []string) (*payload.ThreatMapRecord, map[string]bool) {
+//
+// The one error returned is an interrupt: a run cancelled while it maps is not
+// a failed mapper, and recording it as one would make a resume review every
+// file unscoped, so the preparation aborts instead.
+func (s threatScope) resolve(ctx context.Context, paths []string) (*payload.ThreatMapRecord, map[string]bool, error) {
 	if s.recorded != nil {
-		return &payload.ThreatMapRecord{Keep: s.recorded.Keep, Failed: s.recorded.Failed}, keepSet(s.recorded.Keep)
+		return &payload.ThreatMapRecord{Keep: s.recorded.Keep, Failed: s.recorded.Failed}, keepSet(s.recorded.Keep), nil
 	}
 	if s.mapper == nil || len(paths) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	keep, err := s.mapper.Map(ctx, paths)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, fmt.Errorf("threat map interrupted: %w", ctxErr)
+		}
 		log.FromContext(ctx).Warn("threat map failed; reviewing every changed file", "files", len(paths), "err", err)
-		return &payload.ThreatMapRecord{Failed: err.Error()}, nil
+		return &payload.ThreatMapRecord{Failed: err.Error()}, nil, nil
 	}
 	kept := append([]string(nil), keep...)
 	sort.Strings(kept)
-	return &payload.ThreatMapRecord{Keep: kept}, keepSet(kept)
+	return &payload.ThreatMapRecord{Keep: kept}, keepSet(kept), nil
 }
 
 func keepSet(paths []string) map[string]bool {

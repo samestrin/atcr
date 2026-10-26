@@ -71,7 +71,7 @@ func threatMapProvider(t *testing.T, mapperReply string) (*httptest.Server, func
 }
 
 // threatMapConfig writes a registry with reviewers greta and kai plus the
-// mapper agent scout (no persona key, so the embedded threat_mapper), and a
+// mapper agent scout on the embedded threat_mapper persona, and a
 // project config whose roster is the two reviewers. projectExtra is appended
 // to .atcr/config.yaml.
 func threatMapConfig(t *testing.T, srvURL, projectExtra string) {
@@ -83,7 +83,7 @@ func threatMapConfig(t *testing.T, srvURL, projectExtra string) {
 	reg := "providers:\n  p:\n    api_key_env: " + testReviewKeyEnv + "\n    base_url: " + srvURL + "\nagents:\n" +
 		"  greta:\n    provider: p\n    model: m-greta\n    persona: greta\n" +
 		"  kai:\n    provider: p\n    model: m-kai\n    persona: kai\n" +
-		"  scout:\n    provider: p\n    model: m-scout\n"
+		"  scout:\n    provider: p\n    model: m-scout\n    persona: threat_mapper\n"
 	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(reg), 0o644))
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [greta, kai]\n"+projectExtra), 0o644))
