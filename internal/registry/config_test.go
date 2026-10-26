@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -822,4 +824,181 @@ func TestRegistryExamples_BackwardCompat(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, reg.Agents["bruce"].Language, "agent without a language key loads with nil Language")
 	assert.Nil(t, reg.Agents["greta"].Language, "agent without a language key loads with nil Language")
+}
+
+// webhookProject renders a project config whose webhook block is body,
+// indented under `webhook:`, with checkout standing in for the one allowlisted
+// repository's local path.
+func webhookProject(t *testing.T, body string) string {
+	t.Helper()
+	return writeProject(t, "agents: [bruce]\nwebhook:\n"+body)
+}
+
+// validWebhookBody is a complete webhook block; each rejection test below
+// changes exactly one line of it so the error is the one under test.
+func validWebhookBody(checkout string) string {
+	return "  listen: 127.0.0.1:8787\n" +
+		"  max_body_bytes: 65536\n" +
+		"  job_timeout: 20m\n" +
+		"  github_token_env: ATCR_GITHUB_TOKEN\n" +
+		"  repos:\n" +
+		"    samestrin/atcr: " + checkout + "\n" +
+		"  slack:\n" +
+		"    bot_token_env: SLACK_BOT_TOKEN\n" +
+		"    signing_secret_env: SLACK_SIGNING_SECRET\n" +
+		"    workspaces: [T0001]\n" +
+		"    channels: [C0001]\n" +
+		"    users: [U0001]\n"
+}
+
+// Epic 49.0 T1: a complete webhook block loads, and every field reaches the
+// struct the daemon reads.
+func TestLoadProjectConfig_WebhookBlockLoads(t *testing.T) {
+	checkout := t.TempDir()
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(checkout)))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Webhook)
+
+	w := cfg.Webhook
+	assert.Equal(t, "127.0.0.1:8787", w.ListenAddress())
+	assert.Equal(t, int64(65536), w.BodyLimit())
+	assert.Equal(t, 20*time.Minute, w.JobTimeoutDuration())
+	assert.Equal(t, "ATCR_GITHUB_TOKEN", w.GitHubTokenEnv)
+	assert.Equal(t, map[string]string{"samestrin/atcr": checkout}, w.Repos)
+	require.NotNil(t, w.Slack)
+	assert.Equal(t, "SLACK_BOT_TOKEN", w.Slack.BotTokenEnv)
+	assert.Equal(t, "SLACK_SIGNING_SECRET", w.Slack.SigningSecretEnv)
+	assert.Equal(t, []string{"T0001"}, w.Slack.Workspaces)
+	assert.Equal(t, []string{"C0001"}, w.Slack.Channels)
+	assert.Equal(t, []string{"U0001"}, w.Slack.Users)
+}
+
+// Epic 49.0 T1: the unset listen address, body cap and job timeout fall back
+// to the loopback default and the built-in limits.
+func TestWebhookConfig_Defaults(t *testing.T) {
+	checkout := t.TempDir()
+	cfg, err := LoadProjectConfig(webhookProject(t,
+		"  repos:\n    samestrin/atcr: "+checkout+"\n"))
+	require.NoError(t, err)
+	w := cfg.Webhook
+	require.NotNil(t, w)
+	assert.Equal(t, DefaultWebhookListen, w.ListenAddress())
+	assert.True(t, strings.HasPrefix(w.ListenAddress(), "127.0.0.1:"), "default must bind loopback")
+	assert.Equal(t, DefaultWebhookMaxBodyBytes, w.BodyLimit())
+	assert.Equal(t, DefaultWebhookJobTimeout, w.JobTimeoutDuration())
+
+	// A nil block is valid: the daemon is simply unconfigured.
+	var none *WebhookConfig
+	assert.NoError(t, none.Validate())
+}
+
+// Epic 49.0 T1: a listen address that is not loopback is rejected, so the
+// daemon can never be configured to accept webhooks from the network.
+func TestLoadProjectConfig_WebhookRejectsNonLoopbackListen(t *testing.T) {
+	for _, listen := range []string{"0.0.0.0:8787", ":8787", "192.168.1.10:8787", "[::]:8787", "example.com:8787"} {
+		t.Run(listen, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir()), "127.0.0.1:8787", `"`+listen+`"`, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "webhook.listen")
+			assert.Contains(t, err.Error(), "loopback")
+		})
+	}
+	for _, listen := range []string{"127.0.0.1:9000", "127.0.0.2:9000", "[::1]:9000", "localhost:9000"} {
+		t.Run("ok "+listen, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir()), "127.0.0.1:8787", `"`+listen+`"`, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.NoError(t, err)
+		})
+	}
+	for _, listen := range []string{"127.0.0.1", "127.0.0.1:http", "127.0.0.1:70000"} {
+		t.Run("bad port "+listen, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir()), "127.0.0.1:8787", `"`+listen+`"`, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "webhook.listen")
+		})
+	}
+}
+
+// Epic 49.0 T1: each credential field takes an environment-variable NAME; a
+// value that is not one (a pasted token, a $-prefixed name, a blank) is
+// rejected so a secret can never sit in the config file.
+func TestLoadProjectConfig_WebhookRejectsInvalidEnvVarName(t *testing.T) {
+	cases := []struct{ field, from, to string }{
+		{"webhook.github_token_env", "ATCR_GITHUB_TOKEN", "ghp_abc-123"},
+		{"webhook.github_token_env", "ATCR_GITHUB_TOKEN", "$GITHUB_TOKEN"},
+		{"webhook.slack.bot_token_env", "SLACK_BOT_TOKEN", "xoxb-1234-5678"},
+		{"webhook.slack.signing_secret_env", "SLACK_SIGNING_SECRET", "9SECRET"},
+		{"webhook.slack.signing_secret_env", "SLACK_SIGNING_SECRET", `""`},
+	}
+	for _, c := range cases {
+		t.Run(c.field+"="+c.to, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir()), c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.field)
+			assert.Contains(t, err.Error(), "environment variable name")
+		})
+	}
+}
+
+// Epic 49.0 T1: an empty entry in any allowlist is rejected rather than
+// silently matching nothing (or, worse, an empty id from a malformed payload).
+func TestLoadProjectConfig_WebhookRejectsEmptyAllowlistEntry(t *testing.T) {
+	cases := []struct{ field, from, to string }{
+		{"webhook.slack.workspaces", "[T0001]", `[T0001, ""]`},
+		{"webhook.slack.channels", "[C0001]", `["  "]`},
+		{"webhook.slack.users", "[U0001]", `[U0001, ""]`},
+		{"webhook.repos", "    samestrin/atcr:", `    "":`},
+	}
+	for _, c := range cases {
+		t.Run(c.field, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir()), c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.field)
+			assert.Contains(t, err.Error(), "empty")
+		})
+	}
+
+	t.Run("webhook.repos path", func(t *testing.T) {
+		_, err := LoadProjectConfig(webhookProject(t, "  repos:\n    samestrin/atcr: \"\"\n"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "webhook.repos")
+		assert.Contains(t, err.Error(), "empty")
+	})
+}
+
+// Epic 49.0 T1: the remaining shape checks — an allowlist that is missing
+// altogether, a repo key that is not owner/repo, a relative checkout path,
+// and out-of-range limits — each fail at load.
+func TestLoadProjectConfig_WebhookRejectsBadShape(t *testing.T) {
+	checkout := t.TempDir()
+	cases := []struct {
+		name, from, to, want string
+	}{
+		{"no repos", "  repos:\n    samestrin/atcr: " + checkout + "\n", "", "webhook.repos"},
+		{"no workspaces", "    workspaces: [T0001]\n", "", "webhook.slack.workspaces"},
+		{"no channels", "    channels: [C0001]\n", "", "webhook.slack.channels"},
+		{"no users", "    users: [U0001]\n", "", "webhook.slack.users"},
+		{"missing bot token env", "    bot_token_env: SLACK_BOT_TOKEN\n", "", "webhook.slack.bot_token_env"},
+		{"missing signing secret env", "    signing_secret_env: SLACK_SIGNING_SECRET\n", "", "webhook.slack.signing_secret_env"},
+		{"repo key not owner/repo", "samestrin/atcr:", "atcr:", "owner/repo"},
+		{"repo key with dot-dot", "samestrin/atcr:", "samestrin/..:", "owner/repo"},
+		{"relative checkout", "samestrin/atcr: " + checkout, "samestrin/atcr: src/atcr", "absolute"},
+		{"zero body cap", "max_body_bytes: 65536", "max_body_bytes: 0", "webhook.max_body_bytes"},
+		{"bad timeout", "job_timeout: 20m", "job_timeout: soon", "webhook.job_timeout"},
+		{"negative timeout", "job_timeout: 20m", "job_timeout: -1m", "webhook.job_timeout"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := validWebhookBody(checkout)
+			require.Contains(t, body, c.from)
+			body = strings.Replace(body, c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
 }

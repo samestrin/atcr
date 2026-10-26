@@ -58,43 +58,8 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 	}
 
 	// Levels 2-3: <persona>.md in project then registry dir.
-	for _, dir := range []string{dirs.Project, dirs.Registry} {
-		if dir == "" {
-			continue
-		}
-		// A namespaced persona (security/owasp) traverses intermediate directories
-		// under dir. readNonEmpty refuses a symlinked LEAF, but the OS would still
-		// follow a symlinked intermediate component, so a planted namespace symlink
-		// could read outside dir. Refuse a symlinked intermediate (treated as "not
-		// present", so resolution falls through) to keep the whole path within dir.
-		if bad, err := hasSymlinkedParent(dir, persona); err != nil {
-			return ResolvedPersona{}, err
-		} else if bad {
-			continue
-		}
-		path := filepath.Join(dir, persona+".md")
-		text, ok, err := readNonEmpty(path)
-		if err != nil {
-			return ResolvedPersona{}, err
-		}
-		if ok {
-			// The Registry (pinned-community) tier is untrusted fetched content:
-			// defensively enforce the C3 guardrails on a resolved <persona>.md so a
-			// fetched (or hand-dropped) oversized or {{ }}-bearing custom prompt is
-			// rejected even if it bypassed the install-time check. Scope note: this
-			// guards the per-persona custom prompt only. The shared _base.md
-			// structural template (level 4 below) is intentionally NOT metachar-
-			// restricted — a base template must contain {{.Payload}} to function —
-			// and cannot be fetched anyway (the name "_base" fails validation on the
-			// install/fetch path). The trusted Project tier is likewise exempt (it
-			// may use template variables exactly like the embedded built-ins).
-			if dir == dirs.Registry {
-				if err := validateCommunityPrompt(text); err != nil {
-					return ResolvedPersona{}, fmt.Errorf("community persona %q at %s: %w", persona, path, err)
-				}
-			}
-			return ResolvedPersona{Text: text, Source: path}, nil
-		}
+	if p, ok, err := resolvePersonaFile(persona, dirs); err != nil || ok {
+		return p, err
 	}
 
 	// An explicit persona ref (distinct from the agent name) must resolve to a
@@ -128,6 +93,63 @@ func ResolvePersona(agentName, persona string, taskMessage *string, dirs Persona
 		return ResolvedPersona{}, fmt.Errorf("internal error: no persona found for agent '%s' — embedded default missing: %w", agentName, err)
 	}
 	return ResolvedPersona{Text: base, Source: "embedded:_base"}, nil
+}
+
+// ResolvePersonaFile resolves only levels 2-3 of the chain: <persona>.md in the
+// project dir, then the registry dir, with the same name, symlink and
+// community-prompt checks as ResolvePersona. ok is false when neither dir has
+// the file; it never falls through to _base.md or an embedded default, so a
+// caller with its own default (the threat mapper, Epic 37.0) cannot be handed
+// the reviewer base template.
+func ResolvePersonaFile(persona string, dirs PersonaDirs) (p ResolvedPersona, ok bool, err error) {
+	if err := validateName("persona", persona); err != nil {
+		return ResolvedPersona{}, false, err
+	}
+	return resolvePersonaFile(persona, dirs)
+}
+
+// resolvePersonaFile is levels 2-3 of ResolvePersona for an already-validated
+// persona name.
+func resolvePersonaFile(persona string, dirs PersonaDirs) (ResolvedPersona, bool, error) {
+	for _, dir := range []string{dirs.Project, dirs.Registry} {
+		if dir == "" {
+			continue
+		}
+		// A namespaced persona (security/owasp) traverses intermediate directories
+		// under dir. readNonEmpty refuses a symlinked LEAF, but the OS would still
+		// follow a symlinked intermediate component, so a planted namespace symlink
+		// could read outside dir. Refuse a symlinked intermediate (treated as "not
+		// present", so resolution falls through) to keep the whole path within dir.
+		if bad, err := hasSymlinkedParent(dir, persona); err != nil {
+			return ResolvedPersona{}, false, err
+		} else if bad {
+			continue
+		}
+		path := filepath.Join(dir, persona+".md")
+		text, ok, err := readNonEmpty(path)
+		if err != nil {
+			return ResolvedPersona{}, false, err
+		}
+		if ok {
+			// The Registry (pinned-community) tier is untrusted fetched content:
+			// defensively enforce the C3 guardrails on a resolved <persona>.md so a
+			// fetched (or hand-dropped) oversized or {{ }}-bearing custom prompt is
+			// rejected even if it bypassed the install-time check. Scope note: this
+			// guards the per-persona custom prompt only. The shared _base.md
+			// structural template (level 4 below) is intentionally NOT metachar-
+			// restricted — a base template must contain {{.Payload}} to function —
+			// and cannot be fetched anyway (the name "_base" fails validation on the
+			// install/fetch path). The trusted Project tier is likewise exempt (it
+			// may use template variables exactly like the embedded built-ins).
+			if dir == dirs.Registry {
+				if err := validateCommunityPrompt(text); err != nil {
+					return ResolvedPersona{}, false, fmt.Errorf("community persona %q at %s: %w", persona, path, err)
+				}
+			}
+			return ResolvedPersona{Text: text, Source: path}, true, nil
+		}
+	}
+	return ResolvedPersona{}, false, nil
 }
 
 // allowedPersonaFields is the exact set of PayloadContext fields a fetched

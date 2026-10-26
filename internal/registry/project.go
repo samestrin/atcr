@@ -157,6 +157,9 @@ type ProjectConfig struct {
 	// the config-derived pieces inherit their defaults; it never enables the flow
 	// on its own (validateAutoFixBackend gates that).
 	AutoFix *AutoFixConfig `yaml:"auto_fix,omitempty"`
+	// Webhook is the optional `atcr webhook` daemon block (Epic 49.0). nil means
+	// the daemon is unconfigured.
+	Webhook *WebhookConfig `yaml:"webhook,omitempty"`
 	// Telemetry persists the opt-out state for the anonymous usage ping (Sprint
 	// 28.0). A pointer so an explicit false survives default application (the
 	// Sandbox/AutoFix/MaxParallel idiom); nil means "unset", treated as the
@@ -369,6 +372,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	if err := cfg.AutoFix.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
+	if err := cfg.Webhook.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 

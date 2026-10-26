@@ -1627,3 +1627,95 @@ func TestJSONRoundTripString_MatchesEncodingJSON(t *testing.T) {
 			"jsonRoundTripString must reproduce encoding/json exactly for %q", s)
 	}
 }
+
+// --- Review-complete observer (epic 41.0 T4) --------------------------------
+
+// recordingReviewObserver records every OnReviewComplete call.
+type recordingReviewObserver struct {
+	mu      sync.Mutex
+	reports []hookobs.ReviewReport
+}
+
+func (o *recordingReviewObserver) OnReviewComplete(_ context.Context, rep hookobs.ReviewReport) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.reports = append(o.reports, rep)
+}
+
+func (o *recordingReviewObserver) calls() []hookobs.ReviewReport {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]hookobs.ReviewReport(nil), o.reports...)
+}
+
+// runDetachedReview starts an MCP review with ctx and waits for its detached
+// fan-out to finish, so the observer has had its chance to fire.
+func runDetachedReview(t *testing.T, ctx context.Context, completer fanout.Completer) (ReviewResult, string, string) {
+	t.Helper()
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	_, eng, err := buildServer(root, completer, nil)
+	require.NoError(t, err)
+
+	_, res, err := eng.handleReview(ctx, nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+	eng.bg.Wait()
+	return res, base, head
+}
+
+// TestHandleReview_FiresReviewObserverOnceOnSuccess: a registered ctx observer
+// sees exactly one call after a successful review, carrying the review's
+// identity, range and fan-out counts.
+func TestHandleReview_FiresReviewObserverOnceOnSuccess(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	ctx := hookobs.WithReviewObserver(context.Background(), obs, io.Discard)
+
+	res, base, head := runDetachedReview(t, ctx, fakeCompleter{resp: validFindings})
+
+	got := obs.calls()
+	require.Len(t, got, 1, "a successful MCP review must fire the observer exactly once")
+	rep := got[0]
+	assert.Equal(t, res.ReviewID, rep.RunID)
+	assert.Equal(t, res.ReviewPath, rep.ReviewDir)
+	assert.Equal(t, base, rep.Base)
+	assert.Equal(t, head, rep.Head)
+	assert.Zero(t, rep.PRNumber, "an MCP review is not run for a pull request")
+	assert.False(t, rep.Partial)
+	assert.Equal(t, 2, rep.AgentsTotal)
+	assert.Equal(t, 2, rep.AgentsSucceeded)
+	assert.Zero(t, rep.AgentsFailed)
+	assert.False(t, rep.Reconciled, "the MCP review handler does not reconcile, so findings are not counted")
+}
+
+// TestHandleReview_DoesNotFireReviewObserverOnFailure: a review whose agents all
+// fail is not a completed review, so the observer is not called.
+func TestHandleReview_DoesNotFireReviewObserverOnFailure(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	ctx := hookobs.WithReviewObserver(context.Background(), obs, io.Discard)
+
+	runDetachedReview(t, ctx, fakeCompleter{err: errors.New("provider down")})
+
+	assert.Empty(t, obs.calls(), "a failed MCP review must not fire the observer")
+}
+
+type panickingReviewObserver struct{}
+
+func (panickingReviewObserver) OnReviewComplete(context.Context, hookobs.ReviewReport) {
+	panic("observer boom")
+}
+
+// TestHandleReview_PanickingReviewObserverIsContained: a broken hook is
+// reported on the writer it was registered with and leaves the review's
+// on-disk outcome untouched.
+func TestHandleReview_PanickingReviewObserverIsContained(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := hookobs.WithReviewObserver(context.Background(), panickingReviewObserver{}, &stderr)
+
+	res, _, _ := runDetachedReview(t, ctx, fakeCompleter{resp: validFindings})
+
+	assert.Contains(t, stderr.String(), "review-complete hook panicked")
+	assert.FileExists(t, filepath.Join(res.ReviewPath, "sources", "pool", "summary.json"))
+}

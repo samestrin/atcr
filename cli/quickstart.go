@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/samestrin/atcr/internal/pathutil"
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/quickstart"
 	"github.com/samestrin/atcr/internal/registry"
@@ -370,17 +371,7 @@ func writerIsTerminal(w io.Writer) bool {
 // expandHome replaces a leading `~` or `~/` with the user's home directory.
 // It returns an error if the home directory cannot be determined.
 func expandHome(path string) (string, error) {
-	if path == "~" {
-		return os.UserHomeDir()
-	}
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, path[2:]), nil
-	}
-	return path, nil
+	return pathutil.ExpandHome(path, os.UserHomeDir)
 }
 
 // appendExport appends `export ENV='key'` to the named shell profile, expanding
