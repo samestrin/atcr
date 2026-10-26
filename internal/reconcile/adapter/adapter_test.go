@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"encoding/json"
 	"testing"
 
 	recon "github.com/samestrin/atcr/internal/reconcile"
@@ -143,4 +144,29 @@ func TestJSONFindings_LivePathPreservesVerificationIdentity(t *testing.T) {
 	jsonFindings := res.JSONFindings()
 	require.Len(t, jsonFindings, 1)
 	require.Same(t, verif, jsonFindings[0].Verification)
+}
+
+// TestToJSONFinding_StampsSiblingLocation verifies the Epic 35.16.15 routing
+// marker rides onto JSONFinding only when set: an unmarked finding serializes
+// byte-identically to before, a marked one carries sibling_location.
+func TestToJSONFinding_StampsSiblingLocation(t *testing.T) {
+	rf := reconcile.Finding{Severity: "HIGH", File: "a.go", Line: 1, Reviewers: []string{"greta"}}
+
+	plain, err := json.Marshal(ToJSONFinding(rf, stream.Finding{}))
+	require.NoError(t, err)
+	assert.NotContains(t, string(plain), "sibling_location")
+
+	marked, err := json.Marshal(ToJSONFinding(rf, stream.Finding{SiblingLocation: "b.go:7"}))
+	require.NoError(t, err)
+	assert.Contains(t, string(marked), `"sibling_location":"b.go:7"`)
+
+	// The marker is the only difference.
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(marked, &m))
+	delete(m, "sibling_location")
+	stripped, _ := json.Marshal(m)
+	var p map[string]any
+	require.NoError(t, json.Unmarshal(plain, &p))
+	want, _ := json.Marshal(p)
+	assert.JSONEq(t, string(want), string(stripped))
 }
