@@ -61,7 +61,28 @@ var newTier4Index = func(root string, paths []string) tier4Resolver {
 // root. It names the sibling, not File, because File may well be valid: the
 // warning says which of the finding's two locations was not trusted.
 func siblingNotFoundWarning(sibling string) string {
-	return "sibling file not found: " + sibling
+	return siblingNotFoundPrefix + sibling
+}
+
+// siblingNotFoundPrefix opens every siblingNotFoundWarning. AnchoredPathWarning
+// splits on it, so it lives in one place.
+const siblingNotFoundPrefix = "sibling file not found: "
+
+// AnchoredPathWarning returns the part of a PathWarning that is about the
+// finding's anchored File, dropping the sibling-not-found warning
+// validateSiblingLocation may have appended. A bad sibling only clears the
+// cross-branch marker; File:Line still stands, so consumers that read a
+// non-empty PathWarning as "hallucinated file" (the local debt persistence
+// bridge) must key off this instead of the raw field. A warning about File
+// itself is returned unchanged, whether or not a sibling warning follows it.
+func AnchoredPathWarning(warning string) string {
+	if strings.HasPrefix(warning, siblingNotFoundPrefix) {
+		return ""
+	}
+	if i := strings.Index(warning, "; "+siblingNotFoundPrefix); i >= 0 {
+		return warning[:i]
+	}
+	return warning
 }
 
 // validateSiblingLocation runs a marked finding's sibling file through the same
