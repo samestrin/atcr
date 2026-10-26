@@ -158,7 +158,7 @@ func confine(realRoot, uri string) (string, bool) {
 		return "", false // includes every file:// URI: always absolute
 	}
 	p := u.Path
-	if p == "" || strings.ContainsAny(p, "\\\x00") || path.IsAbs(p) || filepath.IsAbs(p) {
+	if p == "" || strings.Contains(p, `\`) || path.IsAbs(p) || filepath.IsAbs(p) {
 		return "", false
 	}
 	for _, seg := range strings.Split(p, "/") {
