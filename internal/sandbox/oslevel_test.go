@@ -2116,12 +2116,12 @@ func withCapSupport(b *OSLevelBackend, support osLevelCapSupport) *OSLevelBacken
 }
 
 // preflightWithLogs runs Preflight with a captured logger.
-func preflightWithLogs(t *testing.T, b *OSLevelBackend) (error, string) {
+func preflightWithLogs(t *testing.T, b *OSLevelBackend) (string, error) {
 	t.Helper()
 	var buf bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
 	err := b.Preflight(ctx)
-	return err, buf.String()
+	return buf.String(), err
 }
 
 func TestOSLevelBackend_Preflight_RefusesAnOperatorSetCapTheHostCannotEnforce(t *testing.T) {
@@ -2185,7 +2185,7 @@ func TestOSLevelBackend_Preflight_AnUnenforceableDefaultOnlyWarns(t *testing.T) 
 	b := withCapSupport(newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody()),
 		osLevelCapSupport{memoryGap: "no memory rlimit here", procsGap: "no pids.max here"})
 
-	err, logs := preflightWithLogs(t, b)
+	logs, err := preflightWithLogs(t, b)
 	require.NoError(t, err, "logs: %s", logs)
 	assert.NotEmpty(t, b.pinnedTool, "a warn-only preflight still succeeds")
 	for _, want := range []string{"sandbox.memory", "no memory rlimit here", "sandbox.pids_limit", "no pids.max here"} {
@@ -2203,7 +2203,7 @@ func TestOSLevelBackend_Preflight_WarnsForADefaultWhileEnforcingTheOperatorsCap(
 		cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = 1<<30, true
 	}), osLevelCapSupport{procsGap: "no pids.max here"})
 
-	err, logs := preflightWithLogs(t, b)
+	logs, err := preflightWithLogs(t, b)
 	require.NoError(t, err, "logs: %s", logs)
 	assert.Equal(t, 1, strings.Count(logs, "cap=sandbox."), logs)
 	assert.Contains(t, logs, "cap=sandbox.pids_limit")
@@ -2216,7 +2216,7 @@ func TestOSLevelBackend_Preflight_EnforceableCapsNeitherRefuseNorWarn(t *testing
 		cfg.MaxProcs, cfg.MaxProcsSet = 64, true
 	}), osLevelCapSupport{})
 
-	err, logs := preflightWithLogs(t, b)
+	logs, err := preflightWithLogs(t, b)
 	require.NoError(t, err, "logs: %s", logs)
 	assert.NotContains(t, logs, "cap=sandbox.")
 }
