@@ -14,7 +14,7 @@ import (
 
 // poolLossless has every field v1 damages: pipes, a quote, and a multi-line
 // EVIDENCE.
-var poolLossless = Finding{Severity: "HIGH", File: "flags.go", Line: 7, Problem: `mode "x | y"`, Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\n    l2", Reviewer: "greta"}
+var poolLossless = Finding{Severity: "HIGH", File: "flags.go", Line: 7, Problem: `mode "x | y"`, Fix: "a | b", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "l1\n    l2", Reviewer: "greta"}
 
 func v2Of(t *testing.T, findings []Finding) string {
 	t.Helper()
