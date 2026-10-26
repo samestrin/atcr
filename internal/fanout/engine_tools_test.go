@@ -28,6 +28,7 @@ type chatTurn struct {
 	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
 	truncated   bool                   // final content turn hit finish_reason=length (Epic 19.5)
 	reasoning   string                 // reasoning_content the turn carries, replayed on later turns
+	usage       llmclient.UsageData    // provider-reported tokens; carried on errored turns too (Epic 35.26)
 }
 
 // scriptedChat implements both Completer (single-shot) and ChatCompleter
@@ -94,7 +95,7 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 	if turn.err != nil {
 		// Mirror the real *Client.Chat contract: an errored turn still surfaces the
 		// per-attempt telemetry for any wire attempt it made (Epic 4.11).
-		return &llmclient.ChatResponse{CallRecords: turn.callRecords}, turn.err
+		return &llmclient.ChatResponse{CallRecords: turn.callRecords, Usage: turn.usage}, turn.err
 	}
 	msg := llmclient.Message{Role: "assistant", ToolCalls: turn.toolCalls}
 	if turn.reasoning != "" {
@@ -111,7 +112,7 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 			fr = "length"
 		}
 	}
-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated}, nil
+	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated, Usage: turn.usage}, nil
 }
 
 // assertToolCallsAnswered returns an error when any assistant tool_call lacks a
