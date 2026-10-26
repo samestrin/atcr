@@ -107,6 +107,9 @@ type communityPersonaFile struct {
 // replay_reasoning follows it too: whether an endpoint tolerates a replayed
 // reasoning member is a fact about the endpoint the consumer resolves.
 //
+// supports_vision follows it too: whether an endpoint accepts image content
+// parts is a fact about the endpoint the consumer resolves.
+//
 // response_format is another: its own doc (config.go's ResponseFormat) defines
 // it as a claim about the endpoint the CONSUMER resolves — "this agent's model
 // honors the OpenAI-compatible response_format request field". A published
@@ -131,6 +134,11 @@ func rejectMachineLocalFields(name string, cfg AgentConfig) error {
 	if cfg.ResponseFormat != "" {
 		errs = append(errs, fmt.Errorf("community persona %q must not declare response_format: "+
 			"whether a model honors the response_format request field is specific to the "+
+			"endpoint each consumer resolves, so each consumer declares it on their own agents", name))
+	}
+	if cfg.SupportsVision {
+		errs = append(errs, fmt.Errorf("community persona %q must not declare supports_vision: "+
+			"whether a model accepts image content parts is specific to the "+
 			"endpoint each consumer resolves, so each consumer declares it on their own agents", name))
 	}
 	for _, f := range []struct{ key, value string }{
