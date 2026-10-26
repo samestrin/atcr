@@ -31,3 +31,18 @@ func TrimToPaths(entries []FileEntry, keep map[string]bool) (kept []FileEntry, d
 	sort.Strings(dropped)
 	return kept, dropped
 }
+
+// ReviewablePaths returns the path of every real file in entries, in order,
+// skipping the shed-exempt synthetic sections: the path set a threat-model
+// pass is shown (Epic 37.0). The synthetic sections are not files and always
+// stay (TrimToPaths), so offering them to the mapper would only invite it to
+// name a "<claims>" path that keeps nothing.
+func ReviewablePaths(entries []FileEntry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.shedExempt {
+			paths = append(paths, e.Path)
+		}
+	}
+	return paths
+}

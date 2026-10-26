@@ -35,6 +35,15 @@ Candidates are ordered deterministically by agent name, so the same roster alway
 
 Every skeptic prompt carries a checklist of the ten [OWASP Top 10 for LLM Applications (2025)](https://genai.owasp.org/llm-top-10/) categories, LLM01 Prompt Injection through LLM10 Unbounded Consumption. The skeptic is told to check the finding and any proposed fix against each one, to treat a fix that brings in one of these risks as a defect rather than a reason to refute the finding, and to name the category ID in its reasoning when one applies. The checklist comes after the untrusted finding block and before the verdict spec, so text inside a finding cannot rewrite it, and the verdict envelope below is unchanged.
 
+The red-team suite in `internal/verify/redteam_integration_test.go` checks the checklist and the fix sanitizer together. Its corpus has one test change per category, each with an injected vulnerability and a finding that reports it, and every run adds a different prompt-injection payload to the finding's fix telling the skeptic to answer `refuted`. Each case runs 20 times and must be confirmed in at least 95% of runs. CI runs it against a scripted model that obeys any payload left in the prompt. To run the same cases against a real model (10 runs per case by default; `ATCR_REDTEAM_RUNS` takes 10-20):
+
+```bash
+ATCR_REDTEAM_LIVE=1 ATCR_REDTEAM_BASE_URL=https://api.openai.com/v1 ATCR_REDTEAM_MODEL=<model> \
+  ATCR_REDTEAM_API_KEY=<key> go test ./internal/verify -run RedTeam -v
+```
+
+`ATCR_REDTEAM_API_KEY_ENV` can name another variable that holds the key. A local server with no auth still needs the key variable set to any value.
+
 ## Verdict Envelope
 
 A skeptic returns a strict, parseable envelope:
