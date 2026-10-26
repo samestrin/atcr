@@ -3,17 +3,21 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,7 +69,14 @@ import (
 // exec — is OUR bug, and fails.
 func linuxIntegrationBackend(t *testing.T) *OSLevelBackend {
 	t.Helper()
-	b := NewOSLevelBackend(DefaultOSLevelConfig())
+	return linuxIntegrationBackendWith(t, DefaultOSLevelConfig())
+}
+
+// linuxIntegrationBackendWith is linuxIntegrationBackend for a backend with
+// its own caps (epic 35.24 T5); the host-capability guard is the same.
+func linuxIntegrationBackendWith(t *testing.T, cfg OSLevelConfig) *OSLevelBackend {
+	t.Helper()
+	b := NewOSLevelBackend(cfg)
 	if _, err := b.resolveToolPath(); err != nil {
 		skipOrFail(t, "bwrap is not usable on this host: %v", err)
 		return nil
@@ -757,4 +768,196 @@ func TestIntegration_OSLevelLinux_EnvironmentIsScrubbed(t *testing.T) {
 		"the operator's environment leaked into the sandbox — containment breach; output: %s", res.Output)
 	assert.NotContains(t, res.Output, "ATCR_ENV_LEAK_CANARY",
 		"the canary NAME reached the sandbox — the env was inherited, not scrubbed; output: %s", res.Output)
+}
+
+// Epic 35.24 T5 — the resource caps, proven against the real bwrap and a real
+// allocation and fork, not against a fake tool. A cap that is written but not
+// enforced reads as protection and is not, so each case asserts the workload
+// was stopped, not that a limit was configured.
+
+// resourceProbeSource is the workload the cap tests run inside the sandbox: a
+// static binary, because the shell has no allocation that is both deterministic
+// and independent of which interpreter the host ships.
+const resourceProbeSource = `package main
+
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"strconv"
+)
+
+// Usage: probe <MiB>. Holds and touches memory 8 MiB at a time up to <MiB> and
+// reports each step, so a run that was stopped shows how far it got and a run
+// that was not prints "survived".
+func main() {
+	total, _ := strconv.Atoi(os.Args[1])
+	var held [][]byte
+	for mib := 8; mib <= total; mib += 8 {
+		b := make([]byte, 8<<20)
+		for i := 0; i < len(b); i += 4096 {
+			b[i] = 1
+		}
+		held = append(held, b)
+		fmt.Printf("held %d MiB\n", mib)
+	}
+	fmt.Println("survived", len(held))
+	runtime.KeepAlive(held)
+}
+`
+
+// buildResourceProbe compiles resourceProbeSource into a fresh directory and
+// returns it, to be used as the run's snapshot (the probe is /work/probe).
+func buildResourceProbe(t *testing.T) string {
+	t.Helper()
+	goBin, err := exec.LookPath("go")
+	require.NoError(t, err, "the cap tests build their workload with the go toolchain")
+	src, out := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(src, "main.go"), []byte(resourceProbeSource), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "go.mod"), []byte("module probe\n\ngo 1.21\n"), 0o644))
+	build := exec.Command(goBin, "build", "-o", filepath.Join(out, "probe"), ".")
+	build.Dir = src
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
+	if o, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the probe: %v\n%s", err, o)
+	}
+	return out
+}
+
+// runLogged runs spec under b and returns the result, the run's log and the
+// error; which records which mechanism enforced the caps.
+func runLogged(t *testing.T, b *OSLevelBackend, spec RunSpec) (RunResult, string, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	res, err := b.Run(ctx, spec)
+	return res, buf.String(), err
+}
+
+var cgroupDirLogAttr = regexp.MustCompile(`mechanism=cgroup .*\bcgroup=(\S+)`)
+
+// cgroupUsed reports whether the run's log says a per-run cgroup applied, and
+// which. It is the discriminator the cgroup cases and their negative control
+// share: a run that fell back to the rlimit logs mechanism=rlimit instead.
+func cgroupUsed(logs string) (dir string, ok bool) {
+	m := cgroupDirLogAttr.FindStringSubmatch(logs)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// delegatedCgroupRoot returns the cgroup v2 directory CI delegated to this
+// test user (ATCR_TEST_CGROUP_ROOT), or skips where there is none. The
+// dedicated CI step sets it and asserts these cases passed rather than skipped.
+// When it is set, a root that does not work is a failure, not a skip: that is
+// the "cgroup path was not used" case this suite exists to catch.
+func delegatedCgroupRoot(t *testing.T) string {
+	t.Helper()
+	root := os.Getenv("ATCR_TEST_CGROUP_ROOT")
+	if root == "" {
+		t.Skip("ATCR_TEST_CGROUP_ROOT is not set: no cgroup v2 subtree is delegated to this test (the integration-linux CI step sets it)")
+	}
+	cg, err := newSandboxCgroup(root, DefaultOSLevelConfig())
+	require.NoError(t, err, "ATCR_TEST_CGROUP_ROOT=%s is set but is not a usable delegated cgroup", root)
+	require.NoError(t, cg.remove())
+	return root
+}
+
+func TestIntegration_OSLevelLinux_MemoryCapStopsAnOverAllocationViaCgroup(t *testing.T) {
+	// AC 3: the same holds under bwrap, via cgroup v2, and this case fails if
+	// the cgroup path was not the one that enforced.
+	root := delegatedCgroupRoot(t)
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxMemoryBytes = 128 << 20
+	b := linuxIntegrationBackendWith(t, cfg)
+	b.cgroupRoot = root
+	snapshot := buildResourceProbe(t)
+
+	// Positive control: well under the cap, the probe runs to the end, so the
+	// kill below is the cap and not a sandbox that cannot run the probe at all.
+	res, logs, err := runLogged(t, b, RunSpec{Command: []string{bwrapWorkDir + "/probe", "32"}, SnapshotDir: snapshot, Timeout: 30 * time.Second})
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, res.Output, "survived", "a 32 MiB workload must fit a 128 MiB cap; output: %s", res.Output)
+
+	res, logs, err = runLogged(t, b, RunSpec{Command: []string{bwrapWorkDir + "/probe", "1024"}, SnapshotDir: snapshot, Timeout: 30 * time.Second})
+	dir, used := cgroupUsed(logs)
+	require.True(t, used, "the cgroup was delegated but did not enforce: the run fell back to another mechanism\nlogs: %s", logs)
+	assert.NotContains(t, res.Output, "survived", "a 1 GiB allocation past a 128 MiB cap must be stopped; output: %s", res.Output)
+	assert.True(t, err != nil || res.ExitCode != 0, "the over-allocation must end the run abnormally; err=%v exit=%d", err, res.ExitCode)
+	assert.NoDirExists(t, dir, "the run's cgroup must be removed after the run")
+}
+
+func TestIntegration_OSLevelLinux_CgroupReplacesTheRlimit(t *testing.T) {
+	// If a run carried both, the rlimit could be what stopped the allocation
+	// and nothing would show the cgroup did. Inside the sandbox the data limit
+	// is therefore unset when the cgroup applied, and set when it did not.
+	root := delegatedCgroupRoot(t)
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxMemoryBytes = 128 << 20
+	spec := RunSpec{Command: []string{"/bin/sh", "-c", "ulimit -d"}, SnapshotDir: t.TempDir(), Timeout: 20 * time.Second}
+
+	b := linuxIntegrationBackendWith(t, cfg)
+	b.cgroupRoot = root
+	res, logs, err := runLogged(t, b, spec)
+	require.NoError(t, err, "logs: %s", logs)
+	_, used := cgroupUsed(logs)
+	require.True(t, used, "logs: %s", logs)
+	assert.Equal(t, "unlimited", strings.TrimSpace(res.Output), "under a cgroup no RLIMIT_DATA is set; output: %s", res.Output)
+
+	// Negative control: a root that is not a cgroup makes cgroupUsed say so, so
+	// the assertion above can fail, and the rlimit it falls back to is set.
+	b = linuxIntegrationBackendWith(t, cfg)
+	b.cgroupRoot = t.TempDir()
+	res, logs, err = runLogged(t, b, spec)
+	require.NoError(t, err, "logs: %s", logs)
+	_, used = cgroupUsed(logs)
+	assert.False(t, used, "a non-cgroup root must not be reported as the cgroup path; logs: %s", logs)
+	assert.Contains(t, logs, "mechanism=rlimit")
+	assert.Equal(t, strconv.Itoa(128<<10), strings.TrimSpace(res.Output), "the fallback sets RLIMIT_DATA in KiB; output: %s", res.Output)
+}
+
+func TestIntegration_OSLevelLinux_PidCapRefusesAForkViaCgroup(t *testing.T) {
+	// AC 4: a workload forking past MaxProcs is refused (cgroup pids.max).
+	root := delegatedCgroupRoot(t)
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxProcs = 32
+	b := linuxIntegrationBackendWith(t, cfg)
+	b.cgroupRoot = root
+
+	// The loop forks 128 sleepers. Under a 32-task cap the shell's fork fails
+	// well before that; every shell reports it ("Cannot fork" in dash, "fork:
+	// retry: Resource temporarily unavailable" in bash), and the last "forked"
+	// line shows how far it got.
+	script := `i=0; while [ $i -lt 128 ]; do sleep 15 & i=$((i+1)); echo forked $i; done; echo not-refused`
+	res, logs, err := runLogged(t, b, RunSpec{Command: []string{"/bin/sh", "-c", script}, SnapshotDir: t.TempDir(), Timeout: 30 * time.Second})
+	dir, used := cgroupUsed(logs)
+	require.True(t, used, "the cgroup was delegated but did not enforce: the run fell back to another mechanism\nlogs: %s", logs)
+	assert.NotContains(t, res.Output, "not-refused", "128 forks past a 32-task cap must be refused; err=%v output: %s", err, res.Output)
+	assert.Regexp(t, `Cannot fork|Resource temporarily unavailable`, res.Output, "the refusal must come from fork itself")
+	last := regexp.MustCompile(`forked (\d+)`).FindAllStringSubmatch(res.Output, -1)
+	require.NotEmpty(t, last, "output: %s", res.Output)
+	n, _ := strconv.Atoi(last[len(last)-1][1])
+	assert.Less(t, n, 32, "no more processes than pids.max may have been started; output: %s", res.Output)
+	assert.NoDirExists(t, dir, "the run's cgroup must be removed after the run")
+}
+
+func TestIntegration_OSLevelLinux_MemoryCapStopsAnOverAllocationViaRlimitFallback(t *testing.T) {
+	// Where no cgroup is delegated (this job's own runner, most developer
+	// hosts) the cap is RLIMIT_DATA, and it must stop the same allocation. It
+	// needs no delegation, so it runs in the main proof step too.
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxMemoryBytes = 128 << 20
+	b := linuxIntegrationBackendWith(t, cfg)
+	b.cgroupRoot = t.TempDir() // not a cgroup: forces the fallback
+	snapshot := buildResourceProbe(t)
+
+	res, logs, err := runLogged(t, b, RunSpec{Command: []string{bwrapWorkDir + "/probe", "32"}, SnapshotDir: snapshot, Timeout: 30 * time.Second})
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, res.Output, "survived", "a 32 MiB workload must fit a 128 MiB cap; output: %s", res.Output)
+
+	res, logs, err = runLogged(t, b, RunSpec{Command: []string{bwrapWorkDir + "/probe", "1024"}, SnapshotDir: snapshot, Timeout: 30 * time.Second})
+	assert.Contains(t, logs, "mechanism=rlimit")
+	assert.NotContains(t, res.Output, "survived", "a 1 GiB allocation past a 128 MiB cap must be stopped; output: %s", res.Output)
+	assert.True(t, err != nil || res.ExitCode != 0, "the over-allocation must end the run abnormally; err=%v exit=%d", err, res.ExitCode)
 }
