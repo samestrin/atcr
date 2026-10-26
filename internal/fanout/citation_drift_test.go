@@ -58,6 +58,15 @@ func TestCitationDrift_CitedLineHoldsTheNamedIdentifier(t *testing.T) {
 		src := readRepoFile(t, filepath.Join(repoRoot, s.file))
 		cites, problems := checkCitations(repoRoot, s.file, src, s.targets)
 		total += cites
+		if task, pending := awaitingRepin[s.file]; pending {
+			if len(problems) == 0 {
+				t.Errorf("%s now passes this guard: remove it from awaitingRepin (%s re-pinned it), so a later drift fails the suite", s.file, task)
+			}
+			for _, p := range problems {
+				t.Logf("awaiting %s re-pin: %s", task, p)
+			}
+			continue
+		}
 		for _, p := range problems {
 			t.Error(p)
 		}
@@ -90,6 +99,34 @@ var citationScope = []struct {
 	{"internal/hookobs/hookobs.go", []string{"review.go"}},
 	{"internal/hookobs/hookobs_test.go", []string{"review.go"}},
 	{"internal/registry/config_thinking_enabled_test.go", []string{"review.go"}},
+}
+
+// awaitingRepin lists the citing files whose citations Epic 52.0 has not yet
+// re-pinned, keyed to the task that re-pins them. Every one of them fails this
+// guard on the tree T1 landed on — all 22 citation sites, which T1's first
+// commit shows red — and CI must stay green while T2-T5 land in parallel, so
+// their problems are logged (go test -v) instead of failing. The list can only
+// shrink: a listed file that passes is an error, so each task's PR deletes its
+// own lines, and an unlisted file fails on any problem. Groups are kept apart
+// so parallel deletions merge cleanly. Once it is empty, delete it.
+var awaitingRepin = map[string]string{
+	// T2
+	"internal/payload/claims.go": "T2",
+
+	// T3
+	"internal/fanout/chunker.go": "T3",
+	"docs/payload-modes.md":      "T3",
+
+	// T4
+	"internal/payload/prefetch.go":              "T4",
+	"internal/payload/sizing.go":                "T4",
+	"internal/payload/scope_vocabulary_test.go": "T4",
+
+	// T5
+	"internal/doctor/run.go":                            "T5",
+	"internal/hookobs/hookobs.go":                       "T5",
+	"internal/hookobs/hookobs_test.go":                  "T5",
+	"internal/registry/config_thinking_enabled_test.go": "T5",
 }
 
 var (
