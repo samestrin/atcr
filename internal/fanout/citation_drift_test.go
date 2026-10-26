@@ -136,10 +136,6 @@ var awaitingRepin = map[string]string{
 	// T2
 	"internal/payload/claims.go": "T2",
 
-	// T3
-	"internal/fanout/chunker.go": "T3",
-	"docs/payload-modes.md":      "T3",
-
 	// T4
 	"internal/payload/prefetch.go":              "T4",
 	"internal/payload/sizing.go":                "T4",
