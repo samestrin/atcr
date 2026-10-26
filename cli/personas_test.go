@@ -1373,3 +1373,356 @@ func TestPersonasListJSON_ScoresGoldenParsesAndMatchesTheTableRowCount(t *testin
 	// No history at all: no score object, the table's "n/a".
 	assert.Nil(t, rows[byName["kai"]].Score)
 }
+
+// withPersonasPairs swaps the pair-tally loader for a fake so list --pairs
+// tests never touch the real scorecard store. When called is non-nil it is set
+// true if the loader runs.
+func withPersonasPairs(t *testing.T, data personasPairData, called *bool) {
+	t.Helper()
+	withPersonasPairsErr(t, data, nil, called)
+}
+
+func withPersonasPairsErr(t *testing.T, data personasPairData, loadErr error, called *bool) {
+	t.Helper()
+	old := personasPairs
+	personasPairs = func() (personasPairData, error) {
+		if called != nil {
+			*called = true
+		}
+		return data, loadErr
+	}
+	t.Cleanup(func() { personasPairs = old })
+}
+
+// pairsFixture seeds one sufficient pair, one drop-candidate pair, one pair
+// whose member ("ghost") is not in the persona roster, and one pair under the
+// floors. Only the first two may render.
+func pairsFixture() personasPairData {
+	return personasPairData{
+		path: "/tmp/sc",
+		tallies: map[string]scorecard.PairTally{
+			"bruce|sasha": {A: "bruce", B: "sasha", Agreed: 16, Disagreed: 4, Cases: 24, Sufficient: true},
+			"kai|sasha":   {A: "kai", B: "sasha", Agreed: 30, Disagreed: 0, Cases: 22, Sufficient: true, DropCandidate: true},
+			"ghost|sasha": {A: "ghost", B: "sasha", Agreed: 40, Disagreed: 0, Cases: 40, Sufficient: true, DropCandidate: true},
+			"bruce|kai":   {A: "bruce", B: "kai", Agreed: 5, Disagreed: 1, Cases: 3},
+		},
+	}
+}
+
+// pairsTableRows returns the data rows of the --pairs table keyed by pair key.
+func pairsTableRows(t *testing.T, out string) map[string]string {
+	t.Helper()
+	rows := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] == "PAIR" {
+			continue
+		}
+		rows[fields[0]] = line
+	}
+	return rows
+}
+
+func TestPersonasList_PairsRendersSufficientPairsAndOmitsStaleOnes(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, pairsFixture(), nil)
+
+	out, stderr, err := executeSplit(t, "personas", "list", "--pairs")
+	require.NoError(t, err, "a pair naming a persona missing from the roster is omitted, not an error")
+	assert.Empty(t, stderr)
+	assert.Contains(t, out, "PAIR")
+	assert.Contains(t, out, "CASES")
+	assert.Contains(t, out, "RATE")
+
+	rows := pairsTableRows(t, out)
+	require.Len(t, rows, 2, "only the two sufficient pairs whose members both resolve render:\n%s", out)
+
+	sufficient := rows["bruce|sasha"]
+	require.NotEmpty(t, sufficient)
+	assert.Contains(t, sufficient, "24")
+	assert.Contains(t, sufficient, "20.0%")
+	assert.NotContains(t, sufficient, "DROP-CANDIDATE")
+
+	drop := rows["kai|sasha"]
+	require.NotEmpty(t, drop)
+	assert.Contains(t, drop, "22")
+	assert.Contains(t, drop, "0.0%")
+	assert.Contains(t, drop, "DROP-CANDIDATE")
+
+	assert.NotContains(t, out, "ghost", "a stale-persona pair renders no row")
+	assert.NotContains(t, out, "bruce|kai", "a pair under the floors renders no row")
+}
+
+func TestPersonasList_PairsRosterMatchIsCaseInsensitive(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, personasPairData{tallies: map[string]scorecard.PairTally{
+		"bruce|sasha": {A: "Bruce", B: "SASHA", Agreed: 20, Disagreed: 5, Cases: 21, Sufficient: true},
+	}}, nil)
+
+	out, err := execute(t, "personas", "list", "--pairs")
+	require.NoError(t, err)
+	assert.Len(t, pairsTableRows(t, out), 1, out)
+}
+
+func TestPersonasList_PairsEmptyStatePrintsTheEmptyLine(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, personasPairData{path: "/tmp/sc", tallies: map[string]scorecard.PairTally{
+		"bruce|kai": {A: "bruce", B: "kai", Agreed: 5, Disagreed: 1, Cases: 3},
+	}}, nil)
+
+	out, err := execute(t, "personas", "list", "--pairs")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No persona pair clears the floors")
+	assert.Contains(t, out, "/tmp/sc")
+	assert.NotContains(t, out, "PAIR\t")
+	assert.NotContains(t, out, "bruce|kai", "a pair under the floors renders no row")
+}
+
+func TestPersonasList_PairsJSONIsItsOwnArray(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, pairsFixture(), nil)
+	scoresCalled := false
+	withPersonasScores(t, personasScoreData{}, nil, &scoresCalled)
+
+	got, _, err := executeSplit(t, "personas", "list", "--pairs", "--json")
+	require.NoError(t, err)
+
+	var rows []struct {
+		Key           string  `json:"key"`
+		A             string  `json:"a"`
+		B             string  `json:"b"`
+		Cases         int     `json:"cases"`
+		Agreed        int     `json:"agreed"`
+		Disagreed     int     `json:"disagreed"`
+		Rate          float64 `json:"disagreement_rate"`
+		DropCandidate bool    `json:"drop_candidate"`
+	}
+	dec := json.NewDecoder(strings.NewReader(got))
+	dec.DisallowUnknownFields()
+	require.NoError(t, dec.Decode(&rows), "stdout is one JSON array of pair rows:\n%s", got)
+	assert.False(t, dec.More(), "nothing follows the array")
+	assert.False(t, scoresCalled, "--pairs does not load the persona scores")
+
+	require.Len(t, rows, 2)
+	assert.Equal(t, "bruce|sasha", rows[0].Key, "rows are ordered by key")
+	assert.Equal(t, 24, rows[0].Cases)
+	assert.InDelta(t, 0.2, rows[0].Rate, 1e-9)
+	assert.False(t, rows[0].DropCandidate)
+	assert.Equal(t, "kai|sasha", rows[1].Key)
+	assert.Equal(t, 30, rows[1].Agreed)
+	assert.True(t, rows[1].DropCandidate)
+}
+
+func TestPersonasList_PairsJSONEmptyStoreIsAnEmptyArray(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, personasPairData{}, nil)
+
+	got, err := execute(t, "personas", "list", "--pairs", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", got)
+}
+
+func TestPersonasList_PairsAndScoresAreMutuallyExclusive(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairs(t, pairsFixture(), nil)
+	withPersonasScores(t, jsonScoresFixture(), nil, nil)
+
+	_, _, err := executeSplit(t, "personas", "list", "--pairs", "--scores", "--json")
+	require.Error(t, err, "two arrays on one stdout would not parse as JSON")
+}
+
+func TestPersonasList_BaselineAndScoresDoNotLoadPairs(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	called := false
+	withPersonasPairs(t, pairsFixture(), &called)
+	withPersonasScores(t, jsonScoresFixture(), nil, nil)
+
+	_, err := execute(t, "personas", "list")
+	require.NoError(t, err)
+	got, _, err := executeSplit(t, "personas", "list", "--scores", "--json")
+	require.NoError(t, err)
+	assertJSONGolden(t, "personas_list_scores.golden.json", got)
+	assert.False(t, called, "pair tallies load only under --pairs")
+}
+
+func TestLoadPersonasPairs_EmptyStoreYieldsEmptyMapNoError(t *testing.T) {
+	isolate(t)
+
+	data, err := loadPersonasPairs()
+	require.NoError(t, err)
+	assert.Empty(t, data.tallies)
+	assert.NotEmpty(t, data.path)
+}
+
+func TestPersonasListHelpContainsPairsFlag(t *testing.T) {
+	out, err := execute(t, "personas", "list", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "--pairs")
+}
+
+func TestPersonasList_PairsLoadErrorNamesTheUnderlyingError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasPairsErr(t, personasPairData{}, errors.New("no home dir"), nil)
+
+	out, stderr, err := executeSplit(t, "personas", "list", "--pairs")
+	require.NoError(t, err, "an unresolvable store degrades to the empty state")
+	assert.Contains(t, stderr, "no home dir")
+	assert.Contains(t, out, "No persona pair clears the floors")
+	assert.Contains(t, out, "could not be resolved: no home dir")
+}
+
+func withExcludedCases(t *testing.T, data map[string][]scorecard.ExcludedCase) {
+	t.Helper()
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) { return data, nil }
+	t.Cleanup(func() { personasExcludedCases = old })
+}
+
+func TestPersonasList_DetailPrintsEachExcludedCase(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{
+		"dax": {
+			{RunID: "run-b", Reason: scorecard.ReasonOutcomeIneligible},
+			{RunID: "run-a", Reason: scorecard.ReasonSupersededEra},
+		},
+		"kai": {{RunID: "run-z", Reason: scorecard.ReasonConsensusNotStrict}},
+	})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "Dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `run-a\s+`+scorecard.ReasonSupersededEra, out)
+	assert.Regexp(t, `run-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "run-z")
+	assert.Less(t, strings.Index(out, "run-a"), strings.Index(out, "run-b"))
+
+	out, err = execute(t, "personas", "list", "--scores", "--detail", "dax", "--json")
+	require.NoError(t, err)
+	var rows []excludedCaseJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	assert.Len(t, rows, 2)
+}
+
+func TestPersonasList_DetailUnknownLensFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "no-such-lens")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown persona "no-such-lens"`)
+}
+
+func TestPersonasList_DetailKnownLensWithNothingExcluded(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"bruce": nil})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailRequiresScores(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--detail", "bruce")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail requires --scores")
+}
+
+func TestPersonasList_DetailSeededStore(t *testing.T) {
+	isolate(t)
+	for _, id := range []string{"2026-07-02T10:00:00Z-b", "2026-07-01T10:00:00Z-a"} {
+		rec := reviewerRec(id, "Dax", "opus", 2, 1)
+		rec.SchemaVersion = 1
+		rec.Outcome = "" // pre-v2: dropped by the outcome gate
+		storeRecord(t, rec)
+	}
+	storeRecord(t, reviewerRec("2026-07-03T10:00:00Z-c", "Dax", "opus", 2, 1))
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `2026-07-01T10:00:00Z-a\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.Regexp(t, `2026-07-02T10:00:00Z-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "2026-07-03T10:00:00Z-c")
+
+	_, err = execute(t, "personas", "list", "--scores", "--detail", "nobody-here")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown persona")
+}
+
+func TestPersonasList_DetailEmptyNameFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail needs a persona name")
+}
+
+func TestPersonasList_DetailRosterPersonaWithoutHistory(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailLoadErrorWarns(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) {
+		return nil, fmt.Errorf("boom")
+	}
+	t.Cleanup(func() { personasExcludedCases = old })
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning: could not read scorecard data: boom")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailSameRunIDOrdersByReason(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"dax": {
+		{RunID: "r1", Reason: scorecard.ReasonSupersededEra},
+		{RunID: "r1", Reason: scorecard.ReasonOutcomeIneligible},
+	}})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	first, second := scorecard.ReasonOutcomeIneligible, scorecard.ReasonSupersededEra
+	if first > second {
+		first, second = second, first
+	}
+	assert.Less(t, strings.Index(out, first), strings.Index(out, second))
+}
+
+func TestPersonasList_DetailRosterLookupWarning(t *testing.T) {
+	isolate(t)
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.Symlink("personas", ".atcr/personas")) // self-loop -> ELOOP
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning:")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasExcludedCases_DefaultDirErrorSurfaces(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	_, err := personasExcludedCases()
+	require.Error(t, err)
+}

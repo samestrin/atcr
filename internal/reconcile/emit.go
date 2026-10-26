@@ -88,7 +88,9 @@ type JSONFinding struct {
 	// hallucinated path adds path_warning.
 	//
 	// CONTRACT: path_warning is the authoritative signal — a non-empty value
-	// means the path did not resolve under the reviewed repo root. path_valid is
+	// means the path did not resolve under the reviewed repo root — File's, or
+	// (Epic 35.16.15 T4) the cleared sibling_location's, which the warning then
+	// names; path_valid tracks File alone. path_valid is
 	// auxiliary and MUST NOT be read in isolation: under omitempty, "validated
 	// but missing" and "never validated" both serialize as an absent path_valid
 	// (false), so the two states are indistinguishable from path_valid alone.
@@ -120,6 +122,10 @@ type JSONFinding struct {
 	// present. It is advisory only — File (the original cited path) is never
 	// rewritten — and is set only alongside a non-empty path_warning.
 	PathSuggestion string `json:"path_suggestion,omitempty"`
+	// SiblingLocation is the cross-branch routing marker (Epic 35.16.15), a
+	// file:line. ATCR-internal, copied from stream.Finding by ToJSONFinding;
+	// omitempty keeps findings.json byte-identical when no marker is set.
+	SiblingLocation string `json:"sibling_location,omitempty"`
 	// FallbackReviewers maps a reviewer name to the net MODEL that served its slot
 	// when that reviewer was served by a litellm fallback (Epic 19.10 F5) — the
 	// served model, not the per-persona substituted-from name, so two personas on

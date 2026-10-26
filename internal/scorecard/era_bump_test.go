@@ -200,7 +200,7 @@ func TestExplainTrustPriors_CountsTheFoldedEraFourRecord(t *testing.T) {
 	recs = append(recs, eraRec("2026-08-02T00:00:00Z-new", "sasha", raisedDenominatorAmbiguousCharged, 4, 2, 4))
 
 	assert.Len(t, keptForTrust(recs), 31)
-	details := detailsFromRecords(recs, 0)
+	details := detailsFromRecords(recs, 0, ExplainOpts{})
 	assert.Equal(t, 31, details["sasha"].Counted)
 	assert.Equal(t, 124, details["sasha"].Raised, "the era-4 run is counted under era 3")
 }

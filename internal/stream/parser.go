@@ -213,6 +213,12 @@ type Finding struct {
 	// available (non-git repo). Set only alongside a non-empty PathWarning.
 	PathSuggestion string // e.g. "internal/auth/validate.go"; empty when none
 
+	// SiblingLocation is the cross-branch routing marker (Epic 35.16.15): the
+	// file:line of the sibling finding this one was routed from. Like PathValid
+	// it is an in-memory stamp, NOT part of the wire format (json:"-"), and
+	// stays empty until a router stamps it.
+	SiblingLocation string `json:"-"` // e.g. "internal/auth/validate.go:42"; empty when none
+
 	// FallbackModel records the model that SERVED the SOURCE slot this finding came
 	// from when a litellm fallback substituted for the configured primary (Epic
 	// 19.10 F5). Like PathValid/PathWarning it is NOT part of the wire format — no
@@ -274,7 +280,35 @@ const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EV
 //     blanks, and comments are skipped; short rows are padded.
 func ParseModelOutput(data []byte) []Finding {
 	out, _ := scanModelOutput(data)
+	for i := range out {
+		out[i].SiblingLocation = ParseSiblingLocation(out[i].Evidence)
+	}
 	return out
+}
+
+// SiblingToken is the EVIDENCE declaration of a displaced anchor (Epic
+// 35.16.15): "sibling: path/to/file.go:42" names the true file:line of the
+// sibling arm a finding quotes while it is filed on the edited line.
+const SiblingToken = "sibling:"
+
+// siblingRe matches the token at the start of the evidence or after a space,
+// ";" or "/", so a word merely ending in "sibling:" is not read. The location is
+// a whitespace-free path, ":" and a positive decimal line.
+var siblingRe = regexp.MustCompile(`(?:^|[ ;/]\s*)sibling:\s*(\S+?):([1-9][0-9]*)(?:[\s;,.)]|$)`)
+
+// ParseSiblingLocation returns the "file:line" declared by a "sibling:" token in
+// evidence, or "" when none is declared or the declaration is malformed (no
+// path, a non-numeric, zero or negative line). It never guesses: the first
+// well-formed declaration wins, anything else yields "".
+func ParseSiblingLocation(evidence string) string {
+	if !strings.Contains(evidence, SiblingToken) {
+		return ""
+	}
+	m := siblingRe.FindStringSubmatch(evidence)
+	if m == nil {
+		return ""
+	}
+	return m[1] + ":" + m[2]
 }
 
 // LineSpan is an inclusive range of line indexes into a text split on "\n".

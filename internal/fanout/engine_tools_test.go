@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +31,7 @@ type chatTurn struct {
 	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
 	truncated   bool                   // final content turn hit finish_reason=length (Epic 19.5)
 	reasoning   string                 // reasoning_content the turn carries, replayed on later turns
+	usage       llmclient.UsageData    // provider-reported tokens; carried on errored turns too (Epic 35.26)
 }
 
 // scriptedChat implements both Completer (single-shot) and ChatCompleter
@@ -94,7 +98,7 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 	if turn.err != nil {
 		// Mirror the real *Client.Chat contract: an errored turn still surfaces the
 		// per-attempt telemetry for any wire attempt it made (Epic 4.11).
-		return &llmclient.ChatResponse{CallRecords: turn.callRecords}, turn.err
+		return &llmclient.ChatResponse{CallRecords: turn.callRecords, Usage: turn.usage}, turn.err
 	}
 	msg := llmclient.Message{Role: "assistant", ToolCalls: turn.toolCalls}
 	if turn.reasoning != "" {
@@ -111,7 +115,7 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 			fr = "length"
 		}
 	}
-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated}, nil
+	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords, Truncated: turn.truncated, Usage: turn.usage}, nil
 }
 
 // assertToolCallsAnswered returns an error when any assistant tool_call lacks a
@@ -344,6 +348,34 @@ func TestLoop_ChatErrorMidLoop(t *testing.T) {
 	assert.Equal(t, StatusFailed, r.Status)
 	require.Error(t, r.Err)
 	assert.Equal(t, 1, r.Turns)
+}
+
+// Epic 35.26 end to end: a provider that answers 200 with no choices but a usage
+// block bills the call, so a real *llmclient.Client must carry that usage on the
+// errored turn and the tool loop must count it in the Result.
+func TestLoop_RealClientNoChoicesCountsUsage(t *testing.T) {
+	resetBreakers(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[],"usage":{"prompt_tokens":123,"completion_tokens":45}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_NO_CHOICES_KEY", "k")
+
+	client := llmclient.New(llmclient.WithHTTPClient(srv.Client()), llmclient.WithRetry(0, time.Millisecond, 1))
+	a := toolAgent("a", 10, 0)
+	a.Invocation.BaseURL = srv.URL
+	a.Invocation.APIKeyEnv = "ATCR_TEST_NO_CHOICES_KEY"
+
+	r := toolEngine(client, newFakeDispatcher()).invokeAgent(context.Background(), a)
+	assert.Equal(t, StatusFailed, r.Status)
+	require.Error(t, r.Err)
+	assert.Contains(t, r.Err.Error(), "no choices")
+	assert.EqualValues(t, 1, hits.Load(), "one wire call")
+	assert.Equal(t, 123, r.TokensIn)
+	assert.Equal(t, 45, r.TokensOut)
 }
 
 // --- AC 01-04: loop hygiene -------------------------------------------------
