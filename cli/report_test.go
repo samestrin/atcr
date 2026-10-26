@@ -40,6 +40,10 @@ func TestReportCmd_AXITruncatesAtEnvCap(t *testing.T) {
 	t.Setenv("ATCR_AXI_MAX_LINES", "5")
 	code, out := execCmdCapture(t, "report", "--format", "axi", "r")
 	require.Equal(t, 0, code)
+	// The help[] block (Epic 42.0) follows the paginated payload and is not
+	// part of what the cap counts; strip it, requiring it, before measuring.
+	require.True(t, strings.HasSuffix(out, wantReportHelp), "report --axi ends with the help[] block")
+	out = strings.TrimSuffix(out, wantReportHelp)
 	assert.Contains(t, out, "truncated: true", "over-cap report --axi flags truncation")
 	assert.Contains(t, out, "findings[4]{", "header declares the emitted rows (cap 5 minus the header line)")
 	assert.Contains(t, out, "\ntotal: 20\n", "total declares the true count (20)")
@@ -69,6 +73,10 @@ func TestReportCmd_AXIUsesSharedPaginationWrapper(t *testing.T) {
 	fixtureReconciled(t, "r", js)
 	t.Setenv("ATCR_AXI_MAX_LINES", "6")
 	_, cmdOut := execCmdCapture(t, "report", "--format", "axi", "r")
+	// The help[] block (Epic 42.0) is appended after the shared wrapper's output;
+	// everything before it must still be the wrapper's bytes.
+	require.True(t, strings.HasSuffix(cmdOut, wantReportHelp), "report --axi ends with the help[] block")
+	cmdOut = strings.TrimSuffix(cmdOut, wantReportHelp)
 
 	var fs []reconcile.JSONFinding
 	require.NoError(t, json.Unmarshal([]byte(js), &fs))
