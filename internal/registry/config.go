@@ -652,6 +652,12 @@ type AgentConfig struct {
 	// undeclared model degrades safely to single-shot.
 	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
 
+	// SupportsVision declares that this agent's model accepts image content
+	// parts (Epic 36.0). Declared, never probed: default false, so an image
+	// sent to an undeclared agent is refused before any request. Like
+	// SupportsFC it is declared per agent and never inherited by a fallback.
+	SupportsVision bool `yaml:"supports_vision"`
+
 	// ResponseFormat declares that this agent's model honors the
 	// OpenAI-compatible response_format request field (Epic 35.16.11.2.1). The
 	// only legal value is ResponseFormatJSONObject; unset (the default) sends no
