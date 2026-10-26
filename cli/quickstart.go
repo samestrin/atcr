@@ -28,6 +28,7 @@ type quickstartOpts struct {
 	force          bool
 	open           bool
 	fetchCommunity bool // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
+	preset         string // "" for the synthetic cloud funnel, presetLocal for the local-model setup
 	in             io.Reader
 	out            io.Writer
 	errOut         io.Writer
@@ -56,11 +57,19 @@ func newQuickstartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			preset, err := cmd.Flags().GetString("preset")
+			if err != nil {
+				return err
+			}
+			if preset != "" && preset != presetLocal {
+				return usageError(fmt.Errorf("unknown preset %q: the only preset is %q", preset, presetLocal))
+			}
 			return runQuickstart(quickstartOpts{
 				dir:            ".",
 				force:          force,
 				open:           open,
 				fetchCommunity: !offline,
+				preset:         preset,
 				in:             cmd.InOrStdin(),
 				out:            cmd.OutOrStdout(),
 				errOut:         cmd.ErrOrStderr(),
@@ -70,7 +79,47 @@ func newQuickstartCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and workflow files")
 	cmd.Flags().Bool("open", false, "open the provider signup page in a browser")
 	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
+	cmd.Flags().String("preset", "", `"local": set up local models (Ollama) with no network, no API key and telemetry off`)
 	return cmd
+}
+
+// presetLocal is the `--preset local` value: an Ollama provider plus the
+// gerald/orson/liam local personas, scaffolded with no network and telemetry off.
+const presetLocal = "local"
+
+// localAgents is the --preset local roster: each local community persona and
+// the Ollama tag it is bound to (docs/personas-install.md, "Local /
+// Privacy-First"). The tag is what `ollama pull` fetches, not the persona's
+// namespaced discovery id.
+var localAgents = []struct{ name, model string }{
+	{"gerald", "gemma3:27b"},
+	{"orson", "qwen3:30b-a3b"},
+	{"liam", "llama3.3:70b"},
+}
+
+// localRegistryYAML is the user registry --preset local writes: one `local`
+// provider on Ollama's OpenAI-compatible endpoint and one agent per local
+// persona. atcr requires api_key_env even for a keyless endpoint, so it names
+// OLLAMA_API_KEY and the wizard tells the user to export a placeholder.
+func localRegistryYAML() string {
+	var b strings.Builder
+	b.WriteString("# atcr user registry — see docs/registry.md\n")
+	b.WriteString("# Written by `atcr quickstart --preset local`. Every review goes to the Ollama\n")
+	b.WriteString("# server on localhost; no code leaves this machine. Ollama needs no key, but\n")
+	b.WriteString("# atcr requires the env var to be set, so export a placeholder:\n")
+	b.WriteString("#   export OLLAMA_API_KEY=local-no-key-needed\n")
+	b.WriteString("providers:\n")
+	b.WriteString("  local:\n")
+	b.WriteString("    base_url: http://localhost:11434/v1\n")
+	b.WriteString("    api_key_env: OLLAMA_API_KEY\n")
+	b.WriteString("agents:\n")
+	for _, a := range localAgents {
+		fmt.Fprintf(&b, "  %s:\n", a.name)
+		fmt.Fprintf(&b, "    persona: %s\n", a.name)
+		b.WriteString("    provider: local\n")
+		fmt.Fprintf(&b, "    model: %s\n", a.model)
+	}
+	return b.String()
 }
 
 // runQuickstart orchestrates the onboarding wizard. It first reuses `atcr init`'s
@@ -78,6 +127,9 @@ func newQuickstartCmd() *cobra.Command {
 // steps) sets up the synthetic provider, guides the user through the API-key env
 // var, and scaffolds a CI workflow.
 func runQuickstart(o quickstartOpts) error {
+	if o.preset == presetLocal {
+		return runQuickstartLocal(o)
+	}
 	// Layer onto an existing .atcr rather than aborting: `atcr init`'s writers are
 	// all-or-nothing (any existing target is a hard error without --force), which
 	// would block a returning user — and --force would clobber their edited
@@ -114,7 +166,8 @@ func runQuickstart(o quickstartOpts) error {
 
 	// The project roster init just wrote lists the persona names; define one
 	// synthetic-bound agent per persona so the roster resolves.
-	if err := writeSyntheticRegistry(o, manifest, builtins.Names()); err != nil {
+	roster := builtins.Names()
+	if err := writeUserRegistry(o, quickstart.RegistryYAML(manifest, roster), "synthetic provider + agents", roster); err != nil {
 		return err
 	}
 
@@ -125,6 +178,44 @@ func runQuickstart(o quickstartOpts) error {
 	if err := scaffoldWorkflow(o, manifest); err != nil {
 		return err
 	}
+	return nil
+}
+
+// runQuickstartLocal is `atcr quickstart --preset local`. It scaffolds .atcr/
+// with the local personas as the roster (prompts from the embedded community
+// library, never fetched), turns telemetry off, and writes the local provider
+// and agents to the user registry. It makes no network call: there is no
+// community fetch, no signup link, and no CI workflow (a hosted runner has no
+// Ollama server to reach).
+func runQuickstartLocal(o quickstartOpts) error {
+	roster := make([]string, 0, len(localAgents))
+	for _, a := range localAgents {
+		roster = append(roster, a.name)
+	}
+	cfgPath := registry.DefaultProjectConfigPath(o.dir)
+	if _, statErr := os.Lstat(cfgPath); statErr == nil && !o.force {
+		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
+		_, _ = fmt.Fprintf(o.errOut, "Its roster is unchanged: add %s to the agents list in %s to review with the local models.\n", strings.Join(roster, ", "), cfgPath)
+	} else if err := runInitRoster(o.dir, o.force, roster, builtins.CommunityGet, o.out, o.errOut); err != nil {
+		return err
+	}
+
+	if err := registry.SetTelemetrySetting(o.dir, false); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(o.out, "  set telemetry = false in %s\n", cfgPath)
+
+	if err := writeUserRegistry(o, localRegistryYAML(), "local provider + agents", roster); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(o.out, "\nNext, start Ollama and pull the models (each persona needs its own):")
+	_, _ = fmt.Fprintln(o.out, "  ollama serve &")
+	for _, a := range localAgents {
+		_, _ = fmt.Fprintf(o.out, "  ollama pull %s   # %s\n", a.model, a.name)
+	}
+	_, _ = fmt.Fprintln(o.out, "  export OLLAMA_API_KEY=local-no-key-needed   # any non-empty value; Ollama ignores it")
+	_, _ = fmt.Fprintln(o.out, "Remove from .atcr/config.yaml any agent whose model you do not pull.")
 	return nil
 }
 
@@ -473,17 +564,16 @@ func openBrowser(url string) error {
 	}
 }
 
-// writeSyntheticRegistry writes the synthetic provider + agents to the user
-// registry (~/.config/atcr/registry.yaml). It is non-destructive: an existing
-// registry is never clobbered without --force. When one exists and force is off,
-// the generated block is printed for the user to merge by hand rather than
-// silently overwriting their providers/agents.
-func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []string) error {
+// writeUserRegistry writes content (the providers + agents named by what) to
+// the user registry (~/.config/atcr/registry.yaml). It is non-destructive: an
+// existing registry is never clobbered without --force. When one exists and
+// force is off, the generated block is printed for the user to merge by hand
+// rather than silently overwriting their providers/agents.
+func writeUserRegistry(o quickstartOpts, content, what string, roster []string) error {
 	regPath, err := registry.DefaultRegistryPath()
 	if err != nil {
 		return err
 	}
-	content := quickstart.RegistryYAML(m, roster)
 
 	existed, err := createExclusive(regPath, []byte(content), 0o644, o.force)
 	if err != nil {
@@ -494,7 +584,7 @@ func writeSyntheticRegistry(o quickstartOpts, m *quickstart.Manifest, roster []s
 		// that the roster just written to .atcr/config.yaml references these agents
 		// — until they are merged, `atcr review` will fail to resolve the roster.
 		_, _ = fmt.Fprintf(o.errOut, "\nA registry already exists at %s — not overwriting it (use --force to replace).\n", regPath)
-		_, _ = fmt.Fprintln(o.errOut, "Add the following synthetic provider + agents to it manually:")
+		_, _ = fmt.Fprintf(o.errOut, "Add the following %s to it manually:\n", what)
 		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
 		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(roster, ", "))
 		return nil
