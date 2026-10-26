@@ -718,3 +718,70 @@ func readStoreBytes(t *testing.T, root string) string {
 	}
 	return b.String()
 }
+
+// TestPersistForReconcile_SiblingWarningDoesNotDropFinding pins Epic 35.16.15: a
+// sibling-not-found warning only clears the cross-branch marker, so a finding
+// whose anchored File resolves is still persisted. A finding whose anchored File
+// does not resolve is still dropped, with or without a sibling warning beside it.
+// This bridge is the one both entry points call (the CLI reconcile and the MCP
+// atcr_reconcile handler), so it covers both.
+//
+// The real RunReconcile stamps the anchored warnings. The sibling warning is
+// added onto its cached records afterwards, the way the existing tests stamp a
+// verdict, because no source parser stamps the marker for reconcile yet. Its text
+// is the shape TestAnchoredPathWarning pins against validateFindingPaths.
+func TestPersistForReconcile_SiblingWarningDoesNotDropFinding(t *testing.T) {
+	root := gitRepoWithFiles(t, map[string]string{
+		"internal/tok/renew.go": "package tok\n\nfunc RenewToken() error {\n\treturn nil\n}\n",
+	})
+	reviewDir := t.TempDir()
+	p := filepath.Join(reviewDir, "sources", "greta", "findings.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	const (
+		realBadSibling = "token cache is never invalidated"
+		badBadSibling  = "token file handle leaks"
+		badNoSibling   = "token file is world-readable"
+		siblingWarning = "sibling file not found: internal/tok/invented.go:9"
+	)
+	require.NoError(t, os.WriteFile(p, []byte("# atcr-findings/v1\n"+
+		"MEDIUM|internal/tok/renew.go:3|"+realBadSibling+"|invalidate it|correctness|5|ev|greta\n"+
+		"MEDIUM|internal/tok/renw.go:3|"+badBadSibling+"|close it|correctness|5|ev|greta\n"+
+		"MEDIUM|internal/tok/renw.go:4|"+badNoSibling+"|chmod it|security|5|ev|greta\n"), 0o644))
+
+	res, err := reconcile.RunReconcile(context.Background(), reviewDir, nil, reconcile.Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	emitted := res.JSONFindings()
+	require.Len(t, emitted, 3, "every fixture finding must survive merge as its own record")
+	// The finding inside RenewToken is symbol-anchored, so its problem gains a
+	// "(RenewToken) " prefix: match on the reviewer's text, and require all three.
+	seen := 0
+	for i := range emitted {
+		seen++
+		switch p := emitted[i].Problem; {
+		case strings.HasSuffix(p, realBadSibling):
+			require.Empty(t, emitted[i].PathWarning, "the fixture's anchored File must resolve")
+			emitted[i].PathWarning = siblingWarning
+		case strings.HasSuffix(p, badBadSibling):
+			require.NotEmpty(t, emitted[i].PathWarning, "the fixture must path-warn the bad anchored File")
+			emitted[i].PathWarning += "; " + siblingWarning
+		case strings.HasSuffix(p, badNoSibling):
+			require.NotEmpty(t, emitted[i].PathWarning, "the fixture must path-warn the bad anchored File")
+		default:
+			seen--
+		}
+	}
+	require.Equal(t, 3, seen, "every fixture finding must be matched and stamped")
+
+	PersistForReconcile(reviewDir, res, PersistOpts{Root: root})
+	recs, err := ReadAll(DefaultDir(root), ReadOpts{})
+	require.NoError(t, err)
+
+	require.Len(t, recs, 1, "only the finding with a real anchored File may persist")
+	assert.True(t, strings.HasSuffix(recs[0].Problem, realBadSibling), "persisted %q", recs[0].Problem)
+	assert.Equal(t, "internal/tok/renew.go", recs[0].File)
+	assert.Equal(t, 3, recs[0].Line)
+}
