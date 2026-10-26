@@ -67,6 +67,7 @@ func TestParseReviewCommandRefusesURL(t *testing.T) {
 		"oversized number":      "https://github.com/samestrin/atcr/pull/99999999999999999999",
 		"backslash path":        `https://github.com/samestrin\atcr/pull/1`,
 		"protocol-relative":     "//github.com/samestrin/atcr/pull/1",
+		"embedded after prefix": "https://evil.example/x/https://github.com/samestrin/atcr/pull/1",
 		"label hides other url": "<https://evil.example/x/y/pull/1|https://github.com/samestrin/atcr/pull/1>",
 	}
 	for name, u := range urls {
@@ -134,5 +135,29 @@ func TestParseReviewCommandEmptyAllowlistRefusesAll(t *testing.T) {
 	}
 	if _, err := ParseReviewCommand(nil, testAllow); !errors.Is(err, ErrUsage) {
 		t.Fatalf("nil mention error = %v, want ErrUsage", err)
+	}
+}
+
+// An empty ID never matches, even if a blank entry slipped into a list.
+func TestParseReviewCommandEmptyIDNeverMatchesBlankEntry(t *testing.T) {
+	blank := Allowlist{
+		Workspaces: []string{""},
+		Channels:   []string{""},
+		Users:      []string{""},
+		Repos:      testAllow.Repos,
+	}
+	m := &AppMention{Text: "<@UBOT> review <https://github.com/samestrin/atcr/pull/1>"}
+	if _, err := ParseReviewCommand(m, blank); !errors.Is(err, ErrWorkspaceNotAllowed) {
+		t.Fatalf("workspace error = %v, want ErrWorkspaceNotAllowed", err)
+	}
+	blank.Workspaces = []string{"T1"}
+	m.TeamID = "T1"
+	if _, err := ParseReviewCommand(m, blank); !errors.Is(err, ErrChannelNotAllowed) {
+		t.Fatalf("channel error = %v, want ErrChannelNotAllowed", err)
+	}
+	blank.Channels = []string{"C1"}
+	m.Channel = "C1"
+	if _, err := ParseReviewCommand(m, blank); !errors.Is(err, ErrUserNotAllowed) {
+		t.Fatalf("user error = %v, want ErrUserNotAllowed", err)
 	}
 }
