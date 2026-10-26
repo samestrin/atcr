@@ -7,8 +7,10 @@ package sandbox
 // exist on Windows; the //go:build unix tag keeps `GOOS=windows go vet` clean.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -565,7 +568,7 @@ func TestApplySandboxResourceLimits_ChildStartsWithTheLimitAndKeepsItsPid(t *tes
 
 	cmd := exec.CommandContext(context.Background(), tool)
 	configureSandboxProcessGroup(cmd)
-	applySandboxResourceLimits(cmd, cfg)
+	applySandboxResourceLimits(cmd, cfg, nil)
 	var out strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -587,7 +590,7 @@ func TestApplySandboxResourceLimits_PassesTheToolArgvThroughVerbatim(t *testing.
 	tool := writeFakeOSLevel(t, `for a in "$@"; do printf '%s\n' "$a"; done`)
 	args := []string{"a b", "$(echo injected)", "'; exit 3; '", ""}
 	cmd := exec.Command(tool, args...)
-	applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig(), nil)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "output: %s", out)
 	assert.Equal(t, strings.Join(args, "\n")+"\n", string(out))
@@ -670,6 +673,7 @@ func TestOSLevelBackendRun_StartsTheToolUnderTheMemoryCap(t *testing.T) {
 	cfg.ToolPath = writeFakeOSLevel(t, limitsReport)
 	cfg.MaxMemoryBytes = 256 * 1024 * 1024
 	b := NewOSLevelBackend(cfg)
+	b.cgroupRoot = notACgroupRoot(t)
 	captureContainmentCfg(t, &seen)
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.NoError(t, err)
@@ -685,7 +689,7 @@ func TestOSLevelBackendRun_AStructLiteralBackendGetsTheDefaultMemoryCap(t *testi
 	// run under the default cap, not without one and not under a 1 KiB one
 	// that would refuse the tool's first allocation.
 	var seen OSLevelConfig
-	b := &OSLevelBackend{cfg: OSLevelConfig{ToolPath: writeFakeOSLevel(t, limitsReport)}}
+	b := &OSLevelBackend{cfg: OSLevelConfig{ToolPath: writeFakeOSLevel(t, limitsReport)}, cgroupRoot: notACgroupRoot(t)}
 	captureContainmentCfg(t, &seen)
 	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
 	require.NoError(t, err)
@@ -703,7 +707,7 @@ func TestApplySandboxResourceLimits_LeavesAnUnexecutableToolUnwrapped(t *testing
 	require.NoError(t, os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644))
 	for _, tool := range []string{"/nonexistent/os-sandbox-binary-xyz", notExec, t.TempDir()} {
 		cmd := exec.Command(tool, "arg")
-		applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+		applySandboxResourceLimits(cmd, DefaultOSLevelConfig(), nil)
 		assert.Equal(t, tool, cmd.Path, tool)
 		assert.Equal(t, []string{tool, "arg"}, cmd.Args, tool)
 	}
@@ -746,7 +750,346 @@ func TestApplySandboxResourceLimits_LeavesTheCommandAloneWhereNoLimitIsEnforced(
 	sandboxMemoryLimitEnforced = false
 	tool := writeFakeOSLevel(t, "exit 0")
 	cmd := exec.Command(tool, "arg")
-	applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig(), nil)
 	assert.Equal(t, tool, cmd.Path)
 	assert.Equal(t, []string{tool, "arg"}, cmd.Args)
+}
+
+// notACgroupRoot returns a directory with no cgroup.controllers file, so a
+// backend given it as its cgroup root always takes the rlimit fallback. Tests
+// of the rlimit path use it to stay on that path on a host that does delegate
+// a cgroup to atcr.
+func notACgroupRoot(t *testing.T) string {
+	t.Helper()
+	return t.TempDir()
+}
+
+// fakeCgroupRoot builds a directory shaped like a delegated cgroup v2 root:
+// the controllers available, the ones enabled for its children, and the procs
+// file a child joins through. Every file is a regular file, so the writes land
+// where the test can read them back.
+func fakeCgroupRoot(t *testing.T, subtreeControl string) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cgroup.controllers"), []byte("cpu io memory pids\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cgroup.subtree_control"), []byte(subtreeControl+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cgroup.procs"), nil, 0o644))
+	return root
+}
+
+// cgroupRemoval is what a fake rmdir saw: the cgroup directory and the files
+// in it at the moment atcr removed it.
+type cgroupRemoval struct {
+	dir   string
+	files map[string]string
+}
+
+// recordCgroupRemoval replaces sandboxRmdir for a fake root. A real cgroupfs
+// directory is removed with rmdir while its interface files are still listed;
+// a fake one holds regular files, so the stand-in records them and then
+// removes the tree.
+func recordCgroupRemoval(t *testing.T) *[]cgroupRemoval {
+	t.Helper()
+	var got []cgroupRemoval
+	orig := sandboxRmdir
+	t.Cleanup(func() { sandboxRmdir = orig })
+	sandboxRmdir = func(dir string) error {
+		files := map[string]string{}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				return err
+			}
+			files[e.Name()] = strings.TrimSpace(string(raw))
+		}
+		got = append(got, cgroupRemoval{dir: dir, files: files})
+		return os.RemoveAll(dir)
+	}
+	return &got
+}
+
+func runWithLogs(t *testing.T, b *OSLevelBackend) (RunResult, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	res, err := b.Run(ctx, RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err, "logs: %s", buf.String())
+	return res, buf.String()
+}
+
+func TestOSLevelBackendRun_WritesTheCapsToAPerRunCgroupAndRemovesItAfterTheRun(t *testing.T) {
+	// Epic 35.24 T3: where the host delegates a cgroup v2 subtree with the
+	// memory and pids controllers enabled, each run gets its own child cgroup
+	// carrying memory.max and pids.max, the tool joins it before it execs (so
+	// every process it forks is counted), and the cgroup is gone once the run
+	// has returned.
+	root := fakeCgroupRoot(t, "memory pids")
+	removed := recordCgroupRemoval(t)
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `echo "$$"`)
+	cfg.MaxMemoryBytes = 300 * 1024 * 1024
+	cfg.MaxProcs = 64
+	b := NewOSLevelBackend(cfg)
+	b.cgroupRoot = root
+	captureContainmentCfg(t, &seen)
+
+	res, logs := runWithLogs(t, b)
+	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+
+	require.Len(t, *removed, 1, "the run's cgroup must be removed exactly once")
+	rm := (*removed)[0]
+	assert.Equal(t, root, filepath.Dir(rm.dir), "the run's cgroup is a child of the root")
+	assert.True(t, strings.HasPrefix(filepath.Base(rm.dir), "atcr-run-"), rm.dir)
+	assert.Equal(t, strconv.Itoa(300*1024*1024), rm.files["memory.max"])
+	assert.Equal(t, "0", rm.files["memory.swap.max"], "the memory cap must not be served from swap")
+	assert.Equal(t, "64", rm.files["pids.max"])
+	assert.Equal(t, strings.TrimSpace(res.Output), rm.files["cgroup.procs"],
+		"the tool itself, by its own pid, joined the cgroup before it ran")
+	assert.Equal(t, "1", rm.files["cgroup.kill"], "whatever outlived the reap is killed before the rmdir")
+	assert.NoDirExists(t, rm.dir)
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.HasPrefix(e.Name(), "atcr-run-"), "left behind: %s", e.Name())
+	}
+
+	assert.Contains(t, logs, "mechanism=cgroup")
+	assert.Contains(t, logs, "cgroup="+rm.dir)
+}
+
+func TestOSLevelBackendRun_TheCgroupPathReplacesTheRlimit(t *testing.T) {
+	// Under a cgroup the memory cap is memory.max, not RLIMIT_DATA: a run that
+	// carried both could be stopped by the rlimit, and nothing would show the
+	// cgroup was the mechanism that enforced (T5 proves which one did).
+	root := fakeCgroupRoot(t, "memory pids")
+	recordCgroupRemoval(t)
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, `ulimit -H -d`)
+	b := NewOSLevelBackend(cfg)
+	b.cgroupRoot = root
+	captureContainmentCfg(t, &seen)
+
+	var inherited syscall.Rlimit
+	require.NoError(t, syscall.Getrlimit(syscall.RLIMIT_DATA, &inherited))
+	want := "unlimited"
+	if inherited.Max != syscall.RLIM_INFINITY {
+		want = strconv.FormatUint(uint64(inherited.Max)/1024, 10)
+	}
+	res, _ := runWithLogs(t, b)
+	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+	assert.Equal(t, want, strings.TrimSpace(res.Output), "the child inherits atcr's own data limit, no rlimit of its own")
+}
+
+func TestOSLevelBackendRun_FallsBackToTheRlimitAndSaysWhy(t *testing.T) {
+	// A host that does not delegate both controllers gets T2's rlimit (or, on
+	// a kernel that accepts none, no memory cap), and the run's log says which
+	// mechanism applied and why the cgroup did not.
+	cases := map[string]struct {
+		root   func(t *testing.T) string
+		reason string
+	}{
+		"pids not delegated":     {func(t *testing.T) string { return fakeCgroupRoot(t, "memory") }, "pids"},
+		"memory not delegated":   {func(t *testing.T) string { return fakeCgroupRoot(t, "cpu pids") }, "memory"},
+		"not a cgroup v2 root":   {notACgroupRoot, "cgroup.controllers"},
+		"root does not exist at": {func(t *testing.T) string { return filepath.Join(t.TempDir(), "gone") }, "gone"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			removed := recordCgroupRemoval(t)
+			root := tc.root(t)
+			var seen OSLevelConfig
+			cfg := DefaultOSLevelConfig()
+			cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+			b := NewOSLevelBackend(cfg)
+			b.cgroupRoot = root
+			captureContainmentCfg(t, &seen)
+
+			res, logs := runWithLogs(t, b)
+			require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+			assert.Empty(t, *removed, "no cgroup was created, so none is removed")
+			want := "mechanism=rlimit"
+			if !sandboxMemoryLimitEnforced {
+				want = "mechanism=none"
+			}
+			assert.Contains(t, logs, want)
+			assert.Contains(t, logs, "falling back")
+			assert.Contains(t, logs, tc.reason)
+			if entries, err := os.ReadDir(root); err == nil {
+				for _, e := range entries {
+					assert.False(t, strings.HasPrefix(e.Name(), "atcr-run-"), "created: %s", e.Name())
+				}
+			}
+		})
+	}
+}
+
+func TestOSLevelBackendRun_ACgroupThatCannotTakeItsLimitsIsRemovedAndFallsBack(t *testing.T) {
+	// The cgroup was created but a limit could not be written: it must not be
+	// used (a cgroup without its cap reads as protection and is not), it must
+	// not be left behind, and the run falls back like any other refusal.
+	root := fakeCgroupRoot(t, "memory pids")
+	removed := recordCgroupRemoval(t)
+	orig := sandboxCgroupWrite
+	t.Cleanup(func() { sandboxCgroupWrite = orig })
+	sandboxCgroupWrite = func(path, value string) error {
+		if filepath.Base(path) == "pids.max" {
+			return errors.New("pids.max: permission denied")
+		}
+		return orig(path, value)
+	}
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+	b := NewOSLevelBackend(cfg)
+	b.cgroupRoot = root
+	captureContainmentCfg(t, &seen)
+
+	_, logs := runWithLogs(t, b)
+	require.Len(t, *removed, 1)
+	assert.NoDirExists(t, (*removed)[0].dir)
+	assert.Contains(t, logs, "falling back")
+	assert.Contains(t, logs, "pids.max: permission denied")
+}
+
+func TestOSLevelBackendRun_AStructLiteralBackendGetsTheDefaultCapsInItsCgroup(t *testing.T) {
+	// MaxMemoryBytes and MaxProcs are 0 on a backend NewOSLevelBackend never
+	// floored. 0 in memory.max or pids.max would refuse the tool outright, so
+	// the cgroup gets the defaults instead.
+	root := fakeCgroupRoot(t, "memory pids")
+	removed := recordCgroupRemoval(t)
+	var seen OSLevelConfig
+	b := &OSLevelBackend{cfg: OSLevelConfig{ToolPath: writeFakeOSLevel(t, "exit 0")}, cgroupRoot: root}
+	captureContainmentCfg(t, &seen)
+	runWithLogs(t, b)
+	require.Len(t, *removed, 1)
+	def := DefaultOSLevelConfig()
+	assert.Equal(t, strconv.FormatInt(def.MaxMemoryBytes, 10), (*removed)[0].files["memory.max"])
+	assert.Equal(t, strconv.Itoa(def.MaxProcs), (*removed)[0].files["pids.max"])
+}
+
+func TestSandboxCgroupScript_AJoinThatFailsIsAToolFaultNotAWorkloadExit(t *testing.T) {
+	// If the wrapper cannot move itself into the run's cgroup it must not exec
+	// the tool uncapped, and the exit must classify as a sandbox fault.
+	marker := filepath.Join(t.TempDir(), "ran")
+	cmd := exec.Command("/usr/bin/touch", marker)
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig(),
+		&sandboxCgroup{dir: filepath.Join(t.TempDir(), "missing", "atcr-run-x")})
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "output: %s", out)
+	assert.Equal(t, sandboxLimitExitCode, ee.ExitCode())
+	assert.NoFileExists(t, marker, "the tool must not run outside its cgroup")
+	for _, goos := range []string{"darwin", "linux"} {
+		isFault, reason := classifyToolExit(goos, ee.ExitCode(), string(out))
+		assert.True(t, isFault, goos)
+		assert.Contains(t, reason, sandboxLimitDiagnosticPrefix, goos)
+	}
+}
+
+func TestSandboxCgroupScript_PassesTheToolArgvThroughVerbatim(t *testing.T) {
+	// The procs path and the tool's argv travel as positional parameters, never
+	// inside the -c string, so neither is parsed as shell syntax.
+	dir := filepath.Join(t.TempDir(), "atcr-run-$(echo x)")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	tool := writeFakeOSLevel(t, `for a in "$@"; do printf '%s\n' "$a"; done`)
+	args := []string{"a b", "$(echo injected)", "'; exit 3; '", ""}
+	cmd := exec.Command(tool, args...)
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig(), &sandboxCgroup{dir: dir})
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "output: %s", out)
+	assert.Equal(t, strings.Join(args, "\n")+"\n", string(out))
+	assert.FileExists(t, filepath.Join(dir, "cgroup.procs"))
+}
+
+func TestSandboxCgroupRemove_WaitsOutABusyCgroupWithinItsBudget(t *testing.T) {
+	// rmdir answers EBUSY while a killed process has not finished exiting; the
+	// removal retries until it clears, and gives up with the error after its
+	// budget rather than holding the run open.
+	origRmdir, origBudget := sandboxRmdir, sandboxCgroupRemoveBudget
+	t.Cleanup(func() { sandboxRmdir, sandboxCgroupRemoveBudget = origRmdir, origBudget })
+	cg := &sandboxCgroup{dir: t.TempDir()}
+
+	calls := 0
+	sandboxRmdir = func(string) error {
+		calls++
+		if calls < 3 {
+			return syscall.EBUSY
+		}
+		return nil
+	}
+	require.NoError(t, cg.remove())
+	assert.Equal(t, 3, calls)
+
+	sandboxCgroupRemoveBudget = 50 * time.Millisecond
+	sandboxRmdir = func(string) error { return syscall.EBUSY }
+	start := time.Now()
+	err := cg.remove()
+	assert.ErrorIs(t, err, syscall.EBUSY)
+	assert.Less(t, time.Since(start), time.Second)
+
+	calls = 0
+	sandboxRmdir = func(string) error { calls++; return syscall.EACCES }
+	assert.ErrorIs(t, cg.remove(), syscall.EACCES)
+	assert.Equal(t, 1, calls, "only EBUSY is worth waiting out")
+}
+
+func TestOSLevelBackendRun_AFailedCgroupRemovalIsLoggedNotFatal(t *testing.T) {
+	root := fakeCgroupRoot(t, "memory pids")
+	origRmdir, origBudget := sandboxRmdir, sandboxCgroupRemoveBudget
+	t.Cleanup(func() { sandboxRmdir, sandboxCgroupRemoveBudget = origRmdir, origBudget })
+	sandboxCgroupRemoveBudget = 10 * time.Millisecond
+	sandboxRmdir = func(string) error { return syscall.EBUSY }
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, "exit 0")
+	b := NewOSLevelBackend(cfg)
+	b.cgroupRoot = root
+	captureContainmentCfg(t, &seen)
+	res, logs := runWithLogs(t, b)
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Contains(t, logs, "cgroup removal")
+	assert.Contains(t, logs, "device or resource busy")
+}
+
+func TestParseCgroupV2Path(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		"unified only":     {"0::/user.slice/user-1000.slice/session-2.scope\n", "/user.slice/user-1000.slice/session-2.scope", true},
+		"namespace root":   {"0::/\n", "/", true},
+		"hybrid hierarchy": {"12:pids:/user.slice\n1:name=systemd:/x\n0::/user.slice/a.scope\n", "/user.slice/a.scope", true},
+		"v1 only":          {"12:pids:/user.slice\n1:name=systemd:/x\n", "", false},
+		"empty":            {"", "", false},
+		"relative":         {"0::user.slice\n", "", false},
+	}
+	for name, tc := range cases {
+		got, ok := parseCgroupV2Path([]byte(tc.in))
+		assert.Equal(t, tc.ok, ok, name)
+		assert.Equal(t, tc.want, got, name)
+	}
+}
+
+func TestDiscoverSandboxCgroupRoot_IsLinuxOnly(t *testing.T) {
+	root, err := discoverSandboxCgroupRoot("darwin")
+	assert.Error(t, err)
+	assert.Empty(t, root)
+	if runtime.GOOS == "linux" {
+		raw, readErr := os.ReadFile("/proc/self/cgroup")
+		require.NoError(t, readErr)
+		rel, ok := parseCgroupV2Path(raw)
+		if !ok {
+			t.Skip("host has no cgroup v2 entry")
+		}
+		root, err = discoverSandboxCgroupRoot("linux")
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(sandboxCgroupMount, rel), root)
+	}
 }
