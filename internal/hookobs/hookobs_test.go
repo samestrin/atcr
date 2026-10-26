@@ -1047,3 +1047,139 @@ func TestWrap_RecordsTheTemperatureActuallySent(t *testing.T) {
 		})
 	}
 }
+
+// recordingReviewObserver captures every review-complete report.
+type recordingReviewObserver struct {
+	mu          sync.Mutex
+	got         []ReviewReport
+	ctxs        []context.Context
+	panicOnCall bool
+}
+
+func (r *recordingReviewObserver) OnReviewComplete(ctx context.Context, rep ReviewReport) {
+	if r.panicOnCall {
+		panic("review hook exploded")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.got = append(r.got, rep)
+	r.ctxs = append(r.ctxs, ctx)
+}
+
+func (r *recordingReviewObserver) reports() []ReviewReport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]ReviewReport(nil), r.got...)
+}
+
+func sampleReport() ReviewReport {
+	return ReviewReport{
+		RunID:              "rev-1",
+		ReviewDir:          "/repo/.atcr/reviews/rev-1",
+		Base:               "abc123",
+		Head:               "def456",
+		PRNumber:           42,
+		Partial:            true,
+		AgentsTotal:        3,
+		AgentsSucceeded:    2,
+		AgentsFailed:       1,
+		Reconciled:         true,
+		Findings:           5,
+		FindingsBySeverity: map[string]int{"high": 2, "low": 3},
+	}
+}
+
+func TestReviewComplete_NoObserverIsNoOp(t *testing.T) {
+	assert.NotPanics(t, func() { ReviewComplete(context.Background(), sampleReport()) })
+}
+
+func TestReviewComplete_NilObserverIsNoOp(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := WithReviewObserver(context.Background(), nil, &stderr)
+	assert.NotPanics(t, func() { ReviewComplete(ctx, sampleReport()) })
+	assert.Empty(t, stderr.String(), "a nil observer must produce no output")
+}
+
+func TestReviewComplete_NilContextIsNoOp(t *testing.T) {
+	//nolint:staticcheck // a nil context is the input under test
+	assert.Nil(t, WithReviewObserver(nil, &recordingReviewObserver{}, nil))
+	assert.NotPanics(t, func() {
+		//nolint:staticcheck // a nil context is the input under test
+		ReviewComplete(nil, sampleReport())
+	})
+}
+
+func TestReviewComplete_RegisteredObserverReceivesPayloadOnce(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	var stderr bytes.Buffer
+	ctx := WithReviewObserver(context.Background(), obs, &stderr)
+
+	want := sampleReport()
+	ReviewComplete(ctx, want)
+
+	got := obs.reports()
+	require.Len(t, got, 1, "one review must produce exactly one report")
+	assert.Equal(t, want, got[0])
+	assert.Same(t, ctx, obs.ctxs[0], "the observer must receive the caller's context")
+	assert.Empty(t, stderr.String())
+}
+
+// The review observer and the model-invocation observer ride on separate keys,
+// so attaching one cannot erase the other in either order.
+func TestReviewObserver_IndependentOfModelObserver(t *testing.T) {
+	obs := &recordingReviewObserver{}
+	mobs := &recordingObserver{}
+	ctx := NewContext(context.Background(), mobs, nil)
+	ctx = WithReviewObserver(ctx, obs, nil)
+	ctx = NewContext(ctx, mobs, nil)
+
+	ReviewComplete(ctx, sampleReport())
+	assert.Len(t, obs.reports(), 1)
+	_, ok := Wrap(ctx, nil).(*observingClient)
+	assert.True(t, ok, "attaching a review observer must not drop the model observer")
+}
+
+func TestReviewComplete_PanickingObserverRecoveredAndReported(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := WithReviewObserver(context.Background(), &recordingReviewObserver{panicOnCall: true}, &stderr)
+
+	assert.NotPanics(t, func() { ReviewComplete(ctx, sampleReport()) },
+		"a panicking review hook must be recovered at the seam")
+	assert.Contains(t, stderr.String(), "atcr: review-complete hook panicked, continuing without it: review hook exploded")
+}
+
+func TestReviewComplete_PanickingObserverNilStderrDoesNotRepanic(t *testing.T) {
+	ctx := WithReviewObserver(context.Background(), &recordingReviewObserver{panicOnCall: true}, nil)
+	assert.NotPanics(t, func() { ReviewComplete(ctx, sampleReport()) })
+}
+
+// Concurrent reviews under `atcr serve` share one caller-supplied writer; their
+// panic reports must not race on it (run with -race).
+func TestReviewComplete_ConcurrentPanicsSerialized(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := WithReviewObserver(context.Background(), &recordingReviewObserver{panicOnCall: true}, &stderr)
+
+	const n = 16
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ReviewComplete(ctx, sampleReport())
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, n, bytes.Count(stderr.Bytes(), []byte("review-complete hook panicked")))
+}
+
+// A model-observer panic and a review-observer panic built over the same writer
+// share one lock, so they cannot interleave either.
+func TestWithReviewObserver_SharesStderrLockWithModelObserver(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := NewContext(context.Background(), &recordingObserver{}, &stderr)
+	ctx = WithReviewObserver(ctx, &recordingReviewObserver{}, &stderr)
+
+	ms, _ := fromContext(ctx)
+	rs, _ := reviewFromContext(ctx)
+	assert.Same(t, ms.stderrMu, rs.stderrMu)
+}
