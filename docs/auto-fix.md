@@ -85,7 +85,8 @@ reverted.
 > inside `/bin/sh -c '<copy /src to /work with tar>; cd /work && exec "$@"'`, and
 > a failed copy exits 125 before your command runs. So
 > the validation image must provide **`/bin/sh` and a `tar` that supports
-> `--exclude`** (BusyBox and GNU `tar` both do) — true for `alpine`- and
+> `--exclude`** (GNU `tar` and Alpine's BusyBox `tar` both do; a BusyBox built
+> without it, such as Ubuntu's, makes the copy exit 125) — true for `alpine`- and
 > `golang`-family images, but **not** for `distroless`/`scratch` images, which
 > ship neither. If your image has no shell, base it on one that does. The `/work`
 > tmpfs is sized by an internal default and, like every tmpfs, counts against the

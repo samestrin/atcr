@@ -522,7 +522,10 @@ exit 0`)
 // against, each as a directory to prepend to PATH so `tar` resolves to it. The
 // container images differ: alpine ships BusyBox tar and golang (Debian) ships GNU
 // tar, so the script must behave the same under both. The host `tar` is always
-// covered; BusyBox is covered when a `busybox` binary is on PATH.
+// covered; BusyBox is covered when a `busybox` binary on PATH was built with
+// --exclude support. Alpine's is (CONFIG_FEATURE_TAR_FROM=y); Ubuntu's is not,
+// and against it the seed copy fails closed with 125, so it is no stand-in for
+// the alpine image.
 func seedCopyTars(t *testing.T) map[string]string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -533,12 +536,19 @@ func seedCopyTars(t *testing.T) map[string]string {
 		t.Skip("no tar on PATH")
 	}
 	tars := map[string]string{"host": filepath.Dir(host)}
-	if bb, err := exec.LookPath("busybox"); err == nil {
+	bb, err := exec.LookPath("busybox")
+	if err != nil {
+		t.Log("busybox not on PATH: BusyBox tar not covered in this run")
+		return tars
+	}
+	// BusyBox prints its usage and exits non-zero for --help; only the text matters.
+	help, _ := exec.Command(bb, "tar", "--help").CombinedOutput()
+	if strings.Contains(string(help), "--exclude") {
 		dir := t.TempDir()
 		require.NoError(t, os.Symlink(bb, filepath.Join(dir, "tar")))
 		tars["busybox"] = dir
 	} else {
-		t.Log("busybox not on PATH: BusyBox tar not covered in this run")
+		t.Logf("%s tar has no --exclude: BusyBox tar not covered in this run", bb)
 	}
 	return tars
 }
