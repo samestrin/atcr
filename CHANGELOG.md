@@ -176,6 +176,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ### Fixed
 
+- `--auto-fix` now reads the source snippet at, and names in both its prompts, the sibling location when a finding carries the cross-branch `sibling:` marker, instead of the anchored `File:Line` (epic 35.16.15.1)
 - A provider reply with no content and no reasoning now still reports its token usage alongside the error, so the spend is counted. (epic 35.26)
 - A tool-enabled reviewer whose provider answers with no choices, or with an empty turn cut off before it produced content or a tool call, now has that turn's billed tokens counted in its `tokens_in` and `tokens_out` instead of reporting zero; the reviewer still fails as before. (epic 35.26)
 - Tokens billed on a tool-loop turn that then errors, or on an errored forced final-answer call, now count toward the agent's token totals instead of being dropped. (epic 35.26)
