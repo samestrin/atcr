@@ -68,7 +68,7 @@ func do(t *testing.T, req *http.Request) (int, string) {
 	t.Helper()
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return resp.StatusCode, string(b)
@@ -266,12 +266,12 @@ func TestServer_WrongMethodAndPath(t *testing.T) {
 	_, ts := newTestServer(t, Options{})
 	resp, err := http.Get(ts.URL + SlackEventsPath)
 	require.NoError(t, err)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
 	resp, err = http.Post(ts.URL+"/other", "application/json", strings.NewReader("{}"))
 	require.NoError(t, err)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -322,7 +322,7 @@ func TestListen_DefaultsToLoopbackAndRefusesOthers(t *testing.T) {
 	}
 	ln, err := Listen("127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	host, _, err := net.SplitHostPort(ln.Addr().String())
 	require.NoError(t, err)
 	assert.True(t, net.ParseIP(host).IsLoopback())
