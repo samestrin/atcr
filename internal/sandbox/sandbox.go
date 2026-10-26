@@ -82,16 +82,18 @@ type RunSpec struct {
 	// requirement; see oslevel.go's seedWritableCopy).
 	//
 	// DockerBackend mounts the snapshot at /src instead of /work, and /work is
-	// backed by an ephemeral tmpfs seeded with a `cp -R /src/. /work/` copy.
+	// backed by an ephemeral tmpfs seeded by a `tar` pipe from /src that skips
+	// .git, node_modules, vendor and .terraform (docker.go's writableSeedCopy).
 	// The copy step is injected differently per mode. Command mode wraps the argv as
-	// `/bin/sh -c 'cp -R /src/. /work/ || exit 125; cd /work && exec "$@"' -- <command...>`,
+	// `/bin/sh -c '<seed copy>; cd /work && exec "$@"' -- <command...>`,
 	// passing the original command positionally so no token is interpolated into the
-	// shell text. Script mode instead prepends `cp -R /src/. /work/ || exit 125; cd /work\n` to
+	// shell text. Script mode instead prepends `<seed copy>; cd /work\n` to
 	// the script body before it is streamed to `sh -s` over stdin, so the copy step
-	// travels as stdin data and the Script-mode argv is unchanged.
+	// travels as stdin data and the Script-mode argv is unchanged. A failed copy
+	// exits 125 in both modes.
 	//
 	// Image requirement (DockerBackend only): both paths need a POSIX shell, so
-	// the run image must ship /bin/sh and a `cp` supporting `-R` (true for
+	// the run image must ship /bin/sh and a `tar` supporting --exclude (true for
 	// alpine/golang-family images, false for distroless/scratch).
 	Writable bool
 }

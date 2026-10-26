@@ -357,7 +357,8 @@ func TestRegistryDoc_ReplayReasoningRow(t *testing.T) {
 // a member added, renamed, or removed without a doc update fails this test.
 func TestRegistryDoc_ReplayShapeKeysMatchMessage(t *testing.T) {
 	doc := readRepoFile(t, "../../docs/registry.md")
-	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true}
+	// "-" is Parts, which has no key of its own (it is sent as content).
+	plain := map[string]bool{"role": true, "content": true, "tool_calls": true, "tool_call_id": true, "-": true}
 	var keys []string
 	typ := reflect.TypeOf(llmclient.Message{})
 	for i := 0; i < typ.NumField(); i++ {

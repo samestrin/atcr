@@ -63,6 +63,12 @@ func groundFindings(findings []stream.Finding, changed payload.ChangedLines) ([]
 //     itself is in scope.
 //   - Otherwise the cited line must fall within a changed range ±groundingTolerance,
 //     or the EVIDENCE must match a changed line.
+//
+// SiblingLocation (the cross-branch routing marker, Epic 35.16.15) is never
+// consulted: a marked finding grounds on its edited-line File/Line exactly like
+// an unmarked one, so a sibling that points into the patch cannot rescue an
+// anchor that does not. groundFindings keeps findings by value, so the stamp
+// reaches the consumers unchanged.
 func isGrounded(f stream.Finding, changed payload.ChangedLines) bool {
 	if strings.EqualFold(strings.TrimSpace(f.Category), reclib.CategoryOutOfScope) {
 		return true
