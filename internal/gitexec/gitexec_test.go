@@ -397,6 +397,56 @@ func stringLiteralValue(expr ast.Expr) (val string, ok bool) {
 	return v, true
 }
 
+// execVerdict is the AC4 gate's decision about one os/exec construction.
+type execVerdict int
+
+const (
+	execClean             execVerdict = iota // non-git string literal ("open", "docker", ...)
+	execLiteralGit                           // literal "git": an offender in every file
+	execIndirectUngranted                    // non-literal name in a file with no grant: an offender
+	execIndirectGranted                      // non-literal name in an allowlisted file: counted against its grant
+)
+
+func (v execVerdict) String() string {
+	switch v {
+	case execClean:
+		return "clean"
+	case execLiteralGit:
+		return "literal-git"
+	case execIndirectUngranted:
+		return "indirect-ungranted"
+	case execIndirectGranted:
+		return "indirect-granted"
+	}
+	return fmt.Sprintf("execVerdict(%d)", int(v))
+}
+
+// isOffender reports whether the call is flagged at the call site. A granted
+// indirected call is not, but it still counts toward checkIndirectGrants' budget.
+func (v execVerdict) isOffender() bool {
+	return v == execLiteralGit || v == execIndirectUngranted
+}
+
+// decideExecCall is the per-call AC4 decision, shared by the tree walk and its
+// self-test so the two cannot drift. rel is the module-root-relative file path,
+// nameArg the command-name argument classifyExecCall returned, and allow the
+// indirected-exec allowlist (indirectNonGitExecFiles in the walk).
+func decideExecCall(rel string, nameArg ast.Expr, allow map[string]int) execVerdict {
+	if lit, isLit := stringLiteralValue(nameArg); isLit {
+		if lit == "git" {
+			return execLiteralGit
+		}
+		return execClean
+	}
+	// Non-literal command name: could be git-via-variable. Offender unless this
+	// file is a known non-git indirected exec site — and even then only up to its
+	// pinned count, which checkIndirectGrants adjudicates.
+	if _, granted := allow[rel]; granted {
+		return execIndirectGranted
+	}
+	return execIndirectUngranted
+}
+
 // TestAC4_NoBareGitExecOutsideGitexec is the binary, CI-enforced AC4 gate. It walks
 // every production .go file in the module and flags any os/exec construction that
 // could run an unhardened git subprocess outside internal/gitexec. Per call:
@@ -460,20 +510,16 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 				return true
 			}
 			line := strconv.Itoa(fset.Position(call.Pos()).Line)
-			if lit, isLit := stringLiteralValue(nameArg); isLit {
-				if lit == "git" {
-					offenders = append(offenders, rel+":"+line+" (bare exec of literal \"git\")")
-				}
-				return true // non-git literal (e.g. "open") is fine
-			}
-			// Non-literal command name: could be git-via-variable. Offender unless
-			// this file is a known non-git indirected exec site — and even then only
-			// up to its pinned count, which checkIndirectGrants adjudicates below.
-			if _, granted := indirectNonGitExecFiles[rel]; !granted {
+			switch decideExecCall(rel, nameArg, indirectNonGitExecFiles) {
+			case execLiteralGit:
+				offenders = append(offenders, rel+":"+line+" (bare exec of literal \"git\")")
+			case execIndirectUngranted:
 				offenders = append(offenders, rel+":"+line+" (indirected exec — may run git unhardened)")
-				return true
+			case execIndirectGranted:
+				indirectCounts[rel]++ // checkIndirectGrants adjudicates the count below
+			case execClean:
+				// non-git literal (e.g. "open") is fine
 			}
-			indirectCounts[rel]++
 			return true
 		})
 		return nil
@@ -495,12 +541,18 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 }
 
 // TestAC4_MatcherDetectsIndirectedGit proves the AC4 scan's classification logic
-// (execPkgLocalName + classifyExecCall + the literal/indirect decision) actually
-// flags the forms it claims to — most importantly the variable-indirected git call
+// (execPkgLocalName + classifyExecCall + decideExecCall) actually flags the forms it
+// claims to — most importantly the variable-indirected git call
 // `exec.Command(gitPath, ...)`, the snapshot.go pre-migration pattern a literal-only
 // matcher would miss. It parses synthetic in-memory source (no production file is
-// touched) and asserts, line by line, which calls the walk would treat as offenders,
-// mirroring the decision in TestAC4_NoBareGitExecOutsideGitexec exactly.
+// touched) and asserts, line by line, the verdict the walk would reach. The per-call
+// decision is decideExecCall, the same helper TestAC4_NoBareGitExecOutsideGitexec
+// calls, so this cannot drift from the gate it vouches for.
+//
+// The source is decided twice: once under a path absent from the allowlist, and once
+// under a synthetic allowlisted path. The second pass pins the allowlist branch
+// directly — indirected calls there are granted (counted, not flagged) while a
+// literal "git" is STILL an offender — instead of leaving it exercised only end to end.
 func TestAC4_MatcherDetectsIndirectedGit(t *testing.T) {
 	// Line 1 of the parsed file is `package sample`; call lines are annotated below.
 	const src = `package sample
@@ -529,45 +581,69 @@ func f(ctx context.Context, gitPath string, argv []string) {
 		t.Fatalf("execPkgLocalName resolved %q, want %q (import alias not honored)", execPkg, "xexec")
 	}
 
-	// Reproduce the walk's per-call decision with NO file allowlisted, so every
-	// literal-"git" and every indirected call is an offender.
-	var offenderLines []int
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		isExec, nameArg := classifyExecCall(call, execPkg)
-		if !isExec {
-			return true
-		}
-		line := fset.Position(call.Pos()).Line
-		if lit, isLit := stringLiteralValue(nameArg); isLit {
-			if lit == "git" {
-				offenderLines = append(offenderLines, line)
-			}
-			return true
-		}
-		offenderLines = append(offenderLines, line) // indirected
-		return true
-	})
+	// A synthetic allowlist, so the rows do not depend on which production files
+	// happen to be granted today.
+	const allowedFile = "internal/synthetic/allowed.go"
+	allow := map[string]int{allowedFile: 2}
 
-	got := map[int]bool{}
-	for _, l := range offenderLines {
-		got[l] = true
+	verdicts := func(rel string) map[int]execVerdict {
+		got := map[int]execVerdict{}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			isExec, nameArg := classifyExecCall(call, execPkg)
+			if !isExec {
+				return true
+			}
+			got[fset.Position(call.Pos()).Line] = decideExecCall(rel, nameArg, allow)
+			return true
+		})
+		return got
 	}
-	// Offenders: literal git (9, 12) + indirected (10, 13). Non-git literals (11, 14) clean.
-	wantOffenders := []int{9, 10, 12, 13}
-	wantClean := []int{11, 14}
-	for _, l := range wantOffenders {
-		if !got[l] {
-			t.Errorf("line %d should be flagged as an AC4 offender but was not", l)
-		}
+
+	rows := []struct {
+		name string
+		rel  string
+		want map[int]execVerdict
+	}{
+		{
+			// Literal git (9, 12) and indirected (10, 13) are offenders; non-git
+			// literals (11, 14) are clean.
+			name: "file not allowlisted",
+			rel:  "internal/synthetic/sample.go",
+			want: map[int]execVerdict{
+				9: execLiteralGit, 10: execIndirectUngranted, 11: execClean,
+				12: execLiteralGit, 13: execIndirectUngranted, 14: execClean,
+			},
+		},
+		{
+			// The allowlist excuses only the indirected form: 10 and 13 are granted
+			// (counted against the file's budget), 9 and 12 remain bare-git offenders.
+			name: "file allowlisted",
+			rel:  allowedFile,
+			want: map[int]execVerdict{
+				9: execLiteralGit, 10: execIndirectGranted, 11: execClean,
+				12: execLiteralGit, 13: execIndirectGranted, 14: execClean,
+			},
+		},
 	}
-	for _, l := range wantClean {
-		if got[l] {
-			t.Errorf("line %d (non-git literal) must NOT be flagged", l)
-		}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			got := verdicts(row.rel)
+			if len(got) != len(row.want) {
+				t.Fatalf("decided %d exec calls, want %d: %v", len(got), len(row.want), got)
+			}
+			for line, want := range row.want {
+				if got[line] != want {
+					t.Errorf("line %d: verdict %v, want %v", line, got[line], want)
+				}
+				if got[line].isOffender() != want.isOffender() {
+					t.Errorf("line %d: offender=%t, want %t", line, got[line].isOffender(), want.isOffender())
+				}
+			}
+		})
 	}
 }
 
