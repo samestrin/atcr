@@ -49,7 +49,7 @@ clean copy.
 
 **`/work` is writable for `--auto-fix` validation, via an ephemeral copy.** The
 patched working tree is mounted **read-only at `/src`**, and `/work` is backed by
-a fresh writable `tmpfs` that the container seeds with `cp -R /src/. /work/`
+a fresh writable `tmpfs` that the container seeds by copying `/src` with `tar`
 before your `validate_command` runs; the command then executes against that
 writable `/work` copy. Because the snapshot side (`/src`) stays read-only for the
 container's entire lifetime and every write lands in the throwaway `/work` tmpfs
@@ -70,9 +70,22 @@ writes land in the ephemeral `/work` tmpfs and are discarded with the container,
 so a valid non-Go fix is validated and its PR opened rather than silently
 reverted.
 
+> **What the copy skips.** The Docker backend's copy leaves out every `.git`,
+> `node_modules`, `vendor` and `.terraform` directory, at any depth, so a large
+> repository history or dependency tree does not fill the memory-backed `/work`
+> before validation starts. Build outputs such as `target/`, `dist/` and `build/`
+> are copied. A `validate_command` that runs `git`, or that needs installed
+> `node_modules` or a vendored dependency tree, does not find them in `/work`.
+> The `os-level` backend copies the whole tree, `.git` included. With BusyBox
+> `tar` (`alpine` images), a non-empty directory that its owner cannot write
+> (mode `0555`, for example) fails the copy with exit 125; GNU `tar` (`golang`
+> images) copies it.
+>
 > **Image requirement.** The ephemeral-copy overlay runs your `validate_command`
-> inside `/bin/sh -c 'cp -R /src/. /work/ || exit 125; cd /work && exec "$@"'`, so
-> the validation image must provide **`/bin/sh` and `cp`** — true for `alpine`- and
+> inside `/bin/sh -c '<copy /src to /work with tar>; cd /work && exec "$@"'`, and
+> a failed copy exits 125 before your command runs. So
+> the validation image must provide **`/bin/sh` and a `tar` that supports
+> `--exclude`** (BusyBox and GNU `tar` both do) — true for `alpine`- and
 > `golang`-family images, but **not** for `distroless`/`scratch` images, which
 > ship neither. If your image has no shell, base it on one that does. The `/work`
 > tmpfs is sized by an internal default and, like every tmpfs, counts against the

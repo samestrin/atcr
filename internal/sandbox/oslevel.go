@@ -540,8 +540,8 @@ var (
 // directory, so a Writable run mutates a throwaway copy and never the host
 // snapshot (sandbox.go:59-67).
 //
-// The copy is performed host-side, in Go, before the spawn — NOT with a `cp -R`
-// injected into the workload the way DockerBackend does it
+// The copy is performed host-side, in Go, before the spawn — NOT with a `tar`
+// pipe injected into the workload the way DockerBackend does it
 // (writableSetupExec/writableSetupPrefix, docker.go:124-130). Docker has no
 // other way to reach inside a container; this backend spawns a child process on
 // the same filesystem, so no shell needs to enter the picture and RunSpec's
