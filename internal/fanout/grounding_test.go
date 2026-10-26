@@ -215,3 +215,77 @@ func TestGroundFindings_ExemptsOutOfScopeOnPrefetchOnlyFile(t *testing.T) {
 		t.Fatalf("out-of-scope on prefetch-only file: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
 	}
 }
+
+// Epic 35.16.15 T3: the sibling marker never changes the grounding verdict. A
+// marked finding is judged on its edited-line File/Line exactly like an
+// unmarked one, and a kept finding carries its SiblingLocation through intact.
+
+func TestGroundFindings_MarkedOnChangedLineKeepsSibling(t *testing.T) {
+	in := []stream.Finding{{
+		File: "auth.go", Line: 42, Category: "correctness",
+		Evidence:        "sibling: auth.go:120 else arm still returns nil",
+		SiblingLocation: "auth.go:120",
+	}}
+	out, dropped := groundFindings(in, changedFixture())
+	if len(out) != 1 || dropped != 0 {
+		t.Fatalf("marked on changed line: kept=%d dropped=%d, want kept=1 dropped=0", len(out), dropped)
+	}
+	if out[0].SiblingLocation != "auth.go:120" {
+		t.Fatalf("SiblingLocation = %q, want %q preserved", out[0].SiblingLocation, "auth.go:120")
+	}
+}
+
+func TestGroundFindings_MarkedEditedLineOutsidePatchDropped(t *testing.T) {
+	// The sibling points INTO a changed range, but the edited-line anchor does
+	// not: the sibling must never ground the finding on its own.
+	in := []stream.Finding{{
+		File: "auth.go", Line: 200, Category: "correctness",
+		Evidence:        "sibling: auth.go:42 unrelated prose",
+		SiblingLocation: "auth.go:42",
+	}}
+	out, dropped := groundFindings(in, changedFixture())
+	if len(out) != 0 || dropped != 1 {
+		t.Fatalf("marked off-patch: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+}
+
+func TestGroundFindings_MarkedSiblingFileDoesNotGround(t *testing.T) {
+	// A finding filed against an untouched file is dropped even when its
+	// sibling names a changed file and line.
+	in := []stream.Finding{{
+		File: "other.go", Line: 10, Category: "correctness",
+		Evidence:        "sibling: auth.go:42 unrelated prose",
+		SiblingLocation: "auth.go:42",
+	}}
+	out, dropped := groundFindings(in, changedFixture())
+	if len(out) != 0 || dropped != 1 {
+		t.Fatalf("marked on untouched file: kept=%d dropped=%d, want kept=0 dropped=1", len(out), dropped)
+	}
+}
+
+func TestIsGrounded_MarkerDoesNotChangeVerdict(t *testing.T) {
+	changed := changedFixture()
+	changed["ref.go"] = payload.FileChange{
+		Ranges:       []payload.LineRange{{Start: 10, End: 12}},
+		ChangedText:  []string{"some retrieved snippet line"},
+		PrefetchOnly: true,
+	}
+	cases := []stream.Finding{
+		{File: "auth.go", Line: 42, Category: "correctness"},
+		{File: "auth.go", Line: 47, Category: "correctness"},
+		{File: "auth.go", Line: 200, Category: "correctness", Evidence: "totally unrelated prose"},
+		{File: "auth.go", Line: 999, Category: "security", Evidence: "return validate(token)"},
+		{File: "auth.go", Line: 0, Category: "correctness"},
+		{File: "nope.go", Line: 42, Category: "correctness"},
+		{File: "nope.go", Line: 42, Category: "out-of-scope"},
+		{File: "ref.go", Line: 11, Category: "correctness"},
+		{File: "ref.go", Line: 14, Category: "correctness"},
+	}
+	for _, unmarked := range cases {
+		marked := unmarked
+		marked.SiblingLocation = "auth.go:42"
+		if got, want := isGrounded(marked, changed), isGrounded(unmarked, changed); got != want {
+			t.Errorf("%s:%d %s: marked=%v unmarked=%v, want equal", unmarked.File, unmarked.Line, unmarked.Category, got, want)
+		}
+	}
+}
