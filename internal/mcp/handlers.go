@@ -469,7 +469,8 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// cannot drift in how a record is built, deduped, or compacted (closes TD-002).
 	// The root was resolved BEFORE RunReconcile (above), so validation and
 	// persistence agree on which store this run's findings belong to: findings the
-	// resolved root PathWarning-stamped are dropped by the bridge here, matching
+	// resolved root PathWarning-stamped on their anchored File (a bad sibling alone
+	// does not count, Epic 35.16.15) are dropped by the bridge here, matching
 	// the CLI's exclusion set (TD-019). Best-effort and non-fatal, exactly like
 	// the scorecard emit above: it never fails the reconcile or changes
 	// ReconcileResult.
