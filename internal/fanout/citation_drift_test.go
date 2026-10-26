@@ -53,30 +53,53 @@ func TestCitationDrift_CitedLineHoldsTheNamedIdentifier(t *testing.T) {
 		t.Fatalf("repo root not found at %s from internal/fanout: %v", repoRoot, err)
 	}
 
-	total := 0
+	results := make([]citationResult, 0, len(citationScope))
 	for _, s := range citationScope {
 		src := readRepoFile(t, filepath.Join(repoRoot, s.file))
 		cites, problems := checkCitations(repoRoot, s.file, src, s.targets)
-		total += cites
-		if task, pending := awaitingRepin[s.file]; pending {
-			if len(problems) == 0 {
-				t.Errorf("%s now passes this guard: remove it from awaitingRepin (%s re-pinned it), so a later drift fails the suite", s.file, task)
+		results = append(results, citationResult{s.file, cites, problems})
+	}
+	errs, logs := judgeCitations(results, awaitingRepin)
+	for _, l := range logs {
+		t.Log(l)
+	}
+	for _, e := range errs {
+		t.Error(e)
+	}
+}
+
+// citationResult is one citing file's outcome from checkCitations.
+type citationResult struct {
+	file     string
+	cites    int
+	problems []string
+}
+
+// judgeCitations turns per-file results into the guard's verdict: errors fail
+// the test, logs are shown under go test -v. It holds the two checks that keep
+// the guard armed. A file in pending that has no problems is an error, so the
+// list can only shrink. A pattern that silently stops matching would pass every
+// file with nothing checked; some in-scope citations keep a line number by
+// design, so the total must never fall to zero.
+func judgeCitations(results []citationResult, pending map[string]string) (errs, logs []string) {
+	total := 0
+	for _, r := range results {
+		total += r.cites
+		if task, ok := pending[r.file]; ok {
+			if len(r.problems) == 0 {
+				errs = append(errs, fmt.Sprintf("%s now passes this guard: remove it from awaitingRepin (%s re-pinned it), so a later drift fails the suite", r.file, task))
 			}
-			for _, p := range problems {
-				t.Logf("awaiting %s re-pin: %s", task, p)
+			for _, p := range r.problems {
+				logs = append(logs, fmt.Sprintf("awaiting %s re-pin: %s", task, p))
 			}
 			continue
 		}
-		for _, p := range problems {
-			t.Error(p)
-		}
+		errs = append(errs, r.problems...)
 	}
-	// A pattern that silently stops matching would pass every file with nothing
-	// checked. Some in-scope citations keep a line number by design, so the
-	// count must never fall to zero.
 	if total == 0 {
-		t.Fatalf("no citations found in any in-scope file; the citation pattern no longer matches, so this guard checks nothing")
+		errs = append(errs, "no citations found in any in-scope file; the citation pattern no longer matches, so this guard checks nothing")
 	}
+	return errs, logs
 }
 
 // citationScope is the set of citing files and, for each, the target files whose
