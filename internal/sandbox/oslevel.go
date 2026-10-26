@@ -235,6 +235,11 @@ type OSLevelBackend struct {
 	// trusted-directory control is assertable from a fixture rather than
 	// depending on whether the host happens to have the real tool installed.
 	trustedDirs []string
+	// cgroupRoot overrides the cgroup v2 directory each run's cgroup is created
+	// under. Empty means the cgroup atcr runs in, read from /proc/self/cgroup.
+	// Injectable so the cgroup path is assertable against a fake root on any
+	// host, not only on one that delegates a cgroup subtree.
+	cgroupRoot string
 
 	// mu guards pinnedTool. Preflight and Run may be called concurrently — the
 	// type is explicitly built for concurrent use (see MaxConcurrent/sem) — and
@@ -1240,7 +1245,10 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Start the tool under the memory cap. On unix this wraps the argv in a
 	// /bin/sh that sets the rlimit and execs the tool in place, so the pid and
 	// the group set up above are unchanged; see applySandboxResourceLimits.
-	applySandboxResourceLimits(cmd, runCfg)
+	// Where the host delegates a cgroup v2 subtree the wrapper joins a per-run
+	// cgroup carrying memory.max and pids.max instead; see openSandboxCgroup.
+	cgroup := b.openSandboxCgroup(logger, runCfg, logCmd)
+	applySandboxResourceLimits(cmd, runCfg, cgroup)
 	cmd.WaitDelay = osLevelWaitGrace
 	if spec.Script != "" {
 		// The script is stdin DATA to `sh -s`, never argv and never inside a
@@ -1285,6 +1293,14 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	if reapErr := reapSandboxProcessGroup(cmd); reapErr != nil {
 		logger.Warn("sandbox exec process-group reap returned unexpected error",
 			"backend", osLevelBackendName, "command", logCmd, "error", reapErr)
+	}
+	// Then remove the run's cgroup, killing anything still in it. A failed
+	// removal leaves an empty cgroup behind, which is logged, not fatal.
+	if cgroup != nil {
+		if rmErr := cgroup.remove(); rmErr != nil {
+			logger.Warn("sandbox exec cgroup removal failed",
+				"backend", osLevelBackendName, "command", logCmd, "cgroup", cgroup.dir, "error", rmErr)
+		}
 	}
 	res = RunResult{
 		Command: cmdStr,

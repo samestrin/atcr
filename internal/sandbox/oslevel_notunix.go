@@ -2,7 +2,10 @@
 
 package sandbox
 
-import "os/exec"
+import (
+	"log/slog"
+	"os/exec"
+)
 
 // configureSandboxProcessGroup is a no-op on non-unix platforms: there is no
 // POSIX process group to create and no syscall.Kill to reap one with, so
@@ -23,4 +26,17 @@ func reapSandboxProcessGroup(_ *exec.Cmd) error { return nil }
 // applySandboxResourceLimits is a no-op for the same reason: there is no
 // /bin/sh to set an rlimit with, and Run never spawns a process on these
 // platforms.
-func applySandboxResourceLimits(_ *exec.Cmd, _ OSLevelConfig) {}
+func applySandboxResourceLimits(_ *exec.Cmd, _ OSLevelConfig, _ *sandboxCgroup) {}
+
+// sandboxCgroup is never created on these platforms; see openSandboxCgroup.
+type sandboxCgroup struct {
+	dir string
+}
+
+// openSandboxCgroup returns nil: cgroups are linux-only, and Run never spawns
+// a process on these platforms.
+func (b *OSLevelBackend) openSandboxCgroup(_ *slog.Logger, _ OSLevelConfig, _ string) *sandboxCgroup {
+	return nil
+}
+
+func (*sandboxCgroup) remove() error { return nil }
