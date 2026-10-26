@@ -165,6 +165,10 @@ type Settings struct {
 	// is DISABLED, which is the safe direction for a feature that calls an
 	// external service. Read it through ResolvedSemanticPrefetch, never directly.
 	SemanticPrefetch SemanticPrefetch
+	// ThreatMap is the resolved `threat_map` block (Epic 37.0): the agent the
+	// opt-in --threat-map phase calls. The project tier overrides the registry
+	// tier; there is no CLI override, the flag only turns the phase on.
+	ThreatMap ThreatMap
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -249,6 +253,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// context_prefetch.semantic (Epic 35.16.12) sits at the registry and
 		// project tiers only, like MaxPrefetchBytes, and overlays field by field.
 		overlaySemanticPrefetch(&s.SemanticPrefetch, reg.ContextPrefetch, &semanticTopKSet)
+		overlayThreatMap(&s.ThreatMap, reg.ThreatMap)
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
 		// so they are overlaid here rather than through applyTier.
@@ -294,6 +299,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			s.MaxPrefetchBytes = byteCeilingPtr(*proj.MaxPrefetchBytes)
 		}
 		overlaySemanticPrefetch(&s.SemanticPrefetch, proj.ContextPrefetch, &semanticTopKSet)
+		overlayThreatMap(&s.ThreatMap, proj.ThreatMap)
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
 		}

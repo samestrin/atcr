@@ -491,6 +491,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	var (
 		payloads  map[string]modePayload
 		rb        *payload.RangeBuilder
+		threatMap *payload.ThreatMapRecord
 		forceMode string
 	)
 	if m.Baseline {
@@ -513,7 +514,13 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// recovery pattern — editing payload_escalation between an interrupted run and
 		// its resume is intended to take effect, so nothing is persisted or fed back
 		// from the manifest here (2026-07-27 TD apply-answers, Q1).
-		payloads, rb, err = buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore)
+		//
+		// The threat map IS locked to the manifest, like NoIgnore (Epic 37.0): the
+		// recorded keep set is applied and the mapper is never called again, since a
+		// second call could scope the pending agents to a different file set than the
+		// completed agents reviewed. A run that did not map has no record, and a
+		// resume request's own ThreatMapper is ignored.
+		payloads, rb, threatMap, err = buildScopedPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, m.NoIgnore, threatScope{recorded: m.ThreatMap})
 	}
 	if err != nil {
 		return nil, nil, err
@@ -651,6 +658,10 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		// The pre-fetch outcome of this resume, by the same contract as the ledger
 		// above: nil on a baseline path leaves the manifest's field alone.
 		prefetch: resumedPrefetch,
+		// The drops of the recorded threat map, re-derived by trimming this
+		// resume's payload to the recorded keep set (Epic 37.0), so a resumed
+		// agent's status.json lists threat_map_dropped exactly as a completed one.
+		threatMapDropped: threatMapDropped(threatMap),
 	}
 	if m.Baseline {
 		// TD-011: a resumed BASELINE run captures the same write-back state the

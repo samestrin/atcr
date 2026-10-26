@@ -69,7 +69,7 @@ func TestFinalizePreparedReview_PrefetchPayloadsWithoutBuilderDisablesGrounding(
 		"blocks": {Entries: []payload.FileEntry{{Path: payload.PrefetchContextPath, Body: "context"}}},
 	}
 	prep, err := finalizePreparedReview(context.Background(), cfg,
-		reviewReq(repo, repo, base, head), payloads, map[string]string{}, nil, "blocks", nil, false)
+		reviewReq(repo, repo, base, head), payloads, map[string]string{}, nil, "blocks", nil, false, nil)
 	require.NoError(t, err)
 	require.NotNil(t, prep)
 
