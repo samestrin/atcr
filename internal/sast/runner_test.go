@@ -156,3 +156,40 @@ func TestParseSARIF_MissingRootIsError(t *testing.T) {
 	_, _, err := ParseSARIF(strings.NewReader(`{"version":"2.1.0","runs":[]}`), filepath.Join(t.TempDir(), "nope"))
 	require.Error(t, err)
 }
+
+// Each case below names a path that resolves to something that exists inside
+// root, so only the guard under test can drop it; the later resolution checks
+// would otherwise keep it.
+func TestParseSARIF_GuardsThatResolutionAloneWouldMiss(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "app"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "app", "db.go"), nil, 0o644))
+	// On Linux/macOS a backslash is an ordinary filename byte, so this file
+	// really exists; the URI is still refused as a Windows-style separator.
+	require.NoError(t, os.WriteFile(filepath.Join(root, `app\db.go`), nil, 0o644))
+
+	for name, uri := range map[string]string{
+		"dot-dot resolving inside root":         "app/../app/db.go",
+		"encoded dot-dot resolving inside root": "app/%2e%2e/app/db.go",
+		"directory":                             "app",
+		"backslash":                             `app%5Cdb.go`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := `{"version":"2.1.0","runs":[{"results":[{"ruleId":"r","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"` + uri + `"}}}]}]}]}`
+			findings, dropped, err := ParseSARIF(strings.NewReader(doc), root)
+			require.NoError(t, err)
+			assert.Empty(t, findings)
+			assert.Equal(t, 1, dropped)
+		})
+	}
+}
+
+func TestParseSARIF_NegativeStartLineIsFileLevel(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.go"), nil, 0o644))
+	doc := `{"version":"2.1.0","runs":[{"results":[{"ruleId":"r","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.go"},"region":{"startLine":-4}}}]}]}]}`
+	findings, _, err := ParseSARIF(strings.NewReader(doc), root)
+	require.NoError(t, err)
+	require.Len(t, findings, 1)
+	assert.Zero(t, findings[0].Line)
+}
