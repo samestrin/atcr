@@ -6,13 +6,16 @@ import (
 	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
 	"math"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -1848,4 +1851,176 @@ func (a AgentConfig) EffectivePayloadMode(s Settings) string {
 		return v
 	}
 	return s.PayloadMode
+}
+
+// Webhook daemon defaults (Epic 49.0). The listen address binds loopback only:
+// the daemon is meant to sit behind a tunnel or reverse proxy on the same host,
+// and Validate refuses anything else, so no config can expose it directly.
+const (
+	DefaultWebhookListen             = "127.0.0.1:8787"
+	DefaultWebhookMaxBodyBytes int64 = 1 << 20
+	DefaultWebhookJobTimeout         = 30 * time.Minute
+)
+
+// webhookRepoName matches the `owner/repo` key of webhook.repos, the form a
+// GitHub PR URL carries. The `..` check in Validate covers what it lets through.
+var webhookRepoName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+// WebhookConfig is the optional `webhook:` block in .atcr/config.yaml read by
+// `atcr webhook` (Epic 49.0). A nil block means the daemon is unconfigured.
+// Credentials are environment-variable NAMES (the api_key_env pattern), never
+// values, so a token can never be committed with the config.
+type WebhookConfig struct {
+	// Listen is the host:port the daemon binds. Empty is DefaultWebhookListen;
+	// a host that is not loopback is rejected.
+	Listen string `yaml:"listen,omitempty"`
+	// MaxBodyBytes caps a request body. nil is DefaultWebhookMaxBodyBytes; a
+	// pointer so an explicit 0 is caught rather than replaced.
+	MaxBodyBytes *int64 `yaml:"max_body_bytes,omitempty"`
+	// JobTimeout bounds one triggered job, as a Go duration string (e.g. "20m").
+	// Empty is DefaultWebhookJobTimeout.
+	JobTimeout string `yaml:"job_timeout,omitempty"`
+	// GitHubTokenEnv names the environment variable holding the GitHub token
+	// used to fetch a PR. Optional: empty leaves fetching to the checkout's own
+	// git credentials.
+	GitHubTokenEnv string `yaml:"github_token_env,omitempty"`
+	// Repos is the repository allowlist: `owner/repo` to the absolute path of a
+	// local checkout of it. A PR in any other repository is refused.
+	Repos map[string]string `yaml:"repos,omitempty"`
+	// Slack is the optional Slack trigger; nil means Slack requests are refused.
+	Slack *WebhookSlackConfig `yaml:"slack,omitempty"`
+}
+
+// WebhookSlackConfig is the `webhook.slack:` block. Every allowlist is
+// required and non-empty: a request must match a listed workspace, channel and
+// user, so an omitted list never silently means "anyone".
+type WebhookSlackConfig struct {
+	BotTokenEnv      string   `yaml:"bot_token_env"`
+	SigningSecretEnv string   `yaml:"signing_secret_env"`
+	Workspaces       []string `yaml:"workspaces"`
+	Channels         []string `yaml:"channels"`
+	Users            []string `yaml:"users"`
+}
+
+// ListenAddress returns the configured listen address or DefaultWebhookListen.
+func (w *WebhookConfig) ListenAddress() string {
+	if l := strings.TrimSpace(w.Listen); l != "" {
+		return l
+	}
+	return DefaultWebhookListen
+}
+
+// BodyLimit returns the configured request-body cap or DefaultWebhookMaxBodyBytes.
+func (w *WebhookConfig) BodyLimit() int64 {
+	if w.MaxBodyBytes != nil {
+		return *w.MaxBodyBytes
+	}
+	return DefaultWebhookMaxBodyBytes
+}
+
+// JobTimeoutDuration returns the configured per-job timeout or
+// DefaultWebhookJobTimeout. Validate has already rejected an unparsable value.
+func (w *WebhookConfig) JobTimeoutDuration() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(w.JobTimeout)); err == nil {
+		return d
+	}
+	return DefaultWebhookJobTimeout
+}
+
+// Validate checks the webhook block at config-load time. A nil block is valid.
+// It accumulates every fault (errors.Join) so an operator fixes them in one edit.
+func (w *WebhookConfig) Validate() error {
+	if w == nil {
+		return nil
+	}
+	var errs []error
+	if err := validateWebhookListen(w.ListenAddress()); err != nil {
+		errs = append(errs, err)
+	}
+	if w.MaxBodyBytes != nil && *w.MaxBodyBytes <= 0 {
+		errs = append(errs, fmt.Errorf("webhook.max_body_bytes must be > 0, got %d", *w.MaxBodyBytes))
+	}
+	if t := strings.TrimSpace(w.JobTimeout); t != "" {
+		if d, err := time.ParseDuration(t); err != nil {
+			errs = append(errs, fmt.Errorf("webhook.job_timeout %q is not a valid duration (e.g. \"20m\")", w.JobTimeout))
+		} else if d <= 0 {
+			errs = append(errs, fmt.Errorf("webhook.job_timeout must be positive, got %q", w.JobTimeout))
+		}
+	}
+	if w.GitHubTokenEnv != "" {
+		errs = append(errs, validateEnvName("webhook.github_token_env", w.GitHubTokenEnv)...)
+	}
+	if len(w.Repos) == 0 {
+		errs = append(errs, errors.New("webhook.repos must list at least one owner/repo and its local checkout path"))
+	}
+	for _, name := range sortedKeys(w.Repos) {
+		path := strings.TrimSpace(w.Repos[name])
+		switch {
+		case strings.TrimSpace(name) == "":
+			errs = append(errs, errors.New("webhook.repos must not contain an empty repository name"))
+		case !webhookRepoName.MatchString(name) || strings.Contains(name, ".."):
+			errs = append(errs, fmt.Errorf("webhook.repos key %q must be owner/repo", name))
+		}
+		switch {
+		case path == "":
+			errs = append(errs, fmt.Errorf("webhook.repos[%q] has an empty checkout path", name))
+		case !filepath.IsAbs(path):
+			errs = append(errs, fmt.Errorf("webhook.repos[%q] checkout path %q must be absolute", name, w.Repos[name]))
+		}
+	}
+	if s := w.Slack; s != nil {
+		errs = append(errs, validateEnvName("webhook.slack.bot_token_env", s.BotTokenEnv)...)
+		errs = append(errs, validateEnvName("webhook.slack.signing_secret_env", s.SigningSecretEnv)...)
+		errs = append(errs, validateAllowlist("webhook.slack.workspaces", s.Workspaces)...)
+		errs = append(errs, validateAllowlist("webhook.slack.channels", s.Channels)...)
+		errs = append(errs, validateAllowlist("webhook.slack.users", s.Users)...)
+	}
+	return errors.Join(errs...)
+}
+
+// validateWebhookListen requires host:port with a numeric port and a loopback
+// host (localhost, 127.0.0.0/8 or ::1). An empty host binds every interface,
+// so it is rejected like any other non-loopback address.
+func validateWebhookListen(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("webhook.listen %q must be host:port (e.g. %q)", addr, DefaultWebhookListen)
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return fmt.Errorf("webhook.listen %q has an invalid port: must be a number 0..65535", addr)
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("webhook.listen %q is not a loopback address: the daemon binds only localhost, 127.0.0.0/8 or ::1", addr)
+}
+
+// validateEnvName reports a credential field that is not an environment
+// variable name, so a pasted token is refused at load instead of committed.
+func validateEnvName(field, v string) []error {
+	if v == "" {
+		return []error{fmt.Errorf("%s is required: the environment variable name holding the credential", field)}
+	}
+	if !envVarName.MatchString(v) {
+		// The value itself is not echoed: it may be the secret pasted by mistake.
+		return []error{fmt.Errorf("%s is not a valid environment variable name (letters, digits and _, not starting with a digit)", field)}
+	}
+	return nil
+}
+
+// validateAllowlist requires a non-empty list with no blank entry.
+func validateAllowlist(field string, ids []string) []error {
+	if len(ids) == 0 {
+		return []error{fmt.Errorf("%s must list at least one id", field)}
+	}
+	var errs []error
+	for i, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			errs = append(errs, fmt.Errorf("%s[%d] is empty", field, i))
+		}
+	}
+	return errs
 }
