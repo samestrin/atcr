@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/integrations/slack"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/webhook"
 	"github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -408,4 +409,22 @@ func TestJobContext_KeepsBaseValuesAndJobDeadline(t *testing.T) {
 		t.Fatal("job cancellation did not reach the review context")
 	}
 	assert.ErrorIs(t, ctx2.Err(), context.Canceled)
+}
+
+// TestWebhookDocStatesCredentialsAllowlistsAndLoopback is the docs half of the
+// T7 done-when: docs/webhook.md names every credential config key (an
+// environment-variable name, never a value), every allowlist and the loopback
+// default.
+func TestWebhookDocStatesCredentialsAllowlistsAndLoopback(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRootDir(t), "docs", "webhook.md"))
+	require.NoError(t, err)
+	doc := string(b)
+	for _, want := range []string{
+		"bot_token_env", "signing_secret_env", "github_token_env", // credentials
+		"workspaces", "channels", "users", "repos", // allowlists
+		registry.DefaultWebhookListen, "loopback", // bind default
+		"atcr webhook",
+	} {
+		assert.Contains(t, doc, want)
+	}
 }
