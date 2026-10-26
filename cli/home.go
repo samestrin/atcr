@@ -13,6 +13,8 @@ import (
 	"github.com/samestrin/atcr/internal/pathutil"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
 )
 
 // homeExecutable and homeUserDir are seams over os.Executable / os.UserHomeDir so
@@ -148,16 +150,22 @@ func runHome(cmd *cobra.Command) error {
 		case st.unavailable:
 			reviewID, status = st.reviewID, "unavailable"
 		}
-		render := report.RenderHomeViewAXI
-		if legacyPipeFromContext(ctx) {
-			render = report.RenderHomeViewPipe
-		}
-		return render(cmd.OutOrStdout(), report.HomeViewAXI{
+		view := report.HomeViewAXI{
 			ExecPath:     relHome(execPath),
 			Description:  cmd.Short,
 			ReviewID:     reviewID,
 			ReviewStatus: status,
-		})
+		}
+		// The deprecated pipe payload stays byte-identical: help[] is a
+		// standard-TOON block (Epic 42.0).
+		if legacyPipeFromContext(ctx) {
+			return report.RenderHomeViewPipe(cmd.OutOrStdout(), view)
+		}
+		if err := report.RenderHomeViewAXI(cmd.OutOrStdout(), view); err != nil {
+			return err
+		}
+		return goaxi.WriteHelp(cmd.OutOrStdout(),
+			renderSuggestions(suggestHome, invocation{Flags: invocationFlags(cmd)}))
 	}
 
 	return renderHomeView(cmd.OutOrStdout(), execPath, cmd.Short, st)

@@ -31,6 +31,10 @@ A skeptic is an agent with `role: skeptic` in the registry (see [registry.md](re
 
 Candidates are ordered deterministically by agent name, so the same roster always selects the same skeptic(s).
 
+## OWASP LLM Top 10 Check
+
+Every skeptic prompt carries a checklist of the ten [OWASP Top 10 for LLM Applications (2025)](https://genai.owasp.org/llm-top-10/) categories, LLM01 Prompt Injection through LLM10 Unbounded Consumption. The skeptic is told to check the finding and any proposed fix against each one, to treat a fix that brings in one of these risks as a defect rather than a reason to refute the finding, and to name the category ID in its reasoning when one applies. The checklist comes after the untrusted finding block and before the verdict spec, so text inside a finding cannot rewrite it, and the verdict envelope below is unchanged.
+
 ## Verdict Envelope
 
 A skeptic returns a strict, parseable envelope:
