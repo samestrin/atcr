@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +79,7 @@ func TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep(t *testing.T) {
 		Writable:    true,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "cp -R /src/. /work/ || exit 125; cd /work\necho hi\nexit 3\n", res.Output,
+	assert.Equal(t, `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work`+"\necho hi\nexit 3\n", res.Output,
 		"Writable:true Script mode must prepend the copy step to the stdin script body")
 }
 
@@ -100,14 +102,14 @@ func TestDockerBackend_Run_ScriptModeReadOnlyStdinUnchanged(t *testing.T) {
 
 func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
 	// AC 02-03 Scenario 3: renderCommand is display-only evidence — it renders the
-	// caller's ORIGINAL command/script, never the injected cp -R setup step, for both
+	// caller's ORIGINAL command/script, never the injected tar seed-copy step, for both
 	// Writable values, so the evidence trail stays readable.
 	cmd := RunSpec{Command: []string{"npm", "run", "build"}, SnapshotDir: "/tmp/snap"}
 	cmdW := cmd
 	cmdW.Writable = true
 	assert.Equal(t, "npm run build", renderCommand(cmd))
 	assert.Equal(t, "npm run build", renderCommand(cmdW), "Writable must not leak the setup step into command evidence")
-	assert.NotContains(t, renderCommand(cmdW), "cp -R")
+	assert.NotContains(t, renderCommand(cmdW), "tar -C /src")
 
 	scr := RunSpec{Script: "npm test\n", SnapshotDir: "/tmp/snap"}
 	scrW := scr
@@ -115,7 +117,7 @@ func TestRenderCommand_UnaffectedByWritable(t *testing.T) {
 	want := "/bin/sh -s <<'EOF'\nnpm test\n\nEOF"
 	assert.Equal(t, want, renderCommand(scr))
 	assert.Equal(t, want, renderCommand(scrW), "Writable must not alter the Script-mode heredoc evidence")
-	assert.NotContains(t, renderCommand(scrW), "cp -R")
+	assert.NotContains(t, renderCommand(scrW), "tar -C /src")
 }
 
 func TestDockerBackend_Run_WritableOverlayArgvShapeReachable(t *testing.T) {
@@ -513,5 +515,142 @@ exit 0`)
 			require.True(t, res.TimedOut, "deadline OR cancellation must be folded into TimedOut")
 			require.Equal(t, timeoutExitCode, res.ExitCode, "the timeout exit code (124) must be set, not a signal-death code")
 		})
+	}
+}
+
+// seedCopyTars returns the tar implementations the host-side seed-copy tests run
+// against, each as a directory to prepend to PATH so `tar` resolves to it. The
+// container images differ: alpine ships BusyBox tar and golang (Debian) ships GNU
+// tar, so the script must behave the same under both. The host `tar` is always
+// covered; BusyBox is covered when a `busybox` binary is on PATH.
+func seedCopyTars(t *testing.T) map[string]string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("seed-copy script is POSIX sh")
+	}
+	host, err := exec.LookPath("tar")
+	if err != nil {
+		t.Skip("no tar on PATH")
+	}
+	tars := map[string]string{"host": filepath.Dir(host)}
+	if bb, err := exec.LookPath("busybox"); err == nil {
+		dir := t.TempDir()
+		require.NoError(t, os.Symlink(bb, filepath.Join(dir, "tar")))
+		tars["busybox"] = dir
+	} else {
+		t.Log("busybox not on PATH: BusyBox tar not covered in this run")
+	}
+	return tars
+}
+
+// renderSeedScript points the fixed /src and /work paths of a setup script at
+// host directories, so the exact text the container runs can run under host sh.
+func renderSeedScript(t *testing.T, script, src, work string) string {
+	t.Helper()
+	require.Contains(t, script, "/src")
+	require.Contains(t, script, "/work")
+	return strings.NewReplacer("/src", src, "/work", work).Replace(script)
+}
+
+// seedCopyTree builds a snapshot with every excluded dir (top level and nested)
+// plus dirs and dotfiles that must survive the copy.
+func seedCopyTree(t *testing.T) string {
+	t.Helper()
+	src := t.TempDir()
+	for _, f := range []string{
+		".git/HEAD", "node_modules/left-pad/index.js", "vendor/mod/a.go", ".terraform/plugin",
+		"pkg/node_modules/x.js", "pkg/vendor/b.go",
+		"target/release/app", "dist/bundle.js", "build/out.o", "main.go", "pkg/lib.go",
+		".gitignore", ".github/workflows/ci.yml", ".env",
+	} {
+		p := filepath.Join(src, filepath.FromSlash(f))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(f), 0o644))
+	}
+	return src
+}
+
+func TestWritableSetup_HostRunExcludesHeavyDirs(t *testing.T) {
+	// Epic 47.0 T1: run the rendered setup text under sh against a temp tree. The
+	// excluded dirs (.git, node_modules, vendor, .terraform — at any depth) are
+	// absent from /work; build outputs and dotfiles that merely share a prefix stay.
+	for name, dir := range seedCopyTars(t) {
+		for _, mode := range []string{"command", "script"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				src := seedCopyTree(t)
+				work := t.TempDir()
+				var cmd *exec.Cmd
+				if mode == "command" {
+					cmd = exec.Command("sh", "-c", renderSeedScript(t, writableSetupExec, src, work), "--", "touch", "ran")
+				} else {
+					cmd = exec.Command("sh", "-s")
+					cmd.Stdin = strings.NewReader(renderSeedScript(t, writableSetupPrefix, src, work) + "touch ran\n")
+				}
+				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "setup script failed: %s", out)
+
+				for _, gone := range []string{".git", "node_modules", "vendor", ".terraform", "pkg/node_modules", "pkg/vendor"} {
+					assert.NoFileExists(t, filepath.Join(work, gone), "%s must be excluded from the seed copy", gone)
+					assert.NoDirExists(t, filepath.Join(work, gone), "%s must be excluded from the seed copy", gone)
+				}
+				for _, kept := range []string{
+					"target/release/app", "dist/bundle.js", "build/out.o", "main.go", "pkg/lib.go",
+					".gitignore", ".github/workflows/ci.yml", ".env",
+				} {
+					got, err := os.ReadFile(filepath.Join(work, filepath.FromSlash(kept)))
+					require.NoError(t, err, "%s must be copied", kept)
+					assert.Equal(t, kept, string(got))
+				}
+				assert.FileExists(t, filepath.Join(work, "ran"), "the workload must run with /work as its cwd")
+			})
+		}
+	}
+}
+
+// failingTarDir returns a PATH dir whose `tar` fails the create (-cf) or
+// extract (-xf) side of the pipe with exit 2. A failing create still streams a
+// complete archive first, so the extractor succeeds and only the producer's own
+// exit status can reveal the failure.
+func failingTarDir(t *testing.T, realDir, side string) string {
+	t.Helper()
+	dir := t.TempDir()
+	body := fmt.Sprintf("#!/bin/sh\nfor a; do\n  if [ \"$a\" = %q ]; then\n    %q \"$@\"\n    exit 2\n  fi\ndone\nexec %q \"$@\"\n",
+		side, filepath.Join(realDir, "tar"), filepath.Join(realDir, "tar"))
+	if side == "-xf" {
+		body = fmt.Sprintf("#!/bin/sh\nfor a; do\n  if [ \"$a\" = %q ]; then\n    cat >/dev/null\n    exit 2\n  fi\ndone\nexec %q \"$@\"\n",
+			side, filepath.Join(realDir, "tar"))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tar"), []byte(body), 0o755))
+	return dir
+}
+
+func TestWritableSetup_HostRunTarFailureExits125(t *testing.T) {
+	// Epic 47.0 T1: the seed copy stays fail-closed without pipefail (not portable
+	// across alpine and golang images). A failing producing tar — or extracting
+	// tar — exits 125 and the workload never runs.
+	for name, dir := range seedCopyTars(t) {
+		for _, side := range []string{"-cf", "-xf"} {
+			for _, mode := range []string{"command", "script"} {
+				t.Run(name+"/"+side+"/"+mode, func(t *testing.T) {
+					src := seedCopyTree(t)
+					work := t.TempDir()
+					marker := filepath.Join(t.TempDir(), "ran")
+					var cmd *exec.Cmd
+					if mode == "command" {
+						cmd = exec.Command("sh", "-c", renderSeedScript(t, writableSetupExec, src, work), "--", "touch", marker)
+					} else {
+						cmd = exec.Command("sh", "-s")
+						cmd.Stdin = strings.NewReader(renderSeedScript(t, writableSetupPrefix, src, work) + "touch '" + marker + "'\n")
+					}
+					cmd.Env = append(os.Environ(), "PATH="+failingTarDir(t, dir, side)+string(os.PathListSeparator)+os.Getenv("PATH"))
+					out, err := cmd.CombinedOutput()
+					var exitErr *exec.ExitError
+					require.ErrorAs(t, err, &exitErr, "a failing %s tar must fail the setup: %s", side, out)
+					assert.Equal(t, 125, exitErr.ExitCode(), "a failing %s tar must exit 125: %s", side, out)
+					assert.NoFileExists(t, marker, "the workload must not run after a failed seed copy")
+				})
+			}
+		}
 	}
 }
