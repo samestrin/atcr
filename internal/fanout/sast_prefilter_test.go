@@ -250,3 +250,46 @@ func TestPrepareReview_DefaultRunnerIsSemgrepAndFailsOpenWhenAbsent(t *testing.T
 	assert.Contains(t, stderr, "atcr: notice: SAST pre-filter skipped")
 	assert.Contains(t, stderr, "binary not found on PATH")
 }
+
+// A symlink or a directory is not a regular file, so it never reaches the
+// scanner (docs/registry.md: "a deleted file or a symlink is skipped").
+func TestSASTTargets_SkipsSymlinksAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "kept.go"), []byte("package p\n"), 0o644))
+	require.NoError(t, os.Symlink("kept.go", filepath.Join(root, "link.go")))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "dir"), 0o755))
+	payloads := map[string]modePayload{
+		"blocks": {Entries: []payload.FileEntry{{Path: "kept.go"}, {Path: "link.go"}, {Path: "dir"}}},
+	}
+	assert.Equal(t, []string{"kept.go"}, sastTargets(root, payloads))
+}
+
+// sast.Runner reads an empty file list as "scan the whole root", so a review
+// whose changed files are all gone from disk must not call the runner at all:
+// it would feed findings from outside the diff to the reviewers.
+func TestRunSASTPreFilter_NoTargetsNeverCallsTheRunner(t *testing.T) {
+	root := t.TempDir()
+	fake := &fakeSASTRunner{sarif: sastFixture}
+	withSASTRunner(t, fake, nil)
+	payloads := map[string]modePayload{
+		"blocks": {Entries: []payload.FileEntry{{Path: "deleted.go"}, {Path: "also-deleted.go"}}},
+	}
+	block := runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), root, payloads)
+	assert.Empty(t, block)
+	assert.Zero(t, fake.calls.Load(), "an empty target list must not become a whole-repo scan")
+}
+
+// A constructor that returns (nil, nil) fails open with the notice instead of
+// panicking on the nil runner.
+func TestRunSASTPreFilter_NilRunnerFailsOpen(t *testing.T) {
+	repo, _, _ := initRepo(t)
+	withSASTRunner(t, nil, nil)
+	payloads := map[string]modePayload{"blocks": {Entries: []payload.FileEntry{{Path: "auth.go"}}}}
+	var block string
+	stderr := captureStderr(t, func() {
+		block = runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), repo, payloads)
+	})
+	assert.Empty(t, block)
+	assert.Contains(t, stderr, "atcr: notice: SAST pre-filter skipped")
+	assert.Contains(t, stderr, errNoSASTBackend.Error())
+}

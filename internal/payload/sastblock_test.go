@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/sast"
 	"github.com/stretchr/testify/assert"
@@ -69,6 +70,15 @@ func TestSASTBlock_LongMessageIsTruncated(t *testing.T) {
 	assert.NotContains(t, block, long)
 	assert.Less(t, len(block), len(long), "the message is cut, not carried whole")
 	assert.Contains(t, block, strings.Repeat("a", maxSASTMessageBytes)+"…")
+}
+
+// A cut that lands inside a multibyte rune backs off to the rune start, so the
+// block stays valid UTF-8.
+func TestSASTBlock_TruncationNeverSplitsARune(t *testing.T) {
+	msg := "a" + strings.Repeat("é", maxSASTMessageBytes) // byte maxSASTMessageBytes is a continuation byte
+	block := SASTBlock([]sast.Finding{{File: "x.go", Line: 1, Rule: "r", Message: msg}}, "sast-0011223344556677")
+	assert.True(t, utf8.ValidString(block), "the block must stay valid UTF-8")
+	assert.Contains(t, block, "a"+strings.Repeat("é", (maxSASTMessageBytes-1)/2)+"…")
 }
 
 func TestNewSASTSentinel_IsRandomAndTagShaped(t *testing.T) {
