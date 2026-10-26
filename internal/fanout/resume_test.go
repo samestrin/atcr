@@ -831,8 +831,8 @@ func rebuiltPool(t *testing.T, poolDir string, roster []string) []stream.Finding
 }
 
 var (
-	toonFinding = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "alpha"}
-	txtFinding  = stream.Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "from txt", Fix: "f", Category: "style", EstMinutes: 1, Evidence: "e", Reviewer: "alpha"}
+	toonFinding = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "alpha"}
+	txtFinding  = stream.Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "from txt", Fix: "f", Category: "style", CanonicalCategory: "style", EstMinutes: 1, Evidence: "e", Reviewer: "alpha"}
 )
 
 func TestRebuildPool_PrefersToonOverTxt(t *testing.T) {
@@ -853,7 +853,7 @@ func TestRebuildPool_ReadsToonOnlyAgent(t *testing.T) {
 // mixed fleet resolves each agent directory on its own.
 func TestRebuildPool_TxtOnlyAndMixedFleet(t *testing.T) {
 	poolDir := filepath.Join(t.TempDir(), "sources", "pool")
-	bravo := stream.Finding{Severity: "MEDIUM", File: "c.go", Line: 3, Problem: "p", Fix: "f", Category: "design", EstMinutes: 2, Evidence: "e", Reviewer: "bravo"}
+	bravo := stream.Finding{Severity: "MEDIUM", File: "c.go", Line: 3, Problem: "p", Fix: "f", Category: "design", CanonicalCategory: "other", EstMinutes: 2, Evidence: "e", Reviewer: "bravo"}
 	seedAgentDir(t, poolDir, "alpha", StatusOK,
 		v2Bytes(t, []stream.Finding{toonFinding}), v1Bytes(t, []stream.Finding{txtFinding}))
 	seedAgentDir(t, poolDir, "bravo", StatusOK, nil, v1Bytes(t, []stream.Finding{bravo}))

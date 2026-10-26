@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -182,4 +183,13 @@ func TestParse_CarriesRawAndCanonicalCategory(t *testing.T) {
 		require.NoError(t, err)
 		check(t, res.Findings)
 	})
+}
+
+// ambiguous.json marshals Finding whole, and summary.json hashes those bytes,
+// so the canonical field must stay out of JSON or every emitted hash shifts.
+func TestCanonicalCategory_NotInJSON(t *testing.T) {
+	b, err := json.Marshal(Finding{Category: "Resources", CanonicalCategory: reclib.CategoryResourceLeak})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "CanonicalCategory")
+	assert.NotContains(t, string(b), reclib.CategoryResourceLeak)
 }

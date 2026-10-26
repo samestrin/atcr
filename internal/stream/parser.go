@@ -190,12 +190,20 @@ type Finding struct {
 	Line       int
 	Problem    string
 	Fix        string
-	Category   string
+	Category   string // the reviewer's literal word, never rewritten
 	EstMinutes int
 	Evidence   string
 	Reviewer   string   // per-source 8th column
 	Reviewers  []string // reconciled 8th column
 	Confidence string   // reconciled 9th column
+
+	// CanonicalCategory is Category canonicalized at the parse boundary (epic
+	// 51.0, see CanonicalCategory): a vocabulary member, `other` for an
+	// unrecognised word, or empty when Category holds no word. It is NOT part of
+	// the wire format — json:"-" keeps it out of artifacts that marshal Finding
+	// whole (ambiguous.json and its summary.json hash) — and has no consumer yet;
+	// every reader still uses Category.
+	CanonicalCategory string `json:"-"`
 
 	// PathValid and PathWarning record the result of file-existence validation
 	// (Epic 5.0). They are NOT part of the wire format — no findings.txt column
@@ -511,12 +519,13 @@ func wantHeaders(cols int) string {
 func fieldsToFinding(f []string, cols int) Finding {
 	file, line := splitFileLine(f[1])
 	fnd := Finding{
-		Severity: f[0],
-		File:     file,
-		Line:     line,
-		Problem:  f[2],
-		Fix:      f[3],
-		Category: f[4],
+		Severity:          f[0],
+		File:              file,
+		Line:              line,
+		Problem:           f[2],
+		Fix:               f[3],
+		Category:          f[4],
+		CanonicalCategory: CanonicalCategory(f[4]),
 		// Same typo-guard clamp every decode path applies (v2.go): a typo'd
 		// negative or absurd est_minutes must not reach a Finding.
 		EstMinutes: clampEstMinutes(atoiOrZero(f[5])),

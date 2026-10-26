@@ -241,7 +241,8 @@ func adversarialCases() []struct {
 }
 
 // withIdentity fills the fields a case leaves empty, so a case may set File,
-// Category, or Reviewer to adversarial text of its own.
+// Category, or Reviewer to adversarial text of its own, and records the
+// canonical category a parse is expected to derive from Category.
 func withIdentity(f Finding) Finding {
 	f.Severity, f.Line, f.EstMinutes = "HIGH", 42, 15
 	if f.File == "" {
@@ -253,6 +254,8 @@ func withIdentity(f Finding) Finding {
 	if f.Reviewer == "" {
 		f.Reviewer = "bruce"
 	}
+	// Every parse path sets the canonical form beside the raw word (epic 51.0).
+	f.CanonicalCategory = CanonicalCategory(f.Category)
 	return f
 }
 

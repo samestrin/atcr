@@ -21,8 +21,8 @@ import (
 // it holds different content (stalePoolTxt), so a reader that read the .txt is
 // visible from its output.
 var toonPoolFindings = []stream.Finding{
-	{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"},
-	{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x / y", Fix: "f", Category: "correctness", EstMinutes: 5, Evidence: "e", Reviewer: "greta"},
+	{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"},
+	{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x / y", Fix: "f", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "e", Reviewer: "greta"},
 }
 
 const stalePoolTxt = stream.Version + "\nLOW|z.go:9|from txt|f|style|1|e|greta\n"
