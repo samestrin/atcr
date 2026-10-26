@@ -75,9 +75,10 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 		{Command: "status", Args: []string{idPlaceholder}},
 		{Command: "review", Args: []string{"--resume", idPlaceholder}},
 	},
+	// report takes no --repo-root, so there is nothing to carry into verify.
 	suggestReport: {
 		{Command: "debt list"},
-		{Command: "verify", Args: []string{idPlaceholder}, Carry: []string{"repo-root"}},
+		{Command: "verify", Args: []string{idPlaceholder}},
 	},
 	suggestReconcile: {
 		{Command: "debt list"},

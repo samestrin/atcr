@@ -527,6 +527,30 @@ jobs:
         # run under sudo: unprivileged operation is the property under test.
         run: bwrap --ro-bind / / --unshare-all /bin/true
 
+      - name: Delegate a cgroup v2 subtree to the test user
+        # Epic 35.24 T5. A per-run cgroup needs a subtree the test user may
+        # create children in and move processes into, with the memory and pids
+        # controllers enabled for them. ubuntu-latest has no systemd user
+        # manager to hand one out, so this step builds it:
+        #
+        #   atcr-ci/        owned by the runner user, memory + pids delegated
+        #   atcr-ci/leaf/   where the test process itself lives
+        #
+        # The test must live in a cgroup under atcr-ci, not in the runner's:
+        # cgroup v2 lets a process move only between cgroups whose common
+        # ancestor it may write, and for the runner's cgroup that ancestor is the
+        # root. (A cgroup with controllers delegated cannot hold processes
+        # itself, hence the separate leaf.)
+        run: |
+          set -euo pipefail
+          test "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs
+          CG=/sys/fs/cgroup/atcr-ci
+          sudo mkdir -p "$CG/leaf"
+          echo "+memory +pids" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
+          echo "+memory +pids" | sudo tee "$CG/cgroup.subtree_control"
+          sudo chown -R "$(id -u):$(id -g)" "$CG"
+          echo "delegated $CG: controllers=$(cat "$CG/cgroup.controllers") subtree_control=$(cat "$CG/cgroup.subtree_control")"
+
       - name: Run containment proof
         # Also unprivileged. Running the suite as root would re-create exactly the
         # gap this job exists to close (AC 02-04 was signed off on a root-only run).
@@ -546,5 +570,35 @@ jobs:
           echo "integration proofs passed: $n"
           if [ "$n" -lt 8 ]; then
             echo "::error::Expected at least 8 TestIntegration_* passes, saw $n — the containment proof did not run."
+            exit 1
+          fi
+
+      - name: Run cgroup enforcement proof
+        # The cases below fail, not skip, when the delegated cgroup is unusable
+        # (ATCR_TEST_CGROUP_ROOT is set), and each asserts from the run's own log
+        # and from inside the sandbox that the cgroup, not the rlimit fallback,
+        # was the mechanism that stopped the workload. The test binary runs as
+        # the runner user, inside atcr-ci/leaf: setpriv drops root after the
+        # shell has moved itself there.
+        env:
+          ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF: '1'
+        run: |
+          set -euo pipefail
+          CG=/sys/fs/cgroup/atcr-ci
+          go test -c -tags integration -o "$RUNNER_TEMP/sandbox.test" ./internal/sandbox
+          cd internal/sandbox
+          sudo env "ATCR_TEST_CGROUP_ROOT=$CG" "ATCR_REQUIRE_OSLEVEL_SANDBOX_PROOF=1" \
+            "PATH=$PATH" "HOME=$HOME" "GOCACHE=$(go env GOCACHE)" "GOROOT=$(go env GOROOT)" \
+            sh -c 'echo $$ > "$ATCR_TEST_CGROUP_ROOT/leaf/cgroup.procs" && exec setpriv --reuid='"$(id -u)"' --regid='"$(id -g)"' --init-groups "$0" "$@"' \
+            "$RUNNER_TEMP/sandbox.test" -test.v -test.run 'TestIntegration_OSLevelLinux_(MemoryCapStopsAnOverAllocationViaCgroup|CgroupReplacesTheRlimit|PidCapRefusesAForkViaCgroup)$' 2>&1 | tee "$GITHUB_WORKSPACE/cgroup-proof.log"
+
+      - name: Assert the cgroup proof actually ran
+        run: |
+          # A skipped case prints "--- SKIP" and the package still reports ok, so
+          # count the passes: all three must have run against the delegated cgroup.
+          n=$(grep -c '^--- PASS: TestIntegration_OSLevelLinux_\(MemoryCapStopsAnOverAllocationViaCgroup\|CgroupReplacesTheRlimit\|PidCapRefusesAForkViaCgroup\)' cgroup-proof.log || true)
+          echo "cgroup proofs passed: $n"
+          if [ "$n" -ne 3 ]; then
+            echo "::error::Expected 3 cgroup enforcement passes, saw $n — the cgroup path was not proven."
             exit 1
           fi

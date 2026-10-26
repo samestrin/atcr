@@ -1054,6 +1054,32 @@ func TestOSLevelBackendRun_AFailedCgroupRemovalIsLoggedNotFatal(t *testing.T) {
 	assert.Contains(t, logs, syscall.EBUSY.Error(), "the logged error is the rmdir's own (its text differs per kernel)")
 }
 
+func TestProbeSandboxCgroup_CreatesAndRemovesARealRunCgroup(t *testing.T) {
+	// Preflight's PID-cap capability is the same newSandboxCgroup Run uses, not
+	// a separate guess, and the probe leaves nothing behind.
+	root := fakeCgroupRoot(t, "memory pids")
+	removed := recordCgroupRemoval(t)
+	b := &OSLevelBackend{cfg: DefaultOSLevelConfig(), cgroupRoot: root}
+
+	require.NoError(t, b.probeSandboxCgroup())
+	require.Len(t, *removed, 1)
+	assert.Equal(t, "256", (*removed)[0].files["pids.max"])
+	assert.NoDirExists(t, (*removed)[0].dir)
+}
+
+func TestProbeSandboxCgroup_ReportsARootThatCannotHostARun(t *testing.T) {
+	for name, root := range map[string]string{
+		"not a cgroup":         notACgroupRoot(t),
+		"pids not delegated":   fakeCgroupRoot(t, "memory"),
+		"memory not delegated": fakeCgroupRoot(t, "pids"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := &OSLevelBackend{cfg: DefaultOSLevelConfig(), cgroupRoot: root}
+			assert.Error(t, b.probeSandboxCgroup())
+		})
+	}
+}
+
 func TestParseCgroupV2Path(t *testing.T) {
 	cases := map[string]struct {
 		in   string

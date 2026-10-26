@@ -25,7 +25,7 @@ func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
 		},
 		suggestReport: {
 			"atcr debt list",
-			"atcr verify <id> --repo-root=/src/app",
+			"atcr verify <id>",
 		},
 		suggestReconcile: {
 			"atcr debt list",
@@ -149,4 +149,65 @@ func TestInvocationFlags_DeprecatedAliasFoldsIntoCanonical(t *testing.T) {
 	cmd = newCmd()
 	require.NoError(t, cmd.ParseFlags([]string{"--repo", "/old", "--repo-root", "/new"}))
 	assert.Equal(t, map[string]string{"repo-root": "/new"}, invocationFlags(cmd))
+}
+
+// suggestionSources is every covered command and the registry key it renders.
+// The test below derives both sides from the live tree (NewRootCmd) and the live
+// registry, the way TestReportInputSchema_Enum ties the MCP enum to
+// report.FormatList(). A nil path is the bare-`atcr` home view (the root).
+var suggestionSources = map[suggestionKey][]string{
+	suggestReview:            {"review"},
+	suggestReviewInterrupted: {"review"},
+	suggestReport:            {"report"},
+	suggestReconcile:         {"reconcile"},
+	suggestVerify:            {"verify"},
+	suggestDebate:            {"debate"},
+	suggestStatus:            {"status"},
+	suggestHome:              nil,
+}
+
+// findCommand resolves path against a fresh tree and fails unless it lands on
+// exactly that command: cobra's Find falls back to the nearest parent for an
+// unknown name, so the resolved CommandPath is what proves the command exists.
+func findCommand(t *testing.T, path []string) *cobra.Command {
+	t.Helper()
+	cmd, rest, err := NewRootCmd().Find(path)
+	require.NoError(t, err, "atcr %s", strings.Join(path, " "))
+	require.Empty(t, rest, "atcr %s", strings.Join(path, " "))
+	require.Equal(t, strings.Join(append([]string{"atcr"}, path...), " "), cmd.CommandPath(),
+		"atcr %s is not a registered command", strings.Join(path, " "))
+	return cmd
+}
+
+// TestSuggestions_RegistryMatchesCommandTree is the T6 drift guard (AC3): every
+// covered command keeps its registry entry, every registry key names a command
+// that is still registered, and every suggested command, fixed flag and carried
+// flag resolves on the live cobra tree. Renaming or removing a covered command,
+// a suggested command or one of their flags, or deleting a registry entry, fails
+// here instead of shipping a suggestion that no longer runs.
+func TestSuggestions_RegistryMatchesCommandTree(t *testing.T) {
+	for key := range suggestionRegistry {
+		_, ok := suggestionSources[key]
+		assert.True(t, ok, "registry key %s has no source command in suggestionSources", key)
+	}
+	for key, path := range suggestionSources {
+		t.Run(string(key), func(t *testing.T) {
+			steps, ok := suggestionRegistry[key]
+			require.True(t, ok, "covered command atcr %s lost its registry entry %s", strings.Join(path, " "), key)
+			require.NotEmpty(t, steps, "registry entry %s suggests nothing", key)
+			source := findCommand(t, path)
+			for _, s := range steps {
+				target := findCommand(t, strings.Fields(s.Command))
+				for _, arg := range s.Args {
+					if name, isFlag := strings.CutPrefix(arg, "--"); isFlag {
+						assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: no --%s flag", key, s.Command, name)
+					}
+				}
+				for _, name := range s.Carry {
+					assert.NotNil(t, source.Flags().Lookup(name), "%s carries --%s, which %s does not define", key, name, source.CommandPath())
+					assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried --%s is not a flag there", key, s.Command, name)
+				}
+			}
+		})
+	}
 }
