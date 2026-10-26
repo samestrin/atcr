@@ -304,6 +304,51 @@ type Hooks struct {
 	// ledger built from these observations will have no entry for a replayed
 	// agent. Run with --no-cache when a complete per-run record matters.
 	ModelInvocation ModelInvocationObserver
+
+	// ReviewComplete observes completed reviews: one call per successful
+	// review, after its artifacts are written. A failed review does not fire
+	// it, and neither does a standalone `atcr reconcile`.
+	ReviewComplete ReviewCompleteObserver
+}
+
+// ReviewReport is the summary of one completed review. It carries no diff
+// content and no findings text, only identity and counts, so unlike
+// ModelInvocation it is not sensitive in itself. Every field is a plain type,
+// for the same reason as ModelInvocation's.
+type ReviewReport struct {
+	// RunID is the review id; ReviewDir is the directory its artifacts were
+	// written to. They diverge under --output-dir, where the directory is the
+	// operator's path and the id stays the derived one.
+	RunID     string
+	ReviewDir string
+	// Base and Head are the resolved range SHAs. PRNumber is 0 when the review
+	// was not run for a pull request.
+	Base     string
+	Head     string
+	PRNumber int
+	// Partial and the Agents counts come from the fan-out summary. Partial is
+	// true when at least one agent failed but at least one succeeded.
+	Partial         bool
+	AgentsTotal     int
+	AgentsSucceeded int
+	AgentsFailed    int
+	// Reconciled is true when the in-process reconcile ran, and only then are
+	// Findings and FindingsBySeverity filled from its result. A false value
+	// means "not counted", not "no findings".
+	Reconciled         bool
+	Findings           int
+	FindingsBySeverity map[string]int
+}
+
+// ReviewCompleteObserver receives one call per completed review.
+//
+// It has the same contract as ModelInvocationObserver: implementations MUST be
+// safe for concurrent use (`atcr serve` runs reviews in parallel) and should
+// return promptly, the context is the review's own, and there is no error
+// return. A panic is recovered at the seam, reported on stderr, and the review
+// keeps its exit code. An observer reports on a review; it cannot change it.
+type ReviewCompleteObserver interface {
+	OnReviewComplete(context.Context, ReviewReport)
 }
 
 // The context carrier itself lives in internal/hookobs, not here, because
@@ -381,6 +426,37 @@ func adaptCodeRefs(refs []hookobs.CodeRef) []CodeRef {
 	return out
 }
 
+// reviewObserverAdapter is observerAdapter's counterpart for completed
+// reviews: the only place hookobs.ReviewReport and ReviewReport meet.
+type reviewObserverAdapter struct {
+	observer ReviewCompleteObserver
+}
+
+func (a reviewObserverAdapter) OnReviewComplete(ctx context.Context, in hookobs.ReviewReport) {
+	rep := ReviewReport{
+		RunID:           in.RunID,
+		ReviewDir:       in.ReviewDir,
+		Base:            in.Base,
+		Head:            in.Head,
+		PRNumber:        in.PRNumber,
+		Partial:         in.Partial,
+		AgentsTotal:     in.AgentsTotal,
+		AgentsSucceeded: in.AgentsSucceeded,
+		AgentsFailed:    in.AgentsFailed,
+		Reconciled:      in.Reconciled,
+		Findings:        in.Findings,
+	}
+	// Copied, not shared, so a consumer that writes to the map cannot reach
+	// back into the producer's value.
+	if in.FindingsBySeverity != nil {
+		rep.FindingsBySeverity = make(map[string]int, len(in.FindingsBySeverity))
+		for k, v := range in.FindingsBySeverity {
+			rep.FindingsBySeverity[k] = v
+		}
+	}
+	a.observer.OnReviewComplete(ctx, rep)
+}
+
 // adaptToolCalls converts the internal tool-call shape into the exported one.
 func adaptToolCalls(calls []hookobs.ToolCall) []ModelToolCall {
 	if len(calls) == 0 {
@@ -396,12 +472,22 @@ func adaptToolCalls(calls []hookobs.ToolCall) []ModelToolCall {
 // withHooks attaches hooks to ctx so every client-construction site can find
 // them. Unexported: registration is via MainWithHooks, not by hand-building a
 // context, which keeps the public surface to one entry point. A zero Hooks
-// attaches a nil observer, which hookobs.Wrap treats as no observation.
+// attaches a nil model observer, which hookobs.Wrap treats as no observation,
+// and no review observer at all.
+//
+// The review observer is attached only when one is set: wrapping a nil
+// ReviewComplete in the adapter would give hookobs a non-nil interface, and
+// ReviewComplete would then call through to a nil observer.
 func withHooks(ctx context.Context, hooks Hooks, stderr io.Writer) context.Context {
 	if hooks.ModelInvocation == nil {
-		return hookobs.NewContext(ctx, nil, stderr)
+		ctx = hookobs.NewContext(ctx, nil, stderr)
+	} else {
+		ctx = hookobs.NewContext(ctx, observerAdapter{observer: hooks.ModelInvocation}, stderr)
 	}
-	return hookobs.NewContext(ctx, observerAdapter{observer: hooks.ModelInvocation}, stderr)
+	if hooks.ReviewComplete != nil {
+		ctx = hookobs.WithReviewObserver(ctx, reviewObserverAdapter{observer: hooks.ReviewComplete}, stderr)
+	}
+	return ctx
 }
 
 // shutdownSignalKey is the context key carrying the process-wide shutdown
