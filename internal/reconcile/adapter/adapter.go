@@ -89,6 +89,8 @@ func ToJSONFinding(f reconcile.Finding, paths stream.Finding) recon.JSONFinding 
 		PathValid:      paths.PathValid,
 		PathWarning:    paths.PathWarning,
 		PathSuggestion: paths.PathSuggestion,
+
+		SiblingLocation: paths.SiblingLocation,
 	}
 	// Stamp fallback provenance (Epic 19.10 F5) from the side-channel stream.Finding,
 	// mirroring the PathValid/PathWarning stamping: when the originating slot was

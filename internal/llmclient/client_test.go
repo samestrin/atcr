@@ -1260,3 +1260,39 @@ func TestCompleteWithMeta_ReportsWhyAReplyWasSalvaged(t *testing.T) {
 		})
 	}
 }
+
+func TestCompleteWithMeta_BothEmptyErrorCarriesParsedUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{Usage: UsageData{PromptTokens: 11, CompletionTokens: 7}}
+		resp.Choices = append(resp.Choices, chatChoice{FinishReason: "length", Message: message{Role: "assistant"}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	comp, err := fastRetry(srv.Client()).CompleteWithMeta(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Equal(t, UsageData{PromptTokens: 11, CompletionTokens: 7}, comp.Usage)
+	assert.True(t, comp.Truncated)
+	assert.NotEmpty(t, comp.CallRecords)
+}
+
+func TestCompleteWithUsage_SalvagedReplyKeepsEmptyUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{Usage: UsageData{PromptTokens: 11, CompletionTokens: 7}}
+		resp.Choices = append(resp.Choices, chatChoice{Message: message{Role: "assistant", ReasoningContent: reasoningText("chain of thought")}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, records, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.ErrorIs(t, err, ErrSalvagedReply)
+	assert.Empty(t, out)
+	assert.Equal(t, UsageData{}, usage)
+	assert.NotEmpty(t, records)
+}

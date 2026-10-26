@@ -388,6 +388,9 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// JSONFindings(), and only onto records an ignore rule routes into
 		// Result.Suppressed, so it is downstream-only like UnresolvedReason.
 		"SuppressedBy": true,
+		// SiblingLocation is stamped by ToJSONFinding (Epic 35.16.15) from the
+		// ATCR stream.Finding; the library Merged carries no routing marker.
+		"SiblingLocation": true,
 	}
 	m := Merged{
 		Finding: Finding{
