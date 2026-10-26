@@ -213,6 +213,12 @@ type Finding struct {
 	// available (non-git repo). Set only alongside a non-empty PathWarning.
 	PathSuggestion string // e.g. "internal/auth/validate.go"; empty when none
 
+	// SiblingLocation is the cross-branch routing marker (Epic 35.16.15): the
+	// file:line of the sibling finding this one was routed from. Like PathValid
+	// it is an in-memory stamp, NOT part of the wire format (json:"-"), and
+	// stays empty until a router stamps it.
+	SiblingLocation string `json:"-"` // e.g. "internal/auth/validate.go:42"; empty when none
+
 	// FallbackModel records the model that SERVED the SOURCE slot this finding came
 	// from when a litellm fallback substituted for the configured primary (Epic
 	// 19.10 F5). Like PathValid/PathWarning it is NOT part of the wire format — no
