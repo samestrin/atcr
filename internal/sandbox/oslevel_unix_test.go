@@ -1051,7 +1051,7 @@ func TestOSLevelBackendRun_AFailedCgroupRemovalIsLoggedNotFatal(t *testing.T) {
 	res, logs := runWithLogs(t, b)
 	assert.Equal(t, 0, res.ExitCode)
 	assert.Contains(t, logs, "cgroup removal")
-	assert.Contains(t, logs, "device or resource busy")
+	assert.Contains(t, logs, syscall.EBUSY.Error(), "the logged error is the rmdir's own (its text differs per kernel)")
 }
 
 func TestParseCgroupV2Path(t *testing.T) {
