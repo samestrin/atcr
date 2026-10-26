@@ -56,6 +56,14 @@ var newTier4Index = func(root string, paths []string) tier4Resolver {
 	return newLazySymbolIndex(root, paths)
 }
 
+// siblingNotFoundWarning is the PathWarning stamped when a finding's
+// SiblingLocation (Epic 35.16.15) names a file that does not resolve under the
+// root. It names the sibling, not File, because File may well be valid: the
+// warning says which of the finding's two locations was not trusted.
+func siblingNotFoundWarning(sibling string) string {
+	return "sibling file not found: " + sibling
+}
+
 // validateFindingPaths stamps each reconciled finding's PathValid/PathWarning
 // and, when a hallucinated path has a confident correction, PathSuggestion (Epic
 // 5.0 AC1 + Epic 5.4 + Epic 35.16.6.5). It operates on the JSONFinding records
