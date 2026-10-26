@@ -338,6 +338,36 @@ func (cg *sandboxCgroup) remove() error {
 	}
 }
 
+// newRunCgroup creates a run's cgroup under b.cgroupRoot or, unset, the cgroup
+// atcr runs in.
+func (b *OSLevelBackend) newRunCgroup(cfg OSLevelConfig) (*sandboxCgroup, error) {
+	root := b.cgroupRoot
+	if root == "" {
+		var err error
+		if root, err = discoverSandboxCgroupRoot(runtime.GOOS); err != nil {
+			return nil, err
+		}
+	}
+	return newSandboxCgroup(root, cfg)
+}
+
+// probeSandboxCgroup reports whether a run would get a cgroup, by creating one
+// exactly as Run does and removing it again. Preflight asks it rather than
+// inspecting the root itself, so the answer cannot drift from what Run does.
+func (b *OSLevelBackend) probeSandboxCgroup() error {
+	cg, err := b.newRunCgroup(b.cfg)
+	if err != nil {
+		return err
+	}
+	return cg.remove()
+}
+
+// hostCapSupport is the default capSupport: what the running kernel can
+// enforce, with the cgroup probed for real.
+func (b *OSLevelBackend) hostCapSupport() osLevelCapSupport {
+	return osLevelCapSupportFor(runtime.GOOS, sandboxMemoryLimitEnforced, b.probeSandboxCgroup())
+}
+
 // openSandboxCgroup picks the mechanism that enforces this run's caps and logs
 // it: a per-run cgroup under b.cgroupRoot (or, unset, the cgroup atcr runs in)
 // where the host delegates one, otherwise T2's rlimit wrapper, which caps
@@ -346,15 +376,7 @@ func (cg *sandboxCgroup) remove() error {
 // mechanism is Preflight's decision (epic 35.24 T4). A nil return means the
 // fallback.
 func (b *OSLevelBackend) openSandboxCgroup(logger *slog.Logger, cfg OSLevelConfig, logCmd string) *sandboxCgroup {
-	root := b.cgroupRoot
-	var err error
-	if root == "" {
-		root, err = discoverSandboxCgroupRoot(runtime.GOOS)
-	}
-	var cg *sandboxCgroup
-	if err == nil {
-		cg, err = newSandboxCgroup(root, cfg)
-	}
+	cg, err := b.newRunCgroup(cfg)
 	if err == nil {
 		logger.Info("sandbox exec resource caps", "backend", osLevelBackendName, "command", logCmd,
 			"mechanism", "cgroup", "cgroup", cg.dir)

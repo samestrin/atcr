@@ -240,6 +240,11 @@ type OSLevelBackend struct {
 	// Injectable so the cgroup path is assertable against a fake root on any
 	// host, not only on one that delegates a cgroup subtree.
 	cgroupRoot string
+	// capSupport reports which resource caps this host can enforce. Nil means
+	// hostCapSupport, which asks the running kernel. Injectable so Preflight's
+	// refuse-or-warn decision is assertable on any host, not only on a darwin
+	// one or a linux one without a delegated cgroup.
+	capSupport func() osLevelCapSupport
 
 	// mu guards pinnedTool. Preflight and Run may be called concurrently — the
 	// type is explicitly built for concurrent use (see MaxConcurrent/sem) — and
@@ -309,12 +314,15 @@ func (b *OSLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 //     executable (cheapest, so it runs first),
 //  2. the host-specific prerequisite holds (on Linux, that unprivileged user
 //     namespaces are usable — bwrap cannot isolate without them),
-//  3. a trivial no-op Run actually completes through the real Run path, for
+//  3. every resource cap the operator set (sandbox.memory,
+//     sandbox.pids_limit) can be enforced on this host; a default that
+//     cannot is only logged as a warning (checkResourceCaps),
+//  4. a trivial no-op Run actually completes through the real Run path, for
 //     both RunSpec shapes (Command and Script) — and a write into the
 //     read-only snapshot is REFUSED, so a binary that ignores its containment
 //     flags and merely execs its argv (think /usr/bin/env) cannot pass.
 //
-// Step 3 matters: reporting success on binary presence alone would let the CLI
+// Step 4 matters: reporting success on binary presence alone would let the CLI
 // enable --exec against a sandbox that cannot actually contain anything, which
 // is DockerBackend.Preflight's reason for spawning a trivial container
 // (docker.go:382-397). The execution nonce proves the workload ran; only the
@@ -332,7 +340,7 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	// 1. Binary present and executable.
 	//
 	//    There is deliberately no separate containment pre-check here. The gate
-	//    lives in osLevelRunArgs, on the real argv path, so step 3's trivial run
+	//    lives in osLevelRunArgs, on the real argv path, so step 4's trivial run
 	//    inherits the refusal (ErrOSLevelNoContainment surfaces through the
 	//    wrap) — and, unlike a check in this function, it also covers a caller
 	//    that skips Preflight entirely. A pre-check here would additionally have
@@ -355,7 +363,14 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 		return fmt.Errorf("sandbox preflight: host prerequisite unmet: %w", err)
 	}
 
-	// 3. A trivial command actually runs through the real Run path AND proves
+	// 3. Every resource cap the operator set can be enforced here. Checked
+	//    before any spawn, like the prerequisite: the answer does not depend on
+	//    the tool, and a run without the operator's cap is the outcome refused.
+	if err := b.checkResourceCaps(ctx); err != nil {
+		return err
+	}
+
+	// 4. A trivial command actually runs through the real Run path AND proves
 	//    the workload itself executed. Asserting only "exit 0" would pass for
 	//    any binary that swallows its argv and exits 0 — including a shim that
 	//    never runs the command — so the probe echoes a nonce that must come
@@ -415,7 +430,7 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 	// The execution probes above cannot distinguish a real sandbox from a binary
 	// that ignores its containment flags (-p, --bind, --unshare-*) and simply
 	// execs the tail of its argv — /usr/bin/env passes every one of them. So
-	// step 3 ends with a NEGATIVE-capability probe: a write into the read-only
+	// step 4 ends with a NEGATIVE-capability probe: a write into the read-only
 	// snapshot MUST be denied (darwin: the deny-default profile; Linux: the
 	// snapshot is a read-only bind at the workload's /work — both platforms make
 	// the snapshot the workload's cwd for a read-only run, so a relative touch
@@ -463,6 +478,93 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 // (osLevelContainmentArgs), so on a supported platform this now marks a
 // regression rather than the expected state.
 var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containment yet")
+
+// ErrOSLevelCapUnenforceable is returned by Preflight when a resource cap the
+// operator set (sandbox.memory or sandbox.pids_limit) cannot be enforced on
+// this host: any PID cap on darwin, the memory cap on darwin (XNU accepts no
+// memory rlimit), and the PID cap on linux without a delegated cgroup v2
+// subtree. The backend refuses rather than run without the bound the operator
+// asked for. A default the host cannot enforce is a logged warning, not this
+// error (epic 35.24, EST-1340 Q3).
+var ErrOSLevelCapUnenforceable = errors.New("os-level sandbox cannot enforce an operator-set resource cap on this host")
+
+// osLevelCapSupport is what the host can enforce of the per-run resource caps.
+// Each field is empty when the cap is enforced, and otherwise says why not.
+type osLevelCapSupport struct {
+	memoryGap string
+	procsGap  string
+}
+
+// osLevelCapSupportFor decides which caps a host can enforce from what the
+// kernel offers: goos is the host kernel, memoryRlimit whether it accepts a
+// memory rlimit (sandboxMemoryLimitEnforced), and cgroupErr why a per-run
+// cgroup v2 could not be created, nil if one could.
+//
+// darwin enforces neither cap whatever the rest says. RLIMIT_NPROC counts every
+// process of the invoking user across the host, not one run's tree, so there
+// is no per-run PID limit to set (EST-1340 Q2), and XNU rejects lowering
+// RLIMIT_AS and RLIMIT_DATA alike (T2's integration-macos measurement). linux
+// enforces memory through the cgroup or, without one, RLIMIT_DATA, and the PID
+// cap only through the cgroup's pids.max.
+func osLevelCapSupportFor(goos string, memoryRlimit bool, cgroupErr error) osLevelCapSupport {
+	switch goos {
+	case "darwin":
+		return osLevelCapSupport{
+			memoryGap: "darwin accepts no memory rlimit (XNU rejects RLIMIT_AS and RLIMIT_DATA)",
+			procsGap:  "darwin has no per-run process limit (RLIMIT_NPROC counts every process of the invoking user)",
+		}
+	case "linux":
+		var support osLevelCapSupport
+		if cgroupErr != nil {
+			support.procsGap = "no per-run cgroup v2 for pids.max: " + cgroupErr.Error()
+			if !memoryRlimit {
+				support.memoryGap = "no per-run cgroup v2 for memory.max and no memory rlimit: " + cgroupErr.Error()
+			}
+		}
+		return support
+	default:
+		gap := "no os-level resource caps on " + goos
+		return osLevelCapSupport{memoryGap: gap, procsGap: gap}
+	}
+}
+
+// checkResourceCaps is Preflight's cap step. It refuses with
+// ErrOSLevelCapUnenforceable, naming every operator-set cap this host cannot
+// enforce and why, and logs a warning for each default it cannot enforce, the
+// way a fallback that engages is logged rather than refused: the operator did
+// not ask for that bound, and refusing it would take the backend away from
+// every darwin host.
+func (b *OSLevelBackend) checkResourceCaps(ctx context.Context) error {
+	supportOf := b.capSupport
+	if supportOf == nil {
+		supportOf = b.hostCapSupport
+	}
+	support := supportOf()
+	logger := log.FromContext(ctx)
+	var refused []string
+	for _, c := range []struct {
+		key   string
+		value string
+		set   bool
+		gap   string
+	}{
+		{"sandbox.memory", strconv.FormatInt(b.cfg.MaxMemoryBytes, 10), b.cfg.MaxMemoryBytesSet, support.memoryGap},
+		{"sandbox.pids_limit", strconv.Itoa(b.cfg.MaxProcs), b.cfg.MaxProcsSet, support.procsGap},
+	} {
+		switch {
+		case c.gap == "":
+		case c.set:
+			refused = append(refused, fmt.Sprintf("%s=%s (%s)", c.key, c.value, c.gap))
+		default:
+			logger.Warn("sandbox preflight: default resource cap cannot be enforced on this host",
+				"backend", osLevelBackendName, "cap", c.key, "value", c.value, "reason", c.gap)
+		}
+	}
+	if len(refused) > 0 {
+		return fmt.Errorf("sandbox preflight: %w: %s", ErrOSLevelCapUnenforceable, strings.Join(refused, "; "))
+	}
+	return nil
+}
 
 // errPreflightTrivialRun marks a preflight failure at the trivial-run step, so a
 // caller can tell "the sandbox could not run" from "the binary was missing"
