@@ -64,6 +64,7 @@ func runDebateCmd(cmd *cobra.Command, args []string) error {
 		"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld) -> %s\n",
 		res.Selected, res.Upheld, res.Overturned, res.Split, res.Unresolved, res.Overflow, res.Withheld,
 		filepath.Join(reviewDir, "reconciled"))
+	writeNextLines(cmd, suggestDebate, invocation{Flags: invocationFlags(cmd)})
 	return nil
 }
 
