@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -518,4 +519,234 @@ func TestPSParents_HonoursItsContext(t *testing.T) {
 	cancel()
 	_, err := psParents(ctx)
 	assert.Error(t, err)
+}
+
+// limitsReport is the fake sandbox tool body the resource-limit tests run: it
+// prints its own pid, its process group, and the soft and hard memory limit
+// (the host's sandboxMemoryUlimitFlag) it was started with, one per line, so a
+// test can compare all four against what the parent configured.
+var limitsReport = `echo "$$"
+ps -o pgid= -p "$$"
+ulimit -S ` + sandboxMemoryUlimitFlag + `
+ulimit -H ` + sandboxMemoryUlimitFlag + `
+`
+
+// requireHostMemoryLimit skips a test that needs the wrapper to set a memory
+// limit on a host whose kernel accepts none (darwin, see sandboxMemoryLimitFor).
+func requireHostMemoryLimit(t *testing.T) {
+	t.Helper()
+	if !sandboxMemoryLimitEnforced {
+		t.Skipf("%s accepts no memory rlimit, so the child runs unwrapped", runtime.GOOS)
+	}
+}
+
+func parseLimitsReport(t *testing.T, out string) (pid, pgid int, soft, hard string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	require.Len(t, lines, 4, "unexpected report: %q", out)
+	var err error
+	pid, err = strconv.Atoi(strings.TrimSpace(lines[0]))
+	require.NoError(t, err)
+	pgid, err = strconv.Atoi(strings.TrimSpace(lines[1]))
+	require.NoError(t, err)
+	return pid, pgid, strings.TrimSpace(lines[2]), strings.TrimSpace(lines[3])
+}
+
+func TestApplySandboxResourceLimits_ChildStartsWithTheLimitAndKeepsItsPid(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// Epic 35.24 T2: the cap is applied to the spawned child by a /bin/sh
+	// wrapper that sets the rlimit and then execs the sandbox tool. exec keeps
+	// the pid, so the process Go started IS the tool: the pid cmd.Process
+	// reports, the group configureSandboxProcessGroup created, and the pid the
+	// cancel path's descendant walk starts from all still name it.
+	tool := writeFakeOSLevel(t, limitsReport)
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxMemoryBytes = 300 * 1024 * 1024
+
+	cmd := exec.CommandContext(context.Background(), tool)
+	configureSandboxProcessGroup(cmd)
+	applySandboxResourceLimits(cmd, cfg)
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	require.NoError(t, cmd.Run(), "output: %s", out.String())
+
+	pid, pgid, soft, hard := parseLimitsReport(t, out.String())
+	assert.Equal(t, cmd.Process.Pid, pid, "the wrapper must exec the tool in place, not fork it")
+	assert.Equal(t, pid, pgid, "the tool must still lead the process group Setpgid created")
+	assert.Equal(t, "307200", soft, "soft data limit in KiB")
+	assert.Equal(t, "307200", hard, "hard data limit in KiB, so the workload cannot raise it")
+	assert.Equal(t, sandboxLimitShell, cmd.Path)
+	assert.Equal(t, tool, cmd.Args[len(cmd.Args)-1], "the tool's own argv follows the wrapper unchanged")
+}
+
+func TestApplySandboxResourceLimits_PassesTheToolArgvThroughVerbatim(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// The tool's arguments travel as "$@", never inside the -c string, so an
+	// argument holding shell syntax reaches the tool as data.
+	tool := writeFakeOSLevel(t, `for a in "$@"; do printf '%s\n' "$a"; done`)
+	args := []string{"a b", "$(echo injected)", "'; exit 3; '", ""}
+	cmd := exec.Command(tool, args...)
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "output: %s", out)
+	assert.Equal(t, strings.Join(args, "\n")+"\n", string(out))
+}
+
+func TestApplySandboxResourceLimits_NeverLoosensAStricterInheritedLimit(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// A data limit atcr itself already runs under is lower than the cap: the
+	// child keeps the stricter one instead of the wrapper failing to raise it
+	// (an unprivileged process cannot raise its hard limit) or raising the soft
+	// one past what the operator's shell set.
+	orig := sandboxGetrlimit
+	t.Cleanup(func() { sandboxGetrlimit = orig })
+	sandboxGetrlimit = func(resource int, lim *syscall.Rlimit) error {
+		require.Equal(t, sandboxMemoryRlimit, resource)
+		lim.Cur = 100 * 1024 * 1024
+		lim.Max = 200 * 1024 * 1024
+		return nil
+	}
+	assert.Equal(t, uint64(100*1024), sandboxMemoryLimitKiB(512*1024*1024))
+
+	sandboxGetrlimit = func(int, *syscall.Rlimit) error { return errors.New("getrlimit failed") }
+	assert.Equal(t, uint64(512*1024), sandboxMemoryLimitKiB(512*1024*1024),
+		"an unreadable inherited limit leaves the configured cap; the wrapper fails closed if it cannot be set")
+}
+
+func TestSandboxMemoryLimitKiB_NeverRoundsToZero(t *testing.T) {
+	// The KiB value rounds down, so the cap never exceeds the configured bytes,
+	// except that `ulimit -d 0` would refuse the tool's first allocation: a
+	// sub-KiB cap becomes the smallest settable limit instead.
+	orig := sandboxGetrlimit
+	t.Cleanup(func() { sandboxGetrlimit = orig })
+	sandboxGetrlimit = func(int, *syscall.Rlimit) error { return errors.New("unused") }
+	assert.Equal(t, uint64(1), sandboxMemoryLimitKiB(100))
+	assert.Equal(t, uint64(1), sandboxMemoryLimitKiB(1024))
+	assert.Equal(t, uint64(1), sandboxMemoryLimitKiB(2047))
+	assert.Equal(t, uint64(2), sandboxMemoryLimitKiB(2048))
+}
+
+func TestSandboxLimitScript_IsIntegerOnlyAndExecsTheTool(t *testing.T) {
+	requireHostMemoryLimit(t)
+	s := sandboxLimitScript(524288)
+	assert.Contains(t, s, "ulimit "+sandboxMemoryUlimitFlag+" 524288 ")
+	assert.True(t, strings.HasSuffix(s, `exec "$@"`), "script: %s", s)
+	assert.NotContains(t, s, "-u", "never RLIMIT_NPROC: it counts every process of the invoking user, not one run")
+	assert.NotContains(t, s, "-p")
+}
+
+func TestSandboxLimitScript_AFailedLimitIsAToolFaultNotAWorkloadExit(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// If the wrapper cannot set the limit it must not exec the tool unbounded,
+	// and its exit must classify as a sandbox fault on both platforms rather
+	// than be reported as the workload's verdict. The outer shell lowers the
+	// hard limit below what the script asks for, which an unprivileged
+	// process cannot raise back.
+	if os.Geteuid() == 0 {
+		t.Skip("root can raise a hard limit, so the set cannot be made to fail")
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := sandboxLimitScript(4096)
+	cmd := exec.Command(sandboxLimitShell, "-c", `ulimit `+sandboxMemoryUlimitFlag+` 2048 && exec "$0" -c "$1" limits touch "$2"`,
+		sandboxLimitShell, script, marker)
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "output: %s", out)
+	assert.Equal(t, sandboxLimitExitCode, ee.ExitCode())
+	assert.NoFileExists(t, marker, "the tool must not run when its limit could not be set")
+	for _, goos := range []string{"darwin", "linux"} {
+		isFault, reason := classifyToolExit(goos, ee.ExitCode(), string(out))
+		assert.True(t, isFault, goos)
+		assert.Contains(t, reason, sandboxLimitDiagnosticPrefix, goos)
+	}
+}
+
+func TestOSLevelBackendRun_StartsTheToolUnderTheMemoryCap(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// The cap reaches the real spawn path, not only the helper.
+	var seen OSLevelConfig
+	cfg := DefaultOSLevelConfig()
+	cfg.ToolPath = writeFakeOSLevel(t, limitsReport)
+	cfg.MaxMemoryBytes = 256 * 1024 * 1024
+	b := NewOSLevelBackend(cfg)
+	captureContainmentCfg(t, &seen)
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+	_, _, soft, hard := parseLimitsReport(t, res.Output)
+	assert.Equal(t, "262144", soft)
+	assert.Equal(t, "262144", hard)
+}
+
+func TestOSLevelBackendRun_AStructLiteralBackendGetsTheDefaultMemoryCap(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// A backend built without NewOSLevelBackend has MaxMemoryBytes 0. It must
+	// run under the default cap, not without one and not under a 1 KiB one
+	// that would refuse the tool's first allocation.
+	var seen OSLevelConfig
+	b := &OSLevelBackend{cfg: OSLevelConfig{ToolPath: writeFakeOSLevel(t, limitsReport)}}
+	captureContainmentCfg(t, &seen)
+	res, err := b.Run(context.Background(), RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
+	_, _, soft, hard := parseLimitsReport(t, res.Output)
+	want := strconv.FormatInt(DefaultOSLevelConfig().MaxMemoryBytes/1024, 10)
+	assert.Equal(t, want, soft)
+	assert.Equal(t, want, hard)
+}
+
+func TestApplySandboxResourceLimits_LeavesAnUnexecutableToolUnwrapped(t *testing.T) {
+	// A missing or non-executable sandbox binary must keep failing at Start,
+	// with no process created, rather than become a shell's exit 127.
+	notExec := filepath.Join(t.TempDir(), "not-executable")
+	require.NoError(t, os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644))
+	for _, tool := range []string{"/nonexistent/os-sandbox-binary-xyz", notExec, t.TempDir()} {
+		cmd := exec.Command(tool, "arg")
+		applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+		assert.Equal(t, tool, cmd.Path, tool)
+		assert.Equal(t, []string{tool, "arg"}, cmd.Args, tool)
+	}
+}
+
+func TestSandboxLimitScript_AToolThatVanishedBeforeExecIsAFault(t *testing.T) {
+	requireHostMemoryLimit(t)
+	// The tool passed the pre-wrap check and was then removed: the shell's own
+	// exec error names $0, so the run is classified as a fault, not as the
+	// workload's exit 127.
+	cmd := exec.Command(sandboxLimitShell, "-c", sandboxLimitScript(512*1024), sandboxLimitArgv0,
+		"/nonexistent/os-sandbox-binary-xyz")
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "output: %s", out)
+	for _, goos := range []string{"darwin", "linux"} {
+		isFault, reason := classifyToolExit(goos, ee.ExitCode(), string(out))
+		assert.True(t, isFault, "%s: exit %d output %q", goos, ee.ExitCode(), out)
+		assert.Contains(t, reason, sandboxLimitDiagnosticPrefix, goos)
+	}
+}
+
+func TestSandboxMemoryLimitFor_PicksTheRlimitEachKernelAccepts(t *testing.T) {
+	// darwin rejects lowering both RLIMIT_DATA and RLIMIT_AS (EINVAL, measured
+	// on integration-macos), so it gets no memory limit; linux uses
+	// RLIMIT_DATA, which does not count the Go toolchain's reservations.
+	_, _, enforced := sandboxMemoryLimitFor("darwin")
+	assert.False(t, enforced)
+	res, flag, enforced := sandboxMemoryLimitFor("linux")
+	assert.True(t, enforced)
+	assert.Equal(t, syscall.RLIMIT_DATA, res)
+	assert.Equal(t, "-d", flag)
+}
+
+func TestApplySandboxResourceLimits_LeavesTheCommandAloneWhereNoLimitIsEnforced(t *testing.T) {
+	// On a kernel that accepts no memory rlimit, wrapping would only make the
+	// shell fail closed and refuse every run, so the spawn is left as it was.
+	orig := sandboxMemoryLimitEnforced
+	t.Cleanup(func() { sandboxMemoryLimitEnforced = orig })
+	sandboxMemoryLimitEnforced = false
+	tool := writeFakeOSLevel(t, "exit 0")
+	cmd := exec.Command(tool, "arg")
+	applySandboxResourceLimits(cmd, DefaultOSLevelConfig())
+	assert.Equal(t, tool, cmd.Path)
+	assert.Equal(t, []string{tool, "arg"}, cmd.Args)
 }

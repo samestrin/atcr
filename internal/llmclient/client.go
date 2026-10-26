@@ -146,6 +146,10 @@ type Invocation struct {
 	ThinkingLevel    string
 	ThinkingStyle    string
 	PreserveThinking string
+	// SupportsVision is the agent's declared supports_vision. Chat refuses a
+	// message carrying an image part with ErrVisionNotDeclared unless it is
+	// set; it is declared, never probed.
+	SupportsVision bool
 }
 
 type message struct {

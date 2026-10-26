@@ -787,6 +787,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		PayloadMode:            r.PayloadMode,
 		Truncated:              r.Truncation.Truncated,
 		FilesDropped:           r.Truncation.FilesDropped,
+		ThreatMapDropped:       r.ThreatMapDropped,
 		FallbackUsed:           r.FallbackUsed,
 		FallbackFrom:           r.FallbackFrom,
 		FallbackModel:          r.FallbackModel,

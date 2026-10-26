@@ -59,3 +59,21 @@ func TestDebateCmd_UnresolvedWithoutRoles(t *testing.T) {
 	require.Contains(t, out, "debated 1 item(s)")
 	require.Contains(t, out, "1 unresolved")
 }
+
+// TestDebateCmd_NextLinesOnStderr: after a successful run, `atcr debate` names
+// `atcr report <id>` as the next step on stderr, and stdout carries only its
+// pre-existing result line (Epic 42.0 T4).
+func TestDebateCmd_NextLinesOnStderr(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "HIGH",
+		Reviewers: []string{"bruce"}, Disagreement: "MEDIUM vs HIGH",
+	}})
+	code, stdout, stderr := execCmdSplit(t, "debate", "r")
+	require.Equal(t, 0, code)
+	require.Equal(t, "debated 1 item(s): 0 upheld, 0 overturned, 0 split, 1 unresolved (0 overflow, 0 withheld) -> "+
+		filepath.Join(".atcr", "reviews", "r", "reconciled")+"\n", stdout)
+	require.NotContains(t, stdout, "Next:")
+	require.Contains(t, stderr, "Next: atcr report <id>\n")
+}

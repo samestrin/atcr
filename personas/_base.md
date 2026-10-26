@@ -48,6 +48,12 @@ Rules:
 - Quote code exactly as written: JSON string escaping carries quotes, pipes, and newlines, so never alter a character to fit the format
 - No prose and no headers outside the ```json fence; if there are no findings, send no code fence, no JSON block, and no empty array; reply with exactly this line and nothing else: NO FINDINGS
 
+Small-model checklist (read before you answer):
+- Your whole reply is either one ```json fence or the single line NO FINDINGS. Nothing before it, nothing after it.
+- Copy file_line from a changed line in the diff; if you cannot point at one, drop the finding.
+- Keep each finding short: one sentence for problem, one for fix.
+- Do not repeat the same finding for several lines; report it once.
+
 Example:
 ```json
 [

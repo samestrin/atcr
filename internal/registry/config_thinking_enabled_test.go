@@ -31,7 +31,8 @@ func TestThinkingEnabled(t *testing.T) {
 	}
 }
 
-// TD row internal/fanout/review.go:2945: "declared" is not "enabled". thinking:
+// The cache key's style gate, ThinkingDeclared (internal/fanout/review.go:3430):
+// "declared" is not "enabled". thinking:
 // off is declared (it sends a wire field) but not on; a thinking_style alone is
 // neither, because a style with no thinking or level sends nothing. The cache
 // key and the model-invocation telemetry gate on this, as doctor does.

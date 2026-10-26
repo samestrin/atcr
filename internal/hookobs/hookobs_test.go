@@ -966,7 +966,8 @@ func TestWrap_PreserveThinkingGatedOnThinkingEnabled(t *testing.T) {
 	}
 }
 
-// TD row internal/fanout/review.go:2945: a thinking_style with neither
+// The cache key's style gate, ThinkingDeclared (internal/fanout/review.go:3430):
+// a thinking_style with neither
 // thinking nor thinking_level sends no thinking field, so the record must not
 // report one. The echo is gated on registry.ThinkingDeclared, doctor's rule.
 // TD internal/hookobs/hookobs_test.go:899: the gate lives in the shared

@@ -333,8 +333,8 @@ func TestWritePool_DiagnosabilityFieldsInSummary(t *testing.T) {
 // and a multi-line EVIDENCE. findings.toon must keep them; findings.txt keeps
 // today's lossy bytes.
 var dualWriteFindings = []stream.Finding{
-	{Severity: "HIGH", File: "flags.go", Line: 7, Problem: "mode is O_CREATE | O_WRONLY", Fix: "use a | b", Category: "correctness", EstMinutes: 5, Evidence: "line one\n    line two", Reviewer: "greta"},
-	{Severity: "LOW", File: "x.go", Line: 1, Problem: "plain", Fix: "plain fix", Category: "style", EstMinutes: 1, Evidence: "ev", Reviewer: "kai"},
+	{Severity: "HIGH", File: "flags.go", Line: 7, Problem: "mode is O_CREATE | O_WRONLY", Fix: "use a | b", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "line one\n    line two", Reviewer: "greta"},
+	{Severity: "LOW", File: "x.go", Line: 1, Problem: "plain", Fix: "plain fix", Category: "style", CanonicalCategory: "style", EstMinutes: 1, Evidence: "ev", Reviewer: "kai"},
 }
 
 func v1Bytes(t *testing.T, findings []stream.Finding) []byte {
