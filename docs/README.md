@@ -15,6 +15,8 @@ single source of truth the website build consumes, so it links every doc in
 - [Configuration Reference](registry.md) — `.atcr/config.yaml`, the registry
   files, resolution tiers, and the persona resolution chain.
 - [Providers](providers.md) — configuring OpenAI-compatible model providers.
+- [Running ATCR Air-Gapped](air-gapped.md) — every outbound call atcr can make
+  and how to disable each, plus a known-offline local-model setup.
 - [atcr Agent Skill — Installation & Usage](skill-usage.md) — installing and
   driving atcr as an agent skill.
 
