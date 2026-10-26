@@ -170,10 +170,11 @@ type ChatResponse struct {
 
 	// CallRecords is the per-attempt telemetry for THIS turn's dispatch (one
 	// record per HTTP attempt, retries included). Like Usage, it is per-turn and
-	// the fanout loop accumulates it across turns. Surfaced only on the success
-	// path: a turn that errors returns a nil *ChatResponse, so its records are
-	// dropped — the same accepted limitation that already applies to Usage on an
-	// errored turn (see the no-choices note below).
+	// the fanout loop accumulates it across turns. Surfaced on the error path too
+	// (Epic 4.11): a turn that reached the wire and then errored returns a non-nil
+	// *ChatResponse carrying its records alongside the error, plus its Usage and
+	// Reasoning when a response was parsed (no choices, or a truncated empty
+	// turn; Epic 35.26).
 	CallRecords []CallRecord
 
 	// Reasoning is this turn's reasoning_content (or reasoning) as text, for
@@ -359,8 +360,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		// a mid-flight timeout reached the wire, and the fanout loop must still
 		// count that attempt — otherwise the AC1 undercount the epic fixed for the
 		// single-shot path would persist on the tool-loop path. Only CallRecords is
-		// carried here; Usage stays dropped on an errored turn (see the no-choices
-		// note below), since token accounting is out of scope for this change.
+		// carried here: a send error has no parsed response, so no Usage.
 		return &ChatResponse{CallRecords: records}, err
 	}
 	var parsed chatToolResponse
@@ -368,27 +368,24 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return &ChatResponse{CallRecords: records}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		// KNOWN LIMITATION (accepted): a provider may return an error-shaped 200
-		// with no choices yet still bill for the call and report `usage`. This
-		// early return discards parsed.Usage, so cost is understated on
-		// billed-but-empty turns. Capturing it would require returning a non-nil
-		// ChatResponse alongside this error and teaching the fanout loop to read
-		// usage off an errored turn — a cross-package contract change in
-		// internal/fanout. Billed-but-empty turns are rare, so the understatement
-		// is accepted rather than complicating the error contract. (CallRecords IS
-		// surfaced — counting the wire attempt is the point of Epic 4.11.)
-		return &ChatResponse{CallRecords: records}, fmt.Errorf("failed to parse response: no choices returned")
+		// A provider may return an error-shaped 200 with no choices yet still bill
+		// for the call and report `usage`, so the errored turn carries it (Epic
+		// 35.26). There is no message, so no Reasoning.
+		return &ChatResponse{Usage: parsed.Usage, CallRecords: records}, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	ch := parsed.Choices[0]
+	msg := ch.Message.history()
+	reasoning := reasoningOf(memberText(msg.ReasoningContent), memberText(msg.Reasoning))
 	// Guard against truncated or filtered completions that leave an empty turn:
 	// a non-standard finish_reason with no content and no tool_calls must not be
-	// silently returned as a successful empty review.
+	// silently returned as a successful empty review. The turn was still billed,
+	// and a thinking model may have spent it all reasoning, so the error carries
+	// the turn's Usage and salvaged Reasoning.
 	if ch.FinishReason != "stop" && ch.FinishReason != "tool_calls" && ch.FinishReason != "" {
 		if (ch.Message.Content == nil || *ch.Message.Content == "") && len(ch.Message.ToolCalls) == 0 {
-			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
+			return &ChatResponse{Usage: parsed.Usage, CallRecords: records, Reasoning: reasoning}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	msg := ch.Message.history()
 	if ch.FinishReason == "length" {
 		// A length-truncated turn may carry a cut-off structured reasoning value
 		// (for Anthropic, a thinking block with no signature). Replaying it would
@@ -399,7 +396,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		msg.ThinkingBlocks = nil
 		msg.ReasoningDetails = nil
 	}
-	resp := &ChatResponse{Message: msg, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoningOf(memberText(msg.ReasoningContent), memberText(msg.Reasoning))}
+	resp := &ChatResponse{Message: msg, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records, Reasoning: reasoning}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

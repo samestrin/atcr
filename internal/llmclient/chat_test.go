@@ -411,6 +411,60 @@ func TestChat_TruncatedFinishReasonWithEmptyContentReturnsError(t *testing.T) {
 	}
 }
 
+// Epic 35.26 T1: a billed 200 with no choices still reports `usage`, and the
+// errored turn returns it on a non-nil *ChatResponse alongside the error, with
+// the wire attempt's CallRecords.
+func TestChat_NoChoicesReturnsUsageWithError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":7}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no choices returned")
+	require.NotNil(t, resp)
+	assert.Equal(t, 120, resp.Usage.PromptTokens)
+	assert.Equal(t, 7, resp.Usage.CompletionTokens)
+	assert.Len(t, resp.CallRecords, 1)
+	assert.Empty(t, resp.Reasoning, "no message, so no reasoning")
+}
+
+// Epic 35.26 T1: a truncated empty turn errors, and returns the provider's
+// usage and the salvaged reasoning under either key alongside the error.
+func TestChat_TruncatedEmptyTurnReturnsUsageAndReasoningWithError(t *testing.T) {
+	for _, tc := range []struct {
+		name, finishReason, reasoning string
+	}{
+		{"length reasoning_content", "length", `"reasoning_content":"thought A"`},
+		{"length reasoning", "length", `"reasoning":"thought A"`},
+		{"content_filter reasoning_content", "content_filter", `"reasoning_content":"thought A"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"`+tc.finishReason+`","message":{"role":"assistant","content":null,`+tc.reasoning+`}}],`+
+					`"usage":{"prompt_tokens":300,"completion_tokens":4096}}`)
+			}))
+			defer srv.Close()
+			t.Setenv("TEST_KEY", testKey)
+
+			resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+				BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+			}, nil, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "provider truncated response")
+			require.NotNil(t, resp)
+			assert.Equal(t, 300, resp.Usage.PromptTokens)
+			assert.Equal(t, 4096, resp.Usage.CompletionTokens)
+			assert.Equal(t, "thought A", resp.Reasoning)
+			assert.Len(t, resp.CallRecords, 1)
+		})
+	}
+}
+
 // TestChat_StopFinishReasonWithContentSucceeds verifies that a normal "stop"
 // response is unaffected by the truncation guard.
 func TestChat_StopFinishReasonWithContentSucceeds(t *testing.T) {
