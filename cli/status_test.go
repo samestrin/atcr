@@ -25,16 +25,25 @@ func writeStatusFixture(t *testing.T, root, id string) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
 }
 
+// runStatusIn returns stdout only: the JSON payload the tests decode. The
+// human Next: lines on stderr are covered by runStatusSplit.
 func runStatusIn(t *testing.T, root string, args ...string) (string, error) {
+	t.Helper()
+	out, _, err := runStatusSplit(t, root, args...)
+	return out, err
+}
+
+// runStatusSplit runs `atcr status` in root and returns stdout and stderr apart.
+func runStatusSplit(t *testing.T, root string, args ...string) (string, string, error) {
 	t.Helper()
 	t.Chdir(root)
 	cmd := newStatusCmd()
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+	cmd.SetErr(&errOut)
 	cmd.SetArgs(args)
 	err := cmd.Execute()
-	return out.String(), err
+	return out.String(), errOut.String(), err
 }
 
 func TestStatusCmd_CompletedJSON(t *testing.T) {
@@ -229,4 +238,47 @@ func TestStatusCmd_StaleStageJSON(t *testing.T) {
 	require.NoError(t, err)
 	st, _ := decodeStatus(t, out)
 	assert.Equal(t, "stale", st.CurrentStage)
+}
+
+// TestStatusCmd_NextLinesOnStderr is Epic 42.0 T5: a completed review prints a
+// Next: line naming report <id> on stderr, offers no resume (nothing pending),
+// and leaves stdout the bare JSON document.
+func TestStatusCmd_NextLinesOnStderr(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-06-10_x"
+	writeStatusFixture(t, root, id)
+
+	out, errOut, err := runStatusSplit(t, root, id)
+	require.NoError(t, err)
+	assert.Equal(t, "Next: atcr report <id>\n", errOut)
+	assert.NotContains(t, out, "Next:", "stdout stays JSON only")
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &doc), "stdout is exactly one JSON document")
+}
+
+// TestStatusCmd_NextLinesPendingOffersResume: a review with agents still
+// pending also names review --resume <id>, after report <id>.
+func TestStatusCmd_NextLinesPendingOffersResume(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-06-10_live"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	started := time.Now().UTC().Format(time.RFC3339)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"`+started+`","timeout_secs":600,"partial":false}`), 0o644))
+
+	out, errOut, err := runStatusSplit(t, root, id)
+	require.NoError(t, err)
+	st, _ := decodeStatus(t, out)
+	require.Equal(t, 1, st.AgentsPending, "fixture is a pending review")
+	assert.Equal(t, "Next: atcr report <id>\nNext: atcr review --resume <id>\n", errOut)
+}
+
+// TestStatusCmd_NoNextLinesOnError: a failed lookup prints no Next: lines.
+func TestStatusCmd_NoNextLinesOnError(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	_, errOut, err := runStatusSplit(t, root, "missing")
+	require.Error(t, err)
+	assert.NotContains(t, errOut, "Next:")
 }
