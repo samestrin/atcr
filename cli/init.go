@@ -367,17 +367,24 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 		roster = indexOrder
 	}
 
-	// Track every unit file this run might create so a failure rolls back exactly
-	// the files this run created — never a pre-existing one (all-or-nothing).
-	// Candidates are recorded BEFORE the install call so the currently-failing
-	// persona's own partial write is included in the rollback, not just prior
-	// successes. The file-exists guard above has already proven both paths absent
-	// when a candidate is recorded, so pre-existence tracking is unnecessary.
-	var candidates []string
+	// Track every unit file this run wrote so a failure rolls back exactly those
+	// files (all-or-nothing). A persona's paths are recorded only AFTER InstallUnit
+	// succeeds, each with the os.Lstat identity it had then; rollback removes a
+	// path only while its identity still matches. Another process may create or
+	// replace a file at one of these paths before the rollback runs, and that file
+	// is left alone. The failing persona's paths are never recorded: nothing proves
+	// this run wrote them, and writePersonaUnit already removes its own partial
+	// .yaml on failure.
+	type writtenFile struct {
+		path string
+		info fs.FileInfo
+	}
+	var written []writtenFile
 	rollback := func() {
-		for _, path := range candidates {
-			if fileExists(path) {
-				_ = os.Remove(path)
+		for _, w := range written {
+			cur, err := os.Lstat(w.path)
+			if err == nil && os.SameFile(cur, w.info) && cur.ModTime().Equal(w.info.ModTime()) {
+				_ = os.Remove(w.path)
 			}
 		}
 	}
@@ -397,11 +404,15 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 			_, _ = fmt.Fprintf(errOut, "persona %q already installed — leaving it untouched\n", name)
 			continue
 		}
-		candidates = append(candidates, yamlPath, mdPath)
-
 		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
 			rollback()
 			return fmt.Errorf("failed to install community persona %q: %w%s", name, err, offlineHint)
+		}
+		// A binding-only persona has no .md, so a missing path is not recorded.
+		for _, path := range []string{yamlPath, mdPath} {
+			if info, err := os.Lstat(path); err == nil {
+				written = append(written, writtenFile{path: path, info: info})
+			}
 		}
 		_, _ = fmt.Fprintf(out, "Installed %s (community)\n", name)
 	}
@@ -409,8 +420,8 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 }
 
 // fileExists reports whether path is present. A non-ENOENT stat error is treated
-// as "present" so the rollback bookkeeping errs toward NOT deleting a file it did
-// not clearly create (a pre-existing file must never be removed by a rollback).
+// as "present" so the never-overwrite guard errs toward skipping the install
+// rather than writing over a file it could not inspect.
 func fileExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil || !errors.Is(err, fs.ErrNotExist)
