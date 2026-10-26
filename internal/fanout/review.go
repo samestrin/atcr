@@ -147,6 +147,14 @@ type ReviewRequest struct {
 	// index is neither read nor written there). Defaulting false keeps incremental
 	// skipping active for callers that do not opt out.
 	Fresh bool
+	// ThreatMapper, when non-nil, runs the threat-model mapping step (the
+	// --threat-map flag, Epic 37.0): after the entries are built and before the
+	// byte budget, the mapper names the files the panel reviews and the rest are
+	// dropped. A mapper error keeps every file (fail open). Git-range reviews
+	// only: the baseline and --diff-file preparations reject it with
+	// ErrThreatMapNeedsRange. nil (the default, and every caller that does not
+	// opt in, such as the MCP handler) leaves the payload unscoped.
+	ThreatMapper ThreatMapper
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -286,6 +294,10 @@ type PreparedReview struct {
 	// follows writeResumedAgents' rules rather than WritePool's (Epic
 	// 35.16.14.1 T2).
 	resuming bool
+	// threatMapDropped lists the files the threat map removed from this run
+	// (Epic 37.0), stamped onto every agent's status.json as threat_map_dropped.
+	// nil when the run did not map or the mapper failed.
+	threatMapDropped []string
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -435,7 +447,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
-	payloads, rb, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore)
+	payloads, rb, threatMap, err := buildScopedPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head, req.NoIgnore, threatScope{mapper: req.ThreatMapper})
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +487,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false, threatMap)
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
@@ -486,7 +498,10 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 // diff cache. payloadMode is recorded as the manifest's PayloadMode (the
 // configured mode for the git path, "diff" for the ingestion path); the range
 // provenance comes from req.Range, which the ingestion caller leaves empty.
-func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder, baseline bool) (*PreparedReview, error) {
+//
+// threatMap is the threat-map outcome (Epic 37.0), persisted in the manifest so
+// a resume reuses it; nil on every run that did not map.
+func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string, rb *payload.RangeBuilder, baseline bool, threatMap *payload.ThreatMapRecord) (*PreparedReview, error) {
 	// Derive the id unconditionally: for --output-dir the id is provenance-only
 	// (written to the manifest and PreparedReview.ID but not used for the path),
 	// while for --id and the default derived case the id IS the path component.
@@ -681,7 +696,10 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
 		// rather than the resume request (the completed agents' context is locked).
 		NoIgnore: req.NoIgnore,
-		Stages:   []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
+		// Persist the threat map the same way, so a resume trims to the recorded
+		// keep set instead of asking the mapper again (Epic 37.0).
+		ThreatMap: threatMap,
+		Stages:    []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
 	}
 	if err := WriteManifest(dir, m); err != nil {
 		return nil, err
@@ -700,7 +718,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// and capped at the resolved cache_max_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache, threatMapDropped: threatMapDropped(threatMap)}, nil
 }
 
 // payloadsCarryPrefetchContext reports whether any mode payload's pre-budget
@@ -928,6 +946,9 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
+	if req.ThreatMapper != nil {
+		return nil, ErrThreatMapNeedsRange
+	}
 	// Load the incremental file-hash skip index (Sprint 35.0 Story 4/5) and pass it,
 	// with the --fresh bypass, into the candidate build. Load never errors/returns nil
 	// (a missing/corrupt index degrades to a full scan), so a first-ever run behaves
@@ -948,7 +969,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	// No git range → no RangeBuilder: computeGroundingData's range-less early return
 	// disables grounding (not applicable to a baseline scan).
-	prep, err := finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true)
+	prep, err := finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, filesMode, nil, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1107,6 +1128,9 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if err := validateReviewRequest(cfg, req); err != nil {
 		return nil, err
 	}
+	if req.ThreatMapper != nil {
+		return nil, ErrThreatMapNeedsRange
+	}
 	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
 	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
 	// externally-sourced diffs), so a hostile multi-GB diff must be rejected before
@@ -1167,7 +1191,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	// Diff-ingestion has no git range, so no RangeBuilder: computeGroundingData's
 	// range-less early return handles it (grounding not applicable).
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil, false)
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode, nil, false, nil)
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
@@ -1314,6 +1338,7 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 		p.baseline.uncovered = uncoveredBaselineFiles(ctx, p.Slots, results, p.baseline.reviewed)
 	}
 	results = mergeResults(ctx, p.Slots, results)
+	stampThreatMap(results, p.threatMapDropped)
 
 	// Classify the run into the manifest's review-stage entry and stamp the
 	// snapshot provenance (nil when no agent ran with tools).
@@ -1375,7 +1400,9 @@ func earlyAgentWriter(ctx context.Context, p *PreparedReview, poolDir string) fu
 		for k, i := range idx {
 			own[k] = p.Slots[i]
 		}
-		for _, r := range mergeResults(ctx, own, results) {
+		merged := mergeResults(ctx, own, results)
+		stampThreatMap(merged, p.threatMapDropped)
+		for _, r := range merged {
 			if err := writeEarlyAgent(poolDir, r, p.Changed, p.chunks, p.resuming); err != nil {
 				log.FromContext(ctx).Warn("early persona artifact write failed; the final pool write retries it", "agent", agent, "err", err)
 			}
@@ -1647,6 +1674,17 @@ func escalationOverrides(pe registry.PayloadEscalationConfig) payload.Escalation
 // data (computeGroundingData) on the same gitRunner, reusing the memoized
 // --name-status / --unified=0 diffs instead of re-spawning them (Epic 22.4).
 func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string, noIgnore bool) (map[string]modePayload, *payload.RangeBuilder, error) {
+	out, rb, _, err := buildScopedPayloads(ctx, cfg, repo, base, head, noIgnore, threatScope{})
+	return out, rb, err
+}
+
+// buildScopedPayloads is buildPayloads with the threat-map step (Epic 37.0):
+// once every mode's entries are built, and before any byte budget runs, scope
+// resolves the keep set (a mapper call on a fresh run, the manifest record on a
+// resume) and every mode's entries are trimmed to it. The trimmed list becomes
+// the mode's Entries, so the per-agent re-shed in buildSlots never sees a
+// dropped file either. The returned record is nil when the run does not map.
+func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head string, noIgnore bool, scope threatScope) (map[string]modePayload, *payload.RangeBuilder, *payload.ThreatMapRecord, error) {
 	var opts []payload.RangeOption
 	if noIgnore {
 		opts = append(opts, payload.WithoutIgnoreFilter())
@@ -1682,12 +1720,38 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		opts = append(opts, opt)
 	}
 	rb := payload.NewRangeBuilder(ctx, repo, base, head, opts...)
-	out := map[string]modePayload{}
-	for _, mode := range neededModes(cfg) {
+	modes := neededModes(cfg)
+	built := make(map[string][]payload.FileEntry, len(modes))
+	for _, mode := range modes {
 		entries, err := rb.BuildEntries(payload.PayloadMode(mode))
 		if err != nil {
-			return nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
+			return nil, nil, nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
+		built[mode] = entries
+	}
+	// Map then trim, ahead of the byte budget, so a file the mapper removed never
+	// counts against the budget and is never reported as a budget shed. The
+	// drops are recorded on their own (ThreatMapRecord.Dropped, status.json
+	// threat_map_dropped), apart from Truncation.FilesDropped.
+	record, keep := scope.resolve(ctx, reviewablePaths(built))
+	if keep != nil {
+		dropped := map[string]bool{}
+		for mode, entries := range built {
+			kept, d := payload.TrimToPaths(entries, keep)
+			built[mode] = kept
+			for _, p := range d {
+				dropped[p] = true
+			}
+		}
+		for p := range dropped {
+			record.Dropped = append(record.Dropped, p)
+		}
+		sort.Strings(record.Dropped)
+		log.FromContext(ctx).Info("threat map scoped the review", "kept", record.Keep, "dropped", record.Dropped)
+	}
+	out := map[string]modePayload{}
+	for _, mode := range modes {
+		entries := built[mode]
 		// Same escalation-aware order as the per-agent shed in buildSlots. Keeping
 		// the two passes on one policy is what preserves Kept as an upper bound on
 		// every agent's delivered set: the per-agent pass re-sheds the SAME
@@ -1696,7 +1760,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		// the manifest's per_file_payload, derived from Kept) never lists.
 		kept, trunc := payload.ApplyByteBudgetPreferEscalated(entries, cfg.Settings.PayloadByteBudget, payload.PayloadMode(mode))
 		if trunc.AllDropped {
-			return nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+			return nil, nil, nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
 		}
 		// Surface the PARTIAL shed, exactly as the two sibling builders do
 		// (PrepareReviewFromRepo, PrepareReviewFromDiff). AllDropped
@@ -1741,7 +1805,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 	// releasing the per-mode caches here lowers peak heap during grounding for
 	// large multi-mode diffs without re-spawning any git process (Epic 22.4).
 	rb.ReleaseModeCaches()
-	return out, rb, nil
+	return out, rb, record, nil
 }
 
 // perFileModes maps each file the escalation heuristic promoted above its
