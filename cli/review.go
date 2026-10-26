@@ -28,6 +28,8 @@ import (
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
 )
 
 // writeAuditRecord appends one audit record for the review at reviewDir to
@@ -89,7 +91,7 @@ func newReviewCmd() *cobra.Command {
 			"no overwrite, no fixes — the preview renders and the command exits).\n" +
 			"--preview is a deprecated alias for --dry-run.",
 		Args: usageArgs(cobra.NoArgs),
-		RunE: runReview,
+		RunE: runReviewWithHelp,
 	}
 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
 	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
@@ -1032,10 +1034,54 @@ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) 
 	if result != nil {
 		done, total, dir = result.Summary.Succeeded, result.Summary.Total, result.Dir
 	}
+	// The two commands come from the review:interrupted registry entry (Epic
+	// 42.0). The id here is the interrupted review's own, not a guess, so it
+	// fills the <id> placeholder.
+	steps := renderSuggestions(suggestReviewInterrupted, invocation{})
+	for i, s := range steps {
+		steps[i] = strings.ReplaceAll(s, idPlaceholder, prep.ID)
+	}
 	return fmt.Sprintf(
 		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
-			"   Run 'atcr status %s' to inspect, or 'atcr review --resume %s' to finish the remaining agents.\n",
-		done, total, dir, prep.ID, prep.ID)
+			"   Run '%s' to inspect, or '%s' to finish the remaining agents.\n",
+		done, total, dir, steps[0], steps[1])
+}
+
+// runReviewWithHelp is the review command's RunE: runReview (fresh or
+// --resume), then the next-step suggestions (Epic 42.0, axi.md Principle 9)
+// once the run succeeded. They are appended after every other line, so the
+// existing output is unchanged.
+func runReviewWithHelp(cmd *cobra.Command, args []string) error {
+	if err := runReview(cmd, args); err != nil {
+		return err
+	}
+	// --dry-run ran no review, so there is nothing to report or verify.
+	if dryRunFlagSet(cmd) {
+		return nil
+	}
+	return writeReviewHelp(cmd)
+}
+
+// writeReviewHelp emits review's next steps. Under --axi they are a help[]
+// block on stdout, after the run-summary payload; the legacy pipe payload gets
+// none, so it stays byte-identical for the parsers it exists for. In human mode
+// they are Next: lines on stderr, leaving stdout unchanged.
+func writeReviewHelp(cmd *cobra.Command) error {
+	lines := renderSuggestions(suggestReview, invocation{Flags: invocationFlags(cmd)})
+	ctx := cmd.Context()
+	if !axiFromContext(ctx) {
+		for _, l := range lines {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Next: "+l)
+		}
+		return nil
+	}
+	if legacyPipeFromContext(ctx) {
+		return nil
+	}
+	if err := goaxi.WriteHelp(cmd.OutOrStdout(), lines); err != nil {
+		return fmt.Errorf("axi output rendering failed: %w", err)
+	}
+	return nil
 }
 
 // absFn resolves a path to absolute form. It is a package var so a test can

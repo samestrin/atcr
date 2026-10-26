@@ -121,6 +121,18 @@ exception: a `review --resume <id> --axi` run that finds nothing pending (the
 review is already fully complete) runs no fan-out, so its payload reports the
 just-reconciled total instead of a fan-out count.
 
+A run that exits 0 ends with a `help[]` block naming the usual next commands,
+with the review id left as the literal placeholder `<id>`:
+
+```
+help[2]: atcr report <id>,atcr verify <id>
+```
+
+Without `--axi` the same suggestions go to stderr as `Next: atcr report <id>`
+and `Next: atcr verify <id>`, so the human stdout is unchanged. A run that exits
+non-zero, `--dry-run`, and the deprecated `--legacy-pipe` payload get no
+suggestions.
+
 ### The `report --format axi` findings payload
 
 `atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes), followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)):
