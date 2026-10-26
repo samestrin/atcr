@@ -19,3 +19,8 @@ func configureSandboxProcessGroup(_ *exec.Cmd) {}
 // reapSandboxProcessGroup is a no-op for the same reason: no process group was
 // created, and Run never spawns a process on these platforms.
 func reapSandboxProcessGroup(_ *exec.Cmd) error { return nil }
+
+// applySandboxResourceLimits is a no-op for the same reason: there is no
+// /bin/sh to set an rlimit with, and Run never spawns a process on these
+// platforms.
+func applySandboxResourceLimits(_ *exec.Cmd, _ OSLevelConfig) {}
