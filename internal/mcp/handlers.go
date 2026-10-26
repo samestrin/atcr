@@ -264,8 +264,23 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// observer cannot tell two in-flight reviews apart — the agent name
 		// repeats and only the sequence differs.
 		rctx = hookobs.WithCall(rctx, hookobs.Call{RunID: prep.ID, Stage: "review"})
-		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
+		rr, err := fanout.ExecuteReview(rctx, e.completer, prep)
+		if err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
+		} else {
+			// Review-complete hook (Epic 41.0). This path writes no history or
+			// audit ledger, so the firing point is the successful return. The
+			// handler does not reconcile, so findings are left uncounted.
+			hookobs.ReviewComplete(rctx, hookobs.ReviewReport{
+				RunID:           rr.ID,
+				ReviewDir:       rr.Dir,
+				Base:            res.Base,
+				Head:            res.Head,
+				Partial:         rr.Summary.Partial,
+				AgentsTotal:     rr.Summary.Total,
+				AgentsSucceeded: rr.Summary.Succeeded,
+				AgentsFailed:    rr.Summary.Failed,
+			})
 		}
 		// Observability parity with the CLI's "review interrupted by signal"
 		// (epic 4.1/4.1.1): when server shutdown cut this detached review off,
