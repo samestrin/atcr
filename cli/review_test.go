@@ -1165,7 +1165,11 @@ func TestValidatePreviewURL(t *testing.T) {
 // remote host is a usage error (exit 2) before any review work begins.
 func TestReviewCmd_PreviewURL_RejectsRemoteHTTP_ExitsUsage(t *testing.T) {
 	isolate(t)
-	code, _, stderr := execCmdSplit(t, "review", "--preview-url", "http://example.com")
-	require.Equal(t, exitUsage, code)
-	assert.Contains(t, stderr, "--preview-url must use https://")
+	root := NewRootCmd()
+	root.SetArgs([]string{"review", "--preview-url", "http://example.com"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Equal(t, exitUsage, exitCode(err))
+	assert.ErrorContains(t, err, "--preview-url must use https://")
 }
