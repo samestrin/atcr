@@ -214,3 +214,31 @@ func TestRunReconcile_FlagsHallucinatedPathEndToEnd(t *testing.T) {
 	assert.Contains(t, string(reportMD), "⚠️ File not found: internal/auth/validator.go")
 	assert.Contains(t, string(reportMD), "hallucinated path finding")
 }
+
+// TestAnchoredPathWarning (Epic 35.16.15): consumers that read a PathWarning as
+// "File is hallucinated" must see only the anchored part. A sibling-only warning
+// says nothing about File; an anchored warning survives whether or not a sibling
+// warning was appended to it.
+func TestAnchoredPathWarning(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{stream.PathNotFoundWarning, stream.PathNotFoundWarning},
+		{siblingNotFoundWarning("invented.go:9"), ""},
+		{stream.PathNotFoundWarning + "; " + siblingNotFoundWarning("invented.go:9"), stream.PathNotFoundWarning},
+		{siblingNotFoundWarning("a; b.go:9"), ""},
+	} {
+		assert.Equal(t, tc.want, AnchoredPathWarning(tc.in), "AnchoredPathWarning(%q)", tc.in)
+	}
+
+	// Pinned against what validateFindingPaths actually stamps, so the split
+	// cannot drift from the warning's real shape.
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
+	findings := []JSONFinding{
+		{File: "edited.go", Line: 3, SiblingLocation: "invented.go:9"},
+		{File: "missing.go", Line: 3, SiblingLocation: "invented.go:9"},
+	}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+	assert.Empty(t, AnchoredPathWarning(findings[0].PathWarning))
+	assert.Equal(t, stream.PathNotFoundWarning, AnchoredPathWarning(findings[1].PathWarning))
+}
