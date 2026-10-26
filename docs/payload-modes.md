@@ -126,7 +126,7 @@ threat_map:
 
 The outcome is recorded in `manifest.json` under `threat_map` (`keep`, `dropped`, `failed`), and every agent's `status.json` lists the excluded files as `threat_map_dropped` — deliberately apart from `files_dropped`, since a mapper drop is a scoping decision, not a byte-budget shed, and never marks the run truncated.
 
-Scoping applies to **git-range reviews only**: `--threat-map` cannot be combined with a baseline (`--all`/`--scope`) or `--diff-file` review, and passing it with `--resume` is a usage error — a resume reuses the map the original run recorded, so it reviews exactly the file set the completed agents saw rather than re-mapping.
+Scoping applies to **git-range reviews only**: `--threat-map` cannot be combined with a baseline (`--all`/`--scope`) review, and passing it with `--resume` is a usage error — a resume reuses the map the original run recorded, so it reviews exactly the file set the completed agents saw rather than re-mapping.
 
 **Coverage caveat.** A dropped file is reviewed by **no one**: the run's findings and coverage extend only to the kept files, and `threat_map_dropped` is the complete record of what went unreviewed. And because the mapper sees paths, not code, the map is heuristic triage — a wrong drop leaves no trace in the findings. Treat `--threat-map` as a token-saving measure for large ranges, not as a security boundary; when the change is small or the cost of missing a file is high, run without it.
 
