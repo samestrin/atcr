@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -651,4 +652,156 @@ func TestQuickstart_AppendExport_WarnsOnGroupReadableExistingProfile(t *testing.
 		require.NoError(t, appendExport(profile, "TEST_KEY", "secret", &warn))
 		assert.Empty(t, warn.String(), "a 0600 profile is already safe — no warning")
 	})
+}
+
+// failingTransport fails the test on any request that reaches the stdlib HTTP
+// stack. Installed as http.DefaultTransport, it catches a network call from any
+// client that does not go through personasClient.
+type failingTransport struct{ t *testing.T }
+
+func (f failingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.t.Errorf("unexpected network call to %s: --preset local must make none", r.URL)
+	return nil, errors.New("network disabled in test")
+}
+
+// runPresetLocal runs `atcr quickstart --preset local` (plus extra flags)
+// through the real command tree, in a fresh project dir with HOME pointed at
+// home and every HTTP path wired to fail.
+func runPresetLocal(t *testing.T, home string, extra ...string) (dir string, out, errOut *bytes.Buffer, err error) {
+	t.Helper()
+	dir = t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", home)
+	t.Setenv("ATCR_PERSONAS_URL", "http://127.0.0.1:1") // a fetch would hit this
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = failingTransport{t}
+	t.Cleanup(func() { http.DefaultTransport = oldTransport })
+
+	out, errOut = &bytes.Buffer{}, &bytes.Buffer{}
+	root := NewRootCmd()
+	root.SetArgs(append([]string{"quickstart", "--preset", "local"}, extra...))
+	root.SetIn(strings.NewReader(quickstartInput))
+	root.SetOut(out)
+	root.SetErr(errOut)
+	return dir, out, errOut, root.Execute()
+}
+
+// TestQuickstart_PresetLocal_FreshHome covers Epic 36.3 AC1: on a fresh HOME
+// with a transport that fails on any request, `--preset local` exits 0, writes
+// a valid registry with a local provider and the gerald/orson/liam agents, sets
+// telemetry off, and makes no network call.
+func TestQuickstart_PresetLocal_FreshHome(t *testing.T) {
+	home := t.TempDir()
+	dir, out, _, err := runPresetLocal(t, home)
+	require.NoError(t, err)
+
+	reg, err := registry.LoadRegistry(filepath.Join(home, ".config", "atcr", "registry.yaml"))
+	require.NoError(t, err, "--preset local writes a valid registry.yaml")
+	local, ok := reg.Providers["local"]
+	require.True(t, ok, "local provider is defined")
+	assert.Equal(t, "http://localhost:11434/v1", local.BaseURL)
+	assert.Equal(t, "OLLAMA_API_KEY", local.APIKeyEnv)
+	_, synthetic := reg.Providers["synthetic"]
+	assert.False(t, synthetic, "no cloud provider in the local preset")
+
+	wantModels := map[string]string{"gerald": "gemma3:27b", "orson": "qwen3:30b-a3b", "liam": "llama3.3:70b"}
+	require.Len(t, reg.Agents, len(wantModels))
+	for name, model := range wantModels {
+		a, ok := reg.Agents[name]
+		require.True(t, ok, "agent %s is defined", name)
+		assert.Equal(t, "local", a.Provider, "agent %s binds the local provider", name)
+		assert.Equal(t, model, a.Model, "agent %s binds the Ollama tag", name)
+		assert.Equal(t, name, a.Persona)
+		assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", name+".md"), "the embedded %s prompt is scaffolded", name)
+	}
+
+	// The roster must resolve against the registry, or the first review fails.
+	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"gerald", "orson", "liam"}, cfg.Agents)
+	assert.NoError(t, cfg.ValidateAgainst(reg), "roster resolves against the local registry")
+
+	telemetry, err := registry.LoadTelemetrySetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, telemetry, "telemetry is set explicitly")
+	assert.False(t, *telemetry, "telemetry is off")
+
+	assert.NotContains(t, out.String(), "Sign up for", "no cloud signup link in the local preset")
+	assert.NoFileExists(t, filepath.Join(dir, ".github", "workflows", "atcr.yml"), "no cloud CI workflow in the local preset")
+}
+
+// TestQuickstart_PresetLocal_ExistingRegistryNotOverwritten covers Epic 36.3
+// AC2: an existing registry is not overwritten without --force; the block to
+// merge is printed instead.
+func TestQuickstart_PresetLocal_ExistingRegistryNotOverwritten(t *testing.T) {
+	home := t.TempDir()
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
+
+	_, out, errOut, err := runPresetLocal(t, home)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(regPath)
+	require.NoError(t, err)
+	assert.Equal(t, "# user's own registry\n", string(data), "existing registry left intact")
+	assert.Contains(t, errOut.String(), "not overwriting")
+	assert.Contains(t, out.String(), "  local:\n    base_url: http://localhost:11434/v1\n", "the local provider block is printed to merge")
+	for _, name := range []string{"gerald", "orson", "liam"} {
+		assert.Contains(t, out.String(), "  "+name+":\n", "agent %s is in the printed block", name)
+	}
+}
+
+// TestQuickstart_PresetLocal_ForceOverwritesRegistry: with --force the existing
+// registry is replaced by the local one.
+func TestQuickstart_PresetLocal_ForceOverwritesRegistry(t *testing.T) {
+	home := t.TempDir()
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
+
+	_, _, _, err := runPresetLocal(t, home, "--force")
+	require.NoError(t, err)
+	reg, err := registry.LoadRegistry(regPath)
+	require.NoError(t, err)
+	assert.Contains(t, reg.Providers, "local")
+}
+
+// TestQuickstart_PresetLocal_ExistingConfigGetsTelemetryOff: a returning user's
+// existing .atcr/config.yaml is kept (no --force), but telemetry is still
+// switched off in it.
+func TestQuickstart_PresetLocal_ExistingConfigGetsTelemetryOff(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{}))
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:    dir,
+		preset: presetLocal,
+		in:     strings.NewReader(quickstartInput),
+		out:    &bytes.Buffer{},
+		errOut: errOut,
+	}))
+	assert.Contains(t, errOut.String(), "Using existing workspace")
+	assert.Contains(t, errOut.String(), "add gerald, orson, liam to the agents list", "the user is told the kept roster lacks the local agents")
+	telemetry, err := registry.LoadTelemetrySetting(dir)
+	require.NoError(t, err)
+	require.NotNil(t, telemetry)
+	assert.False(t, *telemetry, "telemetry is off in the existing config")
+}
+
+func TestQuickstart_UnknownPreset_IsUsageError(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	root := NewRootCmd()
+	root.SetArgs([]string{"quickstart", "--preset", "cloud"})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown preset "cloud"`)
+	assert.Equal(t, exitUsage, exitCode(err), "an unknown preset is a usage error")
 }
