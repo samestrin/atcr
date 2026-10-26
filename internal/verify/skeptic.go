@@ -48,7 +48,8 @@ func buildSkepticPromptWithSentinel(finding reconcile.JSONFinding, entries []pay
 
 	b.WriteString(openTag + "\n")
 	writeField(&b, "Problem", finding.Problem)
-	writeField(&b, "Fix", finding.Fix)
+	// Fix is executor-authored; sanitize the embedded copy only, finding.Fix stays intact.
+	writeField(&b, "Fix", sanitizeInterAgentText(finding.Fix))
 	writeField(&b, "Evidence", finding.Evidence)
 	writeField(&b, "Severity", finding.Severity)
 	writeField(&b, "Confidence", finding.Confidence)

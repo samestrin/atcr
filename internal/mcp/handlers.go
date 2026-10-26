@@ -264,8 +264,23 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// observer cannot tell two in-flight reviews apart — the agent name
 		// repeats and only the sequence differs.
 		rctx = hookobs.WithCall(rctx, hookobs.Call{RunID: prep.ID, Stage: "review"})
-		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
+		rr, err := fanout.ExecuteReview(rctx, e.completer, prep)
+		if err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
+		} else {
+			// Review-complete hook (Epic 41.0). This path writes no history or
+			// audit ledger, so the firing point is the successful return. The
+			// handler does not reconcile, so findings are left uncounted.
+			hookobs.ReviewComplete(rctx, hookobs.ReviewReport{
+				RunID:           rr.ID,
+				ReviewDir:       rr.Dir,
+				Base:            res.Base,
+				Head:            res.Head,
+				Partial:         rr.Summary.Partial,
+				AgentsTotal:     rr.Summary.Total,
+				AgentsSucceeded: rr.Summary.Succeeded,
+				AgentsFailed:    rr.Summary.Failed,
+			})
 		}
 		// Observability parity with the CLI's "review interrupted by signal"
 		// (epic 4.1/4.1.1): when server shutdown cut this detached review off,
@@ -454,7 +469,8 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// cannot drift in how a record is built, deduped, or compacted (closes TD-002).
 	// The root was resolved BEFORE RunReconcile (above), so validation and
 	// persistence agree on which store this run's findings belong to: findings the
-	// resolved root PathWarning-stamped are dropped by the bridge here, matching
+	// resolved root PathWarning-stamped on their anchored File (a bad sibling alone
+	// does not count, Epic 35.16.15) are dropped by the bridge here, matching
 	// the CLI's exclusion set (TD-019). Best-effort and non-fatal, exactly like
 	// the scorecard emit above: it never fails the reconcile or changes
 	// ReconcileResult.
