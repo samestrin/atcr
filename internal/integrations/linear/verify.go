@@ -194,7 +194,7 @@ func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 		// keep the text out of the error anyway.
 		return PR{}, ErrAPIRequest
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return PR{}, fmt.Errorf("%w: HTTP %d", ErrAPIStatus, resp.StatusCode)
 	}

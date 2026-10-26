@@ -73,7 +73,7 @@ func TestPullRequest(t *testing.T) {
 		if r.Header.Get("Authorization") != apiKey {
 			t.Error("missing auth")
 		}
-		w.Write([]byte(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://slack.com/x"},{"url":"https://github.com/o/r/pull/7"}]}}}}`))
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://slack.com/x"},{"url":"https://github.com/o/r/pull/7"}]}}}}`))
 	})
 	pr, err := ok.PullRequest(context.Background(), "i1")
 	if err != nil || pr != (PR{"o", "r", 7}) {
@@ -88,7 +88,7 @@ func TestPullRequest(t *testing.T) {
 	})
 	httpErr := fake(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) })
 	none := fake(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://example.com/a"}]}}}}`))
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://example.com/a"}]}}}}`))
 	})
 	for name, c := range map[string]struct {
 		cl   *Client
@@ -110,5 +110,31 @@ func TestPullRequest(t *testing.T) {
 	dead := &Client{APIKey: apiKey, URL: "http://127.0.0.1:1", Timeout: time.Second}
 	if _, err := dead.PullRequest(context.Background(), "i1"); !errors.Is(err, ErrAPIRequest) || strings.Contains(err.Error(), apiKey) {
 		t.Errorf("dead: %v", err)
+	}
+}
+
+func write(t *testing.T, w http.ResponseWriter, b []byte) {
+	t.Helper()
+	if _, err := w.Write(b); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestPullRequestGuards(t *testing.T) {
+	if _, err := (&Client{}).PullRequest(context.Background(), "i1"); !errors.Is(err, ErrNoAPIKey) {
+		t.Errorf("no key: %v", err)
+	}
+	notJSON := fake(t, func(w http.ResponseWriter, r *http.Request) { write(t, w, []byte("<html>")) })
+	gqlErr := fake(t, func(w http.ResponseWriter, r *http.Request) { write(t, w, []byte(`{"errors":[{"message":"boom"}]}`)) })
+	for name, c := range map[string]struct {
+		cl   *Client
+		want error
+	}{
+		"not json": {notJSON, ErrAPIResponse},
+		"graphql":  {gqlErr, ErrAPIErrors},
+	} {
+		if _, err := c.cl.PullRequest(context.Background(), "i1"); !errors.Is(err, c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
