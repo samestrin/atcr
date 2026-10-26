@@ -575,7 +575,8 @@ func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
 // 500, but first runs plant from the server goroutine. That stands in for
 // another process writing into the personas dir while the roster install is
 // still in flight: after the guard check for the failing persona, before the
-// rollback.
+// rollback. plant runs off the test goroutine, so it must use assert, not
+// require (t.FailNow is only valid on the test goroutine).
 func plantingServer(t *testing.T, bodies map[string]string, failPath string, plant func()) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -616,8 +617,8 @@ func TestInstallCommunityPersonas_RollbackSparesFileAtFailingPersonaPath(t *test
 		},
 		"/c.yaml",
 		func() {
-			require.NoError(t, os.WriteFile(cYAML, []byte("FOREIGN YAML"), 0o644))
-			require.NoError(t, os.WriteFile(cMD, []byte("FOREIGN MD"), 0o644))
+			assert.NoError(t, os.WriteFile(cYAML, []byte("FOREIGN YAML"), 0o644))
+			assert.NoError(t, os.WriteFile(cMD, []byte("FOREIGN MD"), 0o644))
 		},
 	)
 
@@ -661,18 +662,18 @@ func TestInstallCommunityPersonas_RollbackSparesReplacedFiles(t *testing.T) {
 		func() {
 			// Replace a.yaml with a new file (new inode).
 			tmp := filepath.Join(dest, "a.yaml.foreign")
-			require.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
-			require.NoError(t, os.Rename(tmp, aYAML))
+			assert.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
+			assert.NoError(t, os.Rename(tmp, aYAML))
 			// Rewrite a.md in place (same inode) with a different mtime.
-			f, err := os.OpenFile(aMD, os.O_WRONLY|os.O_TRUNC, 0)
-			require.NoError(t, err)
-			_, err = f.WriteString("FOREIGN A MD")
-			require.NoError(t, err)
-			require.NoError(t, f.Close())
+			if f, err := os.OpenFile(aMD, os.O_WRONLY|os.O_TRUNC, 0); assert.NoError(t, err) {
+				_, err = f.WriteString("FOREIGN A MD")
+				assert.NoError(t, err)
+				assert.NoError(t, f.Close())
+			}
 			old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
-			require.NoError(t, os.Chtimes(aMD, old, old))
+			assert.NoError(t, os.Chtimes(aMD, old, old))
 			// Create b.md, which this run never wrote.
-			require.NoError(t, os.WriteFile(bMD, []byte("FOREIGN B MD"), 0o644))
+			assert.NoError(t, os.WriteFile(bMD, []byte("FOREIGN B MD"), 0o644))
 		},
 	)
 
