@@ -117,6 +117,104 @@ func TestChat_RoleToolMessageSerialization(t *testing.T) {
 	assert.Contains(t, gotBody, `"content":null`)
 }
 
+// Epic 36.0 T1: a message with only Content marshals byte-identically to the
+// body TestChat_RoleToolMessageSerialization sends, pinned here in full.
+func TestChat_ContentOnlyMessagesByteIdentical(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	content := "   1| package fanout"
+	msgs := []Message{
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: json.RawMessage(`"{\"path\":\"x\"}"`)}}}},
+		{Role: "tool", ToolCallID: "call_1", Content: &content},
+	}
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, msgs, nil)
+	require.NoError(t, err)
+
+	want := `{"model":"m1","messages":[` +
+		`{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"x\"}"}}]},` +
+		`{"role":"tool","content":"   1| package fanout","tool_call_id":"call_1"}]}`
+	assert.Equal(t, want, string(gotBody))
+}
+
+// Epic 36.0 T1: a message with Parts marshals content as the parts array, a
+// text part and an image_url part carrying a data: URL.
+func TestMessage_PartsMarshalAsContentArray(t *testing.T) {
+	msg := Message{Role: "user", Parts: []ContentPart{
+		TextPart("what is on screen?"),
+		ImageURLPart("data:image/png;base64,iVBORw0KGgo="),
+	}}
+	b, err := json.Marshal(msg)
+	require.NoError(t, err)
+	assert.Equal(t, `{"role":"user","content":[`+
+		`{"type":"text","text":"what is on screen?"},`+
+		`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}`, string(b))
+}
+
+// Epic 36.0 T1: marshaling a message with both Content and Parts set fails
+// outside Chat too, rather than silently picking one.
+func TestMessage_ContentAndPartsMarshalErrors(t *testing.T) {
+	s := "text"
+	_, err := json.Marshal(Message{Role: "user", Content: &s, Parts: []ContentPart{TextPart("text")}})
+	assert.ErrorIs(t, err, ErrContentAndParts)
+}
+
+// Epic 36.0 T1: the parts array reaches the wire through Chat, and the other
+// messages in the same request keep their plain-string content.
+func TestChat_PartsReachRequestBody(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	sys := "you verify UIs"
+	msgs := []Message{
+		{Role: "system", Content: &sys},
+		{Role: "user", Parts: []ContentPart{TextPart("look"), ImageURLPart("data:image/png;base64,AAAA")}},
+	}
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, msgs, nil)
+	require.NoError(t, err)
+	assert.Equal(t, `{"model":"m1","messages":[`+
+		`{"role":"system","content":"you verify UIs"},`+
+		`{"role":"user","content":[{"type":"text","text":"look"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]}]}`,
+		string(gotBody))
+}
+
+// Epic 36.0 T1: Content and Parts both set is ambiguous, so Chat refuses it
+// before any request is sent.
+func TestChat_ContentAndPartsBothSetErrors(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	s := "text"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, []Message{{Role: "system", Content: &s}, {Role: "user", Content: &s, Parts: []ContentPart{TextPart("text")}}}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrContentAndParts)
+	// Chat's own guard names the offending message; MarshalJSON alone cannot.
+	assert.Contains(t, err.Error(), "message 1:")
+	assert.Nil(t, resp)
+	assert.Zero(t, calls.Load(), "no request may be sent")
+}
+
 // AC 01-01 Edge Case 1: empty/nil tools slice is omitted from the request.
 func TestChat_EmptyToolsOmitted(t *testing.T) {
 	var gotBody string
