@@ -129,3 +129,24 @@ func TestInvocationFlags_OnlyChangedFlags(t *testing.T) {
 	require.NoError(t, cmd.ParseFlags([]string{"--repo-root", "/src/app", "--no-scorecard"}))
 	assert.Equal(t, map[string]string{"repo-root": "/src/app", "no-scorecard": "true"}, invocationFlags(cmd))
 }
+
+// TestInvocationFlags_DeprecatedAliasFoldsIntoCanonical: --repo is a deprecated
+// alias for --repo-root on reconcile and verify, and reconcile honors it when
+// --repo-root is unset (cli/reconcile.go:97). Dropping it would point the
+// suggested `verify` at the wrong tree, so it carries as repo-root; an explicit
+// --repo-root still wins.
+func TestInvocationFlags_DeprecatedAliasFoldsIntoCanonical(t *testing.T) {
+	newCmd := func() *cobra.Command {
+		cmd := &cobra.Command{Use: "reconcile"}
+		cmd.Flags().String("repo-root", ".", "")
+		cmd.Flags().String("repo", ".", "")
+		return cmd
+	}
+	cmd := newCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--repo", "/old"}))
+	assert.Equal(t, map[string]string{"repo-root": "/old"}, invocationFlags(cmd))
+
+	cmd = newCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--repo", "/old", "--repo-root", "/new"}))
+	assert.Equal(t, map[string]string{"repo-root": "/new"}, invocationFlags(cmd))
+}
