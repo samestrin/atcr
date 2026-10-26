@@ -391,6 +391,21 @@ func TestOSLevelFallbackConfig_CarriesMemoryAndPidsAsOperatorSet(t *testing.T) {
 	assert.False(t, def.MaxProcsSet)
 }
 
+func TestOSLevelFallbackConfig_MemoryGrammarMatchesValidation(t *testing.T) {
+	for in, want := range map[string]int64{
+		"1.5g":  1610612736,
+		"512mb": 512 * 1024 * 1024,
+		"1024":  1024,
+		"64kb":  64 * 1024,
+		"2b":    2,
+	} {
+		sc := &registry.SandboxConfig{Memory: in}
+		cfg := osLevelFallbackConfig(sc)
+		assert.Equal(t, want, cfg.MaxMemoryBytes, in)
+		assert.True(t, cfg.MaxMemoryBytesSet, in)
+	}
+}
+
 func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) {
 	stubOSLevel(t, nil)
 	ctx, buf := captureWarnings(t)

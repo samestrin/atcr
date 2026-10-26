@@ -513,9 +513,37 @@ func parseDockerMemory(s string) (int64, error) {
 	return n * mult, nil
 }
 
-// ParseMemoryBytes parses a sandbox.memory value (see parseDockerMemory) into
-// bytes, for backends other than docker that enforce the same operator knob.
-func ParseMemoryBytes(s string) (int64, error) { return parseDockerMemory(s) }
+// ParseMemoryBytes parses a sandbox.memory value into bytes, accepting exactly
+// the grammar registry.validateMemory accepts: a positive plain decimal
+// (fractional allowed) with an optional k/m/g unit, optionally followed by "b".
+// An empty string is 0 bytes. It exists for backends other than docker, whose
+// own parseDockerMemory is narrower than the validator.
+func ParseMemoryBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	num := s
+	if c := num[len(num)-1]; c == 'b' || c == 'B' {
+		num = num[:len(num)-1]
+	}
+	mult := float64(1)
+	if num != "" {
+		switch num[len(num)-1] {
+		case 'k', 'K':
+			mult, num = 1024, num[:len(num)-1]
+		case 'm', 'M':
+			mult, num = 1024*1024, num[:len(num)-1]
+		case 'g', 'G':
+			mult, num = 1024*1024*1024, num[:len(num)-1]
+		}
+	}
+	v, err := strconv.ParseFloat(num, 64)
+	if err != nil || v <= 0 || strings.ContainsAny(num, "eE+-xXiInN_") {
+		return 0, fmt.Errorf("invalid memory value %q", s)
+	}
+	return int64(v * mult), nil
+}
 
 // randHex returns n random bytes hex-encoded, used to make a unique container
 // name. On the (vanishingly unlikely) crypto/rand failure it falls back to a

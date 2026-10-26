@@ -76,8 +76,9 @@ func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 		cfg.Timeout = time.Duration(*sc.TimeoutSecs) * time.Second
 	}
 	if sc != nil {
-		// Validate() already rejected an unparseable value; a caller that skipped
-		// it keeps the default rather than an unbounded or garbage cap.
+		// ParseMemoryBytes accepts the grammar Validate() accepts, so a validated
+		// value always parses; a caller that skipped Validate() keeps the default
+		// rather than an unbounded or garbage cap.
 		if n, err := sandbox.ParseMemoryBytes(sc.Memory); err == nil && n > 0 {
 			cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = n, true
 		}
