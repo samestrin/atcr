@@ -122,3 +122,10 @@ func sastTargets(root string, payloads map[string]modePayload) []string {
 	sort.Strings(files)
 	return files
 }
+
+type sastScan struct {
+	scanner  string
+	findings []sast.Finding
+}
+
+func writeSASTSidecar(dir string, scan sastScan) {}
