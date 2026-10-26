@@ -1578,3 +1578,63 @@ func TestPersonasList_PairsLoadErrorNamesTheUnderlyingError(t *testing.T) {
 	assert.Contains(t, out, "No persona pair clears the floors")
 	assert.Contains(t, out, "could not be resolved: no home dir")
 }
+
+func withExcludedCases(t *testing.T, data map[string][]scorecard.ExcludedCase) {
+	t.Helper()
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) { return data, nil }
+	t.Cleanup(func() { personasExcludedCases = old })
+}
+
+func TestPersonasList_DetailPrintsEachExcludedCase(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{
+		"dax": {
+			{RunID: "run-b", Reason: scorecard.ReasonOutcomeIneligible},
+			{RunID: "run-a", Reason: scorecard.ReasonSupersededEra},
+		},
+		"kai": {{RunID: "run-z", Reason: scorecard.ReasonConsensusNotStrict}},
+	})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "Dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `run-a\s+`+scorecard.ReasonSupersededEra, out)
+	assert.Regexp(t, `run-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "run-z")
+	assert.Less(t, strings.Index(out, "run-a"), strings.Index(out, "run-b"))
+
+	out, err = execute(t, "personas", "list", "--scores", "--detail", "dax", "--json")
+	require.NoError(t, err)
+	var rows []excludedCaseJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	assert.Len(t, rows, 2)
+}
+
+func TestPersonasList_DetailUnknownLensFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "no-such-lens")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown persona "no-such-lens"`)
+}
+
+func TestPersonasList_DetailKnownLensWithNothingExcluded(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"bruce": nil})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailRequiresScores(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--detail", "bruce")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail requires --scores")
+}
