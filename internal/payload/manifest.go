@@ -149,6 +149,14 @@ type Manifest struct {
 	// silently looked like a repo with no consumers.
 	Prefetch *PrefetchStatus `json:"prefetch,omitempty"`
 
+	// ThreatMap records the threat-model mapping outcome of a --threat-map run
+	// (Epic 37.0). Like NoIgnore it is persisted so a resume applies the original
+	// run's scope from disk instead of calling the mapper again, which could keep
+	// a different file set than the completed agents saw. A POINTER with
+	// omitempty: absent means the run did not map, so every other manifest stays
+	// byte-identical to earlier versions'.
+	ThreatMap *ThreatMapRecord `json:"threat_map,omitempty"`
+
 	// Review is the enriched record of the review stage's tool-using agents
 	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered
 	// stage-name list, unchanged from 1.x) rather than nested inside it, because
@@ -164,6 +172,17 @@ type Manifest struct {
 	// distinguishable from an older manifest that never carried the field.
 	MaxParallel int `json:"max_parallel"`
 	TimeoutSecs int `json:"timeout_secs,omitempty"`
+}
+
+// ThreatMapRecord is what the threat-model mapper decided for a run (Epic
+// 37.0). Keep lists the paths the review was scoped to and Dropped the paths
+// the mapper removed, both sorted. A failed mapper leaves Keep and Dropped
+// empty and names the cause in Failed: the run reviewed every file (fail open),
+// and a resume keeps every file too rather than re-mapping.
+type ThreatMapRecord struct {
+	Keep    []string `json:"keep,omitempty"`
+	Dropped []string `json:"dropped,omitempty"`
+	Failed  string   `json:"failed,omitempty"`
 }
 
 // ReviewStage records which agents executed the review stage with tools enabled
