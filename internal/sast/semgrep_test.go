@@ -187,11 +187,26 @@ func TestSemgrep_CallerCancelIsNotUnavailable(t *testing.T) {
 	assert.False(t, errors.Is(err, ErrUnavailable), "a cancelled review is not a scanner outage")
 }
 
+func TestSemgrep_CancelMidRunIsNotUnavailable(t *testing.T) {
+	installFakeSemgrep(t, "hang")
+	shrinkSemgrepTimeout(t, 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := Semgrep{}.Run(ctx, fixtureRoot(t), nil)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.False(t, errors.Is(err, ErrUnavailable), "the caller's deadline is not the scanner's timeout")
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func TestSemgrep_BadRootIsAnError(t *testing.T) {
 	installFakeSemgrep(t, "")
-	_, err := Semgrep{}.Run(context.Background(), filepath.Join(t.TempDir(), "missing"), nil)
-	require.Error(t, err)
-	assert.False(t, errors.Is(err, ErrUnavailable), "a bad scan root is a caller bug, not a scanner outage")
+	for _, root := range []string{"", filepath.Join(t.TempDir(), "missing")} {
+		_, err := Semgrep{}.Run(context.Background(), root, nil)
+		require.Error(t, err, "root %q", root)
+		assert.False(t, errors.Is(err, ErrUnavailable), "a bad scan root is a caller bug, not a scanner outage")
+	}
 }
 
 func TestUnavailableError_Message(t *testing.T) {
