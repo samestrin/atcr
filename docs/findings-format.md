@@ -177,6 +177,23 @@ Discovery is **leaf-preference**: a directory's findings file is an input only w
 
 A source's **`review.md`** — the human-readable narrative each reviewer (every pool agent and the host) writes alongside its `findings.txt` in the same leaf directory — is, as of Epic 18.2, also read at reconcile time. `atcr reconcile` correlates each finding to the `review.md` section that references its `FILE:LINE` (best-effort) and carries that narrative forward as the `justification` / `source_report` JSON fields (see [JSON form](#json-form) below). It is an **optional** input: a source with no `review.md` simply contributes no narrative, and `review.md` never itself yields findings — only `findings.txt` does.
 
+## Reconcile input: `sast.json` (deterministic SAST findings)
+
+A review directory may also hold `sast.json` at its root, next to `sources/`: the findings of one deterministic SAST scan (epic 50.0), already confined to the repository root. It is **not** a reconcile source and is not discovered under `sources/`; reconcile reads it directly:
+
+```json
+{
+  "scanner": "semgrep",
+  "findings": [
+    { "file": "app/db.go", "line": 12, "rule": "go.lang.security.audit.sqli.string-formatted-query", "message": "String-formatted SQL query" }
+  ]
+}
+```
+
+Every entry becomes its own reconciled finding, appended beside the reviewer findings and never clustered with them, so it is in the report even when no reviewer found anything. Each one has severity `MEDIUM` (the lowest level the Fixer's default `min_severity_for_fix` accepts), confidence `HIGH`, category `security`, reviewer `sast-<scanner>`, the problem `<message> [<rule>]`, and evidence `sast-<scanner>: rule <rule>`; `line` 0 means a file-level result. From there it is treated like any other finding: path validation, the `id` stamp and `.atcr/ignore.yaml` rules all apply. `summary.json` counts them under the source name `sast` in `sources_scanned` and `per_source_counts`.
+
+An absent `sast.json` (the scanner is off by default) changes nothing. A present one that does not parse, names a scanner outside `[a-z0-9._-]`, or holds a path that is absolute, unclean or contains `..` fails the reconcile before anything is written, so a run never reports no SAST findings when it could not read them.
+
 ## JSON form
 
 `reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. Each finding may carry a per-finding `verification` block, **produced by the adversarial-verification stage (`atcr verify`, Epic 3.0)** and **absent from 1.x output** and from any review that has not been verified. Renderers and readers must tolerate both its absence and its presence: `atcr report` renders a finding with no block identically to pre-Epic-3.0 output, and renders the Skeptic section / v2 confidence only when the block is present.
