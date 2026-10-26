@@ -145,3 +145,22 @@ func diffHeadLines(t *testing.T, c benchmark.RepoStateCase) []string {
 	require.NotEmpty(t, out)
 	return out
 }
+
+// The local split mirrors internal/stream's splitFileLine: line 0, which the matcher
+// never credits, on a missing or non-numeric suffix.
+func TestSplitSiblingLocation(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		file string
+		line int
+	}{
+		{"projects/transfer.py:7", "projects/transfer.py", 7},
+		{"a:b/c.go:12", "a:b/c.go", 12},
+		{"no-line", "no-line", 0},
+		{"c.go:x", "c.go:x", 0},
+	} {
+		file, line := splitSiblingLocation(tc.in)
+		assert.Equal(t, tc.file, file, tc.in)
+		assert.Equal(t, tc.line, line, tc.in)
+	}
+}

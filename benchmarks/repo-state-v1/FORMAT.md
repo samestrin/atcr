@@ -113,6 +113,8 @@ A reported finding **matches** an expected finding when all three hold:
 2. The reported line `L` satisfies `line_start - line_tolerance <= L <= line_end + line_tolerance`.
 3. When the expected finding has `outside_diff: true`, the reported line must itself not be an added or removed line of the diff.
 
+The reported file and line are the finding's `FILE:LINE`, unless its `EVIDENCE` declares `sibling: <file>:<line>`: then they are that sibling location. A reviewer anchors a sibling-arm finding on the edited line so the grounding gate keeps it, and the marker names where the defect actually is.
+
 Condition 3 is what makes `outside_diff` a measurement rather than a label: a tolerance window can brush the change (the settling line sits near the code the diff edits), and without it a reviewer citing an added line inside the window would score the tier's outside-diff metric while having read nothing but added and removed lines.
 
 The tolerance exists because a reviewer pointing at a defect often cites the line above or below it — the function signature rather than the offending assignment. `±3` is the same window `llm_support_td_dedupe` uses to cluster `FILE:LINE` findings across reviewers, reused here so a single convention governs "these two reports are about the same place" everywhere in the toolchain.
