@@ -378,6 +378,19 @@ func captureWarnings(t *testing.T) (context.Context, *bytes.Buffer) {
 	return log.NewContext(context.Background(), logger), buf
 }
 
+func TestOSLevelFallbackConfig_CarriesMemoryAndPidsAsOperatorSet(t *testing.T) {
+	pids := 64
+	cfg := osLevelFallbackConfig(&registry.SandboxConfig{Memory: "256m", PidsLimit: &pids})
+	assert.Equal(t, int64(256*1024*1024), cfg.MaxMemoryBytes)
+	assert.True(t, cfg.MaxMemoryBytesSet)
+	assert.Equal(t, 64, cfg.MaxProcs)
+	assert.True(t, cfg.MaxProcsSet)
+
+	def := osLevelFallbackConfig(&registry.SandboxConfig{})
+	assert.False(t, def.MaxMemoryBytesSet)
+	assert.False(t, def.MaxProcsSet)
+}
+
 func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) {
 	stubOSLevel(t, nil)
 	ctx, buf := captureWarnings(t)
@@ -395,9 +408,10 @@ func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) 
 
 	out := buf.String()
 	assert.Contains(t, out, "os-level sandbox fallback engaged")
-	assert.Contains(t, out, "sandbox.memory")
 	assert.Contains(t, out, "sandbox.cpus")
-	assert.Contains(t, out, "sandbox.pids_limit")
+	// Enforced caps (Preflight refuses them where the host cannot) are not listed.
+	assert.NotContains(t, out, "sandbox.memory")
+	assert.NotContains(t, out, "sandbox.pids_limit")
 	assert.Contains(t, out, "sandbox.image")
 	assert.Equal(t, 1, strings.Count(out, "os-level sandbox fallback engaged"),
 		"exactly one warning per engagement")

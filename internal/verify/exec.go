@@ -66,13 +66,24 @@ func osLevelFallbackConfigured(sc *registry.SandboxConfig) bool {
 }
 
 // osLevelFallbackConfig builds the OS-level backend config from the operator's
-// sandbox block. Only the timeout carries over: Memory/CPUs/PidsLimit are
-// docker-specific knobs the OS-level backend has no equivalent for (TD-001), and
-// silently accepting them here would imply caps it does not enforce.
+// sandbox block. The timeout, Memory and PidsLimit carry over; Memory and
+// PidsLimit are marked operator-set so Preflight refuses them on a host that
+// cannot enforce them rather than logging a warning. CPUs has no OS-level
+// equivalent and stays dropped (see warnOSLevelFallbackEngaged).
 func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 	cfg := sandbox.DefaultOSLevelConfig()
 	if sc != nil && sc.TimeoutSecs != nil {
 		cfg.Timeout = time.Duration(*sc.TimeoutSecs) * time.Second
+	}
+	if sc != nil {
+		// Validate() already rejected an unparseable value; a caller that skipped
+		// it keeps the default rather than an unbounded or garbage cap.
+		if n, err := sandbox.ParseMemoryBytes(sc.Memory); err == nil && n > 0 {
+			cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = n, true
+		}
+		if sc.PidsLimit != nil && *sc.PidsLimit > 0 {
+			cfg.MaxProcs, cfg.MaxProcsSet = *sc.PidsLimit, true
+		}
 	}
 	return cfg
 }
@@ -80,8 +91,9 @@ func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 // warnOSLevelFallbackEngaged records that the isolation model changed under the
 // operator, at the moment it changes. Engaging the fallback is not a like-for-
 // like substitution: the OS-level backend runs as the invoking user rather than
-// uid 65534, and honors none of the docker-only knobs — Memory, CPUs, PidsLimit
-// are dropped (the backend has no equivalent; TD-001/TD-021), and Image is
+// uid 65534, and drops the docker-only knobs it cannot honor — CPUs and Image
+// (TD-001/TD-021). Memory and PidsLimit are enforced (Preflight refuses them
+// where the host cannot), so they are not listed. Image is
 // unused, so `test_command` meets whatever toolchain the host's PATH provides
 // rather than the declared one (TD-022).
 //
@@ -101,14 +113,8 @@ func osLevelFallbackConfig(sc *registry.SandboxConfig) sandbox.OSLevelConfig {
 func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig, cause error) {
 	dropped := make([]string, 0, 4)
 	if sc != nil {
-		if strings.TrimSpace(sc.Memory) != "" {
-			dropped = append(dropped, "sandbox.memory")
-		}
 		if strings.TrimSpace(sc.CPUs) != "" {
 			dropped = append(dropped, "sandbox.cpus")
-		}
-		if sc.PidsLimit != nil {
-			dropped = append(dropped, "sandbox.pids_limit")
 		}
 		if strings.TrimSpace(sc.Image) != "" {
 			dropped = append(dropped, "sandbox.image")
@@ -140,7 +146,7 @@ func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig,
 // (darwinSystemReadDirs / the Linux binds) instead of a container image's
 // filesystem. Overstating a weakness is still a false statement in a security
 // notice.
-const osLevelUnenforcedDefaults = "memory/cpu/pid caps, cap-drop ALL, no-new-privileges, read-only rootfs, uid 65534; host system and toolchain directories are readable (no image isolation)"
+const osLevelUnenforcedDefaults = "cpu caps, cap-drop ALL, no-new-privileges, read-only rootfs, uid 65534; host system and toolchain directories are readable (no image isolation)"
 
 // truncateCause bounds a preflight error before it is logged. Docker's failure
 // text carries the daemon's raw stderr and, on the timeout branch, the full

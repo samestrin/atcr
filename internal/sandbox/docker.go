@@ -513,6 +513,10 @@ func parseDockerMemory(s string) (int64, error) {
 	return n * mult, nil
 }
 
+// ParseMemoryBytes parses a sandbox.memory value (see parseDockerMemory) into
+// bytes, for backends other than docker that enforce the same operator knob.
+func ParseMemoryBytes(s string) (int64, error) { return parseDockerMemory(s) }
+
 // randHex returns n random bytes hex-encoded, used to make a unique container
 // name. On the (vanishingly unlikely) crypto/rand failure it falls back to a
 // nanosecond timestamp — uniqueness here is best-effort labeling, not security.
