@@ -875,15 +875,12 @@ func TestOSLevelBackendRun_TheCgroupPathReplacesTheRlimit(t *testing.T) {
 	b.cgroupRoot = root
 	captureContainmentCfg(t, &seen)
 
-	var inherited syscall.Rlimit
-	require.NoError(t, syscall.Getrlimit(syscall.RLIMIT_DATA, &inherited))
-	want := "unlimited"
-	if inherited.Max != syscall.RLIM_INFINITY {
-		want = strconv.FormatUint(uint64(inherited.Max)/1024, 10)
-	}
+	inherited, err := exec.Command(sandboxLimitShell, "-c", "ulimit -H -d").Output()
+	require.NoError(t, err)
 	res, _ := runWithLogs(t, b)
 	require.Equal(t, 0, res.ExitCode, "output: %s", res.Output)
-	assert.Equal(t, want, strings.TrimSpace(res.Output), "the child inherits atcr's own data limit, no rlimit of its own")
+	assert.Equal(t, strings.TrimSpace(string(inherited)), strings.TrimSpace(res.Output),
+		"the child inherits atcr's own data limit, no rlimit of its own")
 }
 
 func TestOSLevelBackendRun_FallsBackToTheRlimitAndSaysWhy(t *testing.T) {
