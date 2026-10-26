@@ -1638,3 +1638,71 @@ func TestPersonasList_DetailRequiresScores(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--detail requires --scores")
 }
+
+func TestPersonasList_DetailSeededStore(t *testing.T) {
+	isolate(t)
+	for _, id := range []string{"2026-07-02T10:00:00Z-b", "2026-07-01T10:00:00Z-a"} {
+		rec := reviewerRec(id, "Dax", "opus", 2, 1)
+		rec.SchemaVersion = 1
+		rec.Outcome = "" // pre-v2: dropped by the outcome gate
+		storeRecord(t, rec)
+	}
+	storeRecord(t, reviewerRec("2026-07-03T10:00:00Z-c", "Dax", "opus", 2, 1))
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `2026-07-01T10:00:00Z-a\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.Regexp(t, `2026-07-02T10:00:00Z-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "2026-07-03T10:00:00Z-c")
+
+	_, err = execute(t, "personas", "list", "--scores", "--detail", "nobody-here")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown persona")
+}
+
+func TestPersonasList_DetailEmptyNameFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail needs a persona name")
+}
+
+func TestPersonasList_DetailRosterPersonaWithoutHistory(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailLoadErrorWarns(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) {
+		return nil, fmt.Errorf("boom")
+	}
+	t.Cleanup(func() { personasExcludedCases = old })
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning: could not read scorecard data: boom")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailSameRunIDOrdersByReason(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"dax": {
+		{RunID: "r1", Reason: scorecard.ReasonSupersededEra},
+		{RunID: "r1", Reason: scorecard.ReasonOutcomeIneligible},
+	}})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	first, second := scorecard.ReasonOutcomeIneligible, scorecard.ReasonSupersededEra
+	if first > second {
+		first, second = second, first
+	}
+	assert.Less(t, strings.Index(out, first), strings.Index(out, second))
+}
