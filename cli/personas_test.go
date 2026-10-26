@@ -1578,3 +1578,151 @@ func TestPersonasList_PairsLoadErrorNamesTheUnderlyingError(t *testing.T) {
 	assert.Contains(t, out, "No persona pair clears the floors")
 	assert.Contains(t, out, "could not be resolved: no home dir")
 }
+
+func withExcludedCases(t *testing.T, data map[string][]scorecard.ExcludedCase) {
+	t.Helper()
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) { return data, nil }
+	t.Cleanup(func() { personasExcludedCases = old })
+}
+
+func TestPersonasList_DetailPrintsEachExcludedCase(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{
+		"dax": {
+			{RunID: "run-b", Reason: scorecard.ReasonOutcomeIneligible},
+			{RunID: "run-a", Reason: scorecard.ReasonSupersededEra},
+		},
+		"kai": {{RunID: "run-z", Reason: scorecard.ReasonConsensusNotStrict}},
+	})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "Dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `run-a\s+`+scorecard.ReasonSupersededEra, out)
+	assert.Regexp(t, `run-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "run-z")
+	assert.Less(t, strings.Index(out, "run-a"), strings.Index(out, "run-b"))
+
+	out, err = execute(t, "personas", "list", "--scores", "--detail", "dax", "--json")
+	require.NoError(t, err)
+	var rows []excludedCaseJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	assert.Len(t, rows, 2)
+}
+
+func TestPersonasList_DetailUnknownLensFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "no-such-lens")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown persona "no-such-lens"`)
+}
+
+func TestPersonasList_DetailKnownLensWithNothingExcluded(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"bruce": nil})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailRequiresScores(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--detail", "bruce")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail requires --scores")
+}
+
+func TestPersonasList_DetailSeededStore(t *testing.T) {
+	isolate(t)
+	for _, id := range []string{"2026-07-02T10:00:00Z-b", "2026-07-01T10:00:00Z-a"} {
+		rec := reviewerRec(id, "Dax", "opus", 2, 1)
+		rec.SchemaVersion = 1
+		rec.Outcome = "" // pre-v2: dropped by the outcome gate
+		storeRecord(t, rec)
+	}
+	storeRecord(t, reviewerRec("2026-07-03T10:00:00Z-c", "Dax", "opus", 2, 1))
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	assert.Regexp(t, `2026-07-01T10:00:00Z-a\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.Regexp(t, `2026-07-02T10:00:00Z-b\s+`+scorecard.ReasonOutcomeIneligible, out)
+	assert.NotContains(t, out, "2026-07-03T10:00:00Z-c")
+
+	_, err = execute(t, "personas", "list", "--scores", "--detail", "nobody-here")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown persona")
+}
+
+func TestPersonasList_DetailEmptyNameFails(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "list", "--scores", "--detail", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--detail needs a persona name")
+}
+
+func TestPersonasList_DetailRosterPersonaWithoutHistory(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailLoadErrorWarns(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	old := personasExcludedCases
+	personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) {
+		return nil, fmt.Errorf("boom")
+	}
+	t.Cleanup(func() { personasExcludedCases = old })
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning: could not read scorecard data: boom")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasList_DetailSameRunIDOrdersByReason(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{"dax": {
+		{RunID: "r1", Reason: scorecard.ReasonSupersededEra},
+		{RunID: "r1", Reason: scorecard.ReasonOutcomeIneligible},
+	}})
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	first, second := scorecard.ReasonOutcomeIneligible, scorecard.ReasonSupersededEra
+	if first > second {
+		first, second = second, first
+	}
+	assert.Less(t, strings.Index(out, first), strings.Index(out, second))
+}
+
+func TestPersonasList_DetailRosterLookupWarning(t *testing.T) {
+	isolate(t)
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.Symlink("personas", ".atcr/personas")) // self-loop -> ELOOP
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning:")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasExcludedCases_DefaultDirErrorSurfaces(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	_, err := personasExcludedCases()
+	require.Error(t, err)
+}
