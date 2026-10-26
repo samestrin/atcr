@@ -352,9 +352,16 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		// Symmetric with review.go: an auth rejection overrides the findings gate
 		// (exit 1) but never an already-coded failure — though at this point gateErr
 		// is only ever nil or the plain exit-1 gate error (infra errors returned above).
-		return resolveSyncCloudOutcome(gateErr, runSyncCloud(cmd.Context(), cmd.ErrOrStderr(), syncPlan, reviewDir, outcome))
+		err = resolveSyncCloudOutcome(gateErr, runSyncCloud(cmd.Context(), cmd.ErrOrStderr(), syncPlan, reviewDir, outcome))
+	} else {
+		err = gateErr
 	}
-	return gateErr
+
+	// Next-step suggestions (Epic 42.0) close the run on stderr, after every
+	// other diagnostic. The findings were reconciled whatever the gate or the
+	// cloud push decided, so the next steps apply on every path that gets here.
+	writeNextSteps(cmd.ErrOrStderr(), suggestReconcile, invocation{Flags: invocationFlags(cmd)})
+	return err
 }
 
 // persistLocalDebt is the CLI half of the local-TD persistence hook: delegate to
