@@ -256,8 +256,15 @@ func newPersonasListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			detail, _ := cmd.Flags().GetString("detail")
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
+				if cmd.Flags().Changed("detail") {
+					return listExcludedCases(cmd, dir, detail)
+				}
 				return listPersonasWithScores(cmd, dir)
+			}
+			if cmd.Flags().Changed("detail") {
+				return usageError(fmt.Errorf("--detail requires --scores"))
 			}
 			if pairs, _ := cmd.Flags().GetBool("pairs"); pairs {
 				return listPersonaPairs(cmd, dir)
@@ -277,10 +284,89 @@ func newPersonasListCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("scores", false, "show each persona's corroboration rate from past review runs (n/a when no run history)")
 	cmd.Flags().Bool("pairs", false, "show persona pairs that clear the pair floors, with their disagreement rate and a DROP-CANDIDATE marker")
+	cmd.Flags().String("detail", "", "with --scores, list the named persona's excluded cases, one line per run id with its exclusion reason")
 	// Each mode's --json is its own array; both on one stdout would not parse.
 	cmd.MarkFlagsMutuallyExclusive("scores", "pairs")
 	addJSONFlag(cmd)
 	return cmd
+}
+
+// personasExcludedCases loads every lens's excluded cases (keyed by lowercase
+// reviewer name) from the scorecard store. A package var so tests inject a fake
+// without filesystem access. minRuns=0 matches the --scores table, so the lines
+// printed here are the cases behind that table's "N excluded" figure.
+var personasExcludedCases = func() (map[string][]scorecard.ExcludedCase, error) {
+	dir, err := scorecard.DefaultDir()
+	if err != nil {
+		return nil, err
+	}
+	details, _ := scorecard.ExplainTrustPriorsWithOpts(dir, 0, scorecard.ExplainOpts{ExcludedCases: true})
+	out := make(map[string][]scorecard.ExcludedCase, len(details))
+	for name, d := range details {
+		out[name] = d.ExcludedCases
+	}
+	return out, nil
+}
+
+// excludedCaseJSON is one row of `personas list --scores --detail <name> --json`.
+type excludedCaseJSON struct {
+	RunID  string `json:"run_id"`
+	Reason string `json:"reason"`
+}
+
+// listExcludedCases prints one line per case the scoring chain dropped for the
+// named lens: the run id and the ScoreReasons() label that dropped it. A name
+// that is neither a persona in the roster nor a lens with history is a usage
+// error; a known lens with nothing excluded prints an explicit line, not nothing.
+func listExcludedCases(cmd *cobra.Command, dir, name string) error {
+	key := strings.ToLower(strings.TrimSpace(name))
+	if key == "" {
+		return usageError(fmt.Errorf("--detail needs a persona name"))
+	}
+	cases, err := personasExcludedCases()
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
+	}
+	_, hasHistory := cases[key]
+	known := hasHistory
+	if !known {
+		metas, listErr := commpersonas.ListTiers(filepath.Join(".atcr", "personas"), dir)
+		if listErr != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
+		}
+		for _, m := range metas {
+			if strings.EqualFold(m.Name, key) {
+				known = true
+				break
+			}
+		}
+	}
+	if !known {
+		return usageError(fmt.Errorf("unknown persona %q: run 'atcr personas list' for the installed names", name))
+	}
+	list := append([]scorecard.ExcludedCase(nil), cases[key]...)
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].RunID != list[j].RunID {
+			return list[i].RunID < list[j].RunID
+		}
+		return list[i].Reason < list[j].Reason
+	})
+	if boolFlag(cmd, "json") {
+		rows := make([]excludedCaseJSON, 0, len(list))
+		for _, c := range list {
+			rows = append(rows, excludedCaseJSON{RunID: c.RunID, Reason: c.Reason})
+		}
+		return encodePersonasJSON(cmd.OutOrStdout(), rows)
+	}
+	if len(list) == 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No excluded cases for %s\n", key)
+		return nil
+	}
+	rows := make([]string, len(list))
+	for i, c := range list {
+		rows[i] = c.RunID + "\t" + c.Reason
+	}
+	return writeTable(cmd.OutOrStdout(), "RUN ID\tREASON", rows)
 }
 
 // listPersonaPairs renders the read-only pair section: one row per pair that

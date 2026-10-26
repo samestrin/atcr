@@ -67,6 +67,53 @@ func TestValidateFindingPaths_FlowsIntoJSONRecord(t *testing.T) {
 	assert.Empty(t, js[1].PathWarning)
 }
 
+// TestValidateFindingPaths_ValidatesSiblingLocation (Epic 35.16.15 T4, AC3): the
+// sibling file a cross-branch marker points at is validated like File before any
+// consumer trusts it. A resolving sibling keeps the marker; a hallucinated one
+// has it cleared and a PathWarning naming it, so consumers fall back to the
+// anchored File:Line; an unmarked finding is validated exactly as before.
+func TestValidateFindingPaths_ValidatesSiblingLocation(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "sibling.go"), []byte("package x\n"), 0o644))
+
+	findings := []JSONFinding{
+		{File: "edited.go", Line: 3, SiblingLocation: "sibling.go:9"},
+		{File: "edited.go", Line: 3, SiblingLocation: "invented.go:9"},
+		{File: "edited.go", Line: 3},
+		{File: "missing.go", Line: 3, SiblingLocation: "invented.go:9"},
+		{File: "edited.go", Line: 3, SiblingLocation: "../escape.go:1"},
+	}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	// Sibling resolves: marker kept, anchored validation untouched.
+	assert.Equal(t, "sibling.go:9", findings[0].SiblingLocation)
+	assert.True(t, findings[0].PathValid)
+	assert.Empty(t, findings[0].PathWarning)
+
+	// Sibling hallucinated: marker cleared, warning names the sibling, and the
+	// anchored File still validates.
+	assert.Empty(t, findings[1].SiblingLocation)
+	assert.True(t, findings[1].PathValid)
+	assert.Equal(t, siblingNotFoundWarning("invented.go:9"), findings[1].PathWarning)
+	assert.Contains(t, findings[1].PathWarning, "invented.go")
+
+	// No marker: exactly today's stamping.
+	assert.True(t, findings[2].PathValid)
+	assert.Empty(t, findings[2].PathWarning)
+	assert.Empty(t, findings[2].SiblingLocation)
+
+	// Both hallucinated: the anchored warning survives and the sibling is named
+	// beside it rather than overwriting it.
+	assert.Empty(t, findings[3].SiblingLocation)
+	assert.False(t, findings[3].PathValid)
+	assert.Equal(t, stream.PathNotFoundWarning+"; "+siblingNotFoundWarning("invented.go:9"), findings[3].PathWarning)
+
+	// A sibling escaping the root is refused by the same guard File gets.
+	assert.Empty(t, findings[4].SiblingLocation)
+	assert.Equal(t, siblingNotFoundWarning("../escape.go:1"), findings[4].PathWarning)
+}
+
 // resultWithPaths builds a Result whose cached path-stamped JSONFinding records
 // carry the given path fields, mirroring what RunReconcile produces after
 // validateFindingPaths runs.
