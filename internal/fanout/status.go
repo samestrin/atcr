@@ -576,6 +576,13 @@ type AgentStatus struct {
 	PayloadMode   string   `json:"payload_mode"`
 	Truncated     bool     `json:"truncated"`
 	FilesDropped  []string `json:"files_dropped"`
+	// ThreatMapDropped lists the files the threat-model mapper removed from the
+	// run before any reviewer saw it (--threat-map, Epic 37.0), sorted. It is the
+	// same list on every agent of a run, and deliberately apart from
+	// FilesDropped: a mapper drop is a scoping decision, not a byte-budget shed,
+	// and it never sets Truncated. Absent when the run did not map, or the
+	// mapper failed and every file was reviewed.
+	ThreatMapDropped []string `json:"threat_map_dropped,omitempty"`
 	// FallbackUsed/FallbackFrom/FallbackModel record that this slot's configured
 	// primary model overflowed/failed and was served by a litellm fallback model
 	// instead. FallbackFrom names the substituted-FROM primary/persona (unique per

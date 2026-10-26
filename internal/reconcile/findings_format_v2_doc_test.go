@@ -68,6 +68,6 @@ func TestFindingsFormatDoc_V2ExamplesParse(t *testing.T) {
 	assert.Equal(t, []stream.Finding{{
 		Severity: "HIGH", File: "scripts/release.sh", Line: 12,
 		Problem: "The pipeline returns the exit status of tee, not of the build", Fix: "set -o pipefail\ngo build ./... | tee build.log",
-		Category: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host",
+		Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host",
 	}}, res.Findings, "the envelope example must read as these exact values")
 }

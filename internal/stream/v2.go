@@ -153,15 +153,16 @@ func parseV2Body(body string) (ParseResult, error) {
 		}
 		file, line := splitFileLine(r["file_line"])
 		res.Findings = append(res.Findings, Finding{
-			Severity:   r["severity"],
-			File:       file,
-			Line:       line,
-			Problem:    r["problem"],
-			Fix:        r["fix"],
-			Category:   r["category"],
-			EstMinutes: clampEstMinutes(est),
-			Evidence:   r["evidence"],
-			Reviewer:   r["reviewer"],
+			Severity:          r["severity"],
+			File:              file,
+			Line:              line,
+			Problem:           r["problem"],
+			Fix:               r["fix"],
+			Category:          r["category"],
+			CanonicalCategory: CanonicalCategory(r["category"]),
+			EstMinutes:        clampEstMinutes(est),
+			Evidence:          r["evidence"],
+			Reviewer:          r["reviewer"],
 		})
 	}
 	return res, nil
@@ -317,15 +318,16 @@ func parseV2Envelope(body string) (ParseResult, error) {
 		}
 		file, line := splitFileLine(r.FileLine)
 		res.Findings = append(res.Findings, Finding{
-			Severity:   r.Severity,
-			File:       file,
-			Line:       line,
-			Problem:    r.Problem,
-			Fix:        r.Fix,
-			Category:   r.Category,
-			EstMinutes: clampEstMinutes(int(r.EstMinutes)),
-			Evidence:   r.Evidence,
-			Reviewer:   r.Reviewer,
+			Severity:          r.Severity,
+			File:              file,
+			Line:              line,
+			Problem:           r.Problem,
+			Fix:               r.Fix,
+			Category:          r.Category,
+			CanonicalCategory: CanonicalCategory(r.Category),
+			EstMinutes:        clampEstMinutes(int(r.EstMinutes)),
+			Evidence:          r.Evidence,
+			Reviewer:          r.Reviewer,
 		})
 	}
 	return res, nil
@@ -565,14 +567,15 @@ func findingsFromElems(elems []json.RawMessage) []Finding {
 		}
 		file, line := splitFileLine(loc)
 		out = append(out, Finding{
-			Severity:   sev,
-			File:       file,
-			Line:       line,
-			Problem:    m.Problem,
-			Fix:        m.Fix,
-			Category:   m.Category,
-			EstMinutes: clampEstMinutes(int(m.EstMinutes)),
-			Evidence:   m.Evidence,
+			Severity:          sev,
+			File:              file,
+			Line:              line,
+			Problem:           m.Problem,
+			Fix:               m.Fix,
+			Category:          m.Category,
+			CanonicalCategory: CanonicalCategory(m.Category),
+			EstMinutes:        clampEstMinutes(int(m.EstMinutes)),
+			Evidence:          m.Evidence,
 		})
 	}
 	return out

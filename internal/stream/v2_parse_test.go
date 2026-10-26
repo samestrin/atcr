@@ -23,9 +23,9 @@ const (
 )
 
 var (
-	findA = Finding{Severity: "HIGH", File: "a.go", Line: 10, Problem: "os.O_CREATE | os.O_WRONLY", Fix: "use \"x\"\nthen y", Category: "correctness", EstMinutes: 15, Evidence: "a | b"}
-	findB = Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "pb", Fix: "fb", Category: "style", EstMinutes: 2, Evidence: "eb"}
-	findC = Finding{Severity: "MEDIUM", File: "c.go", Line: 3, Problem: "pc", Fix: "fc", Category: "security", EstMinutes: 5, Evidence: "ec"}
+	findA = Finding{Severity: "HIGH", File: "a.go", Line: 10, Problem: "os.O_CREATE | os.O_WRONLY", Fix: "use \"x\"\nthen y", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 15, Evidence: "a | b"}
+	findB = Finding{Severity: "LOW", File: "b.go", Line: 2, Problem: "pb", Fix: "fb", Category: "style", CanonicalCategory: "style", EstMinutes: 2, Evidence: "eb"}
+	findC = Finding{Severity: "MEDIUM", File: "c.go", Line: 3, Problem: "pc", Fix: "fc", Category: "security", CanonicalCategory: "security", EstMinutes: 5, Evidence: "ec"}
 )
 
 func TestParseModelOutput_JSONBlock(t *testing.T) {
@@ -186,7 +186,7 @@ func TestParseModelOutput_ObjectShapes(t *testing.T) {
 		{"empty wrapper", `{"findings":[]}`, nil},
 		{"object with no severity is prose", `{"note":"hello"}`, nil},
 		{"split file and line keys", `[{"severity":"HIGH","file":"a.go","line":"7","problem":"p","fix":"f","category":"c","est_minutes":1,"evidence":"e"}]`,
-			[]Finding{{Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c", EstMinutes: 1, Evidence: "e"}}},
+			[]Finding{{Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c", CanonicalCategory: "other", EstMinutes: 1, Evidence: "e"}}},
 		{"file_line wins over split keys", `[{"severity":"HIGH","file_line":"b.go:2","file":"a.go","line":7}]`,
 			[]Finding{{Severity: "HIGH", File: "b.go", Line: 2}}},
 		{"split keys without a file are dropped", `[{"severity":"HIGH","line":7}]`, nil},
@@ -269,7 +269,7 @@ func TestParseModelOutput_MultiFieldOverflowFoldsIntoEvidence(t *testing.T) {
 
 func TestParseSource_V2TOONRoundTrip(t *testing.T) {
 	in := []Finding{
-		{Severity: "HIGH", File: "a.go", Line: 3, Problem: "flags := os.O_RDWR | os.O_CREATE", Fix: "line1\r\nline2", Category: "correctness", EstMinutes: 7, Evidence: "| h |\n|---|\n\"q\"", Reviewer: "bruce"},
+		{Severity: "HIGH", File: "a.go", Line: 3, Problem: "flags := os.O_RDWR | os.O_CREATE", Fix: "line1\r\nline2", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 7, Evidence: "| h |\n|---|\n\"q\"", Reviewer: "bruce"},
 		{Severity: "LOW", File: "pkg/x.go", Line: 0, Reviewer: "kai"},
 	}
 	var b strings.Builder
@@ -298,7 +298,7 @@ func TestParseSource_V2JSONEnvelope(t *testing.T) {
 
 	res, err := ParseSource([]byte(b.String()))
 	require.NoError(t, err)
-	assert.Equal(t, []Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "a | b", Fix: "x\ny", Category: "c", EstMinutes: 3, Evidence: "e", Reviewer: "bruce"}}, res.Findings)
+	assert.Equal(t, []Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "a | b", Fix: "x\ny", Category: "c", CanonicalCategory: "other", EstMinutes: 3, Evidence: "e", Reviewer: "bruce"}}, res.Findings)
 }
 
 func TestParseSource_V2HostShapedEnvelope(t *testing.T) {
@@ -306,7 +306,7 @@ func TestParseSource_V2HostShapedEnvelope(t *testing.T) {
 		`{"axi_format":"json","axi_notice":"","data":{"findings":[{"severity":"HIGH","file_line":"a.go:3","problem":"p | q","fix":"f","category":"c","est_minutes":5,"evidence":"e","reviewer":"host"}]}}` + "\n"
 	res, err := ParseSource([]byte(data))
 	require.NoError(t, err)
-	assert.Equal(t, []Finding{{Severity: "HIGH", File: "a.go", Line: 3, Problem: "p | q", Fix: "f", Category: "c", EstMinutes: 5, Evidence: "e", Reviewer: "host"}}, res.Findings)
+	assert.Equal(t, []Finding{{Severity: "HIGH", File: "a.go", Line: 3, Problem: "p | q", Fix: "f", Category: "c", CanonicalCategory: "other", EstMinutes: 5, Evidence: "e", Reviewer: "host"}}, res.Findings)
 }
 
 // v2Row1 is one valid envelope row, for error cases that hide it behind a bad key.
@@ -405,7 +405,7 @@ func TestParseSource_V2ErrorsComeFromTheBrokenRule(t *testing.T) {
 // columns or keys and ignores any others, so a newer atcr can add a field and
 // an older atcr still reads the file.
 func TestParseSource_V2ToleratesAdditiveFields(t *testing.T) {
-	want := []Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "c", EstMinutes: 2, Evidence: "e", Reviewer: "r"}}
+	want := []Finding{{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "c", CanonicalCategory: "other", EstMinutes: 2, Evidence: "e", Reviewer: "r"}}
 	cases := []struct {
 		name string
 		body string
