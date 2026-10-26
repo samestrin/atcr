@@ -38,9 +38,9 @@ var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle", 
 // trustworthy as its weakest call site, so a new literal must be added here on
 // purpose, with a decision about thinking.
 //
-//   - thinking: the four pipeline sites (review primary and fallback, skeptic,
-//     debate seat) set every key in thinkingFieldNames from the agent's own
-//     AgentConfig.
+//   - thinking: the five pipeline sites (review primary and fallback, skeptic,
+//     debate seat, threat mapper) set every key in thinkingFieldNames from the
+//     agent's own AgentConfig.
 //   - the two doctor probe sites set every key in thinkingFieldNames from the
 //     probed Target, which carries the declaration of the agents sharing it
 //     (Story 5).
@@ -56,6 +56,7 @@ var invocationSiteInventory = map[invocationSite]siteRule{
 	{"internal/fanout/review.go", "buildFallbackAgent"}:   {"thinking", "ac"},
 	{"internal/verify/invoke.go", "buildSkepticAgent"}:    {"thinking", "c"},
 	{"internal/debate/protocol.go", "buildDebateAgent"}:   {"thinking", "c"},
+	{"internal/threatmap/map.go", "NewAgent"}:             {"thinking", "ac"},
 	{"internal/doctor/run.go", "probe"}:                   {"thinking", "tgt"},
 	{"internal/doctor/run.go", "responseFormatCall"}:      {"thinking", "tgt"},
 	{"internal/doctor/run.go", "thinkingControlCall"}:     {kind: "control"},

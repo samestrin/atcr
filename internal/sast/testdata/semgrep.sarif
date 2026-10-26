@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Semgrep OSS",
+          "rules": [
+            {"id": "go.lang.security.audit.sqli.string-formatted-query"},
+            {"id": "go.lang.security.audit.xss.no-direct-write"}
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "go.lang.security.audit.sqli.string-formatted-query",
+          "message": {"text": "String-formatted SQL query"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "app/db.go", "uriBaseId": "%SRCROOT%"}, "region": {"startLine": 12}}}]
+        },
+        {
+          "ruleIndex": 1,
+          "message": {"text": "Direct write to ResponseWriter"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "app/handler%20v2.go"}, "region": {"startLine": 40}}}]
+        },
+        {
+          "ruleId": "escape.dotdot",
+          "message": {"text": "dot-dot escape"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "../outside.go"}, "region": {"startLine": 1}}}]
+        },
+        {
+          "ruleId": "escape.encoded-dotdot",
+          "message": {"text": "percent-encoded dot-dot escape"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "app/%2e%2e/%2e%2e/outside.go"}, "region": {"startLine": 1}}}]
+        },
+        {
+          "ruleId": "escape.absolute",
+          "message": {"text": "absolute path"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "/etc/passwd"}, "region": {"startLine": 1}}}]
+        },
+        {
+          "ruleId": "escape.file-uri",
+          "message": {"text": "absolute file URI"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "file:///etc/passwd"}, "region": {"startLine": 1}}}]
+        },
+        {
+          "ruleId": "escape.symlink",
+          "message": {"text": "symlink escape"},
+          "locations": [{"physicalLocation": {"artifactLocation": {"uri": "link/secret.go"}, "region": {"startLine": 3}}}]
+        },
+        {
+          "ruleId": "escape.no-location",
+          "message": {"text": "no location at all"}
+        }
+      ]
+    }
+  ]
+}
