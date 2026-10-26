@@ -206,9 +206,11 @@ func TestChat_ContentAndPartsBothSetErrors(t *testing.T) {
 	s := "text"
 	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
-	}, []Message{{Role: "user", Content: &s, Parts: []ContentPart{TextPart("text")}}}, nil)
+	}, []Message{{Role: "system", Content: &s}, {Role: "user", Content: &s, Parts: []ContentPart{TextPart("text")}}}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrContentAndParts)
+	// Chat's own guard names the offending message; MarshalJSON alone cannot.
+	assert.Contains(t, err.Error(), "message 1:")
 	assert.Nil(t, resp)
 	assert.Zero(t, calls.Load(), "no request may be sent")
 }
