@@ -252,5 +252,38 @@ Not observed:
   call, so nothing is observed even though the content reaches the deliverable.
   Run with `--no-cache` when a complete per-run record matters.
 
-See the godoc on `cli.Hooks`, `cli.ModelInvocation`, and `cli.MainWithHooks` for
-the field-level contract.
+### The review-complete observer
+
+`cli.Hooks` has a second field, `ReviewComplete`. A registered
+`cli.ReviewCompleteObserver` gets one `cli.ReviewReport` per successful review,
+after the review's artifacts are written. It fires for `atcr review` (fresh
+and `--resume`), after the history and audit records are on disk, and for the
+MCP review tool served by `atcr serve`, which writes no history or audit
+records. A failed review does not fire it, and neither does a standalone
+`atcr reconcile`.
+
+Unlike `ModelInvocation`, the report is not source-code-sensitive: it holds the
+run id, review directory, base and head SHAs, PR number, the partial flag and
+agent counts, and, only when the review reconciled in-process (for example with
+`--fail-on`), the finding counts by severity. It carries no diff and no findings
+text. Its contract is the same: no error return, a panic is recovered and
+reported on stderr, and the review keeps its exit code.
+
+```go
+type reviewSink struct{}
+
+func (reviewSink) OnReviewComplete(ctx context.Context, rep cli.ReviewReport) {
+	// e.g. post rep.RunID and rep.FindingsBySeverity to a dashboard
+}
+
+func main() {
+	hooks := cli.Hooks{ReviewComplete: reviewSink{}}
+	os.Exit(cli.MainWithHooks(context.Background(), os.Stdout, os.Stderr, hooks))
+}
+```
+
+`cli/hooks_external_test.go` registers an observer this way from a separate
+test package that sees only the exported API.
+
+See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`, and
+`cli.MainWithHooks` for the field-level contract.
