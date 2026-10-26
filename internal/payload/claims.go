@@ -668,7 +668,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     findings; the second has no equivalent verdict, because context asserts
 //     nothing to be checked against.
 //  4. The sentinel can reach a published artifact. droppedPathsExcept
-//     (internal/fanout/review.go:3124) builds its dropped list from every entry
+//     (internal/fanout/review.go:3662) builds its dropped list from every entry
 //     but the kept one, so "<claims>" can appear in Truncation.FilesDropped and
 //     from there in status.json's files_dropped, alongside real repository
 //     paths.
@@ -678,11 +678,11 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     thing.
 //     EntriesFromRenderedPayload (the Epic 35.0 audit seam) now surfaces it as
 //     an unattributed entry with an empty Path (splitMarkedEntries,
-//     internal/payload/rendered.go:83-86), so the audit record is complete —
+//     internal/payload/rendered.go:67-86), so the audit record is complete —
 //     this consequence USED to be "the ledger is absent from the audit record"
 //     and no longer is. The remaining consumers are in internal/fanout:
-//     entriesFromPrimary (internal/fanout/review.go:3236) rebuilds the inherited
-//     entries and inheritedPayloadFits (internal/fanout/review.go:3175) sums
+//     entriesFromPrimary (internal/fanout/review.go:3774) rebuilds the inherited
+//     entries and inheritedPayloadFits (internal/fanout/review.go:3713) sums
 //     them to decide whether the AC4 overflow gate fires. Both deliberately
 //     measure only the bytes the byte budget governs, and the ledger is exempt
 //     from that budget, so the gate under-measures a fallback's real dispatched
@@ -696,17 +696,18 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     every entry to len(Body) before shedding, which turns the exemption in
 //     ApplyByteBudget into a real comparison for entries that carry Size 0 on
 //     every other path. That exemption is CUMULATIVE OVER THE FUNDED SET, not a
-//     per-entry bound: the funding loop (budget.go:175-181) walks the exempt
-//     entries in descending exemptRank and keeps each only while the RUNNING
-//     total still fits the budget. With one exempt entry it reduces exactly to
+//     per-entry bound: the funding loop (`exemptUsed`, budget.go:175-181)
+//     walks the exempt entries in descending exemptRank and keeps each only
+//     while the RUNNING total still fits the budget. With one exempt entry it
+//     reduces exactly to
 //     the old `clampSize(Size) <= budget`; with two — the ledger at rank 1 and
 //     the Context Definitions block at rank 0 — the block is the one that loses
 //     funding first, and the ledger can be unfunded by its own size alone.
-//     A zero-byte reviewable entry changes neither side of
-//     that: it sorts LAST under the largest-first order (budget.go:115-118)
-//     and the shed loop breaks once used <= budget, so it is never shed and
-//     never trips AllDropped, and keepSmallestEntry skips empty bodies
-//     (internal/fanout/review.go:3691-3693) so it cannot win the reroute — a
+//     A zero-byte reviewable entry changes neither side of that: it sorts LAST
+//     under the largest-first order (`idx`, budget.go:123-134) and the shed
+//     loop breaks once used <= budget, so it is never shed and never trips
+//     AllDropped, and keepSmallestEntry (internal/fanout/review.go:4320-4346)
+//     skips empty bodies so it cannot win the reroute — a
 //     0-byte py.typed beside a 10 KB file leaves the ledger in place with no
 //     code funded. The bound and the reroute are two stages of one pass, not
 //     two independent drop routes, and the ledger's absence has one terminal
@@ -716,7 +717,7 @@ func isAbbrevBefore(runes []rune, start, end int) bool {
 //     bound, but that alone never leaves it absent — the emptied payload
 //     trips AllDropped and the reroute brings the ledger BACK when no smaller
 //     non-empty file exists (budget 50, ledger 100, one 200-byte file: both
-//     shed, then keepSmallestEntry (internal/fanout/review.go:3684-3710)
+//     shed, then keepSmallestEntry (internal/fanout/review.go:4320-4346)
 //     returns the ledger itself). When every reviewable file is LARGER, the
 //     same branch keeps the ledger and sheds all the
 //     code — consequence #3's shape reached by a different route. That backup
@@ -734,9 +735,10 @@ const ClaimLedgerPath = "<claims>"
 // Size 0 keeps the entry out of byte-budget accounting on the ordinary path,
 // where the exemption's bound is satisfied by every budget. The fallback re-fit
 // re-sizes the entry to len(Body), so there the bound becomes real — and it is a
-// bound on the funded exempt SET, not on this entry alone: budget.go:175-181
-// funds the exempt entries in descending exemptRank while their RUNNING total
-// fits the budget. So this package's contract is budget >= the dispatched size of
+// bound on the funded exempt SET, not on this entry alone: the funding loop
+// (`exemptUsed`, budget.go:175-181) funds the exempt entries in descending
+// exemptRank while their RUNNING total fits the budget. So this package's
+// contract is budget >= the dispatched size of
 // every exempt section funded at or above the ledger's rank. With the ledger as
 // the only exempt entry that is exactly budget >= the ledger's own dispatched
 // size, which is what it used to say; with the Context Definitions block also
@@ -744,7 +746,7 @@ const ClaimLedgerPath = "<claims>"
 // ledger's own condition is unchanged by its presence.
 // Funding a reviewable file is NOT part of that
 // contract — it is downstream: internal/fanout's AllDropped reroute to
-// keepSmallestEntry (internal/fanout/review.go:3684-3710) can displace the
+// keepSmallestEntry (internal/fanout/review.go:4320-4346) can displace the
 // ledger afterwards, but only while some reviewable file with a non-empty
 // body is smaller than the ledger, since that reroute keeps the smallest
 // ENTRY and will keep the ledger itself when every file is larger (accepted
