@@ -103,6 +103,10 @@ type Message struct {
 // the wire has one content key, so which one to send would be a guess.
 var ErrContentAndParts = errors.New("message sets both content and parts")
 
+// ErrVisionNotDeclared is returned by Chat when a message carries an image
+// part and the Invocation is not declared SupportsVision. No request is sent.
+var ErrVisionNotDeclared = errors.New("message carries an image but the model is not declared supports_vision")
+
 // MarshalJSON sends Parts as the content array when set, and the message
 // unchanged otherwise.
 func (m Message) MarshalJSON() ([]byte, error) {
@@ -143,6 +147,16 @@ func TextPart(text string) ContentPart {
 // ImageURLPart is an image_url content part for url.
 func ImageURLPart(url string) ContentPart {
 	return ContentPart{Type: "image_url", ImageURL: &ImageURL{URL: url}}
+}
+
+// hasImage reports whether parts holds an image_url part.
+func hasImage(parts []ContentPart) bool {
+	for _, p := range parts {
+		if p.Type == "image_url" || p.ImageURL != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ChatResponse is the engine-facing result of one Chat turn: the assistant
@@ -328,6 +342,13 @@ func memberText(raw json.RawMessage) reasoningText {
 // this method, so a tool-enabled agent runs the loop while a client lacking it
 // (a test fake, say) degrades to single-shot.
 func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, toolDefs []ToolDef) (*ChatResponse, error) {
+	if !inv.SupportsVision {
+		for i, m := range messages {
+			if hasImage(m.Parts) {
+				return nil, fmt.Errorf("message %d: %w", i, ErrVisionNotDeclared)
+			}
+		}
+	}
 	key, err := resolveKey(inv)
 	if err != nil {
 		return nil, err

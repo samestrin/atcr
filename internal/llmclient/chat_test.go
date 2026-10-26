@@ -250,6 +250,16 @@ func TestChat_ImageWithoutVisionRefusedBeforeKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrVisionNotDeclared)
 }
 
+// Epic 36.0 T3: a part counts as an image by its type or by carrying an image
+// payload, since either one puts image_url on the wire.
+func TestHasImage(t *testing.T) {
+	assert.False(t, hasImage(nil))
+	assert.False(t, hasImage([]ContentPart{TextPart("look")}))
+	assert.True(t, hasImage([]ContentPart{TextPart("look"), ImageURLPart("https://example.test/a.png")}))
+	assert.True(t, hasImage([]ContentPart{{Type: "image_url"}}))
+	assert.True(t, hasImage([]ContentPart{{Type: "text", ImageURL: &ImageURL{URL: "https://example.test/a.png"}}}))
+}
+
 // Epic 36.0 T3: with SupportsVision set, the image is sent in one request.
 func TestChat_ImageWithVisionSent(t *testing.T) {
 	var calls atomic.Int32
