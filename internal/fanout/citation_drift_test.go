@@ -140,11 +140,6 @@ var awaitingRepin = map[string]string{
 	"internal/fanout/chunker.go": "T3",
 	"docs/payload-modes.md":      "T3",
 
-	// T4
-	"internal/payload/prefetch.go":              "T4",
-	"internal/payload/sizing.go":                "T4",
-	"internal/payload/scope_vocabulary_test.go": "T4",
-
 	// T5
 	"internal/doctor/run.go":                            "T5",
 	"internal/hookobs/hookobs.go":                       "T5",
