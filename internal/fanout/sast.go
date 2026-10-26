@@ -17,13 +17,14 @@ import (
 // variable only so tests can shorten it.
 var sastScanTimeout = 2 * time.Minute
 
-// errNoSASTBackend is what newSASTRunner reports until a scanner backend is
-// wired in; with `sast.enabled: true` it surfaces as the fail-open notice.
-var errNoSASTBackend = errors.New("no SAST scanner backend is available in this build")
+// errNoSASTBackend reports a runner constructor that returned no runner; it
+// surfaces as the fail-open notice.
+var errNoSASTBackend = errors.New("no SAST scanner backend is available")
 
-// newSASTRunner resolves the scanner the pre-filter runs. A variable so tests
-// inject a fake runner instead of a real Semgrep.
-var newSASTRunner = func() (sast.Runner, error) { return nil, errNoSASTBackend }
+// newSASTRunner resolves the scanner the pre-filter runs: the Semgrep wrapper,
+// which reports a missing binary or a failed scan as sast.ErrUnavailable. A
+// variable so tests inject a fake runner instead of a real Semgrep.
+var newSASTRunner = func() (sast.Runner, error) { return sast.Semgrep{}, nil }
 
 // secretSASTLabel names the SAST block in a secret-guard warning or error.
 const secretSASTLabel = "SAST findings"
