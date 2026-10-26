@@ -312,3 +312,29 @@ func TestIngridGeneralizedBeyondGo(t *testing.T) {
 	require.Contains(t, out, "except Exception",
 		"the non-Go (Python) fixture payload must render into the prompt")
 }
+
+// TestThreatMapper_IsEmbeddedButNotAReviewer pins the mapper persona (Epic 37.0)
+// as an embedded template that stays off the reviewer roster: Names, Get and
+// therefore `atcr init` and the review panel never see it.
+func TestThreatMapper_IsEmbeddedButNotAReviewer(t *testing.T) {
+	s, err := ThreatMapper()
+	require.NoError(t, err)
+	require.NotEmpty(t, strings.TrimSpace(s))
+
+	require.NotContains(t, Names(), ThreatMapperName)
+	_, err = Get(ThreatMapperName)
+	require.Error(t, err)
+}
+
+// TestThreatMapper_Renders checks the mapper template renders against the
+// shared PayloadContext and keeps the persona layout the reviewers use.
+func TestThreatMapper_Renders(t *testing.T) {
+	s, err := ThreatMapper()
+	require.NoError(t, err)
+	for _, h := range []string{"## Role", "## Focus", "## Scope", "## Output Format", "## Payload"} {
+		require.Contains(t, s, h)
+	}
+	out, err := payload.RenderPrompt(s, payload.PayloadContext{AgentName: "mapper", FileCount: 2, Payload: "a.go\nb.css"})
+	require.NoError(t, err)
+	require.Contains(t, out, "a.go\nb.css")
+}
