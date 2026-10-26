@@ -342,3 +342,34 @@ func TestHomeView_GoldenNonAXI(t *testing.T) {
 		assert.Equal(t, want, buf.String())
 	})
 }
+
+// TestRootCmd_BareAXIEndsWithHelpBlock is Epic 42.0 T5: the bare `atcr --axi`
+// home view keeps its home[1] payload as is and appends a help[] block naming
+// the next steps, with the review id left as the <id> placeholder.
+func TestRootCmd_BareAXIEndsWithHelpBlock(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, _ := execCmdSplit(t, "--axi")
+	require.Equal(t, 0, code)
+	body, help, ok := strings.Cut(stdout, "help[")
+	require.True(t, ok, "home --axi output carries a help[] block: %q", stdout)
+	assert.True(t, strings.HasPrefix(body, "home[1"), "the home payload still comes first")
+	assert.Equal(t, "help[2]: atcr review,atcr report <id>\n", "help["+help, "help[] is the last block")
+}
+
+// TestRootCmd_BareAXILegacyPipeHasNoHelpBlock pins that the deprecated pipe
+// payload stays byte-identical: help[] is a standard-TOON block only.
+func TestRootCmd_BareAXILegacyPipeHasNoHelpBlock(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, _ := execCmdSplit(t, "--axi", "--legacy-pipe")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, stdout, "help[")
+}
+
+// TestRootCmd_BareNonAXIHasNoHelpBlock: the human home view is unchanged.
+func TestRootCmd_BareNonAXIHasNoHelpBlock(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, stdout, stderr := execCmdSplit(t)
+	require.Equal(t, 0, code)
+	assert.NotContains(t, stdout+stderr, "help[")
+	assert.NotContains(t, stdout+stderr, "Next:")
+}
