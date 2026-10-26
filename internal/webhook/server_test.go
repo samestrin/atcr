@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testSecret = "8f742231b10e8888abcd99yyyzzz85a5"
+const testSecret = "s3cret"
 
 // signedRequest builds a POST to the Slack route signed with testSecret at now.
 func signedRequest(t *testing.T, url, body string, now time.Time) *http.Request {
