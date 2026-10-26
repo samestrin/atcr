@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -187,4 +189,13 @@ func shellPlain(r rune) bool {
 		return true
 	}
 	return strings.ContainsRune("/._-:,@+=%", r)
+}
+
+// writeNextSteps prints key's next steps as human "Next: <command>" lines, for
+// the commands with no AXI mode. w is the command's stderr, so stdout stays
+// exactly what it was before suggestions existed.
+func writeNextSteps(w io.Writer, key suggestionKey, inv invocation) {
+	for _, line := range renderSuggestions(key, inv) {
+		_, _ = fmt.Fprintln(w, "Next: "+line)
+	}
 }
