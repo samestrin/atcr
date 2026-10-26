@@ -21,7 +21,7 @@ func sastReview(t *testing.T, llmBody string) (root, reviewDir string) {
 	root = gitRepoWithFiles(t, "app/db.go", "app/handler v2.go")
 	f, err := os.Open(filepath.Join("..", "sast", "testdata", "semgrep.sarif"))
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	findings, _, err := sast.ParseSARIF(f, root)
 	require.NoError(t, err)
 	require.Len(t, findings, 2)
@@ -146,4 +146,31 @@ func TestRunReconcile_IgnoreRuleSuppressesSASTFinding(t *testing.T) {
 	assert.Equal(t, "app/db.go", res.Suppressed[0].File)
 	require.Len(t, res.Findings, 1)
 	assert.Equal(t, "app/handler v2.go", res.Findings[0].File)
+}
+
+// Every reviewer failing to write findings leaves sources/ with no source at
+// all; the SAST findings still reach findings.json.
+func TestRunReconcile_SASTWithNoReviewerSource(t *testing.T) {
+	root, reviewDir := sastReview(t, "")
+	require.NoError(t, os.RemoveAll(filepath.Join(reviewDir, "sources", "greta")))
+	runSASTReconcile(t, root, reviewDir)
+
+	got, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	assert.Len(t, got, 2)
+}
+
+func TestSASTProblem(t *testing.T) {
+	cases := []struct {
+		f    sast.Finding
+		want string
+	}{
+		{sast.Finding{Message: "SQL\n  built | by hand", Rule: "sqli"}, "SQL built | by hand [sqli]"},
+		{sast.Finding{Message: "only a message"}, "only a message"},
+		{sast.Finding{Rule: "only-rule"}, "[only-rule]"},
+		{sast.Finding{Message: " \n "}, "SAST finding"},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, sastProblem(c.f))
+	}
 }

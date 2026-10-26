@@ -74,3 +74,8 @@ func TestWriteReport_RejectsUnsafePath(t *testing.T) {
 	err := WriteReport(t.TempDir(), Report{Scanner: "semgrep", Findings: []Finding{{File: "../x.go", Line: 1}}})
 	assert.Error(t, err)
 }
+
+func TestWriteReport_MissingDirIsError(t *testing.T) {
+	err := WriteReport(filepath.Join(t.TempDir(), "absent"), Report{Scanner: "semgrep"})
+	assert.Error(t, err)
+}
