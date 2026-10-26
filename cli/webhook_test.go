@@ -390,16 +390,14 @@ func TestJobContext_KeepsBaseValuesAndJobDeadline(t *testing.T) {
 
 	job, cancelJob := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelJob()
-	ctx, cancel := jobContext(base, job)
-	defer cancel()
+	ctx := context.Context(jobContext{Context: job, values: base})
 	assert.Equal(t, "v", ctx.Value(whCtxKey{}))
 	require.NoError(t, ctx.Err())
 	<-ctx.Done()
 	assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 
 	job2, cancelJob2 := context.WithCancel(context.Background())
-	ctx2, cancel2 := jobContext(base, job2)
-	defer cancel2()
+	ctx2 := context.Context(jobContext{Context: job2, values: base})
 	_, hasDeadline := ctx2.Deadline()
 	assert.False(t, hasDeadline)
 	cancelJob2()

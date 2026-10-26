@@ -148,9 +148,7 @@ func requiredEnv(field, name string) (string, error) {
 func newWebhookReviewer(base context.Context, root string) webhook.Reviewer {
 	completer := newCompleter(base)
 	return func(jobCtx context.Context, dir string) ([]reclib.Finding, error) {
-		ctx, cancel := jobContext(base, jobCtx)
-		defer cancel()
-
+		var ctx context.Context = jobContext{Context: jobCtx, values: base}
 		res, err := gitrange.Resolve(ctx, dir, gitrange.Options{})
 		if err != nil {
 			return nil, fmt.Errorf("resolve range: %w", err)
@@ -217,20 +215,18 @@ func newWebhookReviewer(base context.Context, root string) webhook.Reviewer {
 	}
 }
 
-// jobContext returns a context that carries base's values (the logger and the
-// hooks) and ends when job does, with job's deadline, so a timed-out review
-// reports context.DeadlineExceeded.
-func jobContext(base, job context.Context) (context.Context, context.CancelFunc) {
-	ctx := context.WithoutCancel(base)
-	var cancel context.CancelFunc
-	if dl, ok := job.Deadline(); ok {
-		ctx, cancel = context.WithDeadline(ctx, dl)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
+// jobContext is the job's context with base's values (the logger and the
+// hooks) layered over it. Done, Err and Deadline are the job's own, so a
+// timed-out review reports context.DeadlineExceeded and a shutdown reports
+// context.Canceled, while the command's cancellation never reaches a job.
+type jobContext struct {
+	context.Context
+	values context.Context
+}
+
+func (c jobContext) Value(key any) any {
+	if v := c.values.Value(key); v != nil {
+		return v
 	}
-	stop := context.AfterFunc(job, cancel)
-	return ctx, func() {
-		stop()
-		cancel()
-	}
+	return c.Context.Value(key)
 }
