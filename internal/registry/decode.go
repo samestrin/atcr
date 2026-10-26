@@ -13,7 +13,7 @@ import (
 
 // agentBoolFields are the bool-typed fields in AgentConfig whose yaml type
 // errors need a field-named hint (the strict decoder message omits them).
-var agentBoolFields = []string{"tools", "supports_function_calling"}
+var agentBoolFields = []string{"tools", "supports_function_calling", "supports_vision"}
 
 // amendWithAgentFieldHints checks whether err is a yaml type-mismatch on a
 // known bool agent field. When detected, data is loosely re-parsed via a

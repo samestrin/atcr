@@ -7,12 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/pathutil"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
 )
 
 // homeExecutable and homeUserDir are seams over os.Executable / os.UserHomeDir so
@@ -35,27 +37,13 @@ type homeState struct {
 }
 
 // relHome renders path with the user's home-directory prefix replaced by "~"
-// (axi.md Principle 8's example). It follows the same filepath.Rel-plus-fallback
-// idiom the codebase already uses for path display (internal/tools/dispatch.go's
-// relDisplay, internal/log/redact.go's relativizePaths): a path under home renders
-// as "~/rel", the home dir itself as "~", and anything outside home (or when home
-// can't be resolved) falls back to the verbatim path — never a broken "~/../.."
-// substitution. The "~" form is ALWAYS forward-slash (~/rel), on every platform:
-// the string feeds the agent-facing AXI payload, whose cross-platform TOON
-// consumers parse the documented forward-slash shape.
+// (axi.md Principle 8's example), delegating to pathutil.RelHome with the
+// homeUserDir seam as the resolver: a path under home renders as "~/rel", the home
+// dir itself as "~", and anything outside home (or when home can't be resolved)
+// falls back to the verbatim path. The "~" form is always forward-slash, because
+// the string feeds the agent-facing AXI payload.
 func relHome(path string) string {
-	home, err := homeUserDir()
-	if err != nil || home == "" {
-		return path
-	}
-	rel, err := filepath.Rel(home, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
-	}
-	if rel == "." {
-		return "~"
-	}
-	return "~/" + filepath.ToSlash(rel)
+	return pathutil.RelHome(path, homeUserDir)
 }
 
 // resolveHomeState resolves the current review's id/status via the same
@@ -162,16 +150,22 @@ func runHome(cmd *cobra.Command) error {
 		case st.unavailable:
 			reviewID, status = st.reviewID, "unavailable"
 		}
-		render := report.RenderHomeViewAXI
-		if legacyPipeFromContext(ctx) {
-			render = report.RenderHomeViewPipe
-		}
-		return render(cmd.OutOrStdout(), report.HomeViewAXI{
+		view := report.HomeViewAXI{
 			ExecPath:     relHome(execPath),
 			Description:  cmd.Short,
 			ReviewID:     reviewID,
 			ReviewStatus: status,
-		})
+		}
+		// The deprecated pipe payload stays byte-identical: help[] is a
+		// standard-TOON block (Epic 42.0).
+		if legacyPipeFromContext(ctx) {
+			return report.RenderHomeViewPipe(cmd.OutOrStdout(), view)
+		}
+		if err := report.RenderHomeViewAXI(cmd.OutOrStdout(), view); err != nil {
+			return err
+		}
+		return goaxi.WriteHelp(cmd.OutOrStdout(),
+			renderSuggestions(suggestHome, invocation{Flags: invocationFlags(cmd)}))
 	}
 
 	return renderHomeView(cmd.OutOrStdout(), execPath, cmd.Short, st)

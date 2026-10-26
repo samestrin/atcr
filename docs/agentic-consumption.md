@@ -92,7 +92,13 @@ one-line description, and the current review's id and status:
 ```
 home[1]{exec_path,description,review_id,review_status}:
   ~/go/bin/atcr,"Agent Team Code Review — a review panel, not a reviewer",2026-07-18_main,completed
+help[2]: atcr review,atcr report <id>
 ```
+
+The trailing `help[]` line lists the commands that usually come next (axi.md
+Principle 9, "Contextual Disclosure"). `<id>` is a placeholder for the review id,
+never a guessed value. The deprecated `--legacy-pipe` home payload has no
+`help[]` line.
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
 `review_status` is `none` — the home view is never an error and never empty, even

@@ -56,6 +56,62 @@ var newTier4Index = func(root string, paths []string) tier4Resolver {
 	return newLazySymbolIndex(root, paths)
 }
 
+// siblingNotFoundWarning is the PathWarning stamped when a finding's
+// SiblingLocation (Epic 35.16.15) names a file that does not resolve under the
+// root. It names the sibling, not File, because File may well be valid: the
+// warning says which of the finding's two locations was not trusted.
+func siblingNotFoundWarning(sibling string) string {
+	return siblingNotFoundPrefix + sibling
+}
+
+// siblingNotFoundPrefix opens every siblingNotFoundWarning. AnchoredPathWarning
+// splits on it, so it lives in one place.
+const siblingNotFoundPrefix = "sibling file not found: "
+
+// AnchoredPathWarning returns the part of a PathWarning that is about the
+// finding's anchored File, dropping the sibling-not-found warning
+// validateSiblingLocation may have appended. A bad sibling only clears the
+// cross-branch marker; File:Line still stands, so consumers that read a
+// non-empty PathWarning as "hallucinated file" (the local debt persistence
+// bridge) must key off this instead of the raw field. A warning about File
+// itself is returned unchanged, whether or not a sibling warning follows it.
+func AnchoredPathWarning(warning string) string {
+	if strings.HasPrefix(warning, siblingNotFoundPrefix) {
+		return ""
+	}
+	if i := strings.Index(warning, "; "+siblingNotFoundPrefix); i >= 0 {
+		return warning[:i]
+	}
+	return warning
+}
+
+// validateSiblingLocation runs a marked finding's sibling file through the same
+// stream.ValidatePath check File gets (root containment, case, existence), so no
+// consumer trusts an unchecked sibling path (Epic 35.16.15 T4, Q4). A sibling
+// that does not resolve has its marker cleared — consumers then fall back to the
+// anchored File:Line — and a warning naming it appended to any warning File
+// already carries, never overwriting it. An unmarked finding is untouched.
+func validateSiblingLocation(f *JSONFinding, root string, idx *stream.FileIndex) {
+	if f.SiblingLocation == "" {
+		return
+	}
+	file := f.SiblingLocation
+	if i := strings.LastIndex(file, ":"); i >= 0 {
+		file = file[:i]
+	}
+	sf := stream.Finding{File: file}
+	stream.ValidatePath(&sf, root, idx)
+	if sf.PathValid {
+		return
+	}
+	warning := siblingNotFoundWarning(f.SiblingLocation)
+	if f.PathWarning != "" {
+		warning = f.PathWarning + "; " + warning
+	}
+	f.PathWarning = warning
+	f.SiblingLocation = ""
+}
+
 // validateFindingPaths stamps each reconciled finding's PathValid/PathWarning
 // and, when a hallucinated path has a confident correction, PathSuggestion (Epic
 // 5.0 AC1 + Epic 5.4 + Epic 35.16.6.5). It operates on the JSONFinding records
@@ -130,7 +186,10 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		findings[i].PathValid = sf.PathValid
 		findings[i].PathWarning = sf.PathWarning
 		findings[i].PathSuggestion = sf.PathSuggestion
+		validateSiblingLocation(&findings[i], root, idx)
 
+		// Tier 4 keys off the ANCHORED path's result (sf), never the sibling
+		// warning above: a hallucinated sibling says nothing about File.
 		if !tier4Available || sf.PathWarning == "" || sf.PathSuggestion != "" {
 			continue // path resolved, or Tiers 1-3 already answered: Tier 4 is out of scope
 		}
