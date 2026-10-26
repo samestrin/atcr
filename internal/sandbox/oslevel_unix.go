@@ -68,10 +68,12 @@ const sandboxLimitArgv0 = "atcr-sandbox-limits"
 
 // sandboxMemoryRlimit is the rlimit MaxMemoryBytes sets on this host, and
 // sandboxMemoryUlimitFlag the ulimit option that sets it (KiB, in every
-// /bin/sh atcr meets: dash, bash, zsh and busybox ash). It follows the host
-// kernel, runtime.GOOS, not b.platform(): setrlimit is answered by the kernel
-// atcr is running on.
-var sandboxMemoryRlimit, sandboxMemoryUlimitFlag = sandboxMemoryLimitFor(runtime.GOOS)
+// /bin/sh atcr meets: dash, bash, zsh and busybox ash).
+// sandboxMemoryLimitEnforced is false where the host kernel accepts no memory
+// rlimit at all, and the child then runs without one. All three follow the
+// host kernel, runtime.GOOS, not b.platform(): setrlimit is answered by the
+// kernel atcr is running on.
+var sandboxMemoryRlimit, sandboxMemoryUlimitFlag, sandboxMemoryLimitEnforced = sandboxMemoryLimitFor(runtime.GOOS)
 
 // sandboxMemoryLimitFor picks the memory rlimit per kernel.
 //
@@ -80,16 +82,18 @@ var sandboxMemoryRlimit, sandboxMemoryUlimitFlag = sandboxMemoryLimitFor(runtime
 // default can fail an ordinary `go build` (the plan's Risks). RLIMIT_DATA has
 // counted private writable mappings, anonymous mmap included, since 4.7.
 //
-// darwin: RLIMIT_AS. Measured on the integration-macos job (PR #603's first
-// run): XNU rejects lowering RLIMIT_DATA with EINVAL ("ulimit: data seg size:
-// cannot modify limit: Invalid argument"), so the wrapper failed closed and
-// refused every run. Whether RLIMIT_AS stops an over-allocation is epic 35.24
-// T5's measurement.
-func sandboxMemoryLimitFor(goos string) (resource int, ulimitFlag string) {
+// darwin: none. This is the plan's gated outcome, measured on the
+// integration-macos job (macos-latest, PR #603): XNU rejects lowering either
+// limit with EINVAL, "ulimit: data seg size: cannot modify limit: Invalid
+// argument" for RLIMIT_DATA and "ulimit: virtual memory: cannot modify limit:
+// Invalid argument" for RLIMIT_AS. A wrapper that set either would fail
+// closed and refuse every darwin run, so darwin leaves memory unenforced and
+// Preflight refuses an operator-set memory cap there (epic 35.24 T4).
+func sandboxMemoryLimitFor(goos string) (resource int, ulimitFlag string, enforced bool) {
 	if goos == "darwin" {
-		return syscall.RLIMIT_AS, "-v"
+		return 0, "", false
 	}
-	return syscall.RLIMIT_DATA, "-d"
+	return syscall.RLIMIT_DATA, "-d", true
 }
 
 // sandboxGetrlimit is syscall.Getrlimit; tests replace it to present an
@@ -108,7 +112,8 @@ var sandboxGetrlimit = syscall.Getrlimit
 // The wrapper sits OUTSIDE sandbox-exec/bwrap, so the containment profile and
 // argv are unchanged, and the limit is inherited by everything inside.
 //
-// Only the memory cap is applied, on every unix host. MaxProcs is never set as
+// Only the memory cap is applied, and only where sandboxMemoryLimitEnforced:
+// on darwin cmd is left unchanged. MaxProcs is never set as
 // RLIMIT_NPROC: that limit counts every process (on linux, every thread) of
 // the invoking user across the host, not one run's tree, so a cap of 256
 // refuses every fork for a user whose desktop already runs that many, and it
@@ -132,7 +137,7 @@ var sandboxGetrlimit = syscall.Getrlimit
 // vanishes between this check and the exec, the shell's own error names $0,
 // which carries sandboxLimitDiagnosticPrefix, so the run is still a fault.
 func applySandboxResourceLimits(cmd *exec.Cmd, cfg OSLevelConfig) {
-	if cmd.Err != nil {
+	if !sandboxMemoryLimitEnforced || cmd.Err != nil {
 		return
 	}
 	if _, err := exec.LookPath(cmd.Path); err != nil {
