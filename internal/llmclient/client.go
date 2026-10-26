@@ -334,8 +334,10 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 
 // CompleteWithUsage is Complete plus the provider's token usage and the per-call
 // telemetry for the dispatch (one CallRecord per HTTP attempt, retries included).
-// Usage is the zero value when the provider omits the `usage` block. All error
-// paths return an empty UsageData, never partial counts. The CallRecord slice is
+// Usage is the zero value when the provider omits the `usage` block. Error paths
+// that fail before a response is parsed (transport, HTTP status, parse failure)
+// return an empty UsageData; the both-empty reply error carries the provider's
+// parsed usage, since the call was billed. The CallRecord slice is
 // surfaced on every path that reached dispatch — including error paths — so a
 // mid-flight timeout still reports its wire attempt; it is nil only when no HTTP
 // attempt was made (key/marshal failure, or a circuit-open fail-fast). A
@@ -352,7 +354,7 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		// returning the promoted chain-of-thought here would make an abandoned
 		// draft look like a real answer. Preserve the CallRecords (the call
 		// reached dispatch, per the contract above) but return empty UsageData,
-		// matching every other error path.
+		// leaving UsageData empty on this arm (the usage of a refused reply is not reported).
 		return "", UsageData{}, comp.CallRecords, ErrSalvagedReply
 	}
 	return comp.Content, comp.Usage, comp.CallRecords, err
@@ -474,7 +476,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 		// said nothing. Fail loudly so callers cannot mistake silence for a
 		// clean/empty review. Non-retryable — a re-request with the same budget
 		// would repeat the result.
-		return Completion{CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
+		return Completion{Usage: parsed.Usage, CallRecords: records, Truncated: truncated}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning)"))
 	}
 	return Completion{Content: content, Usage: parsed.Usage, CallRecords: records, Truncated: truncated, Salvaged: salvaged, SalvagedTruncated: salvaged && truncated, SalvagedOnStop: salvaged && !truncated, Reasoning: reasoningOf(ch.Message.ReasoningContent, ch.Message.Reasoning)}, nil
 }

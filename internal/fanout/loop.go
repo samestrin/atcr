@@ -236,6 +236,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			// attempt that reached the wire (Epic 4.11), so count it before exiting —
 			// a mid-flight timeout that did one round-trip must not undercount.
 			if resp != nil {
+				l.res.addUsage(resp.Usage)
 				l.res.addCallRecords(resp.CallRecords)
 			}
 			status := classifyStatus(err)
@@ -427,6 +428,7 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		// Count the final-answer call's wire attempt(s) even on error (Epic 4.11),
 		// mirroring the per-turn path above.
 		if resp != nil {
+			l.res.addUsage(resp.Usage)
 			l.res.addCallRecords(resp.CallRecords)
 		}
 		status := classifyStatus(err)
