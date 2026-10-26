@@ -894,6 +894,9 @@ type Registry struct {
 	// block (Epic 35.16.12), the same block ProjectConfig.ContextPrefetch carries
 	// at the project tier, which overrides it field by field. Absent means OFF.
 	ContextPrefetch *ContextPrefetchConfig `yaml:"context_prefetch,omitempty"`
+	// ThreatMap is the user-level (global) tier of the `threat_map` block (Epic
+	// 37.0); ProjectConfig.ThreatMap overrides it. See ThreatMapConfig.
+	ThreatMap *ThreatMapConfig `yaml:"threat_map,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0

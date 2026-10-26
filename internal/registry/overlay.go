@@ -47,6 +47,7 @@ var sharedSettingsKeys = []string{
 	"max_claim_bytes",
 	"max_prefetch_bytes",
 	"context_prefetch",
+	"threat_map",
 	"fail_on",
 	"consensus",
 }
