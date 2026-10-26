@@ -571,6 +571,123 @@ func TestInstallCommunityPersonas_MidRosterFailure_RollsBack(t *testing.T) {
 	assert.Empty(t, entries, "personas installed before the failure are rolled back (all-or-nothing)")
 }
 
+// plantingServer serves bodies like statusServer and fails failPath with HTTP
+// 500, but first runs plant from the server goroutine. That stands in for
+// another process writing into the personas dir while the roster install is
+// still in flight: after the guard check for the failing persona, before the
+// rollback. plant runs off the test goroutine, so it must use assert, not
+// require (t.FailNow is only valid on the test goroutine).
+func plantingServer(t *testing.T, bodies map[string]string, failPath string, plant func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == failPath {
+			plant()
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if body, ok := bodies[r.URL.Path]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestInstallCommunityPersonas_RollbackSparesFileAtFailingPersonaPath covers
+// epic 47.0 T2 / AC2: a file another process creates at a later persona's path
+// after its guard check and before the roster failure survives the rollback,
+// while the files this run wrote for the earlier personas are removed.
+func TestInstallCommunityPersonas_RollbackSparesFileAtFailingPersonaPath(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	dest := t.TempDir()
+	cYAML := filepath.Join(dest, "c.yaml")
+	cMD := filepath.Join(dest, "c.md")
+	srv := plantingServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/a.md":       communityUnitMD,
+			"/b.yaml":     communityUnitYAML,
+		},
+		"/c.yaml",
+		func() {
+			assert.NoError(t, os.WriteFile(cYAML, []byte("FOREIGN YAML"), 0o644))
+			assert.NoError(t, os.WriteFile(cMD, []byte("FOREIGN MD"), 0o644))
+		},
+	)
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"a", "b", "c"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to install community persona "c"`)
+
+	for path, want := range map[string]string{cYAML: "FOREIGN YAML", cMD: "FOREIGN MD"} {
+		got, rerr := os.ReadFile(path)
+		require.NoError(t, rerr, "a file this run never wrote survives the rollback: %s", path)
+		assert.Equal(t, want, string(got))
+	}
+	for _, name := range []string{"a.yaml", "a.md", "b.yaml"} {
+		assert.NoFileExists(t, filepath.Join(dest, name), "a file this run wrote is rolled back")
+	}
+}
+
+// TestInstallCommunityPersonas_RollbackSparesReplacedFiles covers the identity
+// check on paths this run did write: a path whose file another process has since
+// replaced (new inode) or rewritten in place (new mtime), or a path this run
+// never wrote at all (b is binding-only, so b.md was never created), is not
+// removed by the rollback. Only b.yaml, still the file this run wrote, goes.
+func TestInstallCommunityPersonas_RollbackSparesReplacedFiles(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"b","version":"1.0.0","description":"d","path":"b.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	dest := t.TempDir()
+	aYAML := filepath.Join(dest, "a.yaml")
+	aMD := filepath.Join(dest, "a.md")
+	bMD := filepath.Join(dest, "b.md")
+	srv := plantingServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/a.md":       communityUnitMD,
+			"/b.yaml":     communityUnitYAML,
+		},
+		"/c.yaml",
+		func() {
+			// Replace a.yaml with a new file (new inode).
+			tmp := filepath.Join(dest, "a.yaml.foreign")
+			assert.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
+			assert.NoError(t, os.Rename(tmp, aYAML))
+			// Rewrite a.md in place (same inode) with a different mtime.
+			if f, err := os.OpenFile(aMD, os.O_WRONLY|os.O_TRUNC, 0); assert.NoError(t, err) {
+				_, err = f.WriteString("FOREIGN A MD")
+				assert.NoError(t, err)
+				assert.NoError(t, f.Close())
+			}
+			old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+			assert.NoError(t, os.Chtimes(aMD, old, old))
+			// Create b.md, which this run never wrote.
+			assert.NoError(t, os.WriteFile(bMD, []byte("FOREIGN B MD"), 0o644))
+		},
+	)
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"a", "b", "c"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+
+	for path, want := range map[string]string{aYAML: "FOREIGN A YAML", aMD: "FOREIGN A MD", bMD: "FOREIGN B MD"} {
+		got, rerr := os.ReadFile(path)
+		require.NoError(t, rerr, "a file whose identity changed survives the rollback: %s", path)
+		assert.Equal(t, want, string(got))
+	}
+	assert.NoFileExists(t, filepath.Join(dest, "b.yaml"), "the file this run wrote is rolled back")
+}
+
 // --- AC 07-01: index-derived community roster (TD-011) ----------------------
 
 // communityPinNames returns the sorted <name>s of the <name>.yaml units installed

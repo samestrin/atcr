@@ -114,20 +114,35 @@ func (b *DockerBackend) Name() string { return "docker" }
 // since that value is a context deadline and never appears in the docker run argv.
 func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
+// writableSeedCopy is the fixed shell text that seeds the writable /work tmpfs
+// from the read-only /src snapshot. /work is memory-backed and its pages count
+// against the container's --memory cgroup, so the copy skips the heavy
+// directories a validate command does not need: .git, node_modules, vendor and
+// .terraform, at any depth. Build outputs (target/, dist/, build/) are copied.
+// Both BusyBox tar (alpine) and GNU tar (golang) match an unanchored --exclude
+// against every path component.
+//
+// The copy stays fail-closed (exit 125) without pipefail, which is not portable
+// across those images: the producer's exit status is written to fd 3, which is
+// the command substitution's capture, and a failing extractor appends "x", so
+// _atcr_seed is exactly "0" only when both sides of the pipe succeeded.
+const writableSeedCopy = `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed`
+
 // writableSetupExec is the fixed `sh -c` script text for the Writable:true
 // Command-mode wrap. It seeds the writable /work tmpfs from the read-only /src
-// snapshot, cds into it, then execs the ORIGINAL command via positional "$@"
-// expansion. It contains NO data from spec.Command — the command tokens are passed
-// as distinct trailing argv elements after "--", never interpolated into this
-// string, so RunSpec.Command's "no shell interpolation" invariant holds for the
-// wrapped path (a metacharacter in a command token cannot be re-tokenized here).
-const writableSetupExec = `cp -R /src/. /work/ || exit 125; cd /work && exec "$@"`
+// snapshot (writableSeedCopy), cds into it, then execs the ORIGINAL command via
+// positional "$@" expansion. It contains NO data from spec.Command — the command
+// tokens are passed as distinct trailing argv elements after "--", never
+// interpolated into this string, so RunSpec.Command's "no shell interpolation"
+// invariant holds for the wrapped path (a metacharacter in a command token cannot
+// be re-tokenized here).
+const writableSetupExec = writableSeedCopy + `; cd /work && exec "$@"`
 
 // writableSetupPrefix is the fixed line prepended to a Writable:true Script-mode
-// body before it is streamed to `sh -s` over stdin. It seeds /work from /src and
-// cds into it, then the user's script body runs verbatim after it. It carries no
-// data from spec.Script and is stdin DATA, never argv.
-const writableSetupPrefix = "cp -R /src/. /work/ || exit 125; cd /work\n"
+// body before it is streamed to `sh -s` over stdin. It seeds /work from /src
+// (writableSeedCopy) and cds into it, then the user's script body runs verbatim
+// after it. It carries no data from spec.Script and is stdin DATA, never argv.
+const writableSetupPrefix = writableSeedCopy + "; cd /work\n"
 
 // dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
 // hardening flags can be asserted in a unit test without a daemon. The script
@@ -174,8 +189,8 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// /work, and /work is backed by an ephemeral, memory-backed tmpfs. The tmpfs
 		// gives /work real writable backing under the global --read-only rootfs,
 		// mirroring the /scratch tmpfs above; it — and every write into it — dies
-		// with the --rm container, so no host file is ever mutated. The cp -R setup
-		// step that seeds /work from /src is injected in a later story.
+		// with the --rm container, so no host file is ever mutated. The seed-copy
+		// step that fills /work from /src is writableSeedCopy.
 		args = append(args, "-v", spec.SnapshotDir+":/src:ro")
 		// mode=1777 for the same reason as /scratch above: the non-root sandbox user
 		// must be able to write the seeded copy into /work regardless of the daemon's

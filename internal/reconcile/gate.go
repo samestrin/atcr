@@ -313,6 +313,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 
 	res := Reconcile(sources, opts)
 
+	// Merge the deterministic SAST findings (epic 50.0) before any stamp runs,
+	// so they get path validation, ids and ignore rules like every LLM finding,
+	// and reach findings.json — the Fixer's only input — even when no reviewer
+	// found anything.
+	if err := mergeSAST(&res, reviewDir); err != nil {
+		return Result{}, err
+	}
+
 	// Flag findings whose file paths do not exist under the reviewed repo root
 	// (Epic 5.0). The extracted library Merged no longer carries path-validation
 	// fields, so stamping runs over the JSONFinding records, which are then cached
