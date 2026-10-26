@@ -1706,3 +1706,23 @@ func TestPersonasList_DetailSameRunIDOrdersByReason(t *testing.T) {
 	}
 	assert.Less(t, strings.Index(out, first), strings.Index(out, second))
 }
+
+func TestPersonasList_DetailRosterLookupWarning(t *testing.T) {
+	isolate(t)
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{})
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.Symlink("personas", ".atcr/personas")) // self-loop -> ELOOP
+	out, stderr, err := executeSplit(t, "personas", "list", "--scores", "--detail", "bruce")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "warning:")
+	assert.Contains(t, out, "No excluded cases for bruce")
+}
+
+func TestPersonasExcludedCases_DefaultDirErrorSurfaces(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "")
+	_, err := personasExcludedCases()
+	require.Error(t, err)
+}
