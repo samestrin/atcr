@@ -3,8 +3,10 @@
 package sandbox
 
 import (
+	"errors"
 	"log/slog"
 	"os/exec"
+	"runtime"
 )
 
 // configureSandboxProcessGroup is a no-op on non-unix platforms: there is no
@@ -40,3 +42,9 @@ func (b *OSLevelBackend) openSandboxCgroup(_ *slog.Logger, _ OSLevelConfig, _ st
 }
 
 func (*sandboxCgroup) remove() error { return nil }
+
+// hostCapSupport reports both caps unenforceable: there is no rlimit or cgroup
+// here, and toolPath refuses these platforms before Preflight asks.
+func (b *OSLevelBackend) hostCapSupport() osLevelCapSupport {
+	return osLevelCapSupportFor(runtime.GOOS, false, errors.New("cgroup v2 is linux-only"))
+}

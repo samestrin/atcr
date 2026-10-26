@@ -2108,6 +2108,151 @@ exit 65`)
 	assert.Empty(t, b.pinnedTool)
 }
 
+// withCapSupport injects what the host can enforce, so the cap check is driven
+// from any host without a delegated cgroup or a darwin kernel.
+func withCapSupport(b *OSLevelBackend, support osLevelCapSupport) *OSLevelBackend {
+	b.capSupport = func() osLevelCapSupport { return support }
+	return b
+}
+
+// preflightWithLogs runs Preflight with a captured logger.
+func preflightWithLogs(t *testing.T, b *OSLevelBackend) (string, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	err := b.Preflight(ctx)
+	return buf.String(), err
+}
+
+func TestOSLevelBackend_Preflight_RefusesAnOperatorSetCapTheHostCannotEnforce(t *testing.T) {
+	// Epic 35.24 T4 / AC5: an operator who set sandbox.memory or
+	// sandbox.pids_limit asked for a bound; running without it would be the
+	// silent non-enforcement the epic exists to end. Preflight refuses, with a
+	// named error, before any spawn: the marker proves no trivial run happened.
+	cases := []struct {
+		name         string
+		configure    func(*OSLevelConfig)
+		support      osLevelCapSupport
+		names, omits string
+	}{
+		{
+			name:      "pids_limit with no per-run PID mechanism (darwin, or linux without a cgroup)",
+			configure: func(cfg *OSLevelConfig) { cfg.MaxProcs, cfg.MaxProcsSet = 64, true },
+			support:   osLevelCapSupport{procsGap: "darwin has no per-run process limit"},
+			names:     "sandbox.pids_limit", omits: "sandbox.memory",
+		},
+		{
+			name:      "memory with no memory mechanism (darwin)",
+			configure: func(cfg *OSLevelConfig) { cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = 1<<30, true },
+			support:   osLevelCapSupport{memoryGap: "darwin rejects every memory rlimit"},
+			names:     "sandbox.memory", omits: "sandbox.pids_limit",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "trivial-run-happened")
+			b := withCapSupport(newFakeOSLevelBackendConfigured(t,
+				fmt.Sprintf("touch %q\n%s", marker, fakeOSLevelContainingExecBody()), tc.configure), tc.support)
+
+			err := b.Preflight(context.Background())
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrOSLevelCapUnenforceable)
+			assert.Contains(t, err.Error(), tc.names, "the refusal must name the operator's key")
+			assert.NotContains(t, err.Error(), tc.omits, "an enforceable cap must not be named")
+			assert.NoFileExists(t, marker, "the refusal comes before any spawn")
+			assert.Empty(t, b.pinnedTool, "a refused preflight must not pin anything")
+		})
+	}
+}
+
+func TestOSLevelBackend_Preflight_RefusalNamesEveryUnenforceableOperatorCapAndTheReason(t *testing.T) {
+	b := withCapSupport(newFakeOSLevelBackendConfigured(t, fakeOSLevelContainingExecBody(), func(cfg *OSLevelConfig) {
+		cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = 1<<30, true
+		cfg.MaxProcs, cfg.MaxProcsSet = 64, true
+	}), osLevelCapSupport{memoryGap: "no memory rlimit here", procsGap: "no pids.max here"})
+
+	err := b.Preflight(context.Background())
+	require.ErrorIs(t, err, ErrOSLevelCapUnenforceable)
+	for _, want := range []string{"sandbox.memory", "no memory rlimit here", "sandbox.pids_limit", "no pids.max here"} {
+		assert.Contains(t, err.Error(), want)
+	}
+}
+
+func TestOSLevelBackend_Preflight_AnUnenforceableDefaultOnlyWarns(t *testing.T) {
+	// The board's ruling (EST-1340, Q3): a default the host cannot enforce is
+	// not a refusal, or every darwin host would lose the fallback without the
+	// operator having set anything. It is a warning that names the cap.
+	b := withCapSupport(newFakeOSLevelBackend(t, fakeOSLevelContainingExecBody()),
+		osLevelCapSupport{memoryGap: "no memory rlimit here", procsGap: "no pids.max here"})
+
+	logs, err := preflightWithLogs(t, b)
+	require.NoError(t, err, "logs: %s", logs)
+	assert.NotEmpty(t, b.pinnedTool, "a warn-only preflight still succeeds")
+	for _, want := range []string{"sandbox.memory", "no memory rlimit here", "sandbox.pids_limit", "no pids.max here"} {
+		assert.Contains(t, logs, want)
+	}
+	assert.Contains(t, logs, "level=WARN")
+	assert.Equal(t, 2, strings.Count(logs, "cap=sandbox."), "one warning per unenforceable default: %s", logs)
+}
+
+func TestOSLevelBackend_Preflight_WarnsForADefaultWhileEnforcingTheOperatorsCap(t *testing.T) {
+	// linux with no delegated cgroup: memory is enforced by RLIMIT_DATA, the
+	// PID cap is not. The operator set only memory, so the run proceeds and the
+	// default PID cap is named in a warning.
+	b := withCapSupport(newFakeOSLevelBackendConfigured(t, fakeOSLevelContainingExecBody(), func(cfg *OSLevelConfig) {
+		cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = 1<<30, true
+	}), osLevelCapSupport{procsGap: "no pids.max here"})
+
+	logs, err := preflightWithLogs(t, b)
+	require.NoError(t, err, "logs: %s", logs)
+	assert.Equal(t, 1, strings.Count(logs, "cap=sandbox."), logs)
+	assert.Contains(t, logs, "cap=sandbox.pids_limit")
+	assert.NotContains(t, logs, "cap=sandbox.memory")
+}
+
+func TestOSLevelBackend_Preflight_EnforceableCapsNeitherRefuseNorWarn(t *testing.T) {
+	b := withCapSupport(newFakeOSLevelBackendConfigured(t, fakeOSLevelContainingExecBody(), func(cfg *OSLevelConfig) {
+		cfg.MaxMemoryBytes, cfg.MaxMemoryBytesSet = 1<<30, true
+		cfg.MaxProcs, cfg.MaxProcsSet = 64, true
+	}), osLevelCapSupport{})
+
+	logs, err := preflightWithLogs(t, b)
+	require.NoError(t, err, "logs: %s", logs)
+	assert.NotContains(t, logs, "cap=sandbox.")
+}
+
+func TestOSLevelCapSupportFor_PerPlatform(t *testing.T) {
+	// The default seam's decision, driven from either host. darwin has no
+	// per-run PID limit at all (RLIMIT_NPROC is per user, EST-1340 Q2) and no
+	// memory rlimit XNU accepts (T2's measurement), so both caps are gaps there
+	// whatever the cgroup probe said. linux enforces memory through the cgroup
+	// or RLIMIT_DATA, and the PID cap only through a cgroup.
+	noCgroup := errors.New("no delegated cgroup")
+	cases := []struct {
+		name                string
+		goos                string
+		memoryRlimit        bool
+		cgroupErr           error
+		memoryGap, procsGap bool
+	}{
+		{"darwin", "darwin", false, noCgroup, true, true},
+		{"darwin even if a probe claimed a cgroup", "darwin", true, nil, true, true},
+		{"linux with a cgroup", "linux", true, nil, false, false},
+		{"linux without a cgroup", "linux", true, noCgroup, false, true},
+		{"linux without a cgroup or a memory rlimit", "linux", false, noCgroup, true, true},
+		{"unsupported platform", "windows", false, noCgroup, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := osLevelCapSupportFor(tc.goos, tc.memoryRlimit, tc.cgroupErr)
+			assert.Equal(t, tc.memoryGap, got.memoryGap != "", "memory gap: %q", got.memoryGap)
+			assert.Equal(t, tc.procsGap, got.procsGap != "", "procs gap: %q", got.procsGap)
+		})
+	}
+	assert.Contains(t, osLevelCapSupportFor("linux", true, noCgroup).procsGap, noCgroup.Error(),
+		"the probe's own failure is the reason a linux PID cap is unenforceable")
+}
+
 func TestOSLevelBackend_Preflight_DoesNotQueueBehindTheConcurrencyCap(t *testing.T) {
 	// Preflight's verification run goes through runWith, which acquires the
 	// MaxConcurrent semaphore. Preflight is the readiness gate a resolver blocks
