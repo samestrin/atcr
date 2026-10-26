@@ -225,3 +225,28 @@ func TestPrepareReview_SASTNoFindingsAddsNoBlock(t *testing.T) {
 		assert.NotRegexp(t, sastFenceRe, s.Primary.Prompt)
 	}
 }
+
+// The default runner is T2's Semgrep wrapper; with no semgrep on PATH an
+// enabled review still completes and the notice names the missing binary.
+func TestPrepareReview_DefaultRunnerIsSemgrepAndFailsOpenWhenAbsent(t *testing.T) {
+	r, err := newSASTRunner()
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "semgrep", r.Name())
+
+	repo, base, head := initRepo(t)
+	gitBin, err := exec.LookPath("git")
+	require.NoError(t, err)
+	binDir := t.TempDir()
+	require.NoError(t, os.Symlink(gitBin, filepath.Join(binDir, "git")))
+	t.Setenv("PATH", binDir)
+
+	var prep *PreparedReview
+	stderr := captureStderr(t, func() {
+		prep, err = PrepareReview(context.Background(), sastEnabledConfig("http://unused"), reviewReq(repo, repo, base, head))
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+	assert.Contains(t, stderr, "atcr: notice: SAST pre-filter skipped")
+	assert.Contains(t, stderr, "binary not found on PATH")
+}
