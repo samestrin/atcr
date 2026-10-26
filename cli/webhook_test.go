@@ -291,7 +291,7 @@ func TestWebhookCmd_EndToEnd_SignedMentionGetsThreadReply(t *testing.T) {
 func TestWebhookCmd_ReviewRunsInPRWorktreeWithOperatorConfig(t *testing.T) {
 	isolate(t)
 	checkout := whPRFixture(t)
-	writeWebhookConfig(t, whConfig(checkout))
+	writeWebhookConfig(t, "agents: [bruce]\n"+whConfig(checkout))
 	slackSrv, posts := fakeSlack(t)
 	setWebhookEnv(t, slackSrv.URL)
 	project, err := os.Getwd()
@@ -299,7 +299,7 @@ func TestWebhookCmd_ReviewRunsInPRWorktreeWithOperatorConfig(t *testing.T) {
 
 	var gotRoot, gotContent string
 	orig := webhookReviewerFn
-	webhookReviewerFn = func(root string) webhook.Reviewer {
+	webhookReviewerFn = func(_ context.Context, root string) webhook.Reviewer {
 		gotRoot = root
 		return func(_ context.Context, dir string) ([]reconcile.Finding, error) {
 			b, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
@@ -334,7 +334,7 @@ func TestWebhookCmd_RefusesWithoutWebhookBlock(t *testing.T) {
 
 func TestWebhookCmd_RefusesWithoutSlackBlock(t *testing.T) {
 	isolate(t)
-	writeWebhookConfig(t, "webhook:\n  repos:\n    acme/widget: /nonexistent/checkout\n")
+	writeWebhookConfig(t, "agents: [bruce]\nwebhook:\n  repos:\n    acme/widget: /nonexistent/checkout\n")
 	root := NewRootCmd()
 	root.SetArgs([]string{"webhook"})
 	root.SetOut(io.Discard)
@@ -350,7 +350,7 @@ func TestWebhookCmd_MissingCredentialNamesTheVariable(t *testing.T) {
 	for _, unset := range []string{whSigningSecretEnv, whBotTokenEnv} {
 		t.Run(unset, func(t *testing.T) {
 			isolate(t)
-			writeWebhookConfig(t, whConfig("/nonexistent/checkout"))
+			writeWebhookConfig(t, "agents: [bruce]\n"+whConfig("/nonexistent/checkout"))
 			setWebhookEnv(t, "http://127.0.0.1:1")
 			t.Setenv(unset, "")
 			root := NewRootCmd()
@@ -371,9 +371,41 @@ func TestWebhookCmd_MissingCredentialNamesTheVariable(t *testing.T) {
 // git credentials.
 func TestWebhookCmd_GitHubTokenIsOptional(t *testing.T) {
 	isolate(t)
-	writeWebhookConfig(t, whConfig("/nonexistent/checkout"))
+	writeWebhookConfig(t, "agents: [bruce]\n"+whConfig("/nonexistent/checkout"))
 	setWebhookEnv(t, "http://127.0.0.1:1")
 	t.Setenv(whGitHubTokenEnv, "")
 	_, _, stop := startWebhook(t)
 	require.NoError(t, stop())
+}
+
+type whCtxKey struct{}
+
+// TestJobContext_KeepsBaseValuesAndJobDeadline checks the review context
+// carries the command's values but ends with the job: at its deadline as
+// DeadlineExceeded, so the reply says "timed out", and on its cancellation.
+func TestJobContext_KeepsBaseValuesAndJobDeadline(t *testing.T) {
+	base, cancelBase := context.WithCancel(context.WithValue(context.Background(), whCtxKey{}, "v"))
+	cancelBase() // the command context's own cancellation does not reach a job
+
+	job, cancelJob := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelJob()
+	ctx, cancel := jobContext(base, job)
+	defer cancel()
+	assert.Equal(t, "v", ctx.Value(whCtxKey{}))
+	require.NoError(t, ctx.Err())
+	<-ctx.Done()
+	assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+
+	job2, cancelJob2 := context.WithCancel(context.Background())
+	ctx2, cancel2 := jobContext(base, job2)
+	defer cancel2()
+	_, hasDeadline := ctx2.Deadline()
+	assert.False(t, hasDeadline)
+	cancelJob2()
+	select {
+	case <-ctx2.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("job cancellation did not reach the review context")
+	}
+	assert.ErrorIs(t, ctx2.Err(), context.Canceled)
 }
