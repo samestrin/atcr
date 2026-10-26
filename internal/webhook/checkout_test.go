@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +235,55 @@ func TestWithPRCheckout_TwoJobsOnOnePRDoNotCollide(t *testing.T) {
 		})
 	})
 	require.NoError(t, err)
+	assertNothingLeft(t, f)
+}
+
+// TestWithPRCheckout_RunsNoHook plants post-checkout and reference-transaction
+// hooks in the operator's checkout. Run during a job they would execute against
+// the pull request's files (post-checkout runs inside the new worktree), so a
+// hook that builds or tests would run untrusted code with the daemon's rights.
+func TestWithPRCheckout_RunsNoHook(t *testing.T) {
+	f := newPRFixture(t)
+	marker := filepath.Join(filepath.Dir(f.scratch), "hook-ran")
+	hooks := filepath.Join(f.checkout, ".githooks")
+	require.NoError(t, os.MkdirAll(hooks, 0o755))
+	for _, name := range []string{"post-checkout", "reference-transaction"} {
+		script := "#!/bin/sh\necho " + name + " >> '" + marker + "'\n"
+		require.NoError(t, os.WriteFile(filepath.Join(hooks, name), []byte(script), 0o755))
+	}
+	fixtureGit(t, f.checkout, "config", "core.hooksPath", ".githooks")
+
+	err := WithPRCheckout(context.Background(), f.repos(), "acme/widget", 7, f.scratch, func(context.Context, *Checkout) error {
+		return nil
+	})
+	require.NoError(t, err)
+	assert.NoFileExists(t, marker, "a hook ran during the job")
+}
+
+// TestWithPRCheckout_CancelMidSetupLeavesNoBranch cancels the job after the PR
+// branch is fetched and just as its worktree is added: the branch already exists
+// and must still be deleted.
+func TestWithPRCheckout_CancelMidSetupLeavesNoBranch(t *testing.T) {
+	f := newPRFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	orig := commandContextFn
+	t.Cleanup(func() { commandContextFn = orig })
+	var branchAtCancel string
+	commandContextFn = func(c context.Context, arg ...string) *exec.Cmd {
+		if slices.Contains(arg, "worktree") && slices.Contains(arg, "add") && ctx.Err() == nil {
+			branchAtCancel = fixtureGit(t, f.checkout, "for-each-ref", "--format=%(refname)", "refs/heads/"+branchPrefix)
+			cancel()
+		}
+		return orig(c, arg...)
+	}
+	called := false
+	err := WithPRCheckout(ctx, f.repos(), "acme/widget", 7, f.scratch, func(context.Context, *Checkout) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, called)
+	assert.NotEmpty(t, branchAtCancel, "the branch should exist when the cancel lands")
 	assertNothingLeft(t, f)
 }
