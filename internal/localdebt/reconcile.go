@@ -203,14 +203,16 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		// IsFailing): out-of-scope findings and refuted verdicts never persist,
 		// so the local TD backlog matches what the gate considers real.
 		// Path-warned findings are also skipped: a file that did not resolve under
-		// the repo root is treated as a hallucinated path (Epic 5.0).
+		// the repo root is treated as a hallucinated path (Epic 5.0). Only the
+		// anchored File counts: a sibling that did not resolve has already had its
+		// marker cleared, and the finding still stands at File:Line (Epic 35.16.15).
 		if strings.ToLower(strings.TrimSpace(f.Category)) == reclib.CategoryOutOfScope {
 			continue
 		}
 		if f.Verification != nil && strings.ToLower(strings.TrimSpace(f.Verification.Verdict)) == reclib.VerdictRefuted {
 			continue
 		}
-		if f.PathWarning != "" {
+		if reconcile.AnchoredPathWarning(f.PathWarning) != "" {
 			continue
 		}
 

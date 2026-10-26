@@ -330,7 +330,9 @@ atcr personas search --provider local
 
 You can also search by model (`gemma`, `qwen`, or `llama`), but note that `qwen` returns both the local `orson` persona and the cloud `quinn` persona, which share the same vendor token. Use `--provider local` to disambiguate.
 
-**Set it up entirely offline:**
+**One command: `atcr quickstart --preset local`.** It makes no network call and asks for no key. It writes `.atcr/` with `gerald`, `orson` and `liam` as the roster (their prompts come from the copies built into atcr, never fetched), sets `telemetry: false` in `.atcr/config.yaml`, and writes the `local` provider and the three agents shown below to `~/.config/atcr/registry.yaml`, bound to the Ollama tags `gemma3:27b`, `qwen3:30b-a3b` and `llama3.3:70b`. As with the default quickstart, an existing registry is never overwritten without `--force`: the block is printed for you to merge instead, and an existing `.atcr/config.yaml` keeps its roster (telemetry is still switched off in it). It scaffolds no CI workflow, since a hosted runner has no Ollama server to reach. Then pull the models and export the placeholder key as in steps 1–3 below, and remove from the roster any persona whose model you do not pull.
+
+**Or set it up by hand, entirely offline:**
 
 ```bash
 # 1. Install and start a local model server
@@ -362,7 +364,7 @@ agents:
 
 > **`api_key_env` placeholder requirement.** atcr requires every provider to declare `api_key_env`, and it errors at invoke time if that env var is unset or empty — even for a local endpoint that needs no real key. Export any non-empty placeholder value (`export OLLAMA_API_KEY=local-no-key-needed`) so the review can run. The value is never sent anywhere your `base_url` does not point; with `base_url` on `localhost`, nothing leaves the machine.
 
-Then run a review as usual — `gerald`, `orson`, and `liam` behave like any other reviewer persona, only their traffic terminates at your local server instead of a cloud router. These personas are never part of the `atcr quickstart` funnel; they are a deliberate opt-in.
+Then run a review as usual — `gerald`, `orson`, and `liam` behave like any other reviewer persona, only their traffic terminates at your local server instead of a cloud router. These personas are never part of the default `atcr quickstart` funnel; they are a deliberate opt-in through `--preset local` or the manual setup.
 
 ## Quick walkthrough
 
