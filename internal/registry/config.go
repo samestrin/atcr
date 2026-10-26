@@ -426,6 +426,17 @@ type VerifyConfig struct {
 	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
 }
 
+// SASTConfig is the optional project-level `sast` block (Epic 50.0): the
+// deterministic scanner pass PrepareReview runs over the changed files before
+// any reviewer is invoked. Absent, or anything short of `enabled: true`, is OFF.
+type SASTConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the scanner pass is on. Safe on a nil receiver, so
+// an absent block reads as off.
+func (c *SASTConfig) IsEnabled() bool { return c != nil && c.Enabled }
+
 // PayloadEscalationConfig is the optional registry-level per-file payload
 // escalation block (Epic 35.1). It tunes when the payload builder promotes an
 // individual file above the run's configured payload mode: ChurnRatio,

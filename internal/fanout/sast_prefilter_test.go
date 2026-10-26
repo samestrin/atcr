@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -168,16 +169,19 @@ func TestRunReview_SASTUnavailableFailsOpenWithANotice(t *testing.T) {
 // in the diff.
 func TestPrepareReview_SASTBlockPassesTheSecretGuard(t *testing.T) {
 	repo, base, head := initRepo(t)
-	t.Setenv("PATH", t.TempDir()) // built-in ruleset decides, deterministically
+	// Hide gitleaks so the built-in ruleset decides deterministically, but keep
+	// git, which PrepareReview needs to build the payload.
+	gitBin, err := exec.LookPath("git")
+	require.NoError(t, err)
+	binDir := t.TempDir()
+	require.NoError(t, os.Symlink(gitBin, filepath.Join(binDir, "git")))
+	t.Setenv("PATH", binDir)
 	leaky := strings.Replace(sastFixture, "call result is never checked", "hardcoded key "+guardAWSKey, 1)
 	withSASTRunner(t, &fakeSASTRunner{sarif: leaky}, nil)
 
 	cfg := sastEnabledConfig("http://unused")
 	cfg.Settings.SecretGuard = "redact"
-	var (
-		prep *PreparedReview
-		err  error
-	)
+	var prep *PreparedReview
 	stderr := captureStderr(t, func() {
 		prep, err = PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
 	})

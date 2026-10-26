@@ -153,6 +153,21 @@ Most shared settings have an `atcr review` CLI override, but three flag names di
 `--timeout` takes bare seconds (no unit suffix, matching `timeout_secs`).
 `review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, `max_claim_bytes`, `max_prefetch_bytes`, `cache_max_bytes`, and `context_prefetch` resolve at the registry and project tiers only — there is no CLI flag for them.
 
+## Deterministic SAST pre-filter (`sast`)
+
+An optional project-level block runs a deterministic scanner over the changed files before any reviewer is called (Epic 50.0). It is **off by default**; turn it on in `.atcr/config.yaml`:
+
+```yaml
+sast:
+  enabled: true
+```
+
+- **What it scans.** The changed files of a range review (`atcr review`), as they are in the working tree. A deleted file or a symlink is skipped. `--diff-file` and `--all`/`--dir` reviews do not run it.
+- **What reviewers see.** Each finding (file, line, rule, message) is listed in a `## Deterministic SAST Findings` section at the top of every reviewer's payload, fenced by a tag with a random name chosen per review and marked as untrusted scanner output. At most 25 findings are listed, each message cut to 300 bytes; the rest are counted. A finding whose path leaves the repository (`..`, absolute, or through a symlink) is dropped before it gets that far. The section passes the [`secret_guard`](security.md#payload-egress-the-secret_guard-scan) scan like the diff does, and a warning names it as `SAST findings`.
+- **Scanner backend.** No scanner is wired in yet; until the Semgrep runner lands, `enabled: true` prints the notice below and the review runs without the section.
+- **It fails open.** A missing scanner, a scanner error or crash, or a scan that runs past its fixed 2-minute limit prints `atcr: notice: SAST pre-filter skipped (<reason>); the review continues without deterministic findings` on stderr, and the review runs as if the block were off.
+- **Cache.** The fence tag changes on every review, so a review with SAST findings never reuses a cached reviewer response.
+
 ## Similarity retrieval (`context_prefetch.semantic`)
 
 The Context Definitions section built by pre-fetching (`max_prefetch_bytes`) finds code related to the change **by reference** — a call site, a consumer. An optional second tier finds code related only **by resemblance**: a sibling handler that needs the same guard, a second place that implements the same invariant by hand. That tier is similarity retrieval (Epic 35.16.12): atcr embeds the declaration text of each changed symbol and queries an external vector index for the chunks nearest to it.

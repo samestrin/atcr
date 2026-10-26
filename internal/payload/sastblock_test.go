@@ -67,7 +67,8 @@ func TestSASTBlock_LongMessageIsTruncated(t *testing.T) {
 	long := strings.Repeat("a", maxSASTMessageBytes*3)
 	block := SASTBlock([]sast.Finding{{File: "x.go", Line: 1, Rule: "r", Message: long}}, "sast-0011223344556677")
 	assert.NotContains(t, block, long)
-	assert.Less(t, len(block), maxSASTMessageBytes*2)
+	assert.Less(t, len(block), len(long), "the message is cut, not carried whole")
+	assert.Contains(t, block, strings.Repeat("a", maxSASTMessageBytes)+"…")
 }
 
 func TestNewSASTSentinel_IsRandomAndTagShaped(t *testing.T) {
