@@ -42,7 +42,7 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+		if d.IsDir() || !strings.HasSuffix(path, ".md") || isNonReviewerTemplate(path) {
 			return nil
 		}
 		// checked++ BEFORE the read, and an unreadable file aborts the walk
@@ -179,7 +179,7 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+		if d.IsDir() || !strings.HasSuffix(path, ".md") || isNonReviewerTemplate(path) {
 			return nil
 		}
 		body, readErr := fs.ReadFile(files, path)

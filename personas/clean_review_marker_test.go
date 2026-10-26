@@ -38,7 +38,7 @@ func TestEveryPersona_InstructsTheCleanReviewMarker(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".md") {
+			if d.IsDir() || !strings.HasSuffix(path, ".md") || isNonReviewerTemplate(path) {
 				return nil
 			}
 			body, readErr := fs.ReadFile(src.fsys, path)
