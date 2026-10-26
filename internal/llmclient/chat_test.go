@@ -158,6 +158,14 @@ func TestMessage_PartsMarshalAsContentArray(t *testing.T) {
 		`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}`, string(b))
 }
 
+// Epic 36.0 T1: marshaling a message with both Content and Parts set fails
+// outside Chat too, rather than silently picking one.
+func TestMessage_ContentAndPartsMarshalErrors(t *testing.T) {
+	s := "text"
+	_, err := json.Marshal(Message{Role: "user", Content: &s, Parts: []ContentPart{TextPart("text")}})
+	assert.ErrorIs(t, err, ErrContentAndParts)
+}
+
 // Epic 36.0 T1: the parts array reaches the wire through Chat, and the other
 // messages in the same request keep their plain-string content.
 func TestChat_PartsReachRequestBody(t *testing.T) {
