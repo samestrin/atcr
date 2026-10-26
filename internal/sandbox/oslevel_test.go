@@ -71,9 +71,10 @@ func TestOSLevelBackendName_MatchesFallbackConfigValue(t *testing.T) {
 }
 
 func TestDefaultOSLevelConfig_BoundsAreTheDocumentedValues(t *testing.T) {
-	// Scoped deliberately: this asserts the three bounds OSLevelConfig actually
-	// carries, NOT that the defaults are "safe" in the package-contract sense —
-	// there are no memory/CPU/PID/uid caps to assert (TD-001).
+	// Scoped deliberately: this asserts the three run bounds, NOT that the
+	// defaults are "safe" in the package-contract sense. The memory and PID caps
+	// are pinned separately (TestDefaultOSLevelConfig_ResourceCapsAreTheDocumentedValues);
+	// there are no CPU or uid caps to assert.
 	//
 	// Pinned to the exact values, not positivity: under assert.Positive a change
 	// from 60s to 1ns or from 64 KiB to 1 byte stayed green, and both are
@@ -134,6 +135,94 @@ func TestNewOSLevelBackend_PreservesExplicitConfig(t *testing.T) {
 	assert.Equal(t, 7*time.Second, b.cfg.Timeout)
 	assert.Equal(t, 99, b.cfg.MaxOutputBytes)
 	assert.Equal(t, 2, b.cfg.MaxConcurrent)
+}
+
+func TestDefaultOSLevelConfig_ResourceCapsAreTheDocumentedValues(t *testing.T) {
+	// Pinned to the exact values for the same reason as the three bounds above,
+	// and to DockerConfig's --memory 512m / --pids-limit 256 so the fallback
+	// caps a run the same as the backend it stands in for. A default is not an
+	// operator setting: Preflight refuses only operator-set caps it cannot
+	// enforce, so a default MUST NOT arrive flagged as set.
+	cfg := DefaultOSLevelConfig()
+	assert.Equal(t, int64(512*1024*1024), cfg.MaxMemoryBytes)
+	assert.Equal(t, 256, cfg.MaxProcs)
+	assert.False(t, cfg.MaxMemoryBytesSet)
+	assert.False(t, cfg.MaxProcsSet)
+}
+
+func TestNewOSLevelBackend_ZeroResourceCapsMeanDefaultNotUnbounded(t *testing.T) {
+	// Zero is pinned as "use the default", never "unbounded": a zero cap that
+	// reached the spawn path would leave model-authored code with the host's
+	// whole memory and process table, which is the gap this field closes. The
+	// struct-literal path (no DefaultOSLevelConfig) is the one that produces it.
+	def := DefaultOSLevelConfig()
+	b := NewOSLevelBackend(OSLevelConfig{})
+	require.NotNil(t, b)
+
+	assert.Equal(t, def.MaxMemoryBytes, b.cfg.MaxMemoryBytes)
+	assert.Equal(t, def.MaxProcs, b.cfg.MaxProcs)
+	assert.False(t, b.cfg.MaxMemoryBytesSet)
+	assert.False(t, b.cfg.MaxProcsSet)
+}
+
+func TestNewOSLevelBackend_FloorsNonPositiveResourceCaps(t *testing.T) {
+	// Floored exactly like Timeout/MaxOutputBytes/MaxConcurrent. A floored
+	// value is the default, not what the operator asked for, so the flag is
+	// cleared with it: otherwise Preflight would refuse a host for failing to
+	// enforce a cap the operator never actually got.
+	def := DefaultOSLevelConfig()
+	for _, tc := range []struct {
+		name  string
+		mem   int64
+		procs int
+	}{
+		{"zero", 0, 0},
+		{"negative", -1, -5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewOSLevelBackend(OSLevelConfig{
+				MaxMemoryBytes:    tc.mem,
+				MaxMemoryBytesSet: true,
+				MaxProcs:          tc.procs,
+				MaxProcsSet:       true,
+			})
+			require.NotNil(t, b)
+
+			assert.Equal(t, def.MaxMemoryBytes, b.cfg.MaxMemoryBytes)
+			assert.Equal(t, def.MaxProcs, b.cfg.MaxProcs)
+			assert.False(t, b.cfg.MaxMemoryBytesSet)
+			assert.False(t, b.cfg.MaxProcsSet)
+		})
+	}
+}
+
+func TestNewOSLevelBackend_OperatorSetCapIsDistinguishableFromDefault(t *testing.T) {
+	// An operator who writes down exactly the default value still set it, and
+	// must still be refused (T4) on a host that cannot enforce it, so the
+	// distinction cannot be made by comparing against DefaultOSLevelConfig.
+	def := DefaultOSLevelConfig()
+
+	cfg := DefaultOSLevelConfig()
+	cfg.MaxMemoryBytesSet = true
+	cfg.MaxProcsSet = true
+	set := NewOSLevelBackend(cfg)
+	unset := NewOSLevelBackend(DefaultOSLevelConfig())
+
+	assert.Equal(t, set.cfg.MaxMemoryBytes, unset.cfg.MaxMemoryBytes)
+	assert.Equal(t, set.cfg.MaxProcs, unset.cfg.MaxProcs)
+	assert.True(t, set.cfg.MaxMemoryBytesSet)
+	assert.True(t, set.cfg.MaxProcsSet)
+	assert.False(t, unset.cfg.MaxMemoryBytesSet)
+	assert.False(t, unset.cfg.MaxProcsSet)
+
+	// A non-default operator value survives untouched, flag and all, and each
+	// flag tracks its own cap rather than both moving together.
+	b := NewOSLevelBackend(OSLevelConfig{MaxMemoryBytes: 1 << 30, MaxMemoryBytesSet: true, MaxProcs: 64})
+	assert.Equal(t, int64(1<<30), b.cfg.MaxMemoryBytes)
+	assert.True(t, b.cfg.MaxMemoryBytesSet)
+	assert.Equal(t, 64, b.cfg.MaxProcs)
+	assert.False(t, b.cfg.MaxProcsSet)
+	assert.NotEqual(t, def.MaxProcs, b.cfg.MaxProcs)
 }
 
 func TestOSLevelBackend_ToolPath_ExplicitAbsoluteOverrideWins(t *testing.T) {
