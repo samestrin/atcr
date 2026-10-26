@@ -88,3 +88,37 @@ func TestCitationDrift_LineInsertionAboveTargetFails(t *testing.T) {
 	require.Len(t, problems, 1)
 	assert.Contains(t, problems[0], "chunker.go:1: citation review.go:2-3 names keepSmallestEntry")
 }
+
+// judgeCitations holds the two checks that keep the guard from going inert:
+// awaitingRepin can only shrink, and a pattern that stops matching anything
+// fails. Both decide nothing on the real tree today, so they are pinned here.
+func TestCitationDrift_JudgeKeepsTheGuardArmed(t *testing.T) {
+	stale := []string{"a.go:1: citation review.go:3 names X, but review.go:3 does not hold it"}
+	for _, tc := range []struct {
+		name     string
+		results  []citationResult
+		pending  map[string]string
+		errs     []string // substrings, one per expected error, in order
+		logCount int
+	}{
+		{"unlisted file with a problem fails", []citationResult{{"a.go", 1, stale}}, nil,
+			[]string{"does not hold it"}, 0},
+		{"unlisted clean file passes", []citationResult{{"a.go", 1, nil}}, nil, nil, 0},
+		{"pending file's problems are logged, not failed", []citationResult{{"a.go", 1, stale}},
+			map[string]string{"a.go": "T2"}, nil, 1},
+		{"pending file that passes must leave the list", []citationResult{{"a.go", 1, nil}},
+			map[string]string{"a.go": "T2"}, []string{"a.go now passes this guard: remove it from awaitingRepin (T2 re-pinned it)"}, 0},
+		{"no citations anywhere fails", []citationResult{{"a.go", 0, nil}, {"b.go", 0, nil}}, nil,
+			[]string{"no citations found in any in-scope file"}, 0},
+		{"empty scope fails", nil, nil, []string{"no citations found in any in-scope file"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs, logs := judgeCitations(tc.results, tc.pending)
+			require.Len(t, errs, len(tc.errs), "errors: %q", errs)
+			for i, want := range tc.errs {
+				assert.Contains(t, errs[i], want)
+			}
+			assert.Len(t, logs, tc.logCount)
+		})
+	}
+}
