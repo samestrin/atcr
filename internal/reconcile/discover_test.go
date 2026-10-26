@@ -215,7 +215,7 @@ func writeToon(t *testing.T, sourcesDir, relPath string, findings []stream.Findi
 	require.NoError(t, os.WriteFile(full, []byte(b.String()), 0o644))
 }
 
-var lossless = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"}
+var lossless = stream.Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x | y", Fix: "a | b", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 5, Evidence: "l1\nl2", Reviewer: "greta"}
 
 // AC 04-02 Scenario 1: one leaf holding both files yields the .toon findings
 // once, never the .txt as well.
@@ -367,7 +367,7 @@ func hostEnvelope(findings string) string {
 
 const hostFinding = `{"severity":"HIGH","file_line":"scripts/release.sh:12","problem":"p","fix":"set -o pipefail\ngo build ./... | tee build.log","category":"correctness","est_minutes":10,"evidence":"go build ./... | tee build.log","reviewer":"host"}`
 
-var hostWant = stream.Finding{Severity: "HIGH", File: "scripts/release.sh", Line: 12, Problem: "p", Fix: "set -o pipefail\ngo build ./... | tee build.log", Category: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host"}
+var hostWant = stream.Finding{Severity: "HIGH", File: "scripts/release.sh", Line: 12, Problem: "p", Fix: "set -o pipefail\ngo build ./... | tee build.log", Category: "correctness", CanonicalCategory: "correctness", EstMinutes: 10, Evidence: "go build ./... | tee build.log", Reviewer: "host"}
 
 // AC 08-03 Scenarios 1-2: a host-written findings.toon is discovered and
 // attributed to host, beside a dual-written pool.
