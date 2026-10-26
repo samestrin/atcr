@@ -13,6 +13,8 @@ import (
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
 )
 
 // newReportCmd builds `atcr report`: render the supported views (report.Formats())
@@ -158,6 +160,12 @@ func runReport(cmd *cobra.Command, args []string) error {
 			// An AXI serialization fault is an internal, non-operator-fixable rendering
 			// fault → exit 1 (generic failure), left unwrapped so it defaults to
 			// exitFailure (AC 02-02 Error Scenario 3, which names `atcr report --axi`).
+			return fmt.Errorf("axi output rendering failed: %w", err)
+		}
+		// Next-step suggestions (Epic 42.0) follow the payload, after it rendered.
+		// Standard AXI only: the document and machine formats, and the legacy pipe
+		// encoder above, stay byte-identical.
+		if err := goaxi.WriteHelp(&buf, renderSuggestions(suggestReport, invocation{Flags: invocationFlags(cmd)})); err != nil {
 			return fmt.Errorf("axi output rendering failed: %w", err)
 		}
 	default:

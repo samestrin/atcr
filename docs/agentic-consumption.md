@@ -135,7 +135,7 @@ suggestions.
 
 ### The `report --format axi` findings payload
 
-`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes), followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)):
+`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes), followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)) and a `help` line naming the usual next commands (see [Next-step suggestions](#next-step-suggestions)):
 
 ```
 findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:
@@ -143,10 +143,36 @@ findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,revie
   LOW,"util.go:7",unused var,"",style,0,"",otto,MEDIUM,dcf65c25aac8f0d4
 total: 2
 truncated: false
+help[2]: atcr debt list,atcr verify <id>
 ```
 
 Free-text fields are quoted only when TOON requires it (empty string, embedded delimiter or special character, number- or reserved-token-looking value); integer columns are emitted as bare TOON integers. The stdout bytes are guaranteed free
 of ANSI/OSC escape sequences and Markdown syntax — it is TOON only.
+
+### Next-step suggestions
+
+After a successful run, some commands name the commands that usually come next,
+so an agent without the installed Skill does not spend a turn working out the
+command graph. A runtime value the CLI cannot know for certain stays a literal
+`<id>` placeholder; substitute the review id or path yourself.
+
+- `atcr report --format axi` ends its payload with a TOON `help` array:
+  `help[2]: atcr debt list,atcr verify <id>`. It is written wherever the payload
+  goes, `--output` included. `--format md`, `json`, `checklist`, `sarif` and
+  `pipe` (and `--format axi` under `ATCR_LEGACY_PIPE`) carry no `help` line.
+- `atcr reconcile` has no AXI mode. It prints the same suggestions as human
+  lines on **stderr**, after its other diagnostics, and leaves stdout unchanged:
+
+  ```
+  Next: atcr debt list
+  Next: atcr verify <id>
+  ```
+
+  It prints them whenever the reconcile itself ran, including a run whose
+  `--fail-on` gate exits 1. When `--repo-root` (or the deprecated `--repo`) was
+  set, the `verify` line carries it forward, shell-quoted when needed:
+  `Next: atcr verify <id> --repo-root='/path/with space'`. No other flag is
+  carried.
 
 ## Exit codes
 
@@ -186,12 +212,12 @@ none.
 A large PR can produce a findings list big enough to blow an agent's context
 window. `atcr report --format axi` therefore caps its payload deterministically:
 
-- **Default cap: 500 lines of array** — the array header plus up to 499 finding rows (header inclusive). The closing `total:` and `truncated:` lines are not counted, so a capped payload is at most 502 physical lines.
+- **Default cap: 500 lines of array** — the array header plus up to 499 finding rows (header inclusive). The closing `total:`, `truncated:` and `help[...]:` lines are not counted, so a capped payload is at most 503 physical lines.
 - **Override:** set `ATCR_AXI_MAX_LINES` to a positive integer to raise or lower
   the cap. A blank, non-numeric, zero, or negative value is ignored — the cap
   fails open to 500 and a single warning is written to **stderr** (never stdout,
   never a nonzero exit).
-- **Signal:** every AXI findings payload ends with a `total: <int>` line and a `truncated: <bool>` line, cut or uncut. When findings exceed the cap, rows past the cap are dropped before encoding and `truncated: true` is emitted.
+- **Signal:** every AXI findings payload carries a `total: <int>` line and a `truncated: <bool>` line after the array, cut or uncut. When findings exceed the cap, rows past the cap are dropped before encoding and `truncated: true` is emitted.
 
 The array header's declared count `N` (`findings[N]{...}`) always equals the rows actually present, so a truncated payload still decodes with any stock TOON decoder. The **true, pre-truncation total** is on the `total` line. When `truncated` is `true`, treat the payload as partial: re-invoke with a higher `ATCR_AXI_MAX_LINES` to retrieve the full set, or record the result as incomplete — do not assume you have every finding. (The deprecated legacy pipe path keeps its old contract: header `N` is the true total and there is no `total` line.)
 
@@ -206,7 +232,7 @@ The entire value of AXI mode for an orchestrator is that a redirect produces a
 byte-clean file. Under `--axi`:
 
 - **stdout carries only the payload** — the `review_summary`/`findings` TOON and
-  its `total` and `truncated` lines, with zero ANSI/OSC escapes and zero Markdown. `atcr
+  its `total`, `truncated` and `help` lines, with zero ANSI/OSC escapes and zero Markdown. `atcr
   review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
