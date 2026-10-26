@@ -363,3 +363,18 @@ func TestFindingTitle(t *testing.T) {
 	assert.Equal(t, maxTitleRunes, len([]rune(long)))
 	assert.True(t, strings.HasSuffix(long, "…"))
 }
+
+func TestFailureText_SaysCancelledOnShutdown(t *testing.T) {
+	text := failureText("acme/widget#7", fmt.Errorf("wrapped: %w", context.Canceled))
+	assert.Contains(t, text, "was cancelled")
+}
+
+func TestReviewRunner_UnconfiguredRunsNothing(t *testing.T) {
+	var logs []string
+	r := &ReviewRunner{Allow: testAllow(), Logf: func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }}
+	_, ok := r.Dispatch(testMention("<@B1> review https://github.com/acme/widget/pull/7"))
+	assert.False(t, ok)
+	assert.Len(t, logs, 1)
+	_, ok = (&ReviewRunner{}).Dispatch(nil)
+	assert.False(t, ok, "a nil mention with no Logf neither runs nor panics")
+}
