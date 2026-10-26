@@ -706,3 +706,61 @@ func TestIntegration_OSLevelDarwin_EnvironmentIsScrubbed(t *testing.T) {
 	assert.NotContains(t, res.Output, "ATCR_ENV_LEAK_CANARY",
 		"the canary NAME reached the sandbox — the env was inherited, not scrubbed; output: %s", res.Output)
 }
+
+// Epic 35.24 T5 — the gated darwin memory measurement.
+//
+// The plan gates the darwin memory cap on this measurement: set RLIMIT_AS, then
+// RLIMIT_DATA, the way the wrapper does (ulimit with neither -S nor -H, so both
+// limits), and see whether an over-allocation is killed. T2 measured on
+// macos-latest that XNU rejects both with EINVAL, so darwin leaves memory
+// unenforced (sandboxMemoryLimitEnforced is false) and an operator-set memory
+// cap is refused instead (T4). This case keeps that decision honest in both
+// directions: it fails if a limit turns out to kill an over-allocation while
+// the package still says darwin cannot enforce one (a cap that could be
+// enforced is being given up), and it fails if the package claims enforcement
+// that no limit delivers (a cap that reads as protection and is not).
+func TestIntegration_OSLevelDarwin_MemoryRlimitMeasurement(t *testing.T) {
+	b := darwinIntegrationBackend(t)
+
+	// 128 MiB limit; the hog holds ~400 MB in a shell variable, so a limit that
+	// is enforced must stop it and one that is accepted but ignored will not.
+	const limitKiB = 128 * 1024
+	const hog = `x=$(head -c 400000000 /dev/zero | tr '\0' a); echo survived-${#x}`
+
+	effective := map[string]bool{}
+	for name, flag := range map[string]string{"RLIMIT_AS": "-v", "RLIMIT_DATA": "-d"} {
+		script := fmt.Sprintf(`ulimit %s %d || { echo "rejected: $?"; exit 97; }; %s`, flag, limitKiB, hog)
+		res, err := b.Run(context.Background(), RunSpec{
+			Command:     []string{"/bin/sh", "-c", script},
+			SnapshotDir: t.TempDir(),
+			Timeout:     60 * time.Second,
+		})
+		// A signal death is reported as a fault, not an exit code: it is the
+		// kill this measurement is looking for.
+		killed := err != nil && strings.Contains(err.Error(), "killed by signal")
+		if !killed {
+			require.NoError(t, err, "%s: output: %s", name, res.Output)
+		}
+
+		switch {
+		case killed:
+			t.Logf("%s (ulimit %s): the over-allocation was killed by a signal: %v", name, flag, err)
+			effective[name] = true
+		case strings.Contains(res.Output, "rejected"):
+			t.Logf("%s (ulimit %s): the kernel rejects setting it: %s", name, flag, strings.TrimSpace(res.Output))
+		case strings.Contains(res.Output, "survived"):
+			t.Logf("%s (ulimit %s): accepted but NOT enforced: the over-allocation was served: %s", name, flag, strings.TrimSpace(res.Output))
+		default:
+			t.Logf("%s (ulimit %s): the over-allocation was killed (exit %d): %s", name, flag, res.ExitCode, strings.TrimSpace(res.Output))
+			effective[name] = true
+		}
+	}
+
+	if len(effective) > 0 {
+		assert.True(t, sandboxMemoryLimitEnforced,
+			"%v kills an over-allocation on this host but sandboxMemoryLimitFor(darwin) gives up on memory: switch darwin to that limit", effective)
+	} else {
+		assert.False(t, sandboxMemoryLimitEnforced,
+			"neither RLIMIT_AS nor RLIMIT_DATA stops an over-allocation on this host, but sandboxMemoryLimitFor(darwin) claims a memory cap is enforced")
+	}
+}
