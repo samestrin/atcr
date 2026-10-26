@@ -5,7 +5,9 @@ package localdebt
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,4 +58,36 @@ func TestWithLockReusesALeftoverLockFile(t *testing.T) {
 	assert.True(t, ran)
 	_, err := os.Lstat(filepath.Join(dir, flockName))
 	assert.True(t, os.IsNotExist(err), "the leftover .flock is removed on release")
+}
+
+// TestWithLockRetriesWhenTheLockFileIsReplaced covers the window the release's
+// remove opens: a waiter opens .flock, the holder removes it and unlocks, and a
+// new caller creates a fresh .flock and locks it — all before the waiter's
+// flock. The waiter then locks the removed file without contention; it must see
+// that the file is no longer the one at .flock and keep waiting, or two callers
+// hold the lock at once.
+func TestWithLockRetriesWhenTheLockFileIsReplaced(t *testing.T) {
+	oldWait, oldHook := lockWait, afterLockOpen
+	lockWait = 50 * time.Millisecond
+	defer func() { lockWait, afterLockOpen = oldWait, oldHook }()
+
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, flockName)
+	var newHolder *os.File
+	afterLockOpen = func() {
+		afterLockOpen = func() {}
+		require.NoError(t, os.Remove(lockPath))
+		f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
+		require.NoError(t, err)
+		require.NoError(t, syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+		newHolder = f
+	}
+
+	ran := false
+	err := withLock(dir, "waiter", func() error { ran = true; return nil })
+	require.NotNil(t, newHolder, "the hook must have replaced .flock")
+	defer func() { _ = newHolder.Close() }()
+	assert.False(t, ran, "fn must not run while the replacement .flock is held")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout acquiring localdebt lock")
 }
