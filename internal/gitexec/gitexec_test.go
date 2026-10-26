@@ -397,6 +397,56 @@ func stringLiteralValue(expr ast.Expr) (val string, ok bool) {
 	return v, true
 }
 
+// execVerdict is the AC4 gate's decision about one os/exec construction.
+type execVerdict int
+
+const (
+	execClean             execVerdict = iota // non-git string literal ("open", "docker", ...)
+	execLiteralGit                           // literal "git": an offender in every file
+	execIndirectUngranted                    // non-literal name in a file with no grant: an offender
+	execIndirectGranted                      // non-literal name in an allowlisted file: counted against its grant
+)
+
+func (v execVerdict) String() string {
+	switch v {
+	case execClean:
+		return "clean"
+	case execLiteralGit:
+		return "literal-git"
+	case execIndirectUngranted:
+		return "indirect-ungranted"
+	case execIndirectGranted:
+		return "indirect-granted"
+	}
+	return fmt.Sprintf("execVerdict(%d)", int(v))
+}
+
+// isOffender reports whether the call is flagged at the call site. A granted
+// indirected call is not, but it still counts toward checkIndirectGrants' budget.
+func (v execVerdict) isOffender() bool {
+	return v == execLiteralGit || v == execIndirectUngranted
+}
+
+// decideExecCall is the per-call AC4 decision, shared by the tree walk and its
+// self-test so the two cannot drift. rel is the module-root-relative file path,
+// nameArg the command-name argument classifyExecCall returned, and allow the
+// indirected-exec allowlist (indirectNonGitExecFiles in the walk).
+func decideExecCall(rel string, nameArg ast.Expr, allow map[string]int) execVerdict {
+	if lit, isLit := stringLiteralValue(nameArg); isLit {
+		if lit == "git" {
+			return execLiteralGit
+		}
+		return execClean
+	}
+	// Non-literal command name: could be git-via-variable. Offender unless this
+	// file is a known non-git indirected exec site — and even then only up to its
+	// pinned count, which checkIndirectGrants adjudicates.
+	if _, granted := allow[rel]; granted {
+		return execIndirectGranted
+	}
+	return execIndirectUngranted
+}
+
 // TestAC4_NoBareGitExecOutsideGitexec is the binary, CI-enforced AC4 gate. It walks
 // every production .go file in the module and flags any os/exec construction that
 // could run an unhardened git subprocess outside internal/gitexec. Per call:
@@ -460,20 +510,16 @@ func TestAC4_NoBareGitExecOutsideGitexec(t *testing.T) {
 				return true
 			}
 			line := strconv.Itoa(fset.Position(call.Pos()).Line)
-			if lit, isLit := stringLiteralValue(nameArg); isLit {
-				if lit == "git" {
-					offenders = append(offenders, rel+":"+line+" (bare exec of literal \"git\")")
-				}
-				return true // non-git literal (e.g. "open") is fine
-			}
-			// Non-literal command name: could be git-via-variable. Offender unless
-			// this file is a known non-git indirected exec site — and even then only
-			// up to its pinned count, which checkIndirectGrants adjudicates below.
-			if _, granted := indirectNonGitExecFiles[rel]; !granted {
+			switch decideExecCall(rel, nameArg, indirectNonGitExecFiles) {
+			case execLiteralGit:
+				offenders = append(offenders, rel+":"+line+" (bare exec of literal \"git\")")
+			case execIndirectUngranted:
 				offenders = append(offenders, rel+":"+line+" (indirected exec — may run git unhardened)")
-				return true
+			case execIndirectGranted:
+				indirectCounts[rel]++ // checkIndirectGrants adjudicates the count below
+			case execClean:
+				// non-git literal (e.g. "open") is fine
 			}
-			indirectCounts[rel]++
 			return true
 		})
 		return nil
