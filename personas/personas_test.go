@@ -338,3 +338,12 @@ func TestThreatMapper_Renders(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, out, "a.go\nb.css")
 }
+
+// isNonReviewerTemplate reports whether an embedded path is a template that is
+// not a reviewer persona. The threat mapper (Epic 37.0) replies with a
+// {"keep": [...]} path list, never findings, so the reviewer-only rules (the
+// NO FINDINGS marker, the predicate-exhaustiveness Focus bullet) do not apply
+// to it; TestThreatMapper_* pin its own contract instead.
+func isNonReviewerTemplate(path string) bool {
+	return path == ThreatMapperName+".md"
+}

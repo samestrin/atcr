@@ -263,6 +263,45 @@ func TestAgent_CompleteSendsTheAgentsInvocation(t *testing.T) {
 	require.True(t, llm.hadDeadline, "every mapper call carries a deadline")
 }
 
+func TestNewAgent_MaxTokensOrder(t *testing.T) {
+	cases := []struct {
+		name     string
+		agentCap *int
+		runCap   int
+		want     int
+	}{
+		{"run-wide override wins", intp(512), 2048, 2048},
+		{"agent cap", intp(512), 0, 512},
+		{"zero agent cap reads as unset", intp(0), 0, registry.DefaultMaxTokens},
+		{"no cap", nil, 0, registry.DefaultMaxTokens},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := testRegistry()
+			ac := reg.Agents["mapper"]
+			ac.MaxTokens = tc.agentCap
+			reg.Agents["mapper"] = ac
+			llm := &fakeLLM{reply: "ok"}
+			a, err := NewAgent("mapper", reg, registry.Settings{TimeoutSecs: 30, MaxTokens: tc.runCap}, registry.PersonaDirs{}, llm)
+			require.NoError(t, err)
+
+			_, err = a.Complete(context.Background(), "p")
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, *llm.invs[0].MaxTokens)
+		})
+	}
+}
+
+func TestNewAgent_RejectsATraversingPersonaRef(t *testing.T) {
+	reg := testRegistry()
+	reg.Agents["sneaky"] = registry.AgentConfig{Provider: "cheap", Model: "m", Persona: "../outside"}
+
+	_, err := NewAgent("sneaky", reg, registry.Settings{}, registry.PersonaDirs{Project: t.TempDir()}, &fakeLLM{})
+
+	require.ErrorContains(t, err, "invalid persona name")
+}
+
 func TestAgent_CompleteTimesOut(t *testing.T) {
 	llm := &fakeLLM{block: true}
 	reg := testRegistry()
