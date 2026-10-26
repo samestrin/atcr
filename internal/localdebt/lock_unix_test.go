@@ -29,3 +29,31 @@ func TestWithLockRefusesSymlinkedLockFile(t *testing.T) {
 	_, statErr := os.Lstat(target)
 	assert.True(t, os.IsNotExist(statErr), "the symlink target must not be created")
 }
+
+// TestWithLockLeavesNoLockFileBehind locks the release: the holder removes
+// .flock before it unlocks, so a store a user tracks in git never gains an
+// untracked lock file, and the directory holds only what fn wrote.
+func TestWithLockLeavesNoLockFileBehind(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, withLock(dir, "append", func() error {
+		_, err := os.Lstat(filepath.Join(dir, flockName))
+		assert.NoError(t, err, ".flock must exist while the lock is held")
+		return nil
+	}))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "withLock must not leave .flock behind")
+}
+
+// TestWithLockReusesALeftoverLockFile covers a holder that died while holding:
+// its .flock stays on disk, unlocked by the kernel. The next caller locks that
+// same file without waiting and removes it on release.
+func TestWithLockReusesALeftoverLockFile(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, flockName), nil, 0o600))
+	ran := false
+	require.NoError(t, withLock(dir, "append", func() error { ran = true; return nil }))
+	assert.True(t, ran)
+	_, err := os.Lstat(filepath.Join(dir, flockName))
+	assert.True(t, os.IsNotExist(err), "the leftover .flock is removed on release")
+}
