@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,21 +66,31 @@ const sandboxLimitShell = "/bin/sh"
 // (a failed exec included) with "$0:", which is sandboxLimitDiagnosticPrefix.
 const sandboxLimitArgv0 = "atcr-sandbox-limits"
 
-// sandboxMemoryRlimit is the rlimit MaxMemoryBytes sets, and
+// sandboxMemoryRlimit is the rlimit MaxMemoryBytes sets on this host, and
 // sandboxMemoryUlimitFlag the ulimit option that sets it (KiB, in every
-// /bin/sh atcr meets: dash, bash, zsh and busybox ash).
+// /bin/sh atcr meets: dash, bash, zsh and busybox ash). It follows the host
+// kernel, runtime.GOOS, not b.platform(): setrlimit is answered by the kernel
+// atcr is running on.
+var sandboxMemoryRlimit, sandboxMemoryUlimitFlag = sandboxMemoryLimitFor(runtime.GOOS)
+
+// sandboxMemoryLimitFor picks the memory rlimit per kernel.
 //
-// RLIMIT_DATA rather than RLIMIT_AS: address-space limits count reservations,
-// and the Go toolchain reserves far more than it commits, so an RLIMIT_AS at
-// the 512 MiB default can fail an ordinary `go build` (the plan's Risks). On
-// linux RLIMIT_DATA counts private writable mappings, anonymous mmap included,
-// since kernel 4.7. On darwin whether either limit stops an over-allocation is
-// unmeasured: epic 35.24 T5 measures both on the integration-macos job and
-// changes this pair if RLIMIT_AS is the one that holds.
-const (
-	sandboxMemoryRlimit     = syscall.RLIMIT_DATA
-	sandboxMemoryUlimitFlag = "-d"
-)
+// linux: RLIMIT_DATA. Address-space limits count reservations, and the Go
+// toolchain reserves far more than it commits, so an RLIMIT_AS at the 512 MiB
+// default can fail an ordinary `go build` (the plan's Risks). RLIMIT_DATA has
+// counted private writable mappings, anonymous mmap included, since 4.7.
+//
+// darwin: RLIMIT_AS. Measured on the integration-macos job (PR #603's first
+// run): XNU rejects lowering RLIMIT_DATA with EINVAL ("ulimit: data seg size:
+// cannot modify limit: Invalid argument"), so the wrapper failed closed and
+// refused every run. Whether RLIMIT_AS stops an over-allocation is epic 35.24
+// T5's measurement.
+func sandboxMemoryLimitFor(goos string) (resource int, ulimitFlag string) {
+	if goos == "darwin" {
+		return syscall.RLIMIT_AS, "-v"
+	}
+	return syscall.RLIMIT_DATA, "-d"
+}
 
 // sandboxGetrlimit is syscall.Getrlimit; tests replace it to present an
 // inherited limit the host cannot be made to have.

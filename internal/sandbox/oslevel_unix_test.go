@@ -521,13 +521,13 @@ func TestPSParents_HonoursItsContext(t *testing.T) {
 }
 
 // limitsReport is the fake sandbox tool body the resource-limit tests run: it
-// prints its own pid, its process group, and the soft and hard data limit it
-// was started with, one per line, so a test can compare all four against what
-// the parent configured.
-const limitsReport = `echo "$$"
+// prints its own pid, its process group, and the soft and hard memory limit
+// (the host's sandboxMemoryUlimitFlag) it was started with, one per line, so a
+// test can compare all four against what the parent configured.
+var limitsReport = `echo "$$"
 ps -o pgid= -p "$$"
-ulimit -S -d
-ulimit -H -d
+ulimit -S ` + sandboxMemoryUlimitFlag + `
+ulimit -H ` + sandboxMemoryUlimitFlag + `
 `
 
 func parseLimitsReport(t *testing.T, out string) (pid, pgid int, soft, hard string) {
@@ -633,7 +633,7 @@ func TestSandboxLimitScript_AFailedLimitIsAToolFaultNotAWorkloadExit(t *testing.
 	}
 	marker := filepath.Join(t.TempDir(), "ran")
 	script := sandboxLimitScript(4096)
-	cmd := exec.Command(sandboxLimitShell, "-c", `ulimit -d 2048 && exec "$0" -c "$1" limits touch "$2"`,
+	cmd := exec.Command(sandboxLimitShell, "-c", `ulimit `+sandboxMemoryUlimitFlag+` 2048 && exec "$0" -c "$1" limits touch "$2"`,
 		sandboxLimitShell, script, marker)
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
@@ -706,4 +706,16 @@ func TestSandboxLimitScript_AToolThatVanishedBeforeExecIsAFault(t *testing.T) {
 		assert.True(t, isFault, "%s: exit %d output %q", goos, ee.ExitCode(), out)
 		assert.Contains(t, reason, sandboxLimitDiagnosticPrefix, goos)
 	}
+}
+
+func TestSandboxMemoryLimitFor_PicksTheRlimitEachKernelAccepts(t *testing.T) {
+	// darwin rejects lowering RLIMIT_DATA (EINVAL, measured on integration-macos),
+	// so it uses RLIMIT_AS; linux keeps RLIMIT_DATA, which does not count the Go
+	// toolchain's address-space reservations.
+	res, flag := sandboxMemoryLimitFor("darwin")
+	assert.Equal(t, syscall.RLIMIT_AS, res)
+	assert.Equal(t, "-v", flag)
+	res, flag = sandboxMemoryLimitFor("linux")
+	assert.Equal(t, syscall.RLIMIT_DATA, res)
+	assert.Equal(t, "-d", flag)
 }
