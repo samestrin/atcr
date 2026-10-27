@@ -13,6 +13,19 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+### Highlights
+
+- `atcr webhook` runs a daemon that reviews a GitHub pull request from Slack or from a Linear status change, and posts a filtered summary back on the linked pull request.
+- `atcr review --auto-fix --auto-fix-base <branch>` opens the fix pull request against a branch you name.
+- `atcr quickstart --preset local` sets atcr up for local models in one command, with no network call and no API key.
+- An optional `sast` block runs `semgrep` over the changed files before the reviewers and lists its findings in the review prompt.
+- `secret_guard` scans each review prompt for credentials before it is sent to a provider (`off`, `warn`, `redact` or `block`).
+- `atcr status` shows a review's progress while it runs, and `atcr personas list` gains a `ROLE` column plus read-only reporting views.
+- `atcr benchmark fit` reports how well each persona and model pair performs, and `atcr leaderboard export` prints the public submission document.
+- Per-agent `thinking` settings and an optional `response_format: json_object` give finer control over how models are called.
+
 ### Added
 
 - `atcr personas list` shows a `ROLE` column after `NAME`, in the plain table and the `--scores` table, and each `--json` row carries a `role` field. The role is the text after the em dash in the persona prompt's H1 (`# {{.AgentName}} — <role>`), for built-in, community and project personas; a persona whose prompt names no role gets an empty cell and `"role": ""`, not an error. (epic 83.0)
