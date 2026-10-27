@@ -130,7 +130,7 @@ func TestGuardSASTFindings_HitAcrossFieldsIsRedactedInBoth(t *testing.T) {
 		i := strings.Index(text, "tail")
 		return []payload.SecretHit{{Kind: "k", Start: i, End: i + len("tail\nhead")}}, nil
 	}
-	got, _ := guardSASTFindings(secretGuardRedact, []sast.Finding{{File: "a.go", Line: 1, Message: "msg tail", Rule: "head.rule"}})
+	got := guardSASTFindings(secretGuardRedact, []sast.Finding{{File: "a.go", Line: 1, Message: "msg tail", Rule: "head.rule"}})
 	require.Len(t, got, 1)
 	assert.Equal(t, "msg "+payload.SecretPlaceholder, got[0].Message)
 	assert.Equal(t, payload.SecretPlaceholder+".rule", got[0].Rule)
