@@ -251,6 +251,9 @@ func TestRunVisualReview_BlockCoversNetworkAndTestText(t *testing.T) {
 			r.Browser.FailedTests = []BrowserTestFailure{{Title: "t", Error: "expected " + guardAWSKey}}
 		},
 		"prompt": func(r *VisualReviewRequest) { r.Prompt += guardAWSKey },
+		"screenshot name": func(r *VisualReviewRequest) {
+			r.Browser.Screenshots[1].Name = "cart\n" + guardAWSKey
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -326,4 +329,37 @@ func TestRunVisualReview_ProviderError(t *testing.T) {
 	_, err := RunVisualReview(context.Background(), llmclient.New(llmclient.WithRetry(0, time.Millisecond, 1)), agent, registry.Settings{}, visualRequest("ok"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `vision agent "eye"`)
+}
+
+// A screenshot whose bytes were not returned gets no image part, and the
+// others are still sent, each after its one-line label.
+func TestRunVisualReview_SkipsScreenshotWithoutData(t *testing.T) {
+	countingScanner(t, nil)
+	vs := newVisionServer(t, "NO FINDINGS")
+	agent := visionAgentAt(t, vs.srv.URL, true)
+	req := visualRequest("ok")
+	req.Browser.Screenshots = append([]BrowserScreenshot{{Name: "lost", Path: "lost.png"}}, req.Browser.Screenshots...)
+	req.Browser.Screenshots[2].Name = "cart\nview"
+
+	got, err := RunVisualReview(context.Background(), llmclient.New(), agent, registry.Settings{}, req)
+	require.NoError(t, err)
+	assert.Empty(t, got.Findings)
+	reqs := vs.requests()
+	require.Len(t, reqs, 1)
+	parts := requestParts(t, reqs[0])
+	require.Len(t, parts, 5)
+	assert.Equal(t, "Screenshot 1: checkout (test-results/checkout.png)", parts[0].Text)
+	assert.Equal(t, "image_url", parts[1].Type)
+	assert.Equal(t, "Screenshot 2: cart view (test-results/cart.jpg)", parts[2].Text)
+	assert.Equal(t, "image_url", parts[3].Type)
+	assert.NotContains(t, parts[4].Text, "lost")
+}
+
+// A screenshot with no recognised extension is typed from its bytes, else PNG.
+func TestScreenshotMIME(t *testing.T) {
+	t.Parallel()
+	gif := []byte("GIF89a\x01\x00\x01\x00")
+	assert.Equal(t, "image/webp", screenshotMIME(BrowserScreenshot{Path: "a.WEBP", Data: []byte("x")}))
+	assert.Equal(t, "image/gif", screenshotMIME(BrowserScreenshot{Path: "shot", Data: gif}))
+	assert.Equal(t, "image/png", screenshotMIME(BrowserScreenshot{Path: "shot.bin", Data: []byte("x")}))
 }

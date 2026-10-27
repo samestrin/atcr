@@ -38,8 +38,8 @@ var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle", 
 // trustworthy as its weakest call site, so a new literal must be added here on
 // purpose, with a decision about thinking.
 //
-//   - thinking: the five pipeline sites (review primary and fallback, skeptic,
-//     debate seat, threat mapper) set every key in thinkingFieldNames from the
+//   - thinking: the six pipeline sites (review primary and fallback, skeptic,
+//     debate seat, threat mapper, visual review) set every key in thinkingFieldNames from the
 //     agent's own AgentConfig.
 //   - the two doctor probe sites set every key in thinkingFieldNames from the
 //     probed Target, which carries the declaration of the agents sharing it
@@ -52,16 +52,17 @@ var thinkingFieldNames = []string{"Thinking", "ThinkingLevel", "ThinkingStyle", 
 //     declaration to forward; adding one is a registry change, not a wiring fix.
 //     This is the documented exclusion, recorded here instead of in executor.go.
 var invocationSiteInventory = map[invocationSite]siteRule{
-	{"internal/fanout/review.go", "renderAgent"}:          {"thinking", "ac"},
-	{"internal/fanout/review.go", "buildFallbackAgent"}:   {"thinking", "ac"},
-	{"internal/verify/invoke.go", "buildSkepticAgent"}:    {"thinking", "c"},
-	{"internal/debate/protocol.go", "buildDebateAgent"}:   {"thinking", "c"},
-	{"internal/threatmap/map.go", "NewAgent"}:             {"thinking", "ac"},
-	{"internal/doctor/run.go", "probe"}:                   {"thinking", "tgt"},
-	{"internal/doctor/run.go", "responseFormatCall"}:      {"thinking", "tgt"},
-	{"internal/doctor/run.go", "thinkingControlCall"}:     {kind: "control"},
-	{"internal/verify/executor.go", "callExecutor"}:       {kind: "excluded"},
-	{"internal/verify/executor.go", "buildExecutorAgent"}: {kind: "excluded"},
+	{"internal/fanout/review.go", "renderAgent"}:            {"thinking", "ac"},
+	{"internal/fanout/review.go", "buildFallbackAgent"}:     {"thinking", "ac"},
+	{"internal/verify/invoke.go", "buildSkepticAgent"}:      {"thinking", "c"},
+	{"internal/debate/protocol.go", "buildDebateAgent"}:     {"thinking", "c"},
+	{"internal/threatmap/map.go", "NewAgent"}:               {"thinking", "ac"},
+	{"internal/fanout/visual_review.go", "RunVisualReview"}: {"thinking", "ac"},
+	{"internal/doctor/run.go", "probe"}:                     {"thinking", "tgt"},
+	{"internal/doctor/run.go", "responseFormatCall"}:        {"thinking", "tgt"},
+	{"internal/doctor/run.go", "thinkingControlCall"}:       {kind: "control"},
+	{"internal/verify/executor.go", "callExecutor"}:         {kind: "excluded"},
+	{"internal/verify/executor.go", "buildExecutorAgent"}:   {kind: "excluded"},
 }
 
 // llmclientImportPath is the package whose Invocation literals are audited.
