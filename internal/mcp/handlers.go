@@ -234,6 +234,10 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		}
 		return nil, ReviewResult{}, err
 	}
+	// Reviewer roles for report.md's `name (role)` labels (Epic 83.0 T5), the
+	// same record `atcr review` writes; display metadata, so a failed write
+	// leaves bare names.
+	_ = reconcile.WriteReviewerRoles(prep.Dir, registry.ReviewerRoles(cfg.Registry.Agents, cfg.PersonaDirs))
 
 	// Run the fan-out after the handler returns. Detach from the request context
 	// (cancelled on return) so the run continues in the server process; the
@@ -641,13 +645,15 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// rather than failing the report.
 		//
 		// MCP/CLI parity: this embedded markdown radar is identical to the CLI's —
-		// both call report.RenderMarkdownWithDisagreements (cli/report.go). The
+		// both call report.RenderMarkdownWithRoles (cli/report.go). The
 		// CLI's standalone --disagreements ranked view (RenderDisagreements /
 		// RenderDisagreementsJSON) is intentionally NOT exposed over MCP; MCP clients
 		// receive the radar markdown-embedded only. Any renderer-dedup work belongs
 		// to Epic 15.0 (radar-renderer-consolidation), not this surface.
+		// Reviewers read `name (role)` from the roles the review recorded
+		// (Epic 83.0 T5), as in the CLI report.
 		df := reconcile.LoadDisagreements(dir, findings)
-		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
+		if err := report.RenderMarkdownWithRoles(&buf, findings, df, report.ContestedReport{}, reconcile.ReadReviewerRoles(dir)); err != nil {
 			return nil, ReportResult{}, err
 		}
 	} else if err := report.Render(&buf, findings, format); err != nil {

@@ -403,7 +403,7 @@ func Emit(reconciledDir string, r Result) error {
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
 		{ReportMD, func(w io.Writer) error {
-			if err := renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved)); err != nil {
+			if err := renderMarkdown(w, r.Summary, jf, df, countDocShielded(r.Unresolved), r.ReviewerRoles); err != nil {
 				return err
 			}
 			return writeSuppressedFooter(w, r.Suppressed)
@@ -603,7 +603,7 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 // redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
 	jf := r.JSONFindings()
-	if err := renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved)); err != nil {
+	if err := renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous), countDocShielded(r.Unresolved), r.ReviewerRoles); err != nil {
 		return err
 	}
 	return writeSuppressedFooter(w, r.Suppressed)
@@ -646,8 +646,9 @@ func writeSuppressedFooter(w io.Writer, suppressed []JSONFinding) error {
 // JSONFinding records (the library Merged no longer carries path-validation
 // fields, Phase 2 Clarification Q1) and accepts a pre-built DisagreementsFile so
 // Emit can build the radar once and share it between report.md and
-// disagreements.json without a second O(n log n) sort pass.
-func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile, docShielded int) error {
+// disagreements.json without a second O(n log n) sort pass. roles labels each
+// reviewer on a findings line as name (role); nil leaves every name bare.
+func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile, docShielded int, roles map[string]string) error {
 	inScope := make([]JSONFinding, 0, len(findings))
 	var outOfScope []JSONFinding
 	for _, m := range findings {
@@ -745,11 +746,11 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 
 	if len(inScope) > 0 {
 		b.WriteString("\n## Findings\n")
-		writeFindingsList(&b, inScope)
+		writeFindingsList(&b, inScope, roles)
 	}
 	if len(outOfScope) > 0 {
 		b.WriteString("\n## Out-of-Scope Findings\n\nPre-existing issues outside the reviewed change — annotated for the record, excluded from the severity gate.\n")
-		writeFindingsList(&b, outOfScope)
+		writeFindingsList(&b, outOfScope, roles)
 	}
 	_, err := w.Write(b.Bytes())
 	return err
@@ -759,8 +760,8 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 // given (the caller passes sortMerged-ordered slices). It renders from the
 // path-stamped JSONFinding records so the hallucinated-path warning (Epic 5.0)
 // survives the library Merged dropping its path-validation fields (Phase 2
-// Clarification Q1).
-func writeFindingsList(b *bytes.Buffer, findings []JSONFinding) {
+// Clarification Q1). roles labels the reviewers (ReviewerLabels).
+func writeFindingsList(b *bytes.Buffer, findings []JSONFinding, roles map[string]string) {
 	lastSev := ""
 	for _, m := range findings {
 		if m.Severity != lastSev {
@@ -768,7 +769,7 @@ func writeFindingsList(b *bytes.Buffer, findings []JSONFinding) {
 			lastSev = m.Severity
 		}
 		fmt.Fprintf(b, "- %s — confidence %s, reviewers: %s\n",
-			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(ReviewerLabels(m.Reviewers, roles))))
 		if m.PathWarning != "" {
 			// Hallucinated path (Epic 5.0): the finding is kept, not dropped — the
 			// path is flagged so a user can correct it. A candidate-index
@@ -868,6 +869,26 @@ func Esc(s string) string {
 // esc is the package-local alias for Esc, kept so existing callers in this
 // package continue to compile unchanged.
 func esc(s string) string { return Esc(s) }
+
+// ReviewerLabels returns the reviewer names as the markdown reports show them:
+// `name (role)` for a name roles maps to a non-blank role, the bare name
+// otherwise (a reviewer with no persona, such as host). Only the markdown
+// writers use it; findings.json, axi, pipe and sarif keep bare names (Epic 83.0
+// T5). The caller escapes the joined result.
+func ReviewerLabels(names []string, roles map[string]string) []string {
+	if len(roles) == 0 {
+		return names
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		if role := strings.TrimSpace(roles[n]); role != "" {
+			out[i] = n + " (" + role + ")"
+		} else {
+			out[i] = n
+		}
+	}
+	return out
+}
 
 // joinOrNone joins names with ", " or returns "(none)" for an empty list.
 func joinOrNone(names []string) string {

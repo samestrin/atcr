@@ -788,6 +788,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		Truncated:              r.Truncation.Truncated,
 		FilesDropped:           r.Truncation.FilesDropped,
 		ThreatMapDropped:       r.ThreatMapDropped,
+		ImagesSentOffMachine:   r.ImagesSentOffMachine,
 		FallbackUsed:           r.FallbackUsed,
 		FallbackFrom:           r.FallbackFrom,
 		FallbackModel:          r.FallbackModel,
