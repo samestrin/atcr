@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -1341,9 +1342,17 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 		return nil, nil, 0, false, withFindingsPath(rerr)
 	}
 	for _, f := range parsed.Findings {
+		file, line := f.File, f.Line
+		// A finding filed on the edited line but quoting a sibling arm declares the
+		// sibling in its EVIDENCE (Epic 35.16.15), and is scored THERE. The pool is
+		// read through ParseSource, which never stamps SiblingLocation, so it is
+		// stamped here. An unvalidated sibling path simply fails to match.
+		if loc := stream.ParseSiblingLocation(f.Evidence); loc != "" {
+			file, line = splitSiblingLocation(loc)
+		}
 		located[f.Reviewer] = append(located[f.Reviewer], benchmark.ReportedFinding{
-			File:     f.File,
-			Line:     f.Line,
+			File:     file,
+			Line:     line,
 			Category: f.Category,
 		})
 		categorical[f.Reviewer] = append(categorical[f.Reviewer], f.Category)
@@ -1360,6 +1369,21 @@ func readCaseFindingsLocated(reviewDir string, agents map[string]bool) (located 
 		categorical[reviewer] = append(categorical[reviewer], "")
 	}
 	return located, categorical, unattributed, false, nil
+}
+
+// splitSiblingLocation splits a "file:line" sibling location, mirroring
+// internal/stream's unexported splitFileLine: line 0 on a missing or non-numeric
+// suffix, which MatchFindings never credits.
+func splitSiblingLocation(s string) (string, int) {
+	idx := strings.LastIndex(s, ":")
+	if idx < 0 {
+		return s, 0
+	}
+	n, err := strconv.Atoi(s[idx+1:])
+	if err != nil {
+		return s, 0
+	}
+	return s[:idx], n
 }
 
 // warnCaseFailures gives a PARTIAL run an operator surface, beside the recall
