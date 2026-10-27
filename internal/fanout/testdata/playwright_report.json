@@ -1,0 +1,43 @@
+{
+  "config": {"rootDir": "/work"},
+  "suites": [
+    {
+      "title": "preview.spec.ts",
+      "file": "preview.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "home page",
+          "file": "preview.spec.ts",
+          "specs": [
+            {
+              "title": "renders without errors",
+              "file": "preview.spec.ts",
+              "tests": [
+                {
+                  "status": "unexpected",
+                  "results": [
+                    {
+                      "status": "failed",
+                      "errors": [{"message": "expected heading to be visible"}],
+                      "attachments": [
+                        {"name": "screenshot", "contentType": "image/png", "path": "/work/test-results/home-failed-1.png"},
+                        {"name": "console", "contentType": "application/json", "body": "W3sidHlwZSI6ImVycm9yIiwidGV4dCI6IlVuY2F1Z2h0IFR5cGVFcnJvcjogeCBpcyBub3QgZGVmaW5lZCIsImxvY2F0aW9uIjoiaHR0cDovLzEyNy4wLjAuMTozMDAwL2FwcC5qczoxMiJ9LHsidHlwZSI6Indhcm5pbmciLCJ0ZXh0IjoiZGVwcmVjYXRlZCBBUEkifSx7InR5cGUiOiJlcnJvciIsInRleHQiOiJGYWlsZWQgdG8gbG9hZCByZXNvdXJjZTogNDA0In1d"},
+                        {"name": "network", "contentType": "application/json", "body": "W3sidXJsIjoiaHR0cDovLzEyNy4wLjAuMTozMDAwL2FwaS9pdGVtcyIsIm1ldGhvZCI6IkdFVCIsInN0YXR1cyI6NTAwfV0="}
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "has a title",
+              "file": "preview.spec.ts",
+              "tests": [{"status": "expected", "results": [{"status": "passed", "attachments": []}]}]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
