@@ -55,7 +55,7 @@ func TestMap_PromptIsTheRenderedPersona(t *testing.T) {
 	_, err := Map(context.Background(), fc, []string{"a.go", "b.css"})
 
 	require.NoError(t, err)
-	require.Equal(t, []string{"map these 2 files for threat_mapper:\na.go\nb.css\n"}, fc.prompts,
+	require.Equal(t, []string{"map these 2 files for nora:\na.go\nb.css\n"}, fc.prompts,
 		"the prompt is the persona rendered over the path list and nothing else")
 }
 
@@ -202,6 +202,18 @@ func TestNewAgent_NeverFallsBackToBase(t *testing.T) {
 
 	a, err := NewAgent("threat_mapper", testRegistry(), registry.Settings{TimeoutSecs: 30},
 		registry.PersonaDirs{Project: project}, &fakeLLM{})
+
+	require.NoError(t, err)
+	require.Equal(t, embeddedMapper(t), a.Persona())
+}
+
+// A persona key still naming the pre-Epic 83.0 mapper key resolves to the
+// embedded persona (now nora) instead of failing as an unknown persona.
+func TestNewAgent_LegacyPersonaKeyUsesTheEmbeddedPersona(t *testing.T) {
+	reg := testRegistry()
+	reg.Agents["legacy"] = registry.AgentConfig{Provider: "cheap", Model: "small-5", Persona: personas.LegacyThreatMapperName}
+
+	a, err := NewAgent("legacy", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{}, &fakeLLM{})
 
 	require.NoError(t, err)
 	require.Equal(t, embeddedMapper(t), a.Persona())

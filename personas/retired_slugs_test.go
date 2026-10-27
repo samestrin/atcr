@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,35 @@ var bareRetiredRe = regexp.MustCompile(`\b(sentinel|tracer)\b|(sentinel|tracer)_
 // a doc code span, a file reference, a fixture stem, or a quoted literal — never
 // the ordinary adjective "idiomatic" that ingrid's own prompt legitimately uses.
 var idiomaticIdentRe = regexp.MustCompile("`idiomatic`|idiomatic\\.(md|yaml)|idiomatic_fixture|\"idiomatic\"")
+
+// legacyMapperRe matches threat_mapper, the old role-slug key of the
+// threat-model mapper persona (renamed to nora in Epic 83.0).
+var legacyMapperRe = regexp.MustCompile(`threat_mapper`)
+
+// legacyMapperAllowlist names the only lines in the scan scope that may carry
+// the old mapper key: the LegacyThreatMapperName alias constant and its test.
+// Lines are compared after trimming surrounding whitespace.
+var legacyMapperAllowlist = map[string]map[string]struct{}{
+	"personas.go":      {`const LegacyThreatMapperName = "threat_mapper"`: {}},
+	"personas_test.go": {`require.Equal(t, "threat_mapper", LegacyThreatMapperName)`: {}},
+}
+
+// strayLegacyMapperRefs returns the 1-based numbers of the lines of file's text
+// that name the old mapper key and are not on legacyMapperAllowlist.
+func strayLegacyMapperRefs(file, text string) []int {
+	allowed := legacyMapperAllowlist[filepath.Clean(file)]
+	var stray []int
+	for i, line := range strings.Split(text, "\n") {
+		if !legacyMapperRe.MatchString(line) {
+			continue
+		}
+		if _, ok := allowed[strings.TrimSpace(line)]; ok {
+			continue
+		}
+		stray = append(stray, i+1)
+	}
+	return stray
+}
 
 // retiredSlugScanFiles is the AC 05-03 verification scope for the persona-slug
 // scan: the built-in templates, the registration source, the community index, and
@@ -75,6 +105,9 @@ func TestNoRetiredSlugs(t *testing.T) {
 		if m := idiomaticIdentRe.FindString(text); m != "" {
 			assert.Failf(t, "retired slug found", "%s references retired persona identifier %q", f, m)
 		}
+		if lines := strayLegacyMapperRefs(f, text); len(lines) > 0 {
+			assert.Failf(t, "retired slug found", "%s still references the old mapper key %q on lines %v; use ThreatMapperName (nora), or LegacyThreatMapperName for the alias", f, "threat_mapper", lines)
+		}
 	}
 
 	// Fixture filenames must carry no retired stem (built-in + community testdata).
@@ -91,6 +124,19 @@ func TestNoRetiredSlugs(t *testing.T) {
 		base := filepath.Base(p)
 		assert.NotRegexpf(t, `^(sentinel|tracer|idiomatic)_`, base, "fixture %s carries a retired slug stem", p)
 	}
+}
+
+// TestStrayLegacyMapperRefs proves the old-mapper-key scan is not vacuous: only
+// the allowlisted alias line in its own file passes; the same line elsewhere and
+// any other mention are reported.
+func TestStrayLegacyMapperRefs(t *testing.T) {
+	alias := `const LegacyThreatMapperName = "threat_mapper"`
+	text := "package personas\n\n\t" + alias + "\n// the threat_mapper persona\n"
+
+	assert.Equal(t, []int{4}, strayLegacyMapperRefs("personas.go", text))
+	assert.Equal(t, []int{3, 4}, strayLegacyMapperRefs("community.go", text))
+	assert.Equal(t, []int{1}, strayLegacyMapperRefs(filepath.Join("..", "README.md"), "see threat_mapper.md"))
+	assert.Empty(t, strayLegacyMapperRefs("personas.go", "const ThreatMapperName = \"nora\"\n"))
 }
 
 // TestRetiredSlugs_NewResolveOldFail covers AC 05-03 Scenario 1 / Error 1: the new
