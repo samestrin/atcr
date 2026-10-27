@@ -110,7 +110,12 @@ func TestReviewCmd_AutoFixBaseRequiresAutoFix(t *testing.T) {
 // TestAutoFixBaseOverride_RejectsMalformedNames: an empty, option-like, or
 // whitespace-bearing branch name is refused before any review work.
 func TestAutoFixBaseOverride_RejectsMalformedNames(t *testing.T) {
-	for _, v := range []string{"", "   ", "-x", "two words", "bad\tname", "a..b", "a~1", "a:b", "x.lock"} {
+	// One case per guard in validBranchName, so dropping any clause fails a case.
+	for _, v := range []string{
+		"", "   ", "-x", "two words", "bad\tname", "a\x7fb", "a..b", "a~1", "a:b", "x.lock",
+		"HEAD", "@", "a@{b", ".hidden/branch", "a/.hidden", "a.lock/b", "a//b", "foo/", "foo.",
+		"a^b", "a?b", "a*b", "a[b", "a\\b",
+	} {
 		t.Run(v, func(t *testing.T) {
 			c := newReviewCmd()
 			require.NoError(t, c.Flags().Parse([]string{"--auto-fix", "--auto-fix-base", v}))
@@ -129,6 +134,9 @@ func TestAutoFixBaseOverride_AcceptsAndTrims(t *testing.T) {
 	got, err := autoFixBaseOverride(c)
 	require.NoError(t, err)
 	require.Equal(t, "release/1.x", got)
+	for _, ok := range []string{"main", "feature/linear-123", "HEADS", "my-HEAD", "v1.2", "a@b"} {
+		require.True(t, validBranchName(ok), ok)
+	}
 
 	unset := newReviewCmd()
 	require.NoError(t, unset.Flags().Parse([]string{"--auto-fix"}))
