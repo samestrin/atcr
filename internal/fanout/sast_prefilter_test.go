@@ -274,7 +274,7 @@ func TestRunSASTPreFilter_NoTargetsNeverCallsTheRunner(t *testing.T) {
 	payloads := map[string]modePayload{
 		"blocks": {Entries: []payload.FileEntry{{Path: "deleted.go"}, {Path: "also-deleted.go"}}},
 	}
-	block := runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), root, payloads)
+	block, _ := runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), root, payloads)
 	assert.Empty(t, block)
 	assert.Zero(t, fake.calls.Load(), "an empty target list must not become a whole-repo scan")
 }
@@ -287,7 +287,7 @@ func TestRunSASTPreFilter_NilRunnerFailsOpen(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Entries: []payload.FileEntry{{Path: "auth.go"}}}}
 	var block string
 	stderr := captureStderr(t, func() {
-		block = runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), repo, payloads)
+		block, _ = runSASTPreFilter(context.Background(), sastEnabledConfig("http://unused"), repo, payloads)
 	})
 	assert.Empty(t, block)
 	assert.Contains(t, stderr, "atcr: notice: SAST pre-filter skipped")
