@@ -135,6 +135,7 @@ var communityPersonas = []communityPersona{
 	{Slug: "liam", VendorToken: "llama", Category: "invariant"},
 	{Slug: "simon", VendorToken: "claude", Category: "bloat"},
 	{Slug: "nadia", VendorToken: "qwen", Category: "security"},
+	{Slug: "felix", VendorToken: "claude", Category: "out-of-scope"},
 }
 
 const communityDir = "community"
@@ -685,5 +686,68 @@ func TestAnthony_CritiqueStyleBan(t *testing.T) {
 			require.Equalf(t, "coupling", f.Category, "anthony's taught finding must use its fixture category (ToolsEnabled=%v)", tools)
 		}
 		require.Zerof(t, styleFindings, "anthony must teach zero style findings (ToolsEnabled=%v)", tools)
+	}
+}
+
+// TestFelix_FrontendQAPromptContract covers Epic 36.0.2 T1: felix is the
+// frontend QA persona the engine drives through two calls, so its unit must
+// carry both prompts. The yaml declares no vision or response-format keys (those
+// belong to the operator's registry, and a community persona may not declare
+// supports_vision); the H1 keeps the role for epic 83.0; the spec-authoring
+// section teaches the standalone Playwright spec with the console and
+// request-failure attach boilerplate; the screenshot-review section tells the
+// model to file against the generated spec path with CATEGORY out-of-scope, the
+// one category the grounding gate keeps for a file absent from the patch.
+func TestFelix_FrontendQAPromptContract(t *testing.T) {
+	yraw, err := os.ReadFile(communityPath("felix.yaml"))
+	require.NoError(t, err)
+	var meta map[string]any
+	require.NoError(t, yaml.Unmarshal(yraw, &meta))
+	for _, key := range []string{"supports_vision", "response_format"} {
+		_, ok := meta[key]
+		require.Falsef(t, ok, "felix.yaml must not declare %q", key)
+	}
+
+	raw, err := os.ReadFile(communityPath("felix.md"))
+	require.NoError(t, err)
+	text := string(raw)
+	var h1 string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "# ") {
+			h1 = line
+			break
+		}
+	}
+	require.Equal(t, "# {{.AgentName}} — frontend QA reviewer", h1)
+
+	spec := sectionBody(text, "## Spec Authoring")
+	require.NotEmpty(t, spec, "felix.md must carry a ## Spec Authoring section")
+	for _, want := range []string{
+		"@playwright/test", "```ts", "page.on('console'", "page.on('requestfailed'",
+		"testInfo.attach", "atcr",
+	} {
+		require.Containsf(t, spec, want, "## Spec Authoring must name %q", want)
+	}
+
+	review := sectionBody(text, "## Screenshot Review")
+	require.NotEmpty(t, review, "felix.md must carry a ## Screenshot Review section")
+	for _, want := range []string{"layout", "contrast", "missing", "out-of-scope", "e2e/", ".spec.ts"} {
+		require.Containsf(t, strings.ToLower(review), want, "## Screenshot Review must name %q", want)
+	}
+
+	// The taught finding must survive the grounding gate: category out-of-scope,
+	// filed against the generated spec under e2e/.
+	for _, tools := range []bool{true, false} {
+		ctx := renderContext("<sample diff>")
+		ctx.ToolsEnabled = tools
+		out, err := payload.RenderPrompt(text, ctx)
+		require.NoErrorf(t, err, "render felix ToolsEnabled=%v", tools)
+		got := stream.ParseModelOutput([]byte(sectionBody(out, "## Output Format")))
+		require.NotEmptyf(t, got, "felix must teach at least one finding (ToolsEnabled=%v)", tools)
+		for _, f := range got {
+			require.Equal(t, "out-of-scope", f.Category)
+			require.Truef(t, strings.HasPrefix(f.File, "e2e/") && strings.HasSuffix(f.File, ".spec.ts"),
+				"taught finding must cite the generated spec, got %q", f.File)
+		}
 	}
 }
