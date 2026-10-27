@@ -178,6 +178,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ### Fixed
 
+- On Linux and macOS, the local debt store's lock (`.atcr/debt/`) is now an operating-system file lock on `.atcr/debt/.flock`, so two `atcr` processes can no longer write to or compact the store at the same time. Before, a waiter treated a lock older than 30 seconds as abandoned and deleted it, so a slow `atcr debt compact` or a crashed holder could let two processes in at once and lose or tear records. A crashed holder's lock is now released as soon as its process exits, with no 30-second wait. A waiter still gives up after 45 seconds with `timeout acquiring localdebt lock at .flock`. A `.lock` directory left by an older `atcr` is ignored, and old and new versions do not wait for each other, so do not run both against one store during an upgrade. Windows keeps the old lock. (epic 38.0)
 - `--auto-fix` now reads the source snippet at, and names in both its prompts, the sibling location when a finding carries the cross-branch `sibling:` marker, instead of the anchored `File:Line` (epic 35.16.15.1)
 - A provider reply with no content and no reasoning now still reports its token usage alongside the error, so the spend is counted. (epic 35.26)
 - A tool-enabled reviewer whose provider answers with no choices, or with an empty turn cut off before it produced content or a tool call, now has that turn's billed tokens counted in its `tokens_in` and `tokens_out` instead of reporting zero; the reviewer still fails as before. (epic 35.26)
