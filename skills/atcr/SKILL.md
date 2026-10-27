@@ -77,6 +77,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr init` | Write .atcr/config.yaml and editable persona files |
 | `atcr quickstart` | Interactive onboarding: scaffold config, provider, and a CI workflow |
 | `atcr serve` | Run the MCP stdio server over the review engine |
+| `atcr webhook` | Run the loopback-only daemon that reviews a GitHub pull request when the Slack app is mentioned with `review <pr-url>` (see docs/webhook.md) |
 | `atcr doctor` | Self-test every configured model endpoint |
 | `atcr trust` | Authorize project-defined providers (.atcr/registry.yaml) |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run |
