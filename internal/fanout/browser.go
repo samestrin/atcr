@@ -54,10 +54,24 @@ type BrowserResult struct {
 	Console []ConsoleEntry
 	// NetworkFailures holds the page's failed requests.
 	NetworkFailures []NetworkFailure
+	// FailedTests holds the tests that did not pass.
+	FailedTests []BrowserTestFailure
 	// ExitCode is the runner's exit status.
 	ExitCode int
 	// TimedOut is true when the run exceeded its timeout and was killed.
 	TimedOut bool
+}
+
+// BrowserTestFailure is one test the runner reported as failed.
+type BrowserTestFailure struct {
+	// Title is the test's full title, suite titles included.
+	Title string
+	// File is the spec file the test lives in, when the runner reported it.
+	File string
+	// Status is the runner's final status, for example "failed" or "timedOut".
+	Status string
+	// Error is the first error message, when there is one.
+	Error string
 }
 
 // BrowserScreenshot is one screenshot file returned from the run.
