@@ -474,7 +474,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 			return nil, nil, err
 		}
 	}
-	configured := rosterNames(cfg.Project)
+	configured := reviewerRoster(cfg.Project)
 	if err := ValidateResumeRoster(m, configured); err != nil {
 		return nil, nil, err
 	}
