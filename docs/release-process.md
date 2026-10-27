@@ -69,6 +69,14 @@ The two namespaces are provably disjoint: no tag can match both `v*` and
 `reconcile/v*`. An `atcr` app release (`v0.1.0`) triggers only the app release
 workflow; a module release (`reconcile/v1.2.3`) triggers only the module gate.
 
+goreleaser does not know about the namespaces: left alone it takes the newest tag
+of *any* namespace as the current tag, so a `reconcile/v0.12.0` tag newer than
+`v0.4.0` made a snapshot binary report `atcr version reconcile/v0.12.0` and would
+have built the `v0.5.0` GitHub notes from `reconcile/v0.12.0`, dropping every
+change in between. [`.goreleaser.yaml`](../.goreleaser.yaml) therefore sets
+`git: ignore_tags: ["reconcile/*"]`, so both the current and the previous tag come
+from the app's `v*` series. Keep that entry when adding another tag namespace.
+
 ### Build-time stamping contract (implemented by Task 02)
 
 A single pushed tag stamps **two independent version variables** at link time
