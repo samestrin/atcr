@@ -167,6 +167,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
 	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1)")
+	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr/config.yaml, registry.yaml and personas are not read; its .atcr/ignore.yaml and the one-time telemetry notice still are")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
@@ -178,6 +179,35 @@ func newReviewCmd() *cobra.Command {
 // previewURLFlag names `atcr review --preview-url` (Epic 36.0.1): the page a
 // visual-verification spec opens. This slice only validates it; 36.0.2 reads it.
 const previewURLFlag = "preview-url"
+
+// configDirFlag names `atcr review --config-dir` (Epic 49.2): the directory whose
+// .atcr project config the run loads while it reviews the current directory, so
+// a webhook auto-fix of an untrusted PR head runs the operator's
+// validate_command and sandbox rather than the PR's.
+const configDirFlag = "config-dir"
+
+// configRootFromFlags returns the directory the project config is loaded from:
+// "." when --config-dir is unset, else its value made absolute. A blank value
+// or one that is not an existing directory is a usage error (exit 2).
+func configRootFromFlags(cmd *cobra.Command) (string, error) {
+	if !cmd.Flags().Changed(configDirFlag) {
+		return ".", nil
+	}
+	v, _ := cmd.Flags().GetString(configDirFlag)
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", usageError(errors.New("--config-dir must not be empty"))
+	}
+	abs, err := filepath.Abs(v)
+	if err != nil {
+		return "", usageError(fmt.Errorf("--config-dir %q: %w", v, err))
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return "", usageError(fmt.Errorf("--config-dir %q is not an existing directory", v))
+	}
+	return abs, nil
+}
 
 // ValidatePreviewURL vets a --preview-url value with the --telemetry-endpoint
 // rule: https:// always, http:// only for a loopback host (localhost,
@@ -480,6 +510,14 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return err
 	}
 
+	// --config-dir (Epic 49.2) moves every project-config read below — the gate
+	// and consensus tiers, the roster, the registry overlay, personas, auto_fix
+	// and sandbox — to the named directory; "." (the reviewed tree) otherwise.
+	configRoot, err := configRootFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Resolve the gate threshold (--fail-on flag > project config > registry)
 	// before any review work; a bad configured value is a usage error (exit 2).
 	// The consensus level rides the SAME tier load — `review` has no --consensus
@@ -487,7 +525,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// check is deferred to the reconcile-only branch below, because a plain
 	// `atcr review` never reconciles and must not abort on a level it cannot
 	// use. A broken project config still fails here, via the gate.
-	threshold, rawConsensus, err := resolveGateAndRawConsensus(cmd)
+	threshold, rawConsensus, err := resolveGateAndRawConsensus(cmd, configRoot)
 	if err != nil {
 		return err
 	}
@@ -638,7 +676,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		}
 	}
 
-	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
+	cfg, err := fanout.LoadReviewConfig(configRoot, cliOverrides(cmd))
 	if err != nil {
 		return usageError(err) // missing/invalid config → exit 2
 	}
@@ -880,7 +918,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// transport failure never changes this command's outcome. --dry-run (Story 3)
 		// short-circuits at the top of runReview, so it is never reached on that path.
 		// The gate's unrecognized-env-value warning goes to this command's stderr.
-		defer maybeSendQualitySignal(ctx, cmd.ErrOrStderr(), "")
+		// Under --config-dir the opt-in is read from that directory, never the
+		// reviewed tree; unset keeps the repo-root discovery.
+		qsConfigRoot := ""
+		if cmd.Flags().Changed(configDirFlag) {
+			qsConfigRoot = configRoot
+		}
+		defer maybeSendQualitySignalFrom(ctx, cmd.ErrOrStderr(), "", qsConfigRoot)
 
 		// --require-coverage gate (Epic 35.16.13 T5), DEFERRED so it fires only after
 		// every artifact, ledger and the one-shot stages have run, and registered

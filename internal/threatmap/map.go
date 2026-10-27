@@ -203,12 +203,34 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 // none, the alias maps it to nora (and its own override or embedded text), and
 // legacy is true so the caller can warn.
 func resolvePersona(name, ref string, dirs registry.PersonaDirs) (text string, legacy bool, err error) {
-	if ref == "" {
-		ref = personas.ThreatMapperName
-		if name == personas.LegacyThreatMapperName {
-			ref = name
+	if ref == "" || ref == name {
+		return resolveUnset(name, ref != "", dirs)
+	}
+	return resolveRef(ref, dirs)
+}
+
+// resolveUnset is the no-persona-key path: a <name>.md file (only when the
+// registry load defaulted the key to the name), then a threat_mapper.md
+// override, which still wins as before the rename, then nora. An agent named
+// threat_mapper counts as using the deprecated key.
+func resolveUnset(name string, defaulted bool, dirs registry.PersonaDirs) (string, bool, error) {
+	if defaulted {
+		if p, ok, err := registry.ResolvePersonaFile(name, dirs); err != nil || ok {
+			return p.Text, false, err
 		}
 	}
+	if name == personas.LegacyThreatMapperName {
+		return resolveRef(name, dirs)
+	}
+	if p, ok, err := registry.ResolvePersonaFile(personas.LegacyThreatMapperName, dirs); err != nil || ok {
+		return p.Text, false, err
+	}
+	return resolveRef(personas.ThreatMapperName, dirs)
+}
+
+// resolveRef resolves one persona ref: its file first, then the embedded
+// default for nora and, through the alias, for the legacy key.
+func resolveRef(ref string, dirs registry.PersonaDirs) (string, bool, error) {
 	p, ok, err := registry.ResolvePersonaFile(ref, dirs)
 	if err != nil {
 		return "", false, err
@@ -216,15 +238,13 @@ func resolvePersona(name, ref string, dirs registry.PersonaDirs) (text string, l
 	if ok {
 		return p.Text, false, nil
 	}
-	switch {
-	case ref == personas.LegacyThreatMapperName:
-		text, _, err = resolvePersona(name, personas.ThreatMapperName, dirs)
+	switch ref {
+	case personas.LegacyThreatMapperName:
+		text, _, err := resolveRef(personas.ThreatMapperName, dirs)
 		return text, true, err
-	case ref == personas.ThreatMapperName:
-		text, err = personas.ThreatMapper()
+	case personas.ThreatMapperName:
+		text, err := personas.ThreatMapper()
 		return text, false, err
-	case ref == name:
-		return resolvePersona(name, "", dirs)
 	}
 	return "", false, fmt.Errorf("persona %q not found in %s or %s: %w", ref, dirs.Project, dirs.Registry, registry.ErrPersonaNotFound)
 }

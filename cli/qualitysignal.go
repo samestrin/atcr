@@ -82,14 +82,25 @@ func qualitySignalEnabledFromEnv(w io.Writer) bool {
 // the command's ErrOrStderr so a misspelled opt-in is capturable in cmd-scoped
 // tests exactly as on the --preview path.
 func qualitySignalGate(w io.Writer) bool {
+	return qualitySignalGateFrom(w, "")
+}
+
+// qualitySignalGateFrom is qualitySignalGate reading the persisted opt-in from
+// configRoot's .atcr/config.yaml (`review --config-dir`, Epic 49.2), so a
+// reviewed tree the operator does not trust cannot opt itself in. An empty
+// configRoot keeps the repo-root discovery.
+func qualitySignalGateFrom(w io.Writer, configRoot string) bool {
 	env := qualitySignalEnabledFromEnv(w)
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
 	// rather than breaking the gate.
-	root, rerr := repoRoot()
-	if rerr != nil {
-		root = "."
+	root := configRoot
+	if root == "" {
+		var rerr error
+		if root, rerr = repoRoot(); rerr != nil {
+			root = "."
+		}
 	}
 	cfg, err := registry.LoadQualitySignalSetting(root)
 	if err != nil {
@@ -245,6 +256,12 @@ func waitQualitySignalInFlight() { qualitySignalInFlight.Wait() }
 // call site, which never persists locally) falls back to repoRoot() discovery,
 // matching what `atcr quality-report` reads.
 func maybeSendQualitySignal(ctx context.Context, errW io.Writer, storeRoot string) {
+	maybeSendQualitySignalFrom(ctx, errW, storeRoot, "")
+}
+
+// maybeSendQualitySignalFrom is maybeSendQualitySignal with the opt-in read
+// from configRoot (see qualitySignalGateFrom); "" keeps repo-root discovery.
+func maybeSendQualitySignalFrom(ctx context.Context, errW io.Writer, storeRoot, configRoot string) {
 	// Fail-open absolute (AC 06-03): a panic anywhere on this best-effort path —
 	// the gate resolution or the goroutine spawn — is recovered here so it can
 	// never alter the review/reconcile run's exit code or stdout. The detached
@@ -259,7 +276,7 @@ func maybeSendQualitySignal(ctx context.Context, errW io.Writer, storeRoot strin
 	// Gate FIRST and synchronously: a disabled opt-in short-circuits before any
 	// payload is built or goroutine spawned, proving the privacy line at the
 	// constructor, not merely at the network seam.
-	if !qualitySignalGate(errW) {
+	if !qualitySignalGateFrom(errW, configRoot) {
 		return
 	}
 	// Resolve the root the payload build reads from. A threaded storeRoot (the

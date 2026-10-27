@@ -438,9 +438,11 @@ func finishGate(raw string) (string, error) {
 // gate validated and the consensus level RAW. The enum check is left to the
 // caller because the consensus value is consumed only on a reconciling run: a
 // plain `atcr review` must not abort on a configured level it cannot influence,
-// while a broken project config still fails here through the gate.
-func resolveGateAndRawConsensus(cmd *cobra.Command) (threshold, rawConsensus string, err error) {
-	rawGate, rawConsensus, err := registry.ResolveSharedSettings(".", gateFlagValue(cmd), "")
+// while a broken project config still fails here through the gate. configRoot
+// is the directory whose .atcr/config.yaml is the project tier (`review
+// --config-dir`, else ".").
+func resolveGateAndRawConsensus(cmd *cobra.Command, configRoot string) (threshold, rawConsensus string, err error) {
+	rawGate, rawConsensus, err := registry.ResolveSharedSettings(configRoot, gateFlagValue(cmd), "")
 	if err != nil {
 		return "", "", usageError(err)
 	}

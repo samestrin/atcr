@@ -13,6 +13,10 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ## [Unreleased]
 
+### Added
+
+- `atcr review --config-dir <dir>` loads the project config (`.atcr/config.yaml`, including `auto_fix.validate_command`, `sandbox:`, `fail_on`, `consensus` and the `quality_signal` opt-in, plus `.atcr/registry.yaml` and `.atcr/personas/`) from `<dir>` while the current directory stays the tree under review, so an auto-fix of an untrusted pull request runs the operator's validation command rather than the pull request's. The reviewed tree's `.atcr/config.yaml`, `.atcr/registry.yaml` and `.atcr/personas/` are not read; its `.atcr/ignore.yaml` (finding suppressions) and the one-time telemetry notice (which reads that tree's `telemetry` opt-out and writes its notice marker) still are. A value that is not an existing directory, a directory without `.atcr/config.yaml`, or the flag with `--resume` is a usage error (exit 2) before any review work. See [docs/auto-fix.md](docs/auto-fix.md#loading-the-config-from-another-directory---config-dir). (epic 49.2)
+
 ### Deprecated
 
 - The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)

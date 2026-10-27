@@ -252,6 +252,25 @@ func TestNewAgent_LegacyOverrideFileStillWins(t *testing.T) {
 	require.False(t, a.UsedLegacyKey())
 }
 
+// An agent with no persona key (the registry load sets it to the agent's name)
+// still gets a threat_mapper.md override, without a deprecation flag.
+func TestNewAgent_UnsetKeyStillGetsLegacyOverride(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "threat_mapper.md"), []byte("old override {{.Payload}}"), 0o644))
+	reg := testRegistry()
+	reg.Agents["scout"] = registry.AgentConfig{Provider: "cheap", Model: "small-5", Persona: "scout"}
+
+	for _, key := range []string{"scout", ""} {
+		ac := reg.Agents["scout"]
+		ac.Persona = key
+		reg.Agents["scout"] = ac
+		a, err := NewAgent("scout", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{Project: project}, &fakeLLM{})
+		require.NoError(t, err, key)
+		require.Equal(t, "old override {{.Payload}}", a.Persona(), key)
+		require.False(t, a.UsedLegacyKey(), key)
+	}
+}
+
 // With no threat_mapper.md, the alias lands on a nora.md override.
 func TestNewAgent_LegacyKeyReachesNoraOverride(t *testing.T) {
 	project := t.TempDir()
