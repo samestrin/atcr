@@ -280,3 +280,70 @@ func TestAutoFixLogWriter_SplitsRedactsAndCapsLines(t *testing.T) {
 	assert.Equal(t, "webhook: auto-fix acme/widget#7: after", lines[4])
 	assertNoToken(t, logs, nil)
 }
+
+// TestAutoFixLogWriter_OverLongLineWithoutNewlineIsCutOnce covers a child line
+// longer than autoFixLogChunk that arrives with no newline: it is logged once,
+// truncated, as soon as the chunk is full; the rest of that line is dropped
+// across later writes; and the next line is logged again.
+func TestAutoFixLogWriter_OverLongLineWithoutNewlineIsCutOnce(t *testing.T) {
+	logs := &logLines{}
+	w := newAutoFixLogWriter("acme/widget#7", []string{testPushToken}, logs.logf)
+
+	// Two writes, neither with a newline, that together pass the chunk size.
+	_, _ = w.Write([]byte(strings.Repeat("x", autoFixLogChunk/2)))
+	require.Empty(t, logs.all(), "a line is not logged before it is complete or over-long")
+	_, _ = w.Write([]byte(strings.Repeat("y", autoFixLogChunk/2+10)))
+	lines := logs.all()
+	require.Len(t, lines, 1, "the over-long line is logged as soon as the chunk is full")
+	assert.True(t, strings.HasSuffix(lines[0], "…"), "the over-long line is marked truncated")
+	assert.LessOrEqual(t, len([]rune(lines[0])), len("webhook: auto-fix acme/widget#7: ")+autoFixLogLineRunes)
+
+	// The rest of that line, token included, is dropped; the next line is not.
+	_, _ = w.Write([]byte(strings.Repeat("z", 100) + testPushToken))
+	_, _ = w.Write([]byte(" tail\nnext line\n"))
+	w.Flush()
+	lines = logs.all()
+	require.Len(t, lines, 2, "%q", lines)
+	assert.Equal(t, "webhook: auto-fix acme/widget#7: next line", lines[1])
+	assertNoToken(t, logs, nil)
+}
+
+// TestAutoFixLogWriter_RedactsTokenShapes covers a GitHub-token-shaped value
+// that is not a configured secret, such as one a model quotes back.
+func TestAutoFixLogWriter_RedactsTokenShapes(t *testing.T) {
+	logs := &logLines{}
+	w := newAutoFixLogWriter("acme/widget#7", nil, logs.logf)
+	shaped := "ghp_" + strings.Repeat("a1", 15) // built here so the source holds no token-shaped literal
+	_, _ = w.Write([]byte("quoted " + shaped + " back\n"))
+	assert.Equal(t, []string{"webhook: auto-fix acme/widget#7: quoted [redacted] back"}, logs.all())
+}
+
+func TestChildEnv_DropsDaemonTokenAndRepoVars(t *testing.T) {
+	got := childEnv([]string{
+		"PATH=/bin",
+		"GITHUB_TOKEN=daemon-review-token",
+		"GIT_DIR=/elsewhere/.git",
+		"GIT_WORK_TREE=/elsewhere",
+		"GIT_INDEX_FILE=/elsewhere/.git/index",
+		"GITHUB_TOKEN_EXTRA=kept",
+		"HOME=/home/op",
+	})
+	assert.Equal(t, []string{"PATH=/bin", "GITHUB_TOKEN_EXTRA=kept", "HOME=/home/op"}, got)
+}
+
+// TestAutoFixRunner_FlushesLastLineWithoutNewline covers a child whose final
+// output line has no newline: Run still logs it.
+func TestAutoFixRunner_FlushesLastLineWithoutNewline(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, `echo "first"; printf 'last line, token %s' "$GITHUB_TOKEN"; exit 0`)
+	logs := &logLines{}
+
+	err := newAutoFixRunner(f, stub, logs).Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"webhook: auto-fix acme/widget#7: first",
+		"webhook: auto-fix acme/widget#7: last line, token [redacted]",
+	}, logs.all())
+	assertNothingLeft(t, f)
+}
