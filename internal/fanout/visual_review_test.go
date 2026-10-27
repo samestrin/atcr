@@ -95,6 +95,13 @@ type visionServer struct {
 
 func newVisionServer(t *testing.T, reply string) *visionServer {
 	t.Helper()
+	return newVisionServerMessage(t, map[string]any{"role": "assistant", "content": reply})
+}
+
+// newVisionServerMessage answers with message as the assistant turn and a
+// usage block of 120 prompt and 30 completion tokens.
+func newVisionServerMessage(t *testing.T, message map[string]any) *visionServer {
+	t.Helper()
 	vs := &visionServer{}
 	vs.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -102,7 +109,10 @@ func newVisionServer(t *testing.T, reply string) *visionServer {
 		vs.bodies = append(vs.bodies, body)
 		vs.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{"choices": []map[string]any{{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": reply}}}}
+		resp := map[string]any{
+			"choices": []map[string]any{{"finish_reason": "stop", "message": message}},
+			"usage":   map[string]any{"prompt_tokens": 120, "completion_tokens": 30},
+		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(vs.srv.Close)
@@ -211,6 +221,30 @@ func TestRunVisualReview_ImagePartPerScreenshot(t *testing.T) {
 	assert.Equal(t, "eye", got.Result.Agent)
 	assert.Equal(t, StatusOK, got.Result.Status)
 	assert.False(t, got.Result.ImagesSentOffMachine)
+	assert.Equal(t, "vision-model", got.Result.Model)
+	assert.Equal(t, 120, got.Result.TokensIn)
+	assert.Equal(t, 30, got.Result.TokensOut)
+	assert.Len(t, got.Result.CallRecords, 1)
+}
+
+// A reply whose content is null (or absent) is an empty review, not a panic.
+func TestRunVisualReview_NullContent(t *testing.T) {
+	for name, msg := range map[string]map[string]any{
+		"null":   {"role": "assistant", "content": nil},
+		"absent": {"role": "assistant"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			countingScanner(t, nil)
+			vs := newVisionServerMessage(t, msg)
+			agent := visionAgentAt(t, vs.srv.URL, true)
+
+			got, err := RunVisualReview(context.Background(), llmclient.New(), agent, registry.Settings{}, visualRequest("ok"))
+			require.NoError(t, err)
+			assert.Empty(t, got.Findings)
+			assert.Empty(t, got.Result.Content)
+			assert.Equal(t, StatusOK, got.Result.Status)
+		})
+	}
 }
 
 // secret_guard: block with a token in the console text sends nothing.
@@ -250,7 +284,8 @@ func TestRunVisualReview_BlockCoversNetworkAndTestText(t *testing.T) {
 		"failed test": func(r *VisualReviewRequest) {
 			r.Browser.FailedTests = []BrowserTestFailure{{Title: "t", Error: "expected " + guardAWSKey}}
 		},
-		"prompt": func(r *VisualReviewRequest) { r.Prompt += guardAWSKey },
+		"prompt":    func(r *VisualReviewRequest) { r.Prompt += guardAWSKey },
+		"spec path": func(r *VisualReviewRequest) { r.SpecPath = "e2e/" + guardAWSKey + ".spec.ts" },
 		"screenshot name": func(r *VisualReviewRequest) {
 			r.Browser.Screenshots[1].Name = "cart\n" + guardAWSKey
 		},
