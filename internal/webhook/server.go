@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/integrations/linear"
 	"github.com/samestrin/atcr/internal/integrations/slack"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -17,6 +18,10 @@ import (
 const (
 	// SlackEventsPath is the route Slack's Events API posts to.
 	SlackEventsPath = "/slack/events"
+	// LinearWebhookPath is the route Linear's issue webhooks post to.
+	LinearWebhookPath = "/linear/webhook"
+	// linearDeliveryHeader carries Linear's delivery id; it is only logged.
+	linearDeliveryHeader = "Linear-Delivery"
 	// AckDeadline is how soon Slack needs a 2xx before it retries a delivery.
 	// The handler never waits on a job, so it answers well inside it.
 	AckDeadline = 3 * time.Second
@@ -44,6 +49,12 @@ type Options struct {
 	// Dispatch turns a verified app_mention into a job. ok=false acknowledges
 	// the mention and runs nothing. nil runs nothing.
 	Dispatch func(m *slack.AppMention) (job Job, ok bool)
+	// LinearSigningSecret verifies Linear requests. Empty disables the Linear
+	// route: it answers 404.
+	LinearSigningSecret string
+	// LinearDispatch turns a verified Linear event into a job. ok=false
+	// acknowledges the event and runs nothing. nil runs nothing.
+	LinearDispatch func(ev linear.Event) (job Job, ok bool)
 	// Now is the clock for signature timestamps and deduplication.
 	Now func() time.Time
 	// Logf receives one line per refused request and per failed job. Lines
@@ -82,6 +93,7 @@ func NewServer(o Options) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(SlackEventsPath, s.handleSlack)
+	mux.HandleFunc(LinearWebhookPath, s.handleLinear)
 	return mux
 }
 
@@ -165,15 +177,8 @@ func (s *Server) handleSlack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.opts.MaxBodyBytes))
-	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			s.opts.Logf("webhook: slack request body over the %d-byte cap", s.opts.MaxBodyBytes)
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "cannot read request body", http.StatusBadRequest)
+	body, ok := s.readBody(w, r, "slack")
+	if !ok {
 		return
 	}
 	now := s.opts.Now()
@@ -203,6 +208,77 @@ func (s *Server) handleSlack(w http.ResponseWriter, r *http.Request) {
 		f.Flush()
 	}
 	s.dispatch(ev.Mention, now)
+}
+
+// readBody reads the request body under the size cap. On failure it has
+// already answered the request and returns ok=false.
+func (s *Server) readBody(w http.ResponseWriter, r *http.Request, source string) ([]byte, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.opts.MaxBodyBytes))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			s.opts.Logf("webhook: %s request body over the %d-byte cap", source, s.opts.MaxBodyBytes)
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return nil, false
+		}
+		http.Error(w, "cannot read request body", http.StatusBadRequest)
+		return nil, false
+	}
+	return body, true
+}
+
+func (s *Server) handleLinear(w http.ResponseWriter, r *http.Request) {
+	if s.opts.LinearSigningSecret == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, ok := s.readBody(w, r, "linear")
+	if !ok {
+		return
+	}
+	now := s.opts.Now()
+	ev, err := linear.Verify(s.opts.LinearSigningSecret, r.Header, body, now)
+	if err != nil {
+		s.opts.Logf("webhook: refused linear request: %v", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Acknowledge first: nothing below may wait on the job, and the PR
+	// lookup is made inside it.
+	w.WriteHeader(http.StatusOK)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	s.dispatchLinear(ev, r.Header.Get(linearDeliveryHeader), now)
+}
+
+// dispatchLinear starts the job for ev unless the same issue already moved to
+// the same state within the dedupe window: a redelivery, or a second delivery
+// of one status change, runs one job.
+func (s *Server) dispatchLinear(ev linear.Event, delivery string, now time.Time) {
+	if s.opts.LinearDispatch == nil {
+		return
+	}
+	job, ok := s.opts.LinearDispatch(ev)
+	if !ok || job.Run == nil {
+		return
+	}
+	key := "linear:" + ev.Data.ID + ":" + ev.Data.State.ID
+	if !s.seen.firstSeen(key, now) {
+		s.opts.Logf("webhook: linear delivery %q for issue %s already handled for this state; ignored", delivery, ev.Data.ID)
+		return
+	}
+	// A job that never reviewed must not burn the key for the window.
+	job.Unrun = func() { s.seen.forget(key) }
+	if err := s.jobs.Start(job); err != nil {
+		s.seen.forget(key)
+		s.opts.Logf("webhook: linear delivery %q for issue %s not started: %v", delivery, ev.Data.ID, err)
+	}
 }
 
 // dispatch starts the job for m unless its delivery id was already handled.

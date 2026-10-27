@@ -106,6 +106,30 @@ agents:
 
 Set the run-wide default in `.atcr/config.yaml` (`payload_mode: blocks`), override per agent in the registry, or override the whole run from the CLI with `atcr review --payload <mode>`. Precedence: CLI flag > project config > registry > embedded default.
 
+## Threat-model scoping (`--threat-map`)
+
+`atcr review --threat-map` adds an opt-in triage phase ahead of a git-range review: before any reviewer is called, one cheap **mapper agent** is shown the changed file paths — the paths only, never their contents — and names the subset an attacker could reach or abuse. Only those files go to the review panel; the phase runs after the payloads are built and before the byte-budget shed, so the budget is spent only on files that survived the map.
+
+The mapper is a normal `agents:` entry, named by the `threat_map.agent` setting, which resolves with the usual precedence — project `.atcr/config.yaml` overrides the registry `~/.config/atcr/registry.yaml` (`settings.threat_map.agent` in the resolved settings). The entry's `persona:` key is the mapper prompt; unset, it defaults to the embedded **`threat_mapper`** persona (or to an edited `threat_mapper.md` in the project or registry personas folder; a persona file named after the agent itself, such as `scout.md`, wins over both), which is instructed to judge each path by its name, folder and extension alone, to keep anything it is unsure about, and to answer with one JSON object, `{"keep": [...]}`. The mapper can only **remove** files from the review, never add one: a reply path it was not shown is ignored.
+
+```yaml
+# ~/.config/atcr/registry.yaml
+agents:
+  scout:                      # the mapper — a cheap, fast model is enough
+    provider: openrouter
+    model: openai/gpt-4o-mini
+threat_map:
+  agent: scout
+```
+
+**Fail-open rule.** A missing or unknown `threat_map.agent` is a usage error (exit 2) raised before any provider call, because an operator who asked for a scoped review must never silently get an unscoped one. Failures of the mapper **call** are the opposite: an error, timeout, malformed or empty reply, or a reply that keeps none of the input paths keeps **every** file, logs a warning, and records the cause in `manifest.json`'s `threat_map.failed` — a broken mapper degrades to an ordinary full review, never to an empty one.
+
+The outcome is recorded in `manifest.json` under `threat_map` (`keep`, `dropped`, `failed`), and every agent's `status.json` lists the excluded files as `threat_map_dropped` — deliberately apart from `files_dropped`, since a mapper drop is a scoping decision, not a byte-budget shed, and never marks the run truncated.
+
+Scoping applies to **git-range reviews only**: `--threat-map` cannot be combined with a baseline (`--all`/`--scope`) review, and passing it with `--resume` is a usage error — a resume reuses the map the original run recorded, so it reviews exactly the file set the completed agents saw rather than re-mapping.
+
+**Coverage caveat.** A dropped file is reviewed by **no one**: the run's findings and coverage extend only to the kept files, and `threat_map_dropped` is the complete record of what went unreviewed. And because the mapper sees paths, not code, the map is heuristic triage — a wrong drop leaves no trace in the findings. Treat `--threat-map` as a token-saving measure for large ranges, not as a security boundary; when the change is small or the cost of missing a file is high, run without it.
+
 ## Byte budgets and truncation
 
 Every payload has a byte budget — `payload_byte_budget`, default **524288 bytes (512 KiB)**, configurable with the usual precedence (CLI `--byte-budget` > project config > registry > embedded default). When a payload exceeds its budget, atcr truncates **deterministically** rather than letting a provider silently clip the input:

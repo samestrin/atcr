@@ -914,6 +914,10 @@ type Registry struct {
 	// ThreatMap is the user-level (global) tier of the `threat_map` block (Epic
 	// 37.0); ProjectConfig.ThreatMap overrides it. See ThreatMapConfig.
 	ThreatMap *ThreatMapConfig `yaml:"threat_map,omitempty"`
+	// VisualReview is the user-level (global) tier of the `visual_review` block
+	// (Epic 36.0.2); ProjectConfig.VisualReview overrides it. See
+	// VisualReviewConfig.
+	VisualReview *VisualReviewConfig `yaml:"visual_review,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
