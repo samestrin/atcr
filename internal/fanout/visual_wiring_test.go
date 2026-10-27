@@ -314,3 +314,52 @@ func TestPrepareReviewFromDiff_RefusesAVisualStage(t *testing.T) {
 	_, err := PrepareReviewFromDiff(context.Background(), felixConfig(), req, "diff --git a/x b/x\n")
 	assert.ErrorIs(t, err, ErrVisualNeedsRange)
 }
+
+// A resume rebuilds the pool from the manifest roster, which leaves felix out;
+// felix's record from the original run must still reach the rebuilt pool.
+func TestRebuildPool_KeepsTheVisualRecordOnResume(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	req := reviewReq(repo, repo, base, head)
+	req.Visual = &fakeVisual{log: &callLog{}, reply: "```json\n[{\"severity\":\"HIGH\",\"file_line\":\"e2e/felix-x.spec.ts:9\",\"problem\":\"Pay button clipped\",\"fix\":\"f\",\"category\":\"out-of-scope\",\"est_minutes\":10,\"evidence\":\"e\"}]\n```\n"}
+	res, err := RunReview(context.Background(), orderedCompleter{log: &callLog{}}, felixConfig(), req)
+	require.NoError(t, err)
+	poolDir := filepath.Join(res.Dir, "sources", "pool")
+
+	roster := visualRebuildRoster(readManifestFile(t, res.Dir).Roster, poolDir)
+	assert.Equal(t, []string{"greta", "kai", VisualPersonaName}, roster)
+	_, statuses, err := RebuildPool(context.Background(), poolDir, roster)
+	require.NoError(t, err)
+	assert.Len(t, statuses, 3)
+	findings, err := os.ReadFile(filepath.Join(poolDir, findingsFile))
+	require.NoError(t, err)
+	assert.Contains(t, string(findings), "Pay button clipped")
+
+	assert.Equal(t, []string{"greta"}, visualRebuildRoster([]string{"greta"}, t.TempDir()), "no felix record, no felix")
+}
+
+// A roster of felix alone has no reviewer to dispatch; without a visual stage
+// the review is refused before anything is scaffolded.
+func TestPrepareReview_FelixAloneWithoutAVisualStageIsAnEmptyRoster(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := felixConfig()
+	cfg.Project.Agents = []string{VisualPersonaName}
+	_, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	assert.ErrorIs(t, err, ErrEmptyRoster)
+}
+
+// With a visual stage, felix alone is a valid roster: the review runs only it.
+func TestRunReview_FelixAloneRunsOnlyTheVisualStage(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	cfg := felixConfig()
+	cfg.Project.Agents = []string{VisualPersonaName}
+	l := &callLog{}
+	req := reviewReq(repo, repo, base, head)
+	req.Visual = &fakeVisual{log: l, reply: "NO FINDINGS"}
+
+	res, err := RunReview(context.Background(), orderedCompleter{log: l}, cfg, req)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"visual"}, l.get())
+	assert.Equal(t, 1, res.Summary.Succeeded)
+}
