@@ -14,7 +14,7 @@ import (
 
 // personaStemRe is the persona naming rule (docs/personas-authoring.md, "Persona
 // naming: human first names"): a persona file stem is one lowercase word of
-// letters only, so role slugs such as threat_mapper or frontend-qa cannot return.
+// letters only, so role slugs such as frontend-qa or foo_bar cannot return.
 var personaStemRe = regexp.MustCompile(`^[a-z]+$`)
 
 // personaNamingDirs are the directories whose .md and .yaml files are personas.
@@ -24,10 +24,8 @@ var personaNamingDirs = []string{".", "community"}
 
 // personaNamingExceptions are file names that are allowed to break the rule.
 // _base.md is the shared template, not a persona (see expectedEmbeddedFiles).
-// threat_mapper.md is the one known violation until Epic 83.0 T2 renames it.
 var personaNamingExceptions = map[string]struct{}{
-	"_base.md":         {},
-	"threat_mapper.md": {},
+	"_base.md": {},
 }
 
 // badPersonaStems returns the dir-relative paths of the .md and .yaml files
@@ -72,7 +70,7 @@ func TestPersonaFileStemsAreOneLowercaseWord_ScansBothDirsAndExtensions(t *testi
 	for _, f := range []string{
 		filepath.Join(root, "bruce.md"),
 		filepath.Join(root, "_base.md"),
-		filepath.Join(root, "threat_mapper.md"),
+		filepath.Join(root, "role_mapper.md"),
 		filepath.Join(root, "foo_bar.md"),
 		filepath.Join(root, "notes.txt"),
 		filepath.Join(community, "gerald.md"),
@@ -90,5 +88,6 @@ func TestPersonaFileStemsAreOneLowercaseWord_ScansBothDirsAndExtensions(t *testi
 		filepath.Join(community, "Liam.md"),
 		filepath.Join(community, "frontend-qa.yaml"),
 		filepath.Join(root, "foo_bar.md"),
+		filepath.Join(root, "role_mapper.md"),
 	}, bad)
 }

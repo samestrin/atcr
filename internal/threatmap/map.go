@@ -139,10 +139,10 @@ type Agent struct {
 }
 
 // NewAgent resolves the agents: entry called name into a mapper Agent. Its
-// persona is the entry's persona key, or threat_mapper when the key is unset.
+// persona is the entry's persona key, or nora when the key is unset.
 // The registry load sets an unset key to the agent's name, so that name counts
 // as unset unless a <name>.md persona file exists. A <persona>.md in the project or registry personas dir wins; otherwise only
-// threat_mapper has an embedded default. The mapper never falls back to
+// nora (or its legacy key threat_mapper) has an embedded default. The mapper never falls back to
 // _base.md: that is the reviewer template, whose findings reply never parses
 // here.
 func NewAgent(name string, reg *registry.Registry, settings registry.Settings, dirs registry.PersonaDirs, llm LLM) (*Agent, error) {
@@ -208,10 +208,10 @@ func resolvePersona(name, ref string, dirs registry.PersonaDirs) (string, error)
 	if ok {
 		return p.Text, nil
 	}
-	if ref == name && ref != personas.ThreatMapperName {
+	if ref == name && ref != personas.ThreatMapperName && ref != personas.LegacyThreatMapperName {
 		return resolvePersona(name, "", dirs)
 	}
-	if ref != personas.ThreatMapperName {
+	if ref != personas.ThreatMapperName && ref != personas.LegacyThreatMapperName {
 		return "", fmt.Errorf("persona %q not found in %s or %s: %w", ref, dirs.Project, dirs.Registry, registry.ErrPersonaNotFound)
 	}
 	return personas.ThreatMapper()
