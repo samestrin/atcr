@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,9 +67,63 @@ func addAutoFixFlags(cmd *cobra.Command) {
 			"editor reads it — even though the validation step itself was sandboxed. Only pass this when you are "+
 			"intentionally reviewing an --auto-fix change to a build/CI/editor config and accept that risk. "+
 			"Meaningless without --auto-fix. Prints a security warning to stderr on every run.")
+	cmd.Flags().String("auto-fix-base", "",
+		"branch the --auto-fix pull request targets (default: the repository default branch). "+
+			"Local HEAD must be pushed and equal this branch, as for the default. Requires --auto-fix.")
 	cmd.Flags().String("repo", "", "owner/name target repository for --auto-fix (default: $GITHUB_REPOSITORY)")
 	cmd.Flags().String("token", "", "GitHub token with contents:write + pull_requests:write for --auto-fix (default: $GITHUB_TOKEN)")
 	cmd.Flags().String("api-url", "", "GitHub REST API base for --auto-fix (default: $GITHUB_API_URL or https://api.github.com)")
+}
+
+// autoFixBaseOverride returns the trimmed --auto-fix-base value, or "" when the
+// flag is unset so the caller falls back to the repository default branch. It
+// runs before any review work, so a value that is set without --auto-fix or is
+// not a usable branch name is a usage error (exit 2) rather than a GitHub 422
+// after a full (paid) review.
+func autoFixBaseOverride(cmd *cobra.Command) (string, error) {
+	if !cmd.Flags().Changed("auto-fix-base") {
+		return "", nil
+	}
+	if !boolFlag(cmd, "auto-fix") {
+		return "", usageError(errors.New("--auto-fix-base requires --auto-fix"))
+	}
+	raw, _ := cmd.Flags().GetString("auto-fix-base")
+	name := strings.TrimSpace(raw)
+	if !validBranchName(name) {
+		return "", usageError(fmt.Errorf("--auto-fix-base %q is not a valid branch name", raw))
+	}
+	return name, nil
+}
+
+// autoFixBaseBranch is the branch the fix pull request targets: the
+// --auto-fix-base override when set, else the resolved default branch.
+func autoFixBaseBranch(override, defaultBranch string) string {
+	if override != "" {
+		return override
+	}
+	return defaultBranch
+}
+
+// validBranchName is a local shape check following git check-ref-format's rules
+// for a branch name (no network, no exec). It refuses anything git itself would.
+func validBranchName(name string) bool {
+	if name == "" || name == "@" || strings.HasPrefix(name, "-") ||
+		strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
+		strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") ||
+		strings.ContainsAny(name, " ~^:?*[\\") {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, part := range strings.Split(name, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // autoFixRefusal is the --auto-fix gate's refusal error. Error() returns the

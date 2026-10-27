@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -88,9 +87,9 @@ func TestReviewCmd_AutoFixWithoutBaseOverrideTargetsDefaultBranch(t *testing.T) 
 	setup := func() {
 		wd, err := os.Getwd()
 		require.NoError(t, err)
+		runFixtureGit(t, wd, "branch", "-M", "main")
 		runFixtureGit(t, wd, "checkout", "-q", "-b", "feature")
 		runFixtureGit(t, wd, "branch", "-f", "main", "HEAD^")
-		_ = exec.Command("git", "branch", "-D", "master").Run()
 	}
 	code, out, gh := runReviewAutoFix(t, setup)
 	require.Equal(t, 0, code, out)

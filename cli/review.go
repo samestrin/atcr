@@ -531,6 +531,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// resolved backend forward to the post-reconcile orchestration.
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
+	// --auto-fix-base (Epic 49.2) names the branch the fix PR targets instead of
+	// the resolved default branch; checked here so a bad value fails before any
+	// review work.
+	afBase, err := autoFixBaseOverride(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the consensus level only when this run will actually reconcile —
 	// the one-shot in-process reconcile below is its only consumer, and a plain
@@ -1037,7 +1044,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// findings, and it is terminal — the fail-on exit gate below is bypassed
 		// because the intent under --auto-fix is to remediate, not to fail CI.
 		if autoFix {
-			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
+			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, autoFixBaseBranch(afBase, res.DefaultBranch))
 		}
 
 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
