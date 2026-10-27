@@ -82,6 +82,7 @@ const (
 	visualConsoleLabel     = "captured console text"
 	visualNetworkLabel     = "captured failed-request text"
 	visualTestsLabel       = "failed test messages"
+	visualSpecLabel        = "generated spec path"
 )
 
 // VisionChatter is the one client call the screenshot review makes.
@@ -138,6 +139,7 @@ func RunVisualReview(ctx context.Context, client VisionChatter, agent VisionAgen
 		{text: consoleText(req.Browser.Console), file: visualConsoleLabel},
 		{text: networkText(req.Browser.NetworkFailures), file: visualNetworkLabel},
 		{text: failedTestsText(req.Browser.FailedTests), file: visualTestsLabel},
+		{text: req.SpecPath, file: visualSpecLabel},
 	}
 	for i, sc := range shots {
 		segs = append(segs, guardSegment{text: screenshotLabel(i, sc), file: visualScreenshotsLabel})
@@ -156,7 +158,7 @@ func RunVisualReview(ctx context.Context, client VisionChatter, agent VisionAgen
 	}
 	var b strings.Builder
 	b.WriteString(guarded[0])
-	fmt.Fprintf(&b, "\n\nGenerated spec: %s\n", req.SpecPath)
+	fmt.Fprintf(&b, "\n\nGenerated spec: %s\n", guarded[4])
 	writeCaptured(&b, "Console messages", guarded[1])
 	writeCaptured(&b, "Failed requests", guarded[2])
 	writeCaptured(&b, "Failed tests", guarded[3])
@@ -203,6 +205,10 @@ func RunVisualReview(ctx context.Context, client VisionChatter, agent VisionAgen
 			DurationMS:           time.Since(start).Milliseconds(),
 			ResponseTruncated:    resp.Truncated,
 			ImagesSentOffMachine: !agent.Loopback,
+			Model:                ac.Model,
+			TokensIn:             resp.Usage.PromptTokens,
+			TokensOut:            resp.Usage.CompletionTokens,
+			CallRecords:          resp.CallRecords,
 		},
 		Findings:   kept,
 		Ungrounded: ungrounded,
