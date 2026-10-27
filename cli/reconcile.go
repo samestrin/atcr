@@ -399,7 +399,7 @@ func persistLocalDebt(reviewDir string, res reconcile.Result, root string, ok bo
 // hook applies. The zero value means localdebt's production defaults (100k records
 // / 100 MiB); it is a var so a test can shrink it to a handful of records and
 // restore it with t.Cleanup, rather than writing 100k records to exercise the
-// trigger. Same seam precedent as localdebt's lockWait/lockStale.
+// trigger. Same seam precedent as localdebt's lockWait.
 var autoCompactPolicy = localdebt.CompactPolicy{}
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
