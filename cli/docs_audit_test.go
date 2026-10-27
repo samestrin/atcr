@@ -1409,6 +1409,124 @@ func TestAutoFixDocsStateFallbackIsOptIn(t *testing.T) {
 	}
 }
 
+// autoFixNonParityBullets splits the "What you give up relative to Docker"
+// section into its top-level bullets, each returned as its bold lead (the text
+// of the first **...**) and its full text with line breaks folded to spaces.
+func autoFixNonParityBullets(section string) []struct{ lead, text string } {
+	reLead := regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	var bullets []struct{ lead, text string }
+	var cur []string
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+		text := strings.Join(cur, " ")
+		lead := ""
+		if m := reLead.FindStringSubmatch(text); m != nil {
+			lead = m[1]
+		}
+		bullets = append(bullets, struct{ lead, text string }{lead, text})
+		cur = nil
+	}
+	for _, ln := range strings.Split(section, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "- "):
+			flush()
+			cur = []string{strings.TrimPrefix(ln, "- ")}
+		case len(cur) > 0 && (strings.HasPrefix(ln, " ") || strings.TrimSpace(ln) == ""):
+			cur = append(cur, strings.TrimSpace(ln))
+		default:
+			flush()
+		}
+	}
+	flush()
+	return bullets
+}
+
+// autoFixNonParityProblems checks the non-parity list against what the OS-level
+// backend still leaves unenforced after epic 35.24: CPU and the invoking-user
+// identity everywhere, and the memory and PID caps on macOS only. Linux
+// enforces both caps (a per-run cgroup v2, or RLIMIT_DATA for memory), so a
+// bullet that lists sandbox.memory or sandbox.pids_limit as given up must say
+// in its lead that it is about macOS.
+func autoFixNonParityProblems(section string) []string {
+	bullets := autoFixNonParityBullets(section)
+	var problems []string
+	var cpu, user bool
+	reCapKey := regexp.MustCompile("`sandbox\\.(memory|pids_limit)`")
+	reCapLead := regexp.MustCompile(`(?i)memory|\bpids?\b|process|resource cap`)
+	reMacOS := regexp.MustCompile(`(?i)macos|darwin`)
+	for _, b := range bullets {
+		if strings.Contains(b.text, "`sandbox.cpus`") && regexp.MustCompile(`(?i)\bnot\s+enforced\b`).MatchString(b.text) {
+			cpu = true
+		}
+		if regexp.MustCompile(`(?i)\binvoking\s+user\b`).MatchString(b.lead) {
+			user = true
+		}
+		if (reCapKey.MatchString(b.text) || reCapLead.MatchString(b.lead)) && !reMacOS.MatchString(b.lead) {
+			problems = append(problems, fmt.Sprintf("bullet %q lists the memory or PID cap as given up without scoping its lead to macOS; linux enforces both", b.lead))
+		}
+	}
+	if !cpu {
+		problems = append(problems, "no bullet states that `sandbox.cpus` is not enforced")
+	}
+	if !user {
+		problems = append(problems, "no bullet's lead names the invoking-user identity")
+	}
+	return problems
+}
+
+// TestDocsAudit_AutoFixNonParityList pins docs/auto-fix.md's "What you give up
+// relative to Docker" list to what the OS-level backend still does not enforce
+// (epic 35.24 AC6): it must name CPU and the invoking-user identity, and must
+// not name the linux memory or PID caps, which a per-run cgroup v2 now
+// enforces. The darwin memory and PID caps stay listed: XNU rejects lowering
+// RLIMIT_AS and RLIMIT_DATA, and RLIMIT_NPROC counts the whole user, not one run.
+func TestDocsAudit_AutoFixNonParityList(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "auto-fix.md"))
+	if err != nil {
+		t.Fatalf("read auto-fix.md: %v", err)
+	}
+	section, ok := markdownSection(string(b), regexp.MustCompile(`What you give up relative to Docker`))
+	if !ok {
+		t.Fatal("docs/auto-fix.md has no \"What you give up relative to Docker\" section")
+	}
+	if len(autoFixNonParityBullets(section)) == 0 {
+		t.Fatal("the non-parity section of docs/auto-fix.md has no bullet list")
+	}
+	for _, p := range autoFixNonParityProblems(section) {
+		t.Errorf("docs/auto-fix.md non-parity list: %s", p)
+	}
+}
+
+// TestDocsAudit_AutoFixNonParityListChecker drives the checker over the
+// failures it exists to catch, so a checker that passes everything cannot keep
+// TestDocsAudit_AutoFixNonParityList green.
+func TestDocsAudit_AutoFixNonParityListChecker(t *testing.T) {
+	const user = "- **Runs as the invoking user**, not uid 65534.\n"
+	const cpu = "- **No CPU cap.** `sandbox.cpus` passes validation but is\n  **not enforced**.\n"
+	const mac = "- **On macOS, no memory or PID cap.** `sandbox.memory` and\n  `sandbox.pids_limit` are not enforced there.\n"
+	for _, tc := range []struct {
+		name, doc string
+		wantOK    bool
+	}{
+		{"current shape", user + cpu + mac, true},
+		{"omits CPU", user + mac, false},
+		{"omits invoking user", cpu + mac, false},
+		{"linux memory listed", user + cpu + "- **No memory cap.** `sandbox.memory` is not enforced.\n", false},
+		{"pid cap unscoped", user + cpu + "- **No PID cap**, on any platform.\n", false},
+		{"pre-35.24 resource caps bullet", user + "- **No resource caps.** `sandbox.memory`, `sandbox.cpus`, and `sandbox.pids_limit`\n  still pass config validation but are **not enforced** by this backend.\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := autoFixNonParityProblems("Intro.\n\n" + tc.doc + "\nAfter.\n")
+			if gotOK := len(problems) == 0; gotOK != tc.wantOK {
+				t.Errorf("ok = %v, want %v; problems: %v", gotOK, tc.wantOK, problems)
+			}
+		})
+	}
+}
+
 // TestExecutionDocsDescribeOSLevelBackend guards docs/execution.md, which
 // auto-fix.md cross-links as the single source of truth for sandbox mechanics.
 // Without this, both passages this sprint corrected could regress — including

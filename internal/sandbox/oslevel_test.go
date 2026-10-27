@@ -1243,7 +1243,7 @@ func TestOSLevelRunArgs_ModesAndValidation(t *testing.T) {
 func fakeOSLevelEchoStdinBody() string { return `cat` }
 
 func TestOSLevelBackendRun_ScriptTravelsAsStdinNotArgv(t *testing.T) {
-	// The injection-safety guarantee (sandbox.go:51-56) is that a script body is
+	// The injection-safety guarantee (sandbox.go:56-61) is that a script body is
 	// program source delivered over stdin, never a shell argument.
 	b := newFakeOSLevelBackend(t, fakeOSLevelEchoStdinBody())
 	script := "echo 'quoted; $(whoami) `id`'"

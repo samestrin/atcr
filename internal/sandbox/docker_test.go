@@ -193,7 +193,7 @@ func TestDockerRunArgs_WritableCommandModePassesMetacharsPositionally(t *testing
 	// Shell metacharacters (;, $, backticks, &&) therefore travel as literal data via
 	// the quoted "$@" expansion and are never re-tokenized into the -c script text, so
 	// a metacharacter in a command token cannot inject shell (RunSpec.Command's "no
-	// shell interpolation" invariant, sandbox.go:52).
+	// shell interpolation" invariant, sandbox.go:57).
 	cfg := DefaultDockerConfig()
 	payload := []string{"echo", "hi; rm -rf /", "$(whoami)", "`id`", "&&", "curl http://evil"}
 	args, err := dockerRunArgs(cfg, RunSpec{
