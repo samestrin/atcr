@@ -13,6 +13,10 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ## [Unreleased]
 
+### Added
+
+- `atcr review --config-dir <dir>` loads the project config (`.atcr/config.yaml`, including `auto_fix.validate_command`, `sandbox:`, `fail_on`, `consensus` and the `quality_signal` opt-in, plus `.atcr/registry.yaml` and `.atcr/personas/`) from `<dir>` while the current directory stays the tree under review, so an auto-fix of an untrusted pull request runs the operator's validation command rather than the pull request's. The reviewed tree's `.atcr/config.yaml`, `.atcr/registry.yaml` and `.atcr/personas/` are not read; its `.atcr/ignore.yaml` (finding suppressions) and the one-time telemetry notice (which reads that tree's `telemetry` opt-out and writes its notice marker) still are. A value that is not an existing directory, a directory without `.atcr/config.yaml`, or the flag with `--resume` is a usage error (exit 2) before any review work. See [docs/auto-fix.md](docs/auto-fix.md#loading-the-config-from-another-directory---config-dir). (epic 49.2)
+
 ### Fixed
 
 - Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)
