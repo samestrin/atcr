@@ -674,3 +674,22 @@ func TestJoinScores_RegistryOnlyLensHasNoRole(t *testing.T) {
 	require.Len(t, scored, 1)
 	assert.Equal(t, "", scored[0].Role, "a lens with no persona file has no prompt to read a role from")
 }
+
+func TestListCommunity_SymlinkedPromptBodyIsNotReadForTheRole(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.md")
+	require.NoError(t, os.WriteFile(outside, []byte("# x — leaked line\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "linked.yaml"), []byte("version: 1.0.0\n"), 0o644))
+	if err := os.Symlink(outside, filepath.Join(dir, "linked.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	metas, err := List(dir)
+	require.NoError(t, err)
+	for _, m := range metas {
+		if m.Name == "linked" {
+			assert.Equal(t, "", m.Role)
+			return
+		}
+	}
+	t.Fatal("linked persona row missing")
+}
