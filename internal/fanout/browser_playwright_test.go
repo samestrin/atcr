@@ -280,7 +280,7 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 		t.Fatalf("RunSpec = %+v\nwant     %+v", got, want)
 	}
 	shell := strings.Join(got.Command, " ")
-	for _, s := range []string{"NODE_PATH=/src/node_modules", "PLAYWRIGHT_JSON_OUTPUT_NAME=" + playwrightReportPath} {
+	for _, s := range []string{"NODE_PATH=/src/node_modules", "ln -s /src/node_modules node_modules", "PLAYWRIGHT_JSON_OUTPUT_NAME=" + playwrightReportPath} {
 		if !strings.Contains(shell, s) {
 			t.Fatalf("command %q missing %q", shell, s)
 		}

@@ -61,13 +61,15 @@ var playwrightConfigNames = []string{
 // playwrightRunShell is the fixed `sh -c` text the run executes. It carries no
 // data from the run: the npx argv arrives positionally as "$@". It points Node
 // and npx at the snapshot's node_modules (the writable seed copy excludes
-// node_modules), forbids npx from installing anything (there is no network),
+// node_modules): NODE_PATH for CommonJS, plus a node_modules link in the
+// writable tree for ES modules and npx's bin lookup. It forbids npx from installing anything (there is no network),
 // sends the JSON report to a file so it is neither truncated with the output nor
 // mixed with the dev server's logs, then packs the screenshots under the output
 // directory into one tar, since RunSpec.Collect names files, not directories.
 // The command's exit status is preserved.
 var playwrightRunShell = `export NODE_PATH=/src/node_modules PATH="/src/node_modules/.bin:$PATH" ` +
 	`PLAYWRIGHT_JSON_OUTPUT_NAME=` + playwrightReportPath + ` npm_config_yes=false; ` +
+	`[ -e node_modules ] || ln -s /src/node_modules node_modules 2>/dev/null; ` +
 	`mkdir -p ` + playwrightWorkDir + `; "$@"; _atcr_rc=$?; ` +
 	`find ` + playwrightOutputDir + ` -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null ` +
 	`| head -n ` + fmt.Sprint(playwrightMaxScreenshots) + ` > ` + playwrightWorkDir + `/screenshots.list; ` +
