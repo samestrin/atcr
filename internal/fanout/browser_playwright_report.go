@@ -19,7 +19,6 @@ const (
 // reads.
 type playwrightReport struct {
 	Suites []playwrightSuite `json:"suites"`
-	Errors []playwrightError `json:"errors"`
 }
 
 type playwrightSuite struct {
