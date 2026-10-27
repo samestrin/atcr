@@ -488,10 +488,10 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	// Deterministic SAST pre-filter (Epic 50.0): off unless configured, and
-	// fail-open. Its findings reach every reviewer through renderAgent, which
-	// reads them off a private copy of cfg so the caller's config is untouched.
-	if block := runSASTPreFilter(ctx, cfg, req.Repo, payloads); block != "" {
+	// Deterministic SAST pre-filter (Epic 50.0): off unless configured, and fail-open. Its findings
+	// reach every reviewer through a private copy of cfg, and reconcile through the review-dir sidecar.
+	block, scan := runSASTPreFilter(ctx, cfg, req.Repo, payloads)
+	if block != "" {
 		withSAST := *cfg
 		withSAST.sastBlock = block
 		cfg = &withSAST
@@ -500,7 +500,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false, threatMap)
+	return scan.handOff(finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false, threatMap))
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two

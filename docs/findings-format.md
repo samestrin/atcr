@@ -179,7 +179,7 @@ A source's **`review.md`** — the human-readable narrative each reviewer (every
 
 ## Reconcile input: `sast.json` (deterministic SAST findings)
 
-A review directory may also hold `sast.json` at its root, next to `sources/`: the findings of one deterministic SAST scan (epic 50.0), already confined to the repository root. It is **not** a reconcile source and is not discovered under `sources/`; reconcile reads it directly:
+A review directory may also hold `sast.json` at its root, next to `sources/`: the findings of one deterministic SAST scan (epic 50.0), already confined to the repository root. `atcr review` writes it when the [SAST pre-filter](registry.md#deterministic-sast-pre-filter-sast) is on and its scan returns findings; a scan that fails or finds nothing writes none. It is **not** a reconcile source and is not discovered under `sources/`; reconcile reads it directly:
 
 ```json
 {

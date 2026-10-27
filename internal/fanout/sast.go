@@ -29,23 +29,30 @@ var newSASTRunner = func() (sast.Runner, error) { return sast.Semgrep{}, nil }
 // secretSASTLabel names the SAST block in a secret-guard warning or error.
 const secretSASTLabel = "SAST findings"
 
+// sastScan is one pre-filter scan's result: the runner's name and its
+// findings. The zero value means no scan produced findings.
+type sastScan struct {
+	scanner  string
+	findings []sast.Finding
+}
+
 // runSASTPreFilter runs the optional deterministic scanner over the review's
 // changed files and returns the fenced untrusted block every reviewer prompt
-// carries, or "" (Epic 50.0). It is off unless the project config sets
-// `sast.enabled: true`.
+// carries, or "", plus the scan itself for the reconcile sidecar (Epic 50.0).
+// It is off unless the project config sets `sast.enabled: true`.
 //
 // It fails OPEN: a missing runner, a runner error or panic, and a scan that
-// outlives sastScanTimeout each print one notice to stderr and return "", so
-// the review proceeds exactly as with the scanner off. The scan runs on its own
+// outlives sastScanTimeout each print one notice to stderr and return "" and a
+// zero sastScan, so the review proceeds exactly as with the scanner off. The scan runs on its own
 // goroutine so a runner that ignores ctx still cannot hold the review past the
 // timeout; such a runner's goroutine is abandoned, not waited on.
-func runSASTPreFilter(ctx context.Context, cfg *ReviewConfig, repo string, payloads map[string]modePayload) string {
+func runSASTPreFilter(ctx context.Context, cfg *ReviewConfig, repo string, payloads map[string]modePayload) (string, sastScan) {
 	if cfg.Project == nil || !cfg.Project.SAST.IsEnabled() {
-		return ""
+		return "", sastScan{}
 	}
 	files := sastTargets(repo, payloads)
 	if len(files) == 0 {
-		return ""
+		return "", sastScan{}
 	}
 	runner, err := newSASTRunner()
 	if err == nil && runner == nil {
@@ -53,7 +60,7 @@ func runSASTPreFilter(ctx context.Context, cfg *ReviewConfig, repo string, paylo
 	}
 	if err != nil {
 		sastNotice(err)
-		return ""
+		return "", sastScan{}
 	}
 
 	sctx, cancel := context.WithTimeout(ctx, sastScanTimeout)
@@ -81,17 +88,45 @@ func runSASTPreFilter(ctx context.Context, cfg *ReviewConfig, repo string, paylo
 	}
 	if out.err != nil {
 		sastNotice(out.err)
-		return ""
+		return "", sastScan{}
 	}
 	if len(out.findings) == 0 {
-		return ""
+		return "", sastScan{}
 	}
 	sentinel, err := payload.NewSASTSentinel()
 	if err != nil {
 		sastNotice(err)
-		return ""
+		return "", sastScan{}
 	}
-	return payload.SASTBlock(out.findings, sentinel)
+	return payload.SASTBlock(out.findings, sentinel), sastScan{scanner: runner.Name(), findings: out.findings}
+}
+
+// writeSASTSidecar hands the scan to reconcile through reviewDir's sast.json,
+// which mergeSAST reads into the reconciled report the Fixer works from. A scan
+// with no findings removes any sidecar already in the dir, so a reused dir
+// never reports an earlier run's findings. It fails open like the scan: a write
+// or remove error prints the notice and the review continues.
+func writeSASTSidecar(reviewDir string, scan sastScan) {
+	if len(scan.findings) == 0 {
+		if err := os.Remove(filepath.Join(reviewDir, sast.ReportFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			sastNotice(err)
+		}
+		return
+	}
+	if err := sast.WriteReport(reviewDir, sast.Report{Scanner: scan.scanner, Findings: scan.findings}); err != nil {
+		sastNotice(err)
+	}
+}
+
+// handOff writes the scan's sidecar into a freshly prepared review's dir, which
+// does not exist until finalizePreparedReview scaffolds it. A failed prepare
+// passes through untouched.
+func (s sastScan) handOff(prep *PreparedReview, err error) (*PreparedReview, error) {
+	if err != nil {
+		return nil, err
+	}
+	writeSASTSidecar(prep.Dir, s)
+	return prep, nil
 }
 
 // sastNotice prints the visible fail-open notice.
