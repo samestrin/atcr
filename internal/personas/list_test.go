@@ -583,3 +583,94 @@ func TestListTiersWithScores_FreshInstallStillShowsARegistryOnlyLens(t *testing.
 	// The built-in roster is unaffected — the tail adds, it never replaces.
 	assert.NotNil(t, scoredByName(scored, "bruce"))
 }
+
+// --- Epic 83.0 T4: the role from the prompt H1 -------------------------------
+
+func TestRoleFromPrompt(t *testing.T) {
+	cases := []struct {
+		name, prompt, want string
+	}{
+		{"template H1", "# {{.AgentName}} — security and injection reviewer\n\n## Role\n", "security and injection reviewer"},
+		{"comment before H1", "<!-- vendor-guidance: A — B -->\n# {{.AgentName}} — secrets reviewer\n", "secrets reviewer"},
+		{"CRLF and padding", "#   bruce  —   generalist reviewer  \r\n", "generalist reviewer"},
+		{"H1 without em dash", "# project bruce\n\nbody — not a heading\n", ""},
+		{"no H1 at all", "## Role\n\nbody — text\n", ""},
+		{"empty prompt", "", ""},
+		{"H2 is not an H1", "## {{.AgentName}} — wrong level\n", ""},
+		{"only the first H1 counts", "# plain title\n# {{.AgentName}} — later reviewer\n", ""},
+		{"later em dashes stay in the role", "# x — threat-model mapper — draft\n", "threat-model mapper — draft"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, roleFromPrompt(tc.prompt))
+		})
+	}
+}
+
+func TestList_BuiltinsCarryTheirH1Role(t *testing.T) {
+	metas, err := List(filepath.Join(t.TempDir(), "missing"))
+	require.NoError(t, err)
+	require.NotEmpty(t, metas)
+	for _, m := range metas {
+		body, gerr := builtins.Get(m.Name)
+		require.NoError(t, gerr)
+		assert.NotEmpty(t, m.Role, "%s: every built-in prompt names its role after the em dash", m.Name)
+		assert.Equal(t, roleFromPrompt(body), m.Role, m.Name)
+	}
+	byName := map[string]PersonaMeta{}
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	assert.Equal(t, "security and injection reviewer", byName["sasha"].Role)
+}
+
+func TestListCommunity_RoleComesFromTheMarkdownPrompt(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
+	}
+	// YAML persona with its co-located prompt body.
+	write("gerald.yaml", "version: 1.1.0\n")
+	write("gerald.md", "<!-- vendor-guidance: G — x -->\n# {{.AgentName}} — secrets and data-egress reviewer\n")
+	// Binding-only YAML persona: no prompt, so no role.
+	write("binder.yaml", "version: 1.0.0\n")
+	// md-only persona.
+	write("loner.md", "# {{.AgentName}} — dependency reviewer\n")
+	// md-only persona whose H1 has no role.
+	write("plain.md", "# just a title\n")
+
+	metas, err := List(dir)
+	require.NoError(t, err)
+	byName := map[string]PersonaMeta{}
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	assert.Equal(t, "secrets and data-egress reviewer", byName["gerald"].Role)
+	assert.Equal(t, "", byName["binder"].Role, "a YAML persona with no prompt has an empty role, not an error")
+	assert.Equal(t, "dependency reviewer", byName["loner"].Role)
+	require.Contains(t, byName, "plain")
+	assert.Equal(t, "", byName["plain"].Role, "an H1 with no em dash yields an empty role")
+}
+
+func TestListTiers_ProjectOverrideRoleIsReadFromItsOwnPrompt(t *testing.T) {
+	projectDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "bruce.md"),
+		[]byte("# {{.AgentName}} — house-rules reviewer\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "plain.md"), []byte("# project plain\n"), 0o644))
+
+	metas, err := ListTiers(projectDir, filepath.Join(t.TempDir(), "missing"))
+	require.NoError(t, err)
+	byName := map[string]PersonaMeta{}
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	assert.Equal(t, "project", byName["bruce"].Source)
+	assert.Equal(t, "house-rules reviewer", byName["bruce"].Role, "the winning tier's prompt supplies the role")
+	assert.Equal(t, "", byName["plain"].Role)
+}
+
+func TestJoinScores_RegistryOnlyLensHasNoRole(t *testing.T) {
+	scored := joinScores(nil, map[string]float64{"ghost": 0.5}, nil)
+	require.Len(t, scored, 1)
+	assert.Equal(t, "", scored[0].Role, "a lens with no persona file has no prompt to read a role from")
+}
