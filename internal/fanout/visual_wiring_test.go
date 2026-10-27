@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -456,7 +457,7 @@ func TestVisualStage_UnrenderablePersonaFailsBeforeAnyCall(t *testing.T) {
 
 	_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "render persona")
+	assert.Contains(t, err.Error(), "visual review: render persona", "the early call-2 render fails, not call 1's own render")
 	assert.Empty(t, l.get())
 }
 
@@ -483,14 +484,16 @@ func TestVisualPayload_ShedsToFelixsOwnWindow(t *testing.T) {
 	ac.ContextWindowTokens = &window
 	cfg.Registry.Agents[VisualPersonaName] = ac
 
-	text, count, trunc := visualPayload(cfg, ac, mp, "blocks")
+	text, count, trunc, err := visualPayload(cfg, ac, mp, "blocks")
+	require.NoError(t, err)
 	assert.Equal(t, small.Body, text)
 	assert.Equal(t, 1, count)
 	assert.True(t, trunc.Truncated)
 	assert.Equal(t, []string{"b.go"}, trunc.FilesDropped)
 
 	// A window that holds everything leaves the payload whole.
-	text, count, trunc = visualPayload(felixConfig(), felixConfig().Registry.Agents[VisualPersonaName], mp, "blocks")
+	text, count, trunc, err = visualPayload(felixConfig(), felixConfig().Registry.Agents[VisualPersonaName], mp, "blocks")
+	require.NoError(t, err)
 	assert.Equal(t, mp.Text, text)
 	assert.Equal(t, 2, count)
 	assert.False(t, trunc.Truncated)
@@ -536,12 +539,92 @@ func TestVisualPayload_NothingFitsSendsTheSmallestFile(t *testing.T) {
 	ac := cfg.Registry.Agents[VisualPersonaName]
 	ac.ContextWindowTokens = &window
 
-	text, count, trunc := visualPayload(cfg, ac, mp, "blocks")
+	text, count, trunc, err := visualPayload(cfg, ac, mp, "blocks")
+	require.NoError(t, err)
 	assert.Equal(t, small.Body, text)
 	assert.Equal(t, 1, count)
 	assert.True(t, trunc.Truncated)
 
-	text, count, _ = visualPayload(cfg, ac, modePayload{Text: "raw", FileCount: 1}, "blocks")
+	text, count, _, err = visualPayload(cfg, ac, modePayload{Text: "raw", FileCount: 1}, "blocks")
+	require.NoError(t, err)
 	assert.Equal(t, "raw", text)
 	assert.Equal(t, 1, count)
+}
+
+// Review round 2, finding 3: a felix window at or below the sizing floor
+// (zero budget) is an overflow, as it is for a reviewer slot: on_overflow
+// fail refuses pre-dispatch, and otherwise felix gets the smallest non-empty
+// file, never the whole shared payload.
+func TestVisualPayload_ZeroBudgetIsAnOverflow(t *testing.T) {
+	empty := payload.FileEntry{Path: "py.typed", Size: 0, Body: ""}
+	small := payload.FileEntry{Path: "a.go", Size: 300, Body: strings.Repeat("a", 300)}
+	big := payload.FileEntry{Path: "b.go", Size: 40000, Body: strings.Repeat("b", 40000)}
+	mp := modePayload{Entries: []payload.FileEntry{empty, small, big}, Text: small.Body + big.Body, FileCount: 3}
+	cfg := felixConfig()
+	one := 1
+	ac := cfg.Registry.Agents[VisualPersonaName]
+	ac.ContextWindowTokens = &one
+	require.Zero(t, payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))))
+
+	text, count, trunc, err := visualPayload(cfg, ac, mp, "blocks")
+	require.NoError(t, err)
+	assert.Equal(t, small.Body, text, "the smallest non-empty file, not the shared payload")
+	assert.Equal(t, 1, count)
+	assert.True(t, trunc.Truncated)
+
+	cfg.Settings.OnOverflow = OverflowFail
+	_, _, _, err = visualPayload(cfg, ac, mp, "blocks")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), VisualPersonaName)
+}
+
+// Review round 2, finding 3: the call note felix's payload carries outside the
+// budget is reserved, as a slot reserves its prepended scope constraint.
+func TestVisualPayload_ReservesTheCallNote(t *testing.T) {
+	cfg := felixConfig()
+	var window int
+	var budget int64
+	for w := 1000; w < 200000; w += 100 {
+		ac := registry.AgentConfig{Model: "m-felix", ContextWindowTokens: &w}
+		if b := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))); b > 2000 {
+			window, budget = w, b
+			break
+		}
+	}
+	require.NotZero(t, window)
+	ac := cfg.Registry.Agents[VisualPersonaName]
+	ac.ContextWindowTokens = &window
+	// The two files fit the bare budget by 10 bytes, but not once the note is reserved.
+	smallSize := int64(100)
+	bigSize := budget - smallSize - 10
+	small := payload.FileEntry{Path: "a.go", Size: smallSize, Body: strings.Repeat("a", int(smallSize))}
+	big := payload.FileEntry{Path: "b.go", Size: bigSize, Body: strings.Repeat("b", int(bigSize))}
+	mp := modePayload{Entries: []payload.FileEntry{small, big}, Text: small.Body + big.Body, FileCount: 2}
+
+	_, count, trunc, err := visualPayload(cfg, ac, mp, "blocks")
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, []string{"b.go"}, trunc.FilesDropped)
+}
+
+// Review round 2, finding 1: on --resume, a felix record that is OK on disk
+// must not pass a run whose every reviewer failed again.
+func TestExecuteResume_FelixOKDoesNotHideFailedReviewers(t *testing.T) {
+	dir := t.TempDir()
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta"},
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
+		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
+	}
+	require.NoError(t, WriteManifest(dir, m))
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{{Agent: VisualPersonaName, Status: StatusOK, Content: "NO FINDINGS"}}, nil, nil))
+	slots := []Slot{{Primary: Agent{Name: "greta", Invocation: llmclient.Invocation{Model: "greta"}, PayloadMode: "blocks"}}}
+	prep := &PreparedReview{ID: "2026-06-18_x", Dir: dir, Slots: slots, MaxParallel: 1, manifest: m}
+
+	res, err := ExecuteResume(context.Background(), failingCompleter{}, prep)
+	require.ErrorIs(t, err, ErrAllAgentsFailed)
+	require.NotNil(t, res)
+	assert.Equal(t, 1, res.Summary.Succeeded, "felix's OK record is still counted in the pool")
+	assert.Equal(t, StatusOK, statusJSON(t, dir, VisualPersonaName)["status"], "felix's record stays in the pool")
 }
