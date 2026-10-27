@@ -160,6 +160,12 @@ func (h *linearHarness) send(t *testing.T, body, delivery string) {
 func (h *linearHarness) drain(t *testing.T) {
 	t.Helper()
 	h.ts.Close()
+	h.idle(t)
+}
+
+// idle waits until no job is running.
+func (h *linearHarness) idle(t *testing.T) {
+	t.Helper()
 	require.Eventually(t, func() bool {
 		h.srv.jobs.mu.Lock()
 		defer h.srv.jobs.mu.Unlock()
@@ -218,6 +224,7 @@ func TestLinear_NewStateIsNotDeduplicated(t *testing.T) {
 
 	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", time.Now(), "stateId"), "d-1")
 	require.Eventually(t, func() bool { return h.review.Load() == 1 }, 10*time.Second, 5*time.Millisecond)
+	h.idle(t) // the first job must finish, or the PR is still busy
 	h.send(t, linearBody("iss-1", "EST", "st-ready", "ready", time.Now(), "stateId"), "d-2")
 	h.drain(t)
 	assert.Equal(t, int32(2), h.review.Load())
