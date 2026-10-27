@@ -159,7 +159,10 @@ func prepareVisual(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, pa
 	}
 	ac := cfg.Registry.Agents[VisualPersonaName]
 	mode := ac.EffectivePayloadMode(cfg.Settings)
-	text, count, trunc := visualPayload(cfg, ac, payloads[mode], mode)
+	text, count, trunc, err := visualPayload(cfg, ac, payloads[mode], mode)
+	if err != nil {
+		return nil, VisualStageInput{}, err
+	}
 	return req.Visual, VisualStageInput{
 		RepoDir: repoDir,
 		Prompt: payload.PayloadContext{
@@ -179,29 +182,55 @@ func prepareVisual(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, pa
 // visualPayload sizes felix's diff to felix's own model window, as buildSlots
 // sizes every reviewer's: felix has no slot, so the shared payload text would
 // otherwise reach it unsized. The pre-budget entries are re-shed against the
-// effective budget (capped by payload_byte_budget). When nothing fits, the
-// smallest file is sent, as a reviewer slot does; when the budget is unknown
-// or everything fits, the shared text is sent whole.
-func visualPayload(cfg *ReviewConfig, ac registry.AgentConfig, mp modePayload, mode string) (string, int, payload.Truncation) {
-	budget := appliedByteBudget(payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))), cfg.Settings.PayloadByteBudget, "")
-	if budget <= 0 || len(mp.Entries) == 0 {
-		return mp.Text, mp.FileCount, mp.Truncation
+// effective budget (capped by payload_byte_budget), less the call note each
+// request prepends outside the budget, as a slot reserves its prepended scope
+// constraint. A zero budget is an overflow, as on the bulk path: on_overflow
+// fail or fallback refuses pre-dispatch, and otherwise felix is sent the
+// smallest non-empty file. When nothing fits a non-zero budget, the smallest
+// file is sent too; when everything fits, the shared text is sent whole.
+func visualPayload(cfg *ReviewConfig, ac registry.AgentConfig, mp modePayload, mode string) (string, int, payload.Truncation, error) {
+	if len(mp.Entries) == 0 {
+		return mp.Text, mp.FileCount, mp.Truncation, nil
 	}
-	kept, trunc := payload.ApplyByteBudgetPreferEscalated(mp.Entries, budget, payload.PayloadMode(mode))
+	maxTokens := maxTokensFor(cfg, ac)
+	agentBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokens))
+	budget := appliedByteBudget(agentBudget, cfg.Settings.PayloadByteBudget, visualLongestCallNote())
+	var kept []payload.FileEntry
+	var trunc payload.Truncation
+	if budget <= 0 {
+		if p := cfg.Settings.OnOverflow; p == OverflowFail || p == OverflowFallback {
+			if _, err := applyOverflowPolicy(p, "", 0, mp.Entries, budget); err != nil {
+				return "", 0, payload.Truncation{}, refuseOverflow(VisualPersonaName, payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens), maxTokens, p, 0, err)
+			}
+		}
+		trunc.AllDropped = true
+	} else {
+		kept, trunc = payload.ApplyByteBudgetPreferEscalated(mp.Entries, budget, payload.PayloadMode(mode))
+	}
 	if trunc.AllDropped {
 		var ok bool
 		if kept, trunc, ok = keepSmallestEntry(mp.Entries); !ok {
-			return mp.Text, mp.FileCount, mp.Truncation
+			return mp.Text, mp.FileCount, mp.Truncation, nil
 		}
 	}
 	if !trunc.Truncated {
-		return mp.Text, mp.FileCount, mp.Truncation
+		return mp.Text, mp.FileCount, mp.Truncation, nil
 	}
 	var b strings.Builder
 	for _, e := range kept {
 		b.WriteString(e.Body)
 	}
-	return b.String(), payload.ReviewableCount(kept), trunc
+	return b.String(), payload.ReviewableCount(kept), trunc, nil
+}
+
+// visualLongestCallNote is the longer of the two call notes with its
+// separator: the most either request prepends to the sized payload.
+func visualLongestCallNote() string {
+	n := visualAuthorCallNote
+	if len(visualReviewCallNote) > len(n) {
+		n = visualReviewCallNote
+	}
+	return n + "\n\n"
 }
 
 // reviewerSucceeded reports whether a diff reviewer succeeded: the
