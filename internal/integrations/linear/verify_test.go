@@ -147,9 +147,12 @@ func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r)
 func TestPullRequestDefaults(t *testing.T) {
 	var gotURL string
 	var hasDeadline bool
+	var remaining time.Duration
 	c := &Client{APIKey: apiKey, HTTP: &http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
 		gotURL = r.URL.String()
-		_, hasDeadline = r.Context().Deadline()
+		var dl time.Time
+		dl, hasDeadline = r.Context().Deadline()
+		remaining = time.Until(dl)
 		return &http.Response{
 			StatusCode: 200,
 			Body:       io.NopCloser(strings.NewReader(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://github.com/o/r/pull/1"}]}}}}`)),
@@ -158,8 +161,8 @@ func TestPullRequestDefaults(t *testing.T) {
 	if _, err := c.PullRequest(context.Background(), "i1"); err != nil {
 		t.Fatal(err)
 	}
-	if gotURL != DefaultAPIURL || !hasDeadline {
-		t.Errorf("url=%q deadline=%v", gotURL, hasDeadline)
+	if gotURL != DefaultAPIURL || !hasDeadline || remaining < DefaultTimeout/2 {
+		t.Errorf("url=%q deadline=%v remaining=%v", gotURL, hasDeadline, remaining)
 	}
 }
 
