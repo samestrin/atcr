@@ -474,7 +474,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 			return nil, nil, err
 		}
 	}
-	configured := rosterNames(cfg.Project)
+	configured := reviewerRoster(cfg.Project)
 	if err := ValidateResumeRoster(m, configured); err != nil {
 		return nil, nil, err
 	}
@@ -794,7 +794,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(ctx, poolDir, p.manifest.Roster)
+	sum, statuses, err := RebuildPool(ctx, poolDir, visualRebuildRoster(p.manifest.Roster, poolDir))
 	if err != nil {
 		return nil, err
 	}
@@ -868,7 +868,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	if sum.Total == 0 {
 		return res, ErrEmptyRoster
 	}
-	if sum.Succeeded == 0 {
+	if sum.Succeeded == 0 || !reviewerSucceeded(statuses) {
 		return res, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatStatusFailures(statuses))
 	}
 	return res, nil
