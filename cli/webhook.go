@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/integrations/linear"
@@ -29,6 +30,10 @@ var slackAPIBaseURL = slack.DefaultAPIBaseURL
 // linearAPIURL is the Linear GraphQL endpoint a Linear-triggered job looks the
 // linked pull request up on. A var so a test can point it at a fake.
 var linearAPIURL = linear.DefaultAPIURL
+
+// githubAPIURL is the GitHub REST root the Linear summary comment is posted to;
+// empty means the public API. A var so a test can point it at a fake server.
+var githubAPIURL string
 
 // webhookReviewerFn builds the reviewer a Slack- or Linear-triggered job runs. base
 // carries the command's logger and hooks; root is the directory the daemon was
@@ -154,6 +159,13 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 			Review:   review,
 			Secrets:  secrets,
 			Logf:     logf,
+		}
+		// The summary goes on the pull request only when a GitHub token is
+		// configured; without one the job logs the finding count instead.
+		if cfg.GitHubTokenEnv != "" {
+			if tok := os.Getenv(cfg.GitHubTokenEnv); tok != "" {
+				runner.Commenter = &ghaction.Client{APIURL: githubAPIURL, Token: tok}
+			}
 		}
 		opts.LinearSigningSecret = linearSecret
 		opts.LinearDispatch = runner.Dispatch
