@@ -258,3 +258,25 @@ func TestAuthorVisualSpec_EmptyPersonaIsAnError(t *testing.T) {
 		t.Fatal("model called with an empty persona")
 	}
 }
+
+func TestAuthorVisualSpec_BadPersonaTemplateIsAnError(t *testing.T) {
+	author := newAuthor("```ts\nx\n```")
+	author.persona = "{{.NoSuchField}}"
+	repo := t.TempDir()
+	if _, err := AuthorVisualSpec(context.Background(), author, VisualAuthorRequest{RepoDir: repo, RunID: "r1"}); err == nil {
+		t.Fatal("want a render error")
+	}
+	if len(author.prompts) != 0 {
+		t.Fatal("model called with an unrenderable persona")
+	}
+	if got := e2eEntries(t, repo); len(got) != 0 {
+		t.Fatalf("e2e entries = %v, want nothing written", got)
+	}
+}
+
+// An inline-code line such as "```ts` is not a spec" is not a fence opener.
+func TestExtractSpecBlock_InlineBackticksAreNotAFence(t *testing.T) {
+	if _, ok := extractSpecBlock("```ts` is the language\nnope\n```"); ok {
+		t.Fatal("inline backticks opened a fence")
+	}
+}
