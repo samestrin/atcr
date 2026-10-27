@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,6 +35,16 @@ var linearAPIURL = linear.DefaultAPIURL
 // githubAPIURL is the GitHub REST root the Linear summary comment is posted to;
 // empty means the public API. A var so a test can point it at a fake server.
 var githubAPIURL string
+
+// autoFixBinary is the atcr executable an auto-fix job runs; empty is the
+// running executable. A var so a test can point it at a stub.
+var autoFixBinary = ""
+
+// autoFixStatePath is where the daemon keeps its auto-fix claims and daily job
+// count: under the operator's .atcr directory, so they survive a restart.
+func autoFixStatePath(root string) string {
+	return filepath.Join(root, ".atcr", "webhook", "auto-fix-state.json")
+}
 
 // webhookReviewerFn builds the reviewer a Slack- or Linear-triggered job runs. base
 // carries the command's logger and hooks; root is the directory the daemon was
@@ -109,6 +120,13 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 		}
 		secrets = append(secrets, linearSecret, linearKey)
 	}
+	var pushToken string
+	if cfg.Linear != nil && cfg.Linear.AutoFix != nil {
+		if pushToken, err = requiredEnv("webhook.linear.auto_fix.push_token_env", cfg.Linear.AutoFix.PushTokenEnv); err != nil {
+			return err
+		}
+		secrets = append(secrets, pushToken)
+	}
 	if cfg.GitHubTokenEnv != "" {
 		// Read only so the value is scrubbed from every reply: fetching uses
 		// the checkout's own git credentials.
@@ -165,6 +183,29 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 		if cfg.GitHubTokenEnv != "" {
 			if tok := os.Getenv(cfg.GitHubTokenEnv); tok != "" {
 				runner.Commenter = &ghaction.Client{APIURL: githubAPIURL, Token: tok}
+			}
+		}
+		if a := cfg.Linear.AutoFix; a != nil {
+			state, err := webhook.OpenAutoFixState(autoFixStatePath(root), a.DailyJobCap)
+			if err != nil {
+				return usageError(err)
+			}
+			// The push token reads the PR head and posts the cap refusal: the
+			// review token may be unset, and is never handed push rights.
+			gh := &ghaction.Client{APIURL: githubAPIURL, Token: pushToken}
+			runner.AutoFix = &webhook.LinearAutoFix{
+				Statuses: a.Statuses,
+				Repos:    a.Repos,
+				State:    state,
+				Heads:    gh,
+				Fixer: &webhook.AutoFixRunner{
+					Repos:        cfg.Repos,
+					Binary:       autoFixBinary,
+					PushTokenEnv: a.PushTokenEnv,
+					Secrets:      secrets,
+					Logf:         logf,
+				},
+				Commenter: gh,
 			}
 		}
 		opts.LinearSigningSecret = linearSecret

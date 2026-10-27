@@ -1121,3 +1121,38 @@ func TestPostIssueCommentErrorIsTyped(t *testing.T) {
 	require.ErrorAs(t, c.PostIssueComment(context.Background(), "o", "r", 7, "x"), &apiErr)
 	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 }
+
+func TestPullRequestHeadReadsBranchAndRepo(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"number":7,"head":{"ref":"feature/x","repo":{"full_name":"fork/widget"}}}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	ref, headRepo, err := c.PullRequestHead(context.Background(), "acme", "widget", 7)
+	require.NoError(t, err)
+	assert.Equal(t, "/repos/acme/widget/pulls/7", gotPath)
+	assert.Equal(t, "feature/x", ref)
+	assert.Equal(t, "fork/widget", headRepo)
+}
+
+func TestPullRequestHeadDeletedForkAndMissingRef(t *testing.T) {
+	body := `{"head":{"ref":"b","repo":null}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	ref, headRepo, err := c.PullRequestHead(context.Background(), "o", "r", 1)
+	require.NoError(t, err)
+	assert.Equal(t, "b", ref)
+	assert.Empty(t, headRepo, "a deleted fork has no head repo")
+
+	body = `{"head":{}}`
+	_, _, err = c.PullRequestHead(context.Background(), "o", "r", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no head branch")
+}

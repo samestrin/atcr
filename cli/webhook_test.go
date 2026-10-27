@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -537,4 +538,100 @@ func TestWebhookCmd_MissingLinearCredentialNamesTheVariable(t *testing.T) {
 			assert.NotContains(t, err.Error(), whLinearKey)
 		})
 	}
+}
+
+const (
+	whPushTokenEnv = "ATCR_TEST_PUSH_TOKEN"
+	whPushToken    = "ghp_pushtokenpushtokenpushtoken12"
+)
+
+// Epic 49.2 T6: a Linear change to an auto-fix status runs `atcr review
+// --auto-fix` in the PR head with the operator's config directory, the PR's
+// head branch as the base and the push token in the child's environment, and
+// records the claim under .atcr/webhook.
+func TestWebhookCmd_LinearAutoFixStatusRunsAutoFix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub atcr binary is a POSIX shell script")
+	}
+	isolate(t)
+	checkout := whPRFixture(t)
+	writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig(checkout)+
+		"    auto_fix:\n"+
+		"      statuses: [In Review]\n"+
+		"      repos: [acme/widget]\n"+
+		"      push_token_env: "+whPushTokenEnv+"\n"+
+		"      daily_job_cap: 1\n")
+	t.Setenv(whLinearSecretEnv, whLinearSecret)
+	t.Setenv(whLinearKeyEnv, whLinearKey)
+	t.Setenv(whPushTokenEnv, whPushToken)
+	fakeLinear(t)
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" || r.Header.Get("Authorization") != "Bearer "+whPushToken {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"head":{"ref":"feature","repo":{"full_name":"acme/widget"}}}`)
+	}))
+	t.Cleanup(gh.Close)
+	origGH := githubAPIURL
+	githubAPIURL = gh.URL
+	t.Cleanup(func() { githubAPIURL = origGH })
+
+	out := t.TempDir()
+	stub := filepath.Join(out, "atcr")
+	require.NoError(t, os.WriteFile(stub, []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nprintf '%%s' \"$GITHUB_TOKEN\" > %q\n",
+		filepath.Join(out, "args.tmp"), filepath.Join(out, "token"))+fmt.Sprintf("mv %q %q\n", filepath.Join(out, "args.tmp"), filepath.Join(out, "args"))), 0o755))
+	origBin := autoFixBinary
+	autoFixBinary = stub
+	t.Cleanup(func() { autoFixBinary = origBin })
+
+	reviewed := make(chan struct{}, 1)
+	origRev := webhookReviewerFn
+	webhookReviewerFn = func(context.Context, string) webhook.Reviewer {
+		return func(context.Context, string) ([]reconcile.Finding, error) {
+			reviewed <- struct{}{}
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { webhookReviewerFn = origRev })
+
+	base, stderr, stop := startWebhook(t)
+	postSignedLinear(t, base)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(filepath.Join(out, "args"))
+		return err == nil
+	}, 60*time.Second, 20*time.Millisecond, "no auto-fix run; daemon stderr:\n%s", stderr.String())
+	require.NoError(t, stop())
+
+	args, err := os.ReadFile(filepath.Join(out, "args"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"review", "--auto-fix", "--auto-fix-base=feature", "--config-dir=" + checkout, "--repo=acme/widget"},
+		strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"))
+	token, err := os.ReadFile(filepath.Join(out, "token"))
+	require.NoError(t, err)
+	assert.Equal(t, whPushToken, string(token))
+	assert.Empty(t, reviewed, "an auto-fix status runs no review")
+	assert.FileExists(t, filepath.Join(".atcr", "webhook", "auto-fix-state.json"))
+	assert.NotContains(t, stderr.String(), whPushToken)
+}
+
+func TestWebhookCmd_MissingPushTokenNamesTheVariable(t *testing.T) {
+	isolate(t)
+	writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig("/nonexistent/checkout")+
+		"    auto_fix:\n"+
+		"      statuses: [Fix]\n"+
+		"      repos: [acme/widget]\n"+
+		"      push_token_env: "+whPushTokenEnv+"\n"+
+		"      daily_job_cap: 1\n")
+	t.Setenv(whLinearSecretEnv, whLinearSecret)
+	t.Setenv(whLinearKeyEnv, whLinearKey)
+	t.Setenv(whPushTokenEnv, "")
+	root := NewRootCmd()
+	root.SetArgs([]string{"webhook"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), whPushTokenEnv)
 }
