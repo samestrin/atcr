@@ -463,8 +463,8 @@ func TestVisualStage_UnrenderablePersonaFailsBeforeAnyCall(t *testing.T) {
 // Review finding 5: felix's payload is re-shed to felix's own window, and the
 // shed is recorded on felix's status.
 func TestVisualPayload_ShedsToFelixsOwnWindow(t *testing.T) {
-	small := payload.FileEntry{Path: "a.go", Body: strings.Repeat("a", 200)}
-	big := payload.FileEntry{Path: "b.go", Body: strings.Repeat("b", 40000)}
+	small := payload.FileEntry{Path: "a.go", Size: 200, Body: strings.Repeat("a", 200)}
+	big := payload.FileEntry{Path: "b.go", Size: 40000, Body: strings.Repeat("b", 40000)}
 	mp := modePayload{Entries: []payload.FileEntry{small, big}, Text: small.Body + big.Body, FileCount: 2}
 
 	// Find a window whose budget holds the small file but not both.
@@ -508,4 +508,40 @@ func TestRunVisualStage_RecordsTheShedOnFelix(t *testing.T) {
 	r = runVisualStage(context.Background(), p)
 	assert.Equal(t, StatusFailed, r.Status)
 	assert.True(t, r.Truncation.Truncated, "a failed stage still records what felix was sent")
+}
+
+func TestReviewerResults_DropsFelixUnlessItIsTheOnlyResult(t *testing.T) {
+	g, f := Result{Agent: "greta"}, Result{Agent: VisualPersonaName}
+	assert.Equal(t, []Result{g}, reviewerResults([]Result{g, f}))
+	assert.Equal(t, []Result{f}, reviewerResults([]Result{f}))
+}
+
+// When no file fits felix's window, felix is sent the smallest file, as a
+// reviewer slot is; with no entries, the shared text passes through.
+func TestVisualPayload_NothingFitsSendsTheSmallestFile(t *testing.T) {
+	small := payload.FileEntry{Path: "a.go", Size: 5000, Body: strings.Repeat("a", 5000)}
+	big := payload.FileEntry{Path: "b.go", Size: 40000, Body: strings.Repeat("b", 40000)}
+	mp := modePayload{Entries: []payload.FileEntry{small, big}, Text: small.Body + big.Body, FileCount: 2}
+	cfg := felixConfig()
+	var window int
+	for w := 100; w < 200000; w += 10 {
+		ac := registry.AgentConfig{Model: "m-felix", ContextWindowTokens: &w}
+		b := appliedByteBudget(payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))), 0, "")
+		if b > 0 && b < 5000 {
+			window = w
+			break
+		}
+	}
+	require.NotZero(t, window)
+	ac := cfg.Registry.Agents[VisualPersonaName]
+	ac.ContextWindowTokens = &window
+
+	text, count, trunc := visualPayload(cfg, ac, mp, "blocks")
+	assert.Equal(t, small.Body, text)
+	assert.Equal(t, 1, count)
+	assert.True(t, trunc.Truncated)
+
+	text, count, _ = visualPayload(cfg, ac, modePayload{Text: "raw", FileCount: 1}, "blocks")
+	assert.Equal(t, "raw", text)
+	assert.Equal(t, 1, count)
 }

@@ -868,7 +868,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	if sum.Total == 0 {
 		return res, ErrEmptyRoster
 	}
-	if sum.Succeeded == 0 {
+	if sum.Succeeded == 0 || !reviewerSucceeded(statuses) {
 		return res, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatStatusFailures(statuses))
 	}
 	return res, nil

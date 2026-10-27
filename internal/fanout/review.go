@@ -1637,7 +1637,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum, ChunkRecordErr: p.chunks.writeErr()}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
 	// returned regardless so the caller knows where to look.
-	if _, outErr := Outcome(results); outErr != nil {
+	if _, outErr := Outcome(reviewerResults(results)); outErr != nil {
 		recordReviewOutcome(interrupted, true)
 		return res, outErr
 	}

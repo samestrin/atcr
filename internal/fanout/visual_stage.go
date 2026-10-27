@@ -54,6 +54,9 @@ type VisualStageInput struct {
 	Prompt payload.PayloadContext
 	// Changed is the patch's grounding data.
 	Changed payload.ChangedLines
+	// Truncation records the files shed to fit felix's own model window;
+	// felix's status.json carries it.
+	Truncation payload.Truncation
 }
 
 // VisualStage runs call 1 (Author writes e2e/felix-<run id>.spec.ts), the
@@ -85,6 +88,14 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	}
 	diff := guarded[0]
 
+	// Render call 2's prompt first, so a persona that cannot render fails
+	// before any model call or browser run.
+	reviewCtx := pc
+	reviewCtx.Payload = visualReviewCallNote + "\n\n" + diff
+	prompt, err := payload.RenderPrompt(s.Author.Persona(), reviewCtx)
+	if err != nil {
+		return VisualReviewResult{}, fmt.Errorf("visual review: render persona: %w", err)
+	}
 	authorCtx := pc
 	authorCtx.Payload = visualAuthorCallNote + "\n\n" + diff
 	spec, err := AuthorVisualSpec(ctx, s.Author, VisualAuthorRequest{RepoDir: in.RepoDir, RunID: visualSpecRunID(in.RunID), Prompt: authorCtx})
@@ -94,12 +105,6 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	shots, err := s.Browser.Run(ctx, BrowserRun{RepoDir: in.RepoDir, Spec: spec, PreviewURL: s.PreviewURL})
 	if err != nil {
 		return VisualReviewResult{}, fmt.Errorf("visual review: browser %s: %w", s.Browser.Name(), err)
-	}
-	reviewCtx := pc
-	reviewCtx.Payload = visualReviewCallNote + "\n\n" + diff
-	prompt, err := payload.RenderPrompt(s.Author.Persona(), reviewCtx)
-	if err != nil {
-		return VisualReviewResult{}, fmt.Errorf("visual review: render persona: %w", err)
 	}
 	return RunVisualReview(ctx, s.Vision, s.Agent, s.Settings, VisualReviewRequest{Prompt: prompt, SpecPath: spec, Browser: shots, Changed: in.Changed})
 }
@@ -152,21 +157,71 @@ func prepareVisual(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, pa
 	if err != nil {
 		return nil, VisualStageInput{}, fmt.Errorf("visual review: %w", err)
 	}
-	mode := cfg.Registry.Agents[VisualPersonaName].EffectivePayloadMode(cfg.Settings)
-	mp := payloads[mode]
+	ac := cfg.Registry.Agents[VisualPersonaName]
+	mode := ac.EffectivePayloadMode(cfg.Settings)
+	text, count, trunc := visualPayload(cfg, ac, payloads[mode], mode)
 	return req.Visual, VisualStageInput{
 		RepoDir: repoDir,
 		Prompt: payload.PayloadContext{
 			AgentName:   VisualPersonaName,
 			BaseRef:     req.Range.Base,
 			HeadRef:     req.Range.Head,
-			FileCount:   mp.FileCount,
+			FileCount:   count,
 			PayloadMode: mode,
-			Payload:     mp.Text,
-			ScopeRule:   payload.ScopeRuleForPayload(payload.PayloadMode(mode), mp.Text),
+			Payload:     text,
+			ScopeRule:   payload.ScopeRuleForPayload(payload.PayloadMode(mode), text),
 		},
-		Changed: changed,
+		Changed:    changed,
+		Truncation: trunc,
 	}, nil
+}
+
+// visualPayload sizes felix's diff to felix's own model window, as buildSlots
+// sizes every reviewer's: felix has no slot, so the shared payload text would
+// otherwise reach it unsized. The pre-budget entries are re-shed against the
+// effective budget (capped by payload_byte_budget). When nothing fits, the
+// smallest file is sent, as a reviewer slot does; when the budget is unknown
+// or everything fits, the shared text is sent whole.
+func visualPayload(cfg *ReviewConfig, ac registry.AgentConfig, mp modePayload, mode string) (string, int, payload.Truncation) {
+	budget := appliedByteBudget(payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))), cfg.Settings.PayloadByteBudget, "")
+	if budget <= 0 || len(mp.Entries) == 0 {
+		return mp.Text, mp.FileCount, mp.Truncation
+	}
+	kept, trunc := payload.ApplyByteBudgetPreferEscalated(mp.Entries, budget, payload.PayloadMode(mode))
+	if trunc.AllDropped {
+		var ok bool
+		if kept, trunc, ok = keepSmallestEntry(mp.Entries); !ok {
+			return mp.Text, mp.FileCount, mp.Truncation
+		}
+	}
+	if !trunc.Truncated {
+		return mp.Text, mp.FileCount, mp.Truncation
+	}
+	var b strings.Builder
+	for _, e := range kept {
+		b.WriteString(e.Body)
+	}
+	return b.String(), payload.ReviewableCount(kept), trunc
+}
+
+// reviewerSucceeded reports whether a diff reviewer succeeded: the
+// all-agents-failed gate ignores felix, so a visual review cannot pass a run in
+// which no reviewer read the diff. A felix-only run is judged on felix.
+func reviewerSucceeded(statuses []AgentStatus) bool {
+	reviewers := 0
+	for _, st := range statuses {
+		if st.Agent == VisualPersonaName {
+			continue
+		}
+		reviewers++
+		if st.Status == StatusOK {
+			return true
+		}
+	}
+	if reviewers > 0 {
+		return false
+	}
+	return slices.ContainsFunc(statuses, func(st AgentStatus) bool { return st.Status == StatusOK })
 }
 
 // runVisualStage runs the prepared stage and returns felix's result. A stage
@@ -177,9 +232,10 @@ func runVisualStage(ctx context.Context, p *PreparedReview) Result {
 	vr, err := p.visual.RunVisual(ctx, in)
 	if err != nil {
 		log.FromContext(ctx).Warn("visual review failed", "agent", VisualPersonaName, "err", err)
-		return Result{Agent: VisualPersonaName, Status: StatusFailed, Err: err}
+		return Result{Agent: VisualPersonaName, Status: StatusFailed, Err: err, Truncation: in.Truncation}
 	}
 	r := vr.Result
+	r.Truncation = in.Truncation
 	// The vision agent may also sit in the roster as a reviewer; the visual
 	// record is felix's, and its model names the vision agent's.
 	r.Agent = VisualPersonaName
@@ -206,4 +262,15 @@ func visualRebuildRoster(roster []string, poolDir string) []string {
 		return roster
 	}
 	return append(slices.Clone(roster), VisualPersonaName)
+}
+
+// reviewerResults is results without felix's, for the all-agents-failed gate:
+// a visual review cannot pass a run in which no reviewer read the diff. A
+// felix-only run keeps felix's result, so it is judged on felix.
+func reviewerResults(results []Result) []Result {
+	out := slices.DeleteFunc(slices.Clone(results), func(r Result) bool { return r.Agent == VisualPersonaName })
+	if len(out) == 0 {
+		return results
+	}
+	return out
 }
