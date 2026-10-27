@@ -5,9 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/telemetry"
 )
 
 // --- Epic 49.2 T2: --config-dir loads .atcr/config.yaml from another tree ----
@@ -133,4 +137,55 @@ func TestQualitySignalGateFrom_ReadsConfigRoot(t *testing.T) {
 		"the reviewed tree's quality_signal must not count under --config-dir")
 	require.True(t, qualitySignalGateFrom(io.Discard, ""),
 		"without a config root the gate still reads the reviewed tree")
+}
+
+// runReviewSendWithConfigDir is runReviewSend with --config-dir: the roster moves
+// to a config directory, then worktreeExtra and configDirExtra are appended to
+// the worktree's and the config directory's .atcr/config.yaml. It returns how
+// many quality-signal payloads the run built.
+func runReviewSendWithConfigDir(t *testing.T, worktreeExtra, configDirExtra string) int32 {
+	t.Helper()
+	isolate(t)
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "k")
+	initGitRepoWithChange(t)
+	writeBackendContractConfig(t, mockFindingsServer(t).URL)
+
+	configDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".atcr", "config.yaml"),
+		[]byte("agents: [bruce]\n"+configDirExtra), 0o644))
+	appendProjectConfig(t, worktreeExtra)
+
+	captureSendBodies(t) // keep the transport hermetic
+	builds := countingQualityBuilder(t)
+	client := telemetry.NewSingleDestination(qsEndpoint)
+	logger, err := log.New("info", "text", io.Discard)
+	require.NoError(t, err)
+	cmd := newReviewCmd()
+	cmd.SetContext(telemetry.NewContext(log.NewContext(context.Background(), logger), client))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	require.NoError(t, cmd.ParseFlags([]string{"--base", "HEAD^", "--head", "HEAD", "--config-dir", configDir}))
+	require.NoError(t, runReview(cmd, cmd.Flags().Args()))
+	waitQualitySignalInFlight()
+	client.Wait()
+	return atomic.LoadInt32(builds)
+}
+
+// TestReviewCmd_ConfigDirWorktreeCannotOptIntoQualitySignal: under --config-dir
+// a reviewed tree that sets quality_signal: true does not start a quality-signal
+// send; the config directory's (unset) opt-in decides.
+func TestReviewCmd_ConfigDirWorktreeCannotOptIntoQualitySignal(t *testing.T) {
+	require.Equal(t, int32(0), runReviewSendWithConfigDir(t, "quality_signal: true\n", ""),
+		"the reviewed tree's quality_signal must not opt the run in under --config-dir")
+}
+
+// TestReviewCmd_ConfigDirQualitySignalOptInHonored is the control for the test
+// above: the config directory's own opt-in does start the send, so a zero there
+// means the gate said no, not that the harness cannot see a send.
+func TestReviewCmd_ConfigDirQualitySignalOptInHonored(t *testing.T) {
+	require.Equal(t, int32(1), runReviewSendWithConfigDir(t, "", "quality_signal: true\n"),
+		"the config directory's quality_signal opt-in must start the send")
 }

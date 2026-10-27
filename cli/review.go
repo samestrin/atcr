@@ -167,7 +167,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
 	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1)")
-	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr config is never read")
+	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr/config.yaml, registry.yaml and personas are not read; its .atcr/ignore.yaml and the one-time telemetry notice still are")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)

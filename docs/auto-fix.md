@@ -157,7 +157,11 @@ atcr review --auto-fix --config-dir /srv/checkouts/my-repo
 Under `--config-dir`, `<dir>/.atcr/config.yaml` supplies the roster, `fail_on`,
 `consensus`, `auto_fix:`, `sandbox:` and the `quality_signal` opt-in, and
 `<dir>/.atcr/registry.yaml` and `<dir>/.atcr/personas/` replace the reviewed
-tree's. The reviewed tree's `.atcr` config is never read. A value that is not an
+tree's; those three are never read from the reviewed tree. Two things still
+come from the reviewed tree: `.atcr/ignore.yaml` (finding suppressions applied at
+reconcile), and the one-time telemetry notice, which reads that tree's
+`telemetry` opt-out and writes its notice marker there. The usage ping itself
+follows `<dir>`'s `telemetry` setting. A value that is not an
 existing directory, a directory with no `.atcr/config.yaml`, and `--resume` with
 the flag are usage errors (exit 2) before any review work. The patch is still
 applied to, validated in and committed from the current directory.
