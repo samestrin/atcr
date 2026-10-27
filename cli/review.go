@@ -166,12 +166,24 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
+	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1)")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
 	addSyncCloudFlags(cmd)
 	addQualitySignalFlags(cmd)
 	return cmd
+}
+
+// previewURLFlag names `atcr review --preview-url` (Epic 36.0.1): the page a
+// visual-verification spec opens. This slice only validates it; 36.0.2 reads it.
+const previewURLFlag = "preview-url"
+
+// ValidatePreviewURL vets a --preview-url value with the --telemetry-endpoint
+// rule: https:// always, http:// only for a loopback host (localhost,
+// 127.0.0.0/8, ::1), and anything else rejected without echoing the value.
+func ValidatePreviewURL(previewURL string) error {
+	return validateHTTPSOrLoopbackURL("--"+previewURLFlag, previewURL)
 }
 
 // outputDirFromFlags resolves the --output-dir override for `atcr review`. It
@@ -361,6 +373,15 @@ func baselineWithheldCause(s fanout.Summary) string {
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) (err error) {
+	// --preview-url is a usage error (exit 2) when set to anything the rule
+	// rejects, checked first so a bad value never starts any review work.
+	if cmd.Flags().Changed(previewURLFlag) {
+		v, _ := cmd.Flags().GetString(previewURLFlag)
+		if verr := ValidatePreviewURL(v); verr != nil {
+			return usageError(verr)
+		}
+	}
+
 	// --dry-run renders the outbound quality-signal payload locally and sends
 	// nothing (Story 3). It short-circuits at the top of RunE — before the --resume
 	// branch, the --sync-cloud precondition, the opt-in gate, and any
@@ -531,6 +552,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// resolved backend forward to the post-reconcile orchestration.
 	autoFix := boolFlag(cmd, "auto-fix")
 	var afBackend autoFixBackend
+	// --auto-fix-base (Epic 49.2) names the branch the fix PR targets instead of
+	// the resolved default branch; checked here so a bad value fails before any
+	// review work.
+	afBase, err := autoFixBaseOverride(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the consensus level only when this run will actually reconcile —
 	// the one-shot in-process reconcile below is its only consumer, and a plain
@@ -1037,7 +1065,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// findings, and it is terminal — the fail-on exit gate below is bypassed
 		// because the intent under --auto-fix is to remediate, not to fail CI.
 		if autoFix {
-			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, res.DefaultBranch)
+			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, autoFixBaseBranch(afBase, res.DefaultBranch))
 		}
 
 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise

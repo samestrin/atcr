@@ -1630,7 +1630,7 @@ func TestMaybeCompact_WatermarkFileIsInvisibleToTheReadPath(t *testing.T) {
 }
 
 // TestMaybeCompact_DoesNotDeadlockAgainstCompactLock proves MaybeCompact takes no
-// lock of its own: withLock is mkdir-based and NOT reentrant, so a nested acquire
+// lock of its own: withLock is not reentrant, so a nested acquire
 // would spin for the full lockWait before failing.
 func TestMaybeCompact_DoesNotDeadlockAgainstCompactLock(t *testing.T) {
 	dir := t.TempDir()

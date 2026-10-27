@@ -43,7 +43,7 @@ const MaxRecordBytes = maxLineBytes
 //
 // The contract binds RAW PATH STRINGS too, not only *os.PathError: a diagnostic that
 // formats a path it holds as a plain string reduces it to its base name explicitly
-// (withLock's lock path, lock.go:69-72; the root-resolution warnings that render a
+// (withLock's lock path, lock_unix.go:68 and lock_other.go:79; the root-resolution warnings that render a
 // manifest-recorded root, root.go).
 //
 // The "paths are repo-relative today" assumption this note used to rest on NO LONGER
@@ -2124,7 +2124,7 @@ func grewPast(current, watermark int64) bool {
 // # Locking
 //
 // MaybeCompact takes NO lock, and the stats read runs outside any lock. Compact
-// acquires withLock internally, and withLock is mkdir-based and NOT reentrant — a
+// acquires withLock internally, and withLock is not reentrant — a
 // nested acquire would spin for the full lockWait and then fail, turning every
 // over-threshold reconcile into a multi-second stall. A benign stats race just means
 // compaction happens one run later.

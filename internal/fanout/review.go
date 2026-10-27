@@ -56,6 +56,11 @@ type ReviewConfig struct {
 	Project     *registry.ProjectConfig
 	Settings    registry.Settings
 	PersonaDirs registry.PersonaDirs
+	// sastBlock is the fenced SAST findings block PrepareReview produced for
+	// this run (Epic 50.0), "" when the scanner is off, failed open or found
+	// nothing. Set only on PrepareReview's private copy of the config, so a
+	// caller's ReviewConfig is never mutated.
+	sastBlock string
 }
 
 // ReviewRange is the resolved git range as plain provenance fields. The engine
@@ -483,11 +488,19 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
+	// Deterministic SAST pre-filter (Epic 50.0): off unless configured, and fail-open. Its findings
+	// reach every reviewer through a private copy of cfg, and reconcile through the review-dir sidecar.
+	block, scan := runSASTPreFilter(ctx, cfg, req.Repo, payloads)
+	if block != "" {
+		withSAST := *cfg
+		withSAST.sastBlock = block
+		cfg = &withSAST
+	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
-	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false, threatMap)
+	return scan.handOff(finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode, rb, false, threatMap))
 }
 
 // finalizePreparedReview is the shared scaffold-and-assemble tail of the two
@@ -3523,20 +3536,25 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// prompt below (payloadStart, the response_format swap) describes the text
 	// actually sent. The claim ledger is part of payloadText (rangebuilder
 	// prepends it as an entry), so commit messages are covered too.
+	//
+	// The SAST block (Epic 50.0) is scanner output over repository content, so
+	// it is guarded as its own segment, and it is prepended ahead of the scope
+	// constraint so the constraint still sits immediately before the diff.
 	guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+		guardSegment{text: cfg.sastBlock, file: secretSASTLabel},
 		guardSegment{text: scopeConstraint, file: secretScopeLabel},
 		guardSegment{text: payloadText, file: "payload", mode: mode})
 	if err != nil {
 		return Agent{}, err
 	}
-	scopeConstraint, payloadText = guarded[0], guarded[1]
+	sastBlock, scopeConstraint, payloadText := guarded[0], guarded[1], guarded[2]
 	pctx := payload.PayloadContext{
 		AgentName:   name,
 		BaseRef:     rng.Base,
 		HeadRef:     rng.Head,
 		PayloadMode: mode,
 		FileCount:   fileCount,
-		Payload:     scopeConstraint + payloadText,
+		Payload:     sastBlock + scopeConstraint + payloadText,
 		// Per-file escalation (Epic 35.1) can promote individual files above the
 		// agent's configured mode, so the scope rule is derived from what the
 		// payload actually contains rather than from the mode alone: a payload

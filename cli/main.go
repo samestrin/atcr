@@ -585,6 +585,7 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 		newInitCmd(),
 		newQuickstartCmd(),
 		newServeCmd(),
+		newWebhookCmd(),
 		newDoctorCmd(),
 		newTrustCmd(),
 		newScorecardCmd(),

@@ -436,6 +436,8 @@ Five things differ from a `standard-v1` run.
 
 **Expected findings are located, and matched positionally.** A case declares `expected_findings[]` with a `file`, a line range, a per-finding `line_tolerance`, and an `outside_diff` flag. A reported finding matches when the file is equal, the line falls inside the tolerance window, and — for an `outside_diff: true` expectation — the cited line is not itself an added or removed line of the case's own diff. One report settles at most one expectation, so N reports of a single defect score as one hit.
 
+A finding filed on the edited line that declares `sibling: <file>:<line>` in its `EVIDENCE` (the displaced-anchor marker a reviewer writes when it quotes an unchanged sibling arm) is matched at that sibling location instead of its own `FILE:LINE`; a finding without the marker, or with a malformed one, is matched at its `FILE:LINE` as before.
+
 **Out-of-diff recall is reported separately**, in the run-result's `reviewer_positional_recall` array:
 
 | Field | Meaning |

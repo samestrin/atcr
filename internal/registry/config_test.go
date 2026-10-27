@@ -1059,3 +1059,106 @@ func TestValidateCommunityPersonaYAML_RejectsSupportsVision(t *testing.T) {
 		"the error must name the offending key so the persona author can remove it")
 	assert.Contains(t, err.Error(), "sample", "the error must name the persona")
 }
+
+// linearWebhookBlock is a complete webhook.linear block appended to the valid
+// webhook body by the Epic 49.1 T1 tests.
+const linearWebhookBlock = "  linear:\n" +
+	"    webhook_secret_env: LINEAR_WEBHOOK_SECRET\n" +
+	"    api_key_env: LINEAR_API_KEY\n" +
+	"    trigger_statuses: [In Review]\n" +
+	"    teams: [EST]\n"
+
+// Epic 49.1 T1: a complete webhook.linear block loads into the struct.
+func TestLoadProjectConfig_WebhookLinearBlockLoads(t *testing.T) {
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Webhook)
+	l := cfg.Webhook.Linear
+	require.NotNil(t, l)
+	assert.Equal(t, "LINEAR_WEBHOOK_SECRET", l.WebhookSecretEnv)
+	assert.Equal(t, "LINEAR_API_KEY", l.APIKeyEnv)
+	assert.Equal(t, []string{"In Review"}, l.TriggerStatuses)
+	assert.Equal(t, []string{"EST"}, l.Teams)
+
+	// Absent block stays nil: Linear requests are refused.
+	cfg, err = LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Webhook.Linear)
+}
+
+// Epic 49.1 T1: a bad env-var name, or a missing/empty status or team list,
+// is rejected at load.
+func TestLoadProjectConfig_WebhookLinearRejectsInvalid(t *testing.T) {
+	cases := []struct{ name, from, to, want string }{
+		{"secret env is a token", "LINEAR_WEBHOOK_SECRET", "lin_wh-123", "webhook.linear.webhook_secret_env"},
+		{"api key env is a token", "LINEAR_API_KEY", "lin_api_abc-1", "webhook.linear.api_key_env"},
+		{"missing secret env", "    webhook_secret_env: LINEAR_WEBHOOK_SECRET\n", "", "webhook.linear.webhook_secret_env"},
+		{"missing api key env", "    api_key_env: LINEAR_API_KEY\n", "", "webhook.linear.api_key_env"},
+		{"no statuses", "    trigger_statuses: [In Review]\n", "", "webhook.linear.trigger_statuses"},
+		{"empty status list", "[In Review]", "[]", "webhook.linear.trigger_statuses"},
+		{"blank status", "[In Review]", `["In Review", " "]`, "webhook.linear.trigger_statuses[1]"},
+		{"no teams", "    teams: [EST]\n", "", "webhook.linear.teams"},
+		{"blank team", "[EST]", `[EST, ""]`, "webhook.linear.teams[1]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir())+linearWebhookBlock, c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}
+
+// linearAutoFixBlock is a complete webhook.linear.auto_fix block appended after
+// linearWebhookBlock by the Epic 49.2 T3 tests.
+const linearAutoFixBlock = "    auto_fix:\n" +
+	"      statuses: [Ready to Fix]\n" +
+	"      repos: [samestrin/atcr]\n" +
+	"      push_token_env: ATCR_PUSH_TOKEN\n" +
+	"      daily_job_cap: 5\n"
+
+// Epic 49.2 T3: a complete auto_fix block loads into the struct, and a Linear
+// block without one leaves auto-fix off.
+func TestLoadProjectConfig_WebhookLinearAutoFixLoads(t *testing.T) {
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock+linearAutoFixBlock))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Webhook.Linear)
+	a := cfg.Webhook.Linear.AutoFix
+	require.NotNil(t, a)
+	assert.Equal(t, []string{"Ready to Fix"}, a.Statuses)
+	assert.Equal(t, []string{"samestrin/atcr"}, a.Repos)
+	assert.Equal(t, "ATCR_PUSH_TOKEN", a.PushTokenEnv)
+	assert.Equal(t, 5, a.DailyJobCap)
+
+	cfg, err = LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Webhook.Linear.AutoFix)
+}
+
+// Epic 49.2 T3: a bad or reused push-token name, a missing or empty status
+// list, a repo outside webhook.repos and a cap below 1 are rejected at load.
+func TestLoadProjectConfig_WebhookLinearAutoFixRejectsInvalid(t *testing.T) {
+	cases := []struct{ name, from, to, want string }{
+		{"push token env is a token", "ATCR_PUSH_TOKEN", "ghp_abc-123", "webhook.linear.auto_fix.push_token_env is not a valid"},
+		{"missing push token env", "      push_token_env: ATCR_PUSH_TOKEN\n", "", "webhook.linear.auto_fix.push_token_env is required"},
+		{"push token reuses github_token_env", "push_token_env: ATCR_PUSH_TOKEN", "push_token_env: ATCR_GITHUB_TOKEN", "different variable from webhook.github_token_env"},
+		{"no statuses", "      statuses: [Ready to Fix]\n", "", "webhook.linear.auto_fix.statuses"},
+		{"empty status list", "[Ready to Fix]", "[]", "webhook.linear.auto_fix.statuses"},
+		{"blank status", "[Ready to Fix]", `["Ready to Fix", " "]`, "webhook.linear.auto_fix.statuses[1]"},
+		{"no repos", "      repos: [samestrin/atcr]\n", "", "webhook.linear.auto_fix.repos must list"},
+		{"repo not in webhook.repos", "repos: [samestrin/atcr]", "repos: [samestrin/atcr, samestrin/other]", `webhook.linear.auto_fix.repos[1] "samestrin/other" is not a key of webhook.repos`},
+		{"cap zero", "daily_job_cap: 5", "daily_job_cap: 0", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got 0"},
+		{"cap negative", "daily_job_cap: 5", "daily_job_cap: -1", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got -1"},
+		{"cap missing", "      daily_job_cap: 5\n", "", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got 0"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Contains(t, linearAutoFixBlock, c.from)
+			body := validWebhookBody(t.TempDir()) + linearWebhookBlock + strings.Replace(linearAutoFixBlock, c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}

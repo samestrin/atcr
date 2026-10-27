@@ -14,27 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLockWaitAtLeastStale locks the acquisition-window invariant: a waiter must be
-// able to outlast the staleness threshold. If lockWait < lockStale, a waiter's own
-// deadline fires before it could ever declare a healthy holder's lock stale, so a
-// legitimate critical section running between lockWait and lockStale makes every
-// contending caller return a spurious "timeout acquiring localdebt lock" while the
-// holder is fine — the stale branch is only reachable for locks already stale on
-// arrival, making the two thresholds mutually inconsistent.
-func TestLockWaitAtLeastStale(t *testing.T) {
-	if lockWait < lockStale {
-		t.Fatalf("lockWait (%s) must be >= lockStale (%s): a waiter has to be able to wait until it could declare a lock stale", lockWait, lockStale)
-	}
+// TestLockWaitKeeps45Seconds locks the acquisition window: the flock rework
+// dropped the wall-clock staleness threshold, but a waiter still gives up after
+// the same 45s it always did.
+func TestLockWaitKeeps45Seconds(t *testing.T) {
+	assert.Equal(t, 45*time.Second, lockWait)
 }
 
 // TestWithLockTimeoutErrorRedactsPath locks the SECURITY contract (store.go:26-31):
 // a surfaced error must not embed the absolute store path, which can carry a
-// username segment. The lock timeout error interpolated the full lockDir with %s;
-// it must be reduced to the base name like every other store path error
-// (basePathErr).
+// username segment. The lock timeout error must carry only the base name, like
+// every other store path error (basePathErr).
 func TestWithLockTimeoutErrorRedactsPath(t *testing.T) {
-	// Fast timeout: shrink only lockWait so a held, NON-stale lock forces a timeout
-	// (lockStale stays at its large default so the fresh owner is never judged stale).
 	oldWait := lockWait
 	lockWait = 50 * time.Millisecond
 	defer func() { lockWait = oldWait }()
@@ -42,56 +33,58 @@ func TestWithLockTimeoutErrorRedactsPath(t *testing.T) {
 	// An absolute dir with a username-shaped segment the error must never leak.
 	dir := filepath.Join(t.TempDir(), "Users", "secretuser", "project", ".atcr", "debt")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
-	lockDir := filepath.Join(dir, lockSubdir)
-	require.NoError(t, os.MkdirAll(lockDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(lockDir, lockOwner),
-		[]byte(fmt.Sprintf("session=live|epoch=%d", time.Now().Unix())), 0o600))
+
+	// A live holder keeps the lock for longer than the waiter's lockWait.
+	held, release := make(chan struct{}), make(chan struct{})
+	holderErr := make(chan error, 1)
+	go func() {
+		holderErr <- withLock(dir, "live", func() error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
 
 	err := withLock(dir, "waiter", func() error { return nil })
+	close(release)
+	require.NoError(t, <-holderErr)
+
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout acquiring localdebt lock")
 	assert.NotContains(t, err.Error(), "secretuser",
 		"timeout error must not leak the username-bearing absolute path")
-	assert.NotContains(t, err.Error(), lockDir,
+	assert.NotContains(t, err.Error(), dir,
 		"timeout error must not contain the full absolute lock path")
 	assert.False(t, strings.Contains(err.Error(), string(filepath.Separator)+"Users"+string(filepath.Separator)),
 		"timeout error must carry only the base name, not path segments")
 }
 
 // TestWithLockReclaimsStaleLockWithoutOverlap stresses the stale-reclaim path: many
-// callers contend on a pre-seeded stale lock simultaneously. The racy
-// RemoveAll+continue reclamation lets two waiters both delete the lock and both
-// re-Mkdir — if one acquires and writes a fresh owner before another's RemoveAll
-// runs, that RemoveAll clobbers the live lock and a second caller acquires too, so
-// fn() runs concurrently and mutual exclusion is broken. Atomic reclamation (rename
-// the stale dir aside; only the rename winner removes it) must keep fn strictly
-// serialized. Run with -race to amplify detection of any overlap.
+// callers contend at once on a store a dead holder left behind. The old mkdir
+// lock's RemoveAll+continue reclaim let two waiters both delete the lock and both
+// re-Mkdir, so fn() ran concurrently. The flock lock has no reclaim step — the
+// kernel drops a dead holder's lock — so fn must stay strictly serialized. Run
+// with -race to amplify detection of any overlap.
 func TestWithLockReclaimsStaleLockWithoutOverlap(t *testing.T) {
-	t.Skip("KNOWN FAILING — deferred to the technical-debt entry for internal/localdebt/lock.go:47 " +
-		"in .planning/technical-debt/README.md (flock-based advisory lock rework). The reviewer-prescribed " +
-		"atomic-rename reclaim (os.Rename stale dir aside; only the rename winner removes it) is provably " +
-		"insufficient: a stale-decision read BEFORE a fresh acquire still executes its rename against the " +
-		"freshly-acquired live lock, moving it aside and opening a free window, so fn() still runs " +
-		"concurrently (this test observed maxConcurrent>1 + a data race even with the atomic rename in " +
-		"place). Correct mutual exclusion under concurrent stale reclaim needs an OS-level primitive that " +
-		"auto-releases on crash (syscall.Flock). Un-skip once that primitive lands.")
-
-	// Shrink timings (preserving lockWait >= lockStale) so the stress loop is fast.
-	oldWait, oldStale := lockWait, lockStale
-	lockWait, lockStale = 200*time.Millisecond, 100*time.Millisecond
-	defer func() { lockWait, lockStale = oldWait, oldStale }()
+	// Shrink lockWait so a broken run fails fast instead of stalling 45s per worker.
+	oldWait := lockWait
+	lockWait = 2 * time.Second
+	defer func() { lockWait = oldWait }()
 
 	const iterations = 25
 	const workers = 12
 	for iter := 0; iter < iterations; iter++ {
 		dir := t.TempDir()
-		lockDir := filepath.Join(dir, lockSubdir)
-		require.NoError(t, os.MkdirAll(lockDir, 0o700))
-		// Pre-seed a stale owner (epoch far in the past) so every worker hits the
-		// stale-reclaim path at once — the exact window the racy reclamation could let
-		// two workers both acquire.
+		// Pre-seed what a dead holder leaves behind: the lock file it opened, and
+		// a legacy mkdir lock directory whose owner epoch is far in the past.
+		// Every worker starts at once against that leftover state — the window
+		// the old RemoveAll reclaim let two workers both acquire.
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".flock"), nil, 0o600))
+		legacy := filepath.Join(dir, ".lock")
+		require.NoError(t, os.MkdirAll(legacy, 0o700))
 		staleEpoch := time.Now().Add(-time.Hour).Unix()
-		require.NoError(t, os.WriteFile(filepath.Join(lockDir, lockOwner),
+		require.NoError(t, os.WriteFile(filepath.Join(legacy, "owner.txt"),
 			[]byte(fmt.Sprintf("session=dead|epoch=%d", staleEpoch)), 0o600))
 
 		var running, maxConcurrent atomic.Int32

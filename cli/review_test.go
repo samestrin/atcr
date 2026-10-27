@@ -1124,3 +1124,52 @@ func TestRunReview_ResolvesSharedSettingsInOneLoad(t *testing.T) {
 			"entering the reconciling branch must not cost an extra user-registry load")
 	})
 }
+
+// --- Epic 36.0.1 T5: --preview-url ------------------------------------------
+
+// TestValidatePreviewURL pins the --preview-url acceptance rule: https:// always,
+// plaintext http:// only for a loopback host (localhost, 127.0.0.0/8, ::1), and
+// nothing else. It shares the rule with --telemetry-endpoint.
+func TestValidatePreviewURL(t *testing.T) {
+	cases := []struct {
+		url string
+		ok  bool
+	}{
+		{"https://example.com", true},
+		{"http://127.0.0.1:3000", true},
+		{"http://localhost:5173", true},
+		{"http://[::1]:8080", true},
+		{"http://127.0.0.2:3000", true}, // all of 127.0.0.0/8 is loopback
+		{"http://example.com", false},
+		{"http://op:s3cret@example.com", false},
+		{"http://localhost.evil.test", false},
+		{"ftp://x", false},
+		{"https://", false}, // empty host
+		{"http://:8080", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		err := ValidatePreviewURL(tc.url)
+		if tc.ok {
+			assert.NoError(t, err, "ValidatePreviewURL(%q)", tc.url)
+			continue
+		}
+		if assert.Error(t, err, "ValidatePreviewURL(%q)", tc.url) {
+			assert.Contains(t, err.Error(), "--preview-url")
+			assert.NotContains(t, err.Error(), "s3cret", "the error must never echo the rejected value")
+		}
+	}
+}
+
+// TestReviewCmd_PreviewURL_RejectsRemoteHTTP_ExitsUsage: a plaintext URL to a
+// remote host is a usage error (exit 2) before any review work begins.
+func TestReviewCmd_PreviewURL_RejectsRemoteHTTP_ExitsUsage(t *testing.T) {
+	isolate(t)
+	root := NewRootCmd()
+	root.SetArgs([]string{"review", "--preview-url", "http://example.com"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	err := root.ExecuteContext(context.Background())
+	require.Equal(t, exitUsage, exitCode(err))
+	assert.ErrorContains(t, err, "--preview-url must use https://")
+}

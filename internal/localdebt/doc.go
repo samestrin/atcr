@@ -43,19 +43,19 @@
 // # Concurrency guarantee
 //
 // The guarantee has two layers. Mutual exclusion comes first: Append, appendBatch
-// and Compact run their critical sections under withLock (lock.go), a mkdir-based
-// cross-process lock with staleness reclaim, so two processes never append to or
+// and Compact run their critical sections under withLock (lock_unix.go; lock.go off unix), a flock-based
+// cross-process lock the kernel releases when its holder dies, so two processes never append to or
 // rewrite the store at the same time. Line integrity comes second: inside that
 // lock, each record is marshaled to one []byte and emitted in exactly one
 // os.Write to a file opened O_APPEND — per record, in a batch exactly as in a
 // single Append. On Linux/macOS a write() to a regular file
 // opened O_APPEND atomically appends, so a record can never interleave or tear
-// even if the lock is reclaimed stale and two appends overlap. No bufio.Writer is
+// even if two appends were to overlap. No bufio.Writer is
 // shared across records — batching would coalesce records into one larger write
 // whose atomicity is not guaranteed, tearing lines under concurrency. The lock is
 // taken by Append, appendBatch (one cycle per reconcile run, one Write per
 // record inside it), and Compact only: MaybeCompact's threshold stats read runs
-// outside any lock (withLock is mkdir-based and not reentrant, so nesting it
+// outside any lock (withLock is not reentrant, so nesting it
 // inside Compact would stall for the full lockWait). The portability caveat for
 // non-POSIX append semantics is the accepted TD-004 won't-fix stance already
 // applied to the other five append-only ledgers (audit, debate, scorecard, tools,
