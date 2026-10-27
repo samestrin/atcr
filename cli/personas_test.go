@@ -1177,7 +1177,7 @@ func TestDocs_PersonasInstallMdDocumentsTheCasesColumn(t *testing.T) {
 	var table bytes.Buffer
 	require.NoError(t, renderScoredList(&table, nil))
 	header := strings.Fields(strings.SplitN(table.String(), "\n", 2)[0])
-	require.Equal(t, []string{"NAME", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "RAISED", "CASES"}, header)
+	require.Equal(t, []string{"NAME", "ROLE", "VERSION", "SOURCE", "LANGUAGE", "CORROBORATION", "RAISED", "CASES"}, header)
 	for _, col := range header {
 		assert.Contains(t, doc, col, "docs/personas-install.md must name every --scores column")
 	}
@@ -1725,4 +1725,71 @@ func TestPersonasExcludedCases_DefaultDirErrorSurfaces(t *testing.T) {
 	t.Setenv("HOME", "")
 	_, err := personasExcludedCases()
 	require.Error(t, err)
+}
+
+// --- Epic 83.0 T4: the ROLE column -------------------------------------------
+
+// withRolePersonas installs a binding-only YAML persona (no prompt, so no role)
+// and an md-only community persona whose H1 names its role, so the goldens
+// cover both the filled and the empty ROLE cell.
+func withRolePersonas(t *testing.T) {
+	t.Helper()
+	srv := personasTestServer(t, map[string]string{"/security/owasp.yaml": cmdValidPersonaYAML})
+	dir := withPersonasEnv(t, srv)
+	require.NoError(t, personas.Install(http.DefaultClient, srv.URL, "security/owasp", dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "celeste.md"),
+		[]byte("<!-- vendor-guidance: x — y -->\n# {{.AgentName}} — dependency and configuration reviewer\n"), 0o644))
+}
+
+func TestPersonasList_TableGoldenShowsTheRoleColumn(t *testing.T) {
+	withRolePersonas(t)
+	withPersonasScores(t, personasScoreData{}, nil, nil)
+
+	out, stderr, err := executeSplit(t, "personas", "list")
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assertJSONGolden(t, "personas_list_table.golden.txt", out)
+
+	lines := strings.Split(out, "\n")
+	assert.Equal(t, []string{"NAME", "ROLE", "VERSION", "SOURCE", "LANGUAGE"}, strings.Fields(lines[0]))
+	assert.Contains(t, out, "security and injection reviewer", "built-in roles come from the embedded H1")
+	assert.Contains(t, out, "dependency and configuration reviewer", "community roles come from the prompt H1")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "security/owasp") {
+			assert.Equal(t, []string{"security/owasp", "1.0.0", "community", "go"}, strings.Fields(line),
+				"a persona with no role renders an empty ROLE cell, not an error")
+		}
+	}
+}
+
+func TestPersonasList_ScoresTableGoldenShowsTheRoleColumn(t *testing.T) {
+	withRolePersonas(t)
+	withPersonasScores(t, jsonScoresFixture(), nil, nil)
+
+	out, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assertJSONGolden(t, "personas_list_scores_table.golden.txt", out)
+	assert.Contains(t, out, "security and injection reviewer")
+	assert.Contains(t, out, "dependency and configuration reviewer")
+}
+
+func TestPersonasListJSON_RowsCarryTheRole(t *testing.T) {
+	withRolePersonas(t)
+	withPersonasScores(t, jsonScoresFixture(), nil, nil)
+
+	for _, args := range [][]string{{"personas", "list", "--json"}, {"personas", "list", "--scores", "--json"}} {
+		got, _, err := executeSplit(t, args...)
+		require.NoError(t, err)
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(got), &rows))
+		roles := map[string]any{}
+		for _, r := range rows {
+			role, ok := r["role"]
+			require.True(t, ok, "%v: row %v has a role field", args, r["name"])
+			roles[r["name"].(string)] = role
+		}
+		assert.Equal(t, "security and injection reviewer", roles["sasha"], "%v", args)
+		assert.Equal(t, "dependency and configuration reviewer", roles["celeste"], "%v", args)
+		assert.Equal(t, "", roles["security/owasp"], "%v: no role is an empty string", args)
+	}
 }

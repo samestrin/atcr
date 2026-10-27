@@ -18,9 +18,47 @@ import (
 // PersonaMeta is one row of `atcr personas list`.
 type PersonaMeta struct {
 	Name     string
+	Role     string // text after the em dash in the prompt H1; "" when there is none
 	Version  string
 	Source   string // "project" | "community" | "built-in" | "registry"
 	Language []string
+}
+
+// roleFromPrompt returns the role a persona prompt names in its H1, the text
+// after the first em dash in `# {{.AgentName}} — <role>`. Only the first H1
+// counts; lines before it (a vendor-guidance comment) are skipped. A prompt
+// with no H1, or an H1 with no em dash, has no role and yields "" — the list
+// renders an empty cell rather than failing on a hand-written prompt.
+func roleFromPrompt(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "# ") {
+			continue
+		}
+		_, role, ok := strings.Cut(line, "—")
+		if !ok {
+			return ""
+		}
+		return strings.TrimSpace(role)
+	}
+	return ""
+}
+
+// roleFromFile reads the role from the prompt file at path. A file that cannot
+// be read has no role: the role is display metadata, so a missing or unreadable
+// prompt leaves the cell empty rather than failing the listing. Only a regular
+// file is read; a symlink is skipped for the same reason the walkers skip one
+// (it may point outside the personas dir).
+func roleFromFile(path string) string {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return roleFromPrompt(string(data))
 }
 
 // personaFileMeta captures the persona-file metadata read from an installed
@@ -39,7 +77,11 @@ func List(personasDir string) ([]PersonaMeta, error) {
 	names := builtins.Names()
 	metas := make([]PersonaMeta, 0, len(names))
 	for _, n := range names {
-		metas = append(metas, PersonaMeta{Name: n, Version: "built-in", Source: "built-in"})
+		meta := PersonaMeta{Name: n, Version: "built-in", Source: "built-in"}
+		if body, err := builtins.Get(n); err == nil {
+			meta.Role = roleFromPrompt(body)
+		}
+		metas = append(metas, meta)
 	}
 	community, err := listCommunity(personasDir)
 	metas = append(metas, community...)
@@ -110,7 +152,7 @@ func listProject(projectDir string) ([]PersonaMeta, error) {
 			return nil // shared base template (at any depth), not a persona
 		}
 		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
-		out = append(out, PersonaMeta{Name: name, Version: "project", Source: "project"})
+		out = append(out, PersonaMeta{Name: name, Role: roleFromFile(path), Version: "project", Source: "project"})
 		return nil
 	})
 	return out, walkErr
@@ -388,6 +430,9 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 			return nil
 		}
 		meta := PersonaMeta{Name: name, Version: "-", Source: "community"}
+		// The role lives in the co-located <name>.md prompt body; a
+		// binding-only YAML persona has none and keeps an empty role.
+		meta.Role = roleFromFile(strings.TrimSuffix(path, filepath.Ext(path)) + ".md")
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			warnings = append(warnings, fmt.Errorf("could not read persona file %q: %w", rel, readErr))
@@ -431,7 +476,7 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
 			continue
 		}
-		out = append(out, PersonaMeta{Name: name, Version: "-", Source: "community"})
+		out = append(out, PersonaMeta{Name: name, Role: roleFromFile(filepath.Join(personasDir, rel)), Version: "-", Source: "community"})
 	}
 	return out, errors.Join(warnings...)
 }

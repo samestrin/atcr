@@ -1,0 +1,12 @@
+NAME            ROLE                                      VERSION   SOURCE     LANGUAGE
+bruce           generalist correctness reviewer           built-in  built-in   -
+greta           algorithmic correctness reviewer          built-in  built-in   -
+kai             architecture and design reviewer          built-in  built-in   -
+mira            production feasibility reviewer           built-in  built-in   -
+dax             test coverage and error-path reviewer     built-in  built-in   -
+sasha           security and injection reviewer           built-in  built-in   -
+penny           performance and resource reviewer         built-in  built-in   -
+ingrid          idiomatic-style and conventions reviewer  built-in  built-in   -
+otto            style, readability, and idiom reviewer    built-in  built-in   -
+security/owasp                                            1.0.0     community  go
+celeste         dependency and configuration reviewer     -         community  -
