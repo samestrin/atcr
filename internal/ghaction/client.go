@@ -435,6 +435,31 @@ func (c *Client) FindOpenPullRequest(ctx context.Context, owner, repo, branch st
 	return lowest, true, nil
 }
 
+// PullRequestHead returns the head of pull request number via
+// GET /repos/{owner}/{repo}/pulls/{number}: its branch, and the `owner/repo`
+// that holds it. headRepo differs from owner/repo for a fork and is empty when
+// the fork was deleted. A response with no head branch is an error.
+func (c *Client) PullRequestHead(ctx context.Context, owner, repo string, number int) (ref, headRepo string, err error) {
+	var resp struct {
+		Head struct {
+			Ref  string `json:"ref"`
+			Repo *struct {
+				FullName string `json:"full_name"`
+			} `json:"repo"`
+		} `json:"head"`
+	}
+	if err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, number), &resp); err != nil {
+		return "", "", err
+	}
+	if resp.Head.Ref == "" {
+		return "", "", fmt.Errorf("pull request %s/%s#%d: response carried no head branch", owner, repo, number)
+	}
+	if resp.Head.Repo != nil {
+		headRepo = resp.Head.Repo.FullName
+	}
+	return resp.Head.Ref, headRepo, nil
+}
+
 // sleepCtx waits for d to elapse or for ctx to be cancelled, whichever happens
 // first. It returns ctx.Err() if the context is cancelled during the wait so
 // that retry back-off is interruptible by cancellation or shutdown.
