@@ -22,6 +22,12 @@ type Job struct {
 	// Key identifies the pull request the job works on (e.g. "owner/repo#12").
 	// Two jobs with one key never run at the same time.
 	Key string
+	// Resolve, when set, finds the job's pull request inside the job, after
+	// the request was acknowledged (a Linear event names an issue, not a PR).
+	// Key then names the job only until Resolve returns the PR's key; Run
+	// starts only if no other job holds that key, so one job runs per PR at a
+	// time. An error from Resolve ends the job without running Run.
+	Resolve func(ctx context.Context) (key string, err error)
 	// Run does the work. Its context is cancelled at the per-job timeout and
 	// on shutdown; Run must return promptly once it is.
 	Run func(ctx context.Context) error
@@ -80,6 +86,19 @@ func (j *jobs) run(job Job) {
 			j.logf("webhook: job %s panicked: %v", job.Key, r)
 		}
 	}()
+	if job.Resolve != nil {
+		key, err := job.Resolve(ctx)
+		if err != nil {
+			j.logf("webhook: job %s not run: %v", job.Key, err)
+			return
+		}
+		release, err := j.claim(key)
+		if err != nil {
+			j.logf("webhook: job %s refused: %v", job.Key, err)
+			return
+		}
+		defer release()
+	}
 	err := job.Run(ctx)
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -87,6 +106,22 @@ func (j *jobs) run(job Job) {
 	case err != nil:
 		j.logf("webhook: job %s failed: %v", job.Key, err)
 	}
+}
+
+// claim marks key running for a job already started under another key, and
+// returns the func that clears it. It returns ErrJobBusy when key is running.
+func (j *jobs) claim(key string) (release func(), err error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if _, busy := j.running[key]; busy {
+		return nil, fmt.Errorf("%w: %s", ErrJobBusy, key)
+	}
+	j.running[key] = struct{}{}
+	return func() {
+		j.mu.Lock()
+		delete(j.running, key)
+		j.mu.Unlock()
+	}, nil
 }
 
 // Shutdown refuses new jobs, cancels the running ones and waits for them to
@@ -109,8 +144,8 @@ func (j *jobs) Shutdown(ctx context.Context) error {
 	}
 }
 
-// dedupe remembers delivery ids for a window, so a delivery Slack retries is
-// handled once.
+// dedupe remembers delivery ids (Slack) and issue-plus-state keys (Linear)
+// for a window, so a retried or repeated delivery is handled once.
 type dedupe struct {
 	window time.Duration
 	mu     sync.Mutex

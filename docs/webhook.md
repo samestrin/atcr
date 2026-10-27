@@ -172,6 +172,43 @@ The review range uses the default branch, not the pull request's own base
 branch. A pull request that targets another branch is reviewed against the
 default branch.
 
+## Linear-triggered reviews
+
+With a `webhook.linear:` block the daemon also reviews the GitHub pull request
+attached to a Linear issue when the issue moves to one of your trigger
+statuses. Point a Linear webhook for Issue events at your tunnel's
+`/linear/webhook` URL. Either trigger block is enough on its own.
+
+```yaml
+webhook:
+  repos:
+    acme/widget: /srv/checkouts/widget
+  linear:
+    webhook_secret_env: LINEAR_WEBHOOK_SECRET   # the webhook's signing secret
+    api_key_env: LINEAR_API_KEY                 # reads the issue's attachments
+    trigger_statuses: [In Review]
+    teams: [EST]                                # team key or id
+```
+
+1. **Signature.** `Linear-Signature` must be the HMAC-SHA256 of the body under
+   the signing secret, and the body's `webhookTimestamp` must be within a
+   minute of the daemon's clock. A failed check gets HTTP 401.
+2. **Acknowledgement.** A valid request gets HTTP 200 at once. The pull request
+   lookup happens afterwards, inside the job.
+3. **Trigger.** Only an Issue `update` whose `updatedFrom` shows the state
+   changed, in a listed team, to a listed status (names match ignoring case)
+   runs a review. Any other edit runs nothing.
+4. **Repeats.** The issue id and the new state are remembered for an hour, so a
+   redelivery, or a second delivery of the same status change, runs one review.
+5. **Pull request.** The job asks the Linear API (10-second timeout) for the
+   issue's attachments and takes the first GitHub pull request URL. A pull
+   request whose repository is not in `repos` is ignored and logged.
+6. **One job per pull request.** While a review of that pull request is
+   running, from Linear or Slack, the new event is refused and logged.
+
+The checkout, review and cleanup are the same as for a Slack mention. The
+daemon logs the finding count when the review finishes.
+
 ## Where reviews are written
 
 Each webhook review is a normal review directory under `.atcr/reviews/` of the
