@@ -201,10 +201,21 @@ Concretely, opting in accepts all of the following:
 
 - **Runs as the invoking user**, not as the unprivileged `uid 65534` the container
   backend uses.
-- **No resource caps.** `sandbox.memory`, `sandbox.cpus`, and `sandbox.pids_limit`
-  still pass config validation but are **not enforced** by this backend. Every
-  hardened container default is likewise dropped: `--cap-drop ALL`,
+- **No CPU cap.** `sandbox.cpus` still passes config validation but is **not
+  enforced** by this backend: a CPU rate limit has no counterpart in
+  `sandbox-exec`, so it is left out on both platforms rather than enforced on one.
+  Every hardened container default is likewise dropped: `--cap-drop ALL`,
   `--security-opt no-new-privileges`, and the read-only root filesystem.
+- **On macOS, no memory or PID cap.** `sandbox.memory` and `sandbox.pids_limit`
+  are not enforced there: macOS refuses to lower a process's memory limits
+  (`RLIMIT_AS` and `RLIMIT_DATA`), and its process limit counts every process
+  you run, not one run's. If you set either key, the backend's preflight
+  **refuses** the run rather than ignore it; the defaults (512 MiB, 256
+  processes) are skipped with a logged warning. On Linux both caps are enforced,
+  by a per-run cgroup v2 group carrying `memory.max` and `pids.max`. Where the
+  host delegates no writable cgroup, memory falls back to a per-process
+  `RLIMIT_DATA` limit, and a `sandbox.pids_limit` you set is refused (the
+  default only logs a warning).
 - **`sandbox.image` is ignored.** There is no container, so `test_command` /
   `validate_command` runs against the **host's** toolchain rather than the declared
   image's. If that toolchain is not reachable the command exits `127`, which a
