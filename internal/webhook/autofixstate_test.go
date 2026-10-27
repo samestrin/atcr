@@ -89,7 +89,7 @@ func TestAutoFixStateDayIsUTC(t *testing.T) {
 	// Two times on different local days in UTC+2 but on one UTC day count
 	// against one day's cap.
 	plus2 := time.FixedZone("UTC+2", 2*60*60)
-	a := time.Date(2026, 10, 27, 1, 30, 0, 0, plus2) // 2026-10-26 23:30 UTC
+	a := time.Date(2026, 10, 27, 1, 30, 0, 0, plus2)  // 2026-10-26 23:30 UTC
 	b := time.Date(2026, 10, 26, 23, 30, 0, 0, plus2) // 2026-10-26 21:30 UTC
 	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 1)
 	if err := s.Claim("ISS-1", "st", b); err != nil {
