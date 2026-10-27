@@ -2124,7 +2124,7 @@ func grewPast(current, watermark int64) bool {
 // # Locking
 //
 // MaybeCompact takes NO lock, and the stats read runs outside any lock. Compact
-// acquires withLock internally, and withLock is mkdir-based and NOT reentrant — a
+// acquires withLock internally, and withLock is not reentrant — a
 // nested acquire would spin for the full lockWait and then fail, turning every
 // over-threshold reconcile into a multi-second stall. A benign stats race just means
 // compaction happens one run later.
