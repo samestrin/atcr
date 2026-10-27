@@ -66,15 +66,11 @@ func TestSecretGuardDoc_SecurityPage(t *testing.T) {
 	}
 }
 
+// The entry sits in whichever section the release cut put it in, so this reads
+// the whole changelog rather than only [Unreleased], which is empty after a cut.
 func TestSecretGuardDoc_ChangelogEntry(t *testing.T) {
 	changelog := readRepoFile(t, "../../CHANGELOG.md")
-	const marker = "\n## [Unreleased]\n"
-	i := strings.Index(changelog, marker)
-	require.True(t, i >= 0, "CHANGELOG.md must keep an Unreleased section")
-	unreleased := changelog[i+1:]
-	if j := strings.Index(unreleased[len(marker):], "\n## ["); j >= 0 {
-		unreleased = unreleased[:len(marker)+j]
-	}
-	require.Contains(t, unreleased, "`secret_guard`", "the Unreleased section must carry the secret_guard entry")
-	require.Contains(t, unreleased, "(epic 35.20)", "the entry must carry its source, per the changelog rules")
+	require.Contains(t, changelog, "\n## [Unreleased]\n", "CHANGELOG.md must keep an Unreleased section")
+	require.Contains(t, changelog, "`secret_guard`", "the changelog must carry the secret_guard entry")
+	require.Contains(t, changelog, "(epic 35.20)", "the entry must carry its source, per the changelog rules")
 }

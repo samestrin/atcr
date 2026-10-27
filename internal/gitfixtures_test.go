@@ -46,6 +46,7 @@ var readOnlyGitReaders = map[string]string{
 	"skills/docs_test.go":                        "git ls-files over the repository's tracked .go files",
 	"skills/layout_test.go":                      "git ls-files over the repository's tracked files",
 	"internal/payload/escalation_replay_test.go": "git log / rev-parse over the repository's own history",
+	"cli/changelog_tags_test.go":                 "git tag --list over the repository's own tags",
 	"internal/gitexec/gitexec_test.go":           "tests the constructors themselves, against temp repos",
 }
 
