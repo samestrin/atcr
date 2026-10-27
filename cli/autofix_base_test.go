@@ -140,3 +140,12 @@ func TestAutoFixBaseOverride_AcceptsAndTrims(t *testing.T) {
 	require.Equal(t, "release/1.x", autoFixBaseBranch("release/1.x", "main"))
 	require.Equal(t, "main", autoFixBaseBranch("", "main"))
 }
+
+// TestReviewCmd_ResumeRejectsAutoFixBase: --resume branches off before the fresh
+// path reads --auto-fix-base, so it is refused there rather than silently dropped.
+func TestReviewCmd_ResumeRejectsAutoFixBase(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--auto-fix-base", "release/1.x")
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "--resume does not support --auto-fix-base")
+}
