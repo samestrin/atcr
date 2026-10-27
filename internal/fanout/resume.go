@@ -794,7 +794,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(ctx, poolDir, p.manifest.Roster)
+	sum, statuses, err := RebuildPool(ctx, poolDir, visualRebuildRoster(p.manifest.Roster, poolDir))
 	if err != nil {
 		return nil, err
 	}

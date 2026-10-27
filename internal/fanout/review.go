@@ -441,7 +441,7 @@ func (p *PreparedReview) AgentCount() int { return len(p.Slots) }
 // reachable by non-CLI callers (the MCP server, the benchmark harness), and the
 // CLI emits its own flag-named usage error earlier at flag-parse time.
 func validateReviewRequest(cfg *ReviewConfig, req ReviewRequest) error {
-	if len(rosterNames(cfg.Project)) == 0 {
+	if len(reviewerRoster(cfg.Project)) == 0 && (req.Visual == nil || !visualInRoster(cfg.Project)) {
 		return ErrEmptyRoster
 	}
 	if req.OutputDir != "" && req.IDOverride != "" {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -110,4 +112,56 @@ func exitCodeOf(err error) int {
 		return ce.ExitCode()
 	}
 	return 1
+}
+
+// felix's call-1 adapter resolves its own agent, provider and persona, and
+// sends the prompt to felix's model.
+func TestNewFelixAuthor_SendsThePromptToFelixsModel(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	srv, bodies := threatMapProvider(t, "unused")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "felix.md"), []byte("# {{.AgentName}} — frontend QA reviewer\n"), 0o644))
+	cfg := visualCfg(true, "http://localhost:11434", "eye")
+	cfg.Registry.Providers["p"] = registry.Provider{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY"}
+	cfg.PersonaDirs = registry.PersonaDirs{Project: dir}
+
+	a, err := newFelixAuthor(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Contains(t, a.Persona(), "frontend QA reviewer")
+	reply, err := a.Complete(context.Background(), "write the spec")
+	require.NoError(t, err)
+	assert.Equal(t, "NO FINDINGS", reply)
+	require.Len(t, bodies()["m-felix"], 1)
+	assert.Contains(t, bodies()["m-felix"][0], "write the spec")
+}
+
+func TestNewFelixAuthor_MissingPiecesAreErrors(t *testing.T) {
+	noAgent := visualCfg(true, "http://localhost:11434", "eye")
+	delete(noAgent.Registry.Agents, fanout.VisualPersonaName)
+	_, err := newFelixAuthor(context.Background(), noAgent)
+	assert.ErrorContains(t, err, "not found in registry")
+
+	noProvider := visualCfg(true, "http://localhost:11434", "eye")
+	delete(noProvider.Registry.Providers, "p")
+	_, err = newFelixAuthor(context.Background(), noProvider)
+	assert.ErrorContains(t, err, `provider "p"`)
+
+	noPersona := visualCfg(true, "http://localhost:11434", "eye")
+	noPersona.PersonaDirs = registry.PersonaDirs{Project: t.TempDir(), Registry: t.TempDir()}
+	noPersona.Registry.Agents[fanout.VisualPersonaName] = registry.AgentConfig{Provider: "p", Model: "m-felix", Persona: "nobody-by-this-name"}
+	_, err = newFelixAuthor(context.Background(), noPersona)
+	assert.Error(t, err)
+}
+
+// With a sandbox block, a felix agent the registry lacks still fails as a
+// usage error before the sandbox preflight.
+func TestVisualStageFromFlags_FelixAgentErrorIsAUsageError(t *testing.T) {
+	cfg := visualCfg(true, "http://localhost:11434", "eye")
+	cfg.Project.Sandbox = &registry.SandboxConfig{}
+	delete(cfg.Registry.Agents, fanout.VisualPersonaName)
+	cfg.Project.Agents = []string{"greta", fanout.VisualPersonaName}
+	_, _, err := runVisualFromFlags(t, cfg, false, map[string]string{previewURLFlag: "http://localhost:3000"})
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCodeOf(err))
+	assert.Contains(t, err.Error(), "felix")
 }

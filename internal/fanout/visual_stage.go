@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -191,4 +192,18 @@ func runVisualStage(ctx context.Context, p *PreparedReview) Result {
 func reviewerRoster(p *registry.ProjectConfig) []string {
 	names := rosterNames(p)
 	return slices.DeleteFunc(names, func(n string) bool { return n == VisualPersonaName })
+}
+
+// visualRebuildRoster is the roster a resume rebuilds the pool from: the
+// manifest roster, plus felix when the original run left a felix record, so a
+// resume keeps the visual review's findings in the merged pool. The visual
+// stage itself is not re-run on a resume.
+func visualRebuildRoster(roster []string, poolDir string) []string {
+	if slices.Contains(roster, VisualPersonaName) {
+		return roster
+	}
+	if _, err := os.Stat(filepath.Join(poolDir, poolRawAgentDir, VisualPersonaName, "status.json")); err != nil {
+		return roster
+	}
+	return append(slices.Clone(roster), VisualPersonaName)
 }
