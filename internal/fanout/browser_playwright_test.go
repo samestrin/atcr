@@ -56,6 +56,23 @@ func (f *fakeSandbox) Run(ctx context.Context, spec sandbox.RunSpec) (sandbox.Ru
 	return f.result, f.err
 }
 
+// runAt returns a copy of the i-th RunSpec the fake saw, waiting briefly for a
+// run started on another goroutine.
+func (f *fakeSandbox) runAt(t *testing.T, i int) sandbox.RunSpec {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		f.mu.Lock()
+		if len(f.runs) > i {
+			r := f.runs[i]
+			f.mu.Unlock()
+			return r
+		}
+		f.mu.Unlock()
+	}
+	t.Fatalf("sandbox saw %d runs, want at least %d", f.runCount(), i+1)
+	return sandbox.RunSpec{}
+}
+
 func (f *fakeSandbox) runCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -244,7 +261,7 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 	if fake.runCount() != 1 {
 		t.Fatalf("runs = %d, want 1", fake.runCount())
 	}
-	got := fake.runs[0]
+	got := fake.runAt(t, 0)
 
 	npx := []string{"npx", "playwright", "test", "e2e/home.spec.ts", "--reporter=json", "--output=" + playwrightOutputDir}
 	if !containsRun(got.Command, npx) {
@@ -268,14 +285,16 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 			t.Fatalf("command %q missing %q", shell, s)
 		}
 	}
-	if strings.Contains(shell, "127.0.0.1:3000") {
-		t.Fatalf("preview URL interpolated into the command: %q", shell)
+	// Run data travels as argv after "--"-style positionals, never in the shell
+	// text itself.
+	if script := got.Command[2]; strings.Contains(script, "127.0.0.1:3000") || strings.Contains(script, "home.spec.ts") {
+		t.Fatalf("run data interpolated into the shell text: %q", script)
 	}
 
 	if res.Backend != "playwright" || res.ExitCode != 1 || res.TimedOut {
 		t.Fatalf("result header = %q/%d/%v", res.Backend, res.ExitCode, res.TimedOut)
 	}
-	if len(res.Console) != 2 || len(res.NetworkFailures) != 1 || len(res.FailedTests) == 0 {
+	if len(res.Console) != 3 || len(res.NetworkFailures) != 1 || len(res.FailedTests) == 0 {
 		t.Fatalf("parsed result = %+v", res)
 	}
 	if len(res.Screenshots) != 2 {
@@ -305,7 +324,7 @@ func TestPlaywrightBackend_PassesPreviewURLByEnv(t *testing.T) {
 	if _, err := b.Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts", PreviewURL: "http://localhost:5173/a b'$(x)"}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	cmd := fake.runs[0].Command
+	cmd := fake.runAt(t, 0).Command
 	if !slices.Contains(cmd, "ATCR_PREVIEW_URL=http://localhost:5173/a b'$(x)") {
 		t.Fatalf("preview URL not passed as one env argv element: %q", cmd)
 	}
@@ -330,7 +349,7 @@ func TestPlaywrightBackend_HungRunIsCancelledAtTimeout(t *testing.T) {
 	if elapsed > 5*time.Second {
 		t.Fatalf("Run took %v, want it cut at the 50ms timeout", elapsed)
 	}
-	if got := fake.runs[0].Timeout; got != 50*time.Millisecond {
+	if got := fake.runAt(t, 0).Timeout; got != 50*time.Millisecond {
 		t.Fatalf("sandbox Timeout = %v, want the run's 50ms so the sandbox kills the process group", got)
 	}
 }
