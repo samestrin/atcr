@@ -158,12 +158,12 @@ func TestReadUnresolvedFindings_MissingIsEmpty(t *testing.T) {
 // render-only-when-nonzero guard, mirroring the "Consensus filtered: N" line.
 func TestRenderMarkdown_UnresolvedLine(t *testing.T) {
 	var withCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
+	require.NoError(t, renderMarkdown(&withCount, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0, nil))
 	assert.Contains(t, withCount.String(),
 		"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
 
 	var withoutCount bytes.Buffer
-	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}, 0))
+	require.NoError(t, renderMarkdown(&withoutCount, Summary{}, nil, DisagreementsFile{}, 0, nil))
 	assert.NotContains(t, withoutCount.String(), "Unresolved findings:")
 }
 
@@ -179,7 +179,7 @@ func TestRenderMarkdown_UnresolvedLine(t *testing.T) {
 func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
 	t.Run("all shielded: the absent-from-the-tree claim must not be made", func(t *testing.T) {
 		var b bytes.Buffer
-		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 2}, nil, DisagreementsFile{}, 2))
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 2}, nil, DisagreementsFile{}, 2, nil))
 		out := b.String()
 		assert.Contains(t, out, "named only in documentation")
 		assert.NotContains(t, out, "no symbol correspondence in the tracked tree; routed",
@@ -188,7 +188,7 @@ func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
 
 	t.Run("mixed: both shapes are counted separately", func(t *testing.T) {
 		var b bytes.Buffer
-		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 5}, nil, DisagreementsFile{}, 2))
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 5}, nil, DisagreementsFile{}, 2, nil))
 		out := b.String()
 		assert.Contains(t, out, "- Unresolved findings: 5")
 		assert.Contains(t, out, "3 with no symbol correspondence in the tracked tree",
@@ -198,7 +198,7 @@ func TestRenderMarkdown_DocShieldedRoutingsAreNotClaimedAbsent(t *testing.T) {
 
 	t.Run("none shielded: the line is unchanged", func(t *testing.T) {
 		var b bytes.Buffer
-		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0))
+		require.NoError(t, renderMarkdown(&b, Summary{UnresolvedFiltered: 3}, nil, DisagreementsFile{}, 0, nil))
 		assert.Contains(t, b.String(),
 			"- Unresolved findings: 3 (no symbol correspondence in the tracked tree; routed to unresolved.json)")
 	})

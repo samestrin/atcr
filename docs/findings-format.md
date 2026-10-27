@@ -194,6 +194,12 @@ Every entry becomes its own reconciled finding, appended beside the reviewer fin
 
 An absent `sast.json` (the scanner is off by default) changes nothing. A present one that does not parse, names a scanner outside `[a-z0-9._-]`, or holds a path that is absolute, unclean or contains `..` fails the reconcile before anything is written, so a run never reports no SAST findings when it could not read them.
 
+## Reviewer labels: `reviewer_roles.json`
+
+The markdown reports (`reconciled/report.md` and `atcr report` in its default `md` format) name each reviewer on a finding's line as `name (role)`, for example `reviewers: greta (algorithmic correctness reviewer), host`. The role is the text after the em dash in the H1 of the persona prompt the reviewer ran (`# {{.AgentName}} — <role>`), the same role `atcr personas list` shows. A reviewer with no persona of its own (one that runs on the shared `_base` template, such as `host`) or whose prompt names no role keeps its bare name.
+
+`atcr review` (and the MCP review tool and `atcr webhook`) records the roles when it scaffolds the review, in `reviewer_roles.json` at the review directory's root: `{"roles": {"<agent>": "<role>"}}`. Reconcile and `atcr report` read that file and do not load the registry again. A review directory without it (a review from an earlier version, or one whose personas name no role), or with one that cannot be read, renders bare names; it never fails the reconcile or the report. `findings.json`, `--format json`, `sarif`, `checklist`, `axi` and `pipe` always carry bare reviewer names.
+
 ## JSON form
 
 `reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. Each finding may carry a per-finding `verification` block, **produced by the adversarial-verification stage (`atcr verify`, Epic 3.0)** and **absent from 1.x output** and from any review that has not been verified. Renderers and readers must tolerate both its absence and its presence: `atcr report` renders a finding with no block identically to pre-Epic-3.0 output, and renders the Skeptic section / v2 confidence only when the block is present.

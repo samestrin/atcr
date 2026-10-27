@@ -484,6 +484,10 @@ type Result struct {
 	// onto each merged result by runEngine and published as status.json
 	// threat_map_dropped. nil when the run did not map.
 	ThreatMapDropped []string
+	// ImagesSentOffMachine marks the visual review's result when its
+	// screenshots went to a non-loopback vision endpoint (--allow-cloud-vision,
+	// Epic 36.0.2), published as status.json images_sent_off_machine.
+	ImagesSentOffMachine bool
 
 	// servedChunkFiles is the baseline coverage tag of the chain member that
 	// ACTUALLY SERVED this slot (Epic 35.16.5.4 T3), stamped by invokeSlot. It

@@ -107,7 +107,7 @@ func (c ContestedReport) HasContent() bool {
 // contested report is empty the output is byte-identical to
 // RenderMarkdownWithDisagreements, so a review with no debate is unchanged.
 func RenderMarkdownWithContested(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile, cr ContestedReport) error {
-	return renderMarkdownFull(w, findings, df, cr)
+	return renderMarkdownFull(w, findings, df, cr, nil)
 }
 
 // writeContestedSection appends the "Contested findings" section: one entry per

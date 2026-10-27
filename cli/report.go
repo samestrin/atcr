@@ -132,7 +132,10 @@ func runReport(cmd *cobra.Command, args []string) error {
 		// degrades to no section rather than failing the report, matching the
 		// tolerant-read contract the radar uses for ambiguous.json.
 		cr := loadContested(reviewDir)
-		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
+		// Reviewers read `name (role)` from the roles the review recorded in
+		// its dir (Epic 83.0 T5); a review without that record keeps bare names.
+		roles := reconcile.ReadReviewerRoles(reviewDir)
+		if err := report.RenderMarkdownWithRoles(&buf, findings, df, cr, roles); err != nil {
 			return usageError(err)
 		}
 	case format == report.FormatPipe || (format == report.FormatAXI && legacyPipeFromContext(cmd.Context())):
