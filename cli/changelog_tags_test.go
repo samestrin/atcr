@@ -39,7 +39,7 @@ func TestChangelogHasSectionForEveryReleaseTag(t *testing.T) {
 	}
 	if len(tags) == 0 {
 		if os.Getenv("CI") != "" {
-			t.Fatal("no v* release tags in this CI checkout: the checkout step must fetch tags (fetch-tags: true), or this guard checks nothing")
+			t.Fatal("no v* release tags in this CI checkout: the checkout step must fetch tags (fetch-depth: 0 and fetch-tags: true), or this guard checks nothing")
 		}
 		t.Skip("no v* release tags in this checkout (shallow clone?)")
 	}
