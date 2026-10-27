@@ -1109,3 +1109,56 @@ func TestLoadProjectConfig_WebhookLinearRejectsInvalid(t *testing.T) {
 		})
 	}
 }
+
+// linearAutoFixBlock is a complete webhook.linear.auto_fix block appended after
+// linearWebhookBlock by the Epic 49.2 T3 tests.
+const linearAutoFixBlock = "    auto_fix:\n" +
+	"      statuses: [Ready to Fix]\n" +
+	"      repos: [samestrin/atcr]\n" +
+	"      push_token_env: ATCR_PUSH_TOKEN\n" +
+	"      daily_job_cap: 5\n"
+
+// Epic 49.2 T3: a complete auto_fix block loads into the struct, and a Linear
+// block without one leaves auto-fix off.
+func TestLoadProjectConfig_WebhookLinearAutoFixLoads(t *testing.T) {
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock+linearAutoFixBlock))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Webhook.Linear)
+	a := cfg.Webhook.Linear.AutoFix
+	require.NotNil(t, a)
+	assert.Equal(t, []string{"Ready to Fix"}, a.Statuses)
+	assert.Equal(t, []string{"samestrin/atcr"}, a.Repos)
+	assert.Equal(t, "ATCR_PUSH_TOKEN", a.PushTokenEnv)
+	assert.Equal(t, 5, a.DailyJobCap)
+
+	cfg, err = LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Webhook.Linear.AutoFix)
+}
+
+// Epic 49.2 T3: a bad or reused push-token name, a missing or empty status
+// list, a repo outside webhook.repos and a cap below 1 are rejected at load.
+func TestLoadProjectConfig_WebhookLinearAutoFixRejectsInvalid(t *testing.T) {
+	cases := []struct{ name, from, to, want string }{
+		{"push token env is a token", "ATCR_PUSH_TOKEN", "ghp_abc-123", "webhook.linear.auto_fix.push_token_env is not a valid"},
+		{"missing push token env", "      push_token_env: ATCR_PUSH_TOKEN\n", "", "webhook.linear.auto_fix.push_token_env is required"},
+		{"push token reuses github_token_env", "push_token_env: ATCR_PUSH_TOKEN", "push_token_env: ATCR_GITHUB_TOKEN", "different variable from webhook.github_token_env"},
+		{"no statuses", "      statuses: [Ready to Fix]\n", "", "webhook.linear.auto_fix.statuses"},
+		{"empty status list", "[Ready to Fix]", "[]", "webhook.linear.auto_fix.statuses"},
+		{"blank status", "[Ready to Fix]", `["Ready to Fix", " "]`, "webhook.linear.auto_fix.statuses[1]"},
+		{"no repos", "      repos: [samestrin/atcr]\n", "", "webhook.linear.auto_fix.repos must list"},
+		{"repo not in webhook.repos", "repos: [samestrin/atcr]", "repos: [samestrin/atcr, samestrin/other]", `webhook.linear.auto_fix.repos[1] "samestrin/other" is not a key of webhook.repos`},
+		{"cap zero", "daily_job_cap: 5", "daily_job_cap: 0", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got 0"},
+		{"cap negative", "daily_job_cap: 5", "daily_job_cap: -1", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got -1"},
+		{"cap missing", "      daily_job_cap: 5\n", "", "webhook.linear.auto_fix.daily_job_cap must be >= 1, got 0"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Contains(t, linearAutoFixBlock, c.from)
+			body := validWebhookBody(t.TempDir()) + linearWebhookBlock + strings.Replace(linearAutoFixBlock, c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}
