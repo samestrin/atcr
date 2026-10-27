@@ -21,8 +21,13 @@
 // process sandbox — macOS sandbox-exec, Linux bwrap — which isolates the
 // filesystem and network but shares the host kernel and has no image, no
 // rootfs remount, and no capability set to drop. bwrap supplies a PID
-// namespace; neither tool caps memory or CPU without additional cgroup/rlimit
-// plumbing.
+// namespace. Neither tool caps resources itself, so the backend adds the
+// memory and PID caps outside the tool: on linux a per-run cgroup v2
+// (memory.max, pids.max) with an RLIMIT_DATA fallback for memory, and on
+// darwin nothing, because XNU rejects lowering RLIMIT_AS and RLIMIT_DATA and
+// RLIMIT_NPROC counts the whole user. Preflight refuses an operator-set cap
+// the host cannot enforce. CPU is capped on neither platform, and the run
+// keeps the invoking user's identity.
 // A caller that needs the full list must require DockerBackend specifically
 // rather than any Backend. This distinction is stated here rather than left
 // implicit because the OS-level backend is operator-selectable, and an operator
