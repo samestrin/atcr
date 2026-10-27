@@ -407,6 +407,9 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 		res.Summary.OutOfScope = countOutOfScope(res.Findings)
 	}
 	res.jsonFindings = jf
+	// Reviewer roles (Epic 83.0 T5) label report.md only; the review recorded
+	// them, and a review dir without the sidecar keeps bare names.
+	res.ReviewerRoles = ReadReviewerRoles(reviewDir)
 
 	if err := ctx.Err(); err != nil {
 		return Result{}, err

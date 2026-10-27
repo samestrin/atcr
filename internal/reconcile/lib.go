@@ -138,8 +138,8 @@ type Result struct {
 	Summary    Summary
 	// ReviewerRoles maps a reviewer name to its persona role, so report.md can
 	// label it `name (role)` (Epic 83.0 T5). Display only: no JSON artifact
-	// carries it. Nil leaves every reviewer bare. RunReconcile sets it from
-	// WithReviewerRoles.
+	// carries it. Nil leaves every reviewer bare. RunReconcile sets it from the
+	// review dir's reviewer_roles.json sidecar (ReadReviewerRoles).
 	ReviewerRoles map[string]string
 	// jsonFindings caches the path-validated findings.json records the ATCR I/O
 	// layer stamps after reconcile (Phase 2 Clarification Q1): the library Merged

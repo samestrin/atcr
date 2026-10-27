@@ -184,6 +184,9 @@ func newWebhookReviewer(base context.Context, root string) webhook.Reviewer {
 		if err != nil {
 			return nil, err
 		}
+		// Reviewer roles for report.md's `name (role)` labels (Epic 83.0 T5);
+		// display metadata, so a failed write leaves bare names.
+		_ = reconcile.WriteReviewerRoles(prep.Dir, registry.ReviewerRoles(cfg.Registry.Agents, cfg.PersonaDirs))
 		secrets, _ := prep.SecretValues()
 		ctx = correlateAndRedact(ctx, prep.ID, dir, secrets...)
 		ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: prep.ID, Stage: "review"})

@@ -24,25 +24,11 @@ type PersonaMeta struct {
 	Language []string
 }
 
-// roleFromPrompt returns the role a persona prompt names in its H1, the text
-// after the first em dash in `# {{.AgentName}} — <role>`. Only the first H1
-// counts; lines before it (a vendor-guidance comment) are skipped. A prompt
-// with no H1, or an H1 with no em dash, has no role and yields "" — the list
-// renders an empty cell rather than failing on a hand-written prompt.
-func roleFromPrompt(prompt string) string {
-	for _, line := range strings.Split(prompt, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "# ") {
-			continue
-		}
-		_, role, ok := strings.Cut(line, "—")
-		if !ok {
-			return ""
-		}
-		return strings.TrimSpace(role)
-	}
-	return ""
-}
+// roleFromPrompt returns the role a persona prompt names in its H1. It is
+// registry.PersonaRole, the one reader the report's reviewer labels share, so
+// the list and the report cannot disagree. A prompt with no role yields "" and
+// the list renders an empty cell rather than failing on a hand-written prompt.
+func roleFromPrompt(prompt string) string { return registry.PersonaRole(prompt) }
 
 // roleFromFile reads the role from the prompt file at path. A file that cannot
 // be read has no role: the role is display metadata, so a missing or unreadable
