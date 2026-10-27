@@ -13,6 +13,10 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 ## [Unreleased]
 
+### Deprecated
+
+- The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)
+
 ### Fixed
 
 - Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)

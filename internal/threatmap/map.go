@@ -133,6 +133,7 @@ type LLM interface {
 // call. It implements Completer.
 type Agent struct {
 	persona string
+	legacy  bool
 	inv     llmclient.Invocation
 	timeout time.Duration
 	llm     LLM
@@ -157,7 +158,7 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 	if !ok {
 		return nil, fmt.Errorf("threatmap: mapper agent %q: provider %q not found in registry", name, ac.Provider)
 	}
-	persona, err := resolvePersona(name, ac.Persona, dirs)
+	persona, legacy, err := resolvePersona(name, ac.Persona, dirs)
 	if err != nil {
 		return nil, fmt.Errorf("threatmap: mapper agent %q: %w", name, err)
 	}
@@ -176,6 +177,7 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 	}
 	return &Agent{
 		persona: persona,
+		legacy:  legacy,
 		inv: llmclient.Invocation{
 			BaseURL:          prov.BaseURL,
 			APIKeyEnv:        prov.APIKeyEnv,
@@ -196,26 +198,43 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 // resolvePersona loads the mapper persona text for the persona ref ref of the
 // agent called name. The registry load defaults an unset persona key to the
 // agent's own name, so a ref equal to name with no <name>.md file is treated
-// as unset and falls to threat_mapper.
-func resolvePersona(name, ref string, dirs registry.PersonaDirs) (string, error) {
+// as unset and falls to nora. A ref of the legacy key threat_mapper tries a
+// threat_mapper.md override first, so an existing override keeps winning; with
+// none, the alias maps it to nora (and its own override or embedded text), and
+// legacy is true so the caller can warn.
+func resolvePersona(name, ref string, dirs registry.PersonaDirs) (text string, legacy bool, err error) {
 	if ref == "" {
 		ref = personas.ThreatMapperName
+		if name == personas.LegacyThreatMapperName {
+			ref = name
+		}
 	}
 	p, ok, err := registry.ResolvePersonaFile(ref, dirs)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if ok {
-		return p.Text, nil
+		return p.Text, false, nil
 	}
-	if ref == name && ref != personas.ThreatMapperName && ref != personas.LegacyThreatMapperName {
+	switch {
+	case ref == personas.LegacyThreatMapperName:
+		text, _, err = resolvePersona(name, personas.ThreatMapperName, dirs)
+		return text, true, err
+	case ref == personas.ThreatMapperName:
+		text, err = personas.ThreatMapper()
+		return text, false, err
+	case ref == name:
 		return resolvePersona(name, "", dirs)
 	}
-	if ref != personas.ThreatMapperName && ref != personas.LegacyThreatMapperName {
-		return "", fmt.Errorf("persona %q not found in %s or %s: %w", ref, dirs.Project, dirs.Registry, registry.ErrPersonaNotFound)
-	}
-	return personas.ThreatMapper()
+	return "", false, fmt.Errorf("persona %q not found in %s or %s: %w", ref, dirs.Project, dirs.Registry, registry.ErrPersonaNotFound)
 }
+
+// UsedLegacyKey reports whether the persona came from the deprecated
+// threat_mapper key through the alias, not from a threat_mapper.md override.
+func (a *Agent) UsedLegacyKey() bool { return a.legacy }
+
+// LegacyKeyWarning is the one-per-run deprecation notice for that alias.
+const LegacyKeyWarning = "the threat_mapper persona key is deprecated and now resolves to nora; rename persona: threat_mapper to persona: nora (a threat_mapper.md override still wins)"
 
 // Persona returns the resolved persona template.
 func (a *Agent) Persona() string { return a.persona }

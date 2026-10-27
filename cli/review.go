@@ -155,7 +155,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
-	cmd.Flags().Bool(threatMapFlag, false, "before the review, ask the threat_map.agent (a cheap mapper using the threat_mapper persona) which changed files are security relevant, and send only those to the reviewers; the rest are listed in each status.json as threat_map_dropped. If the mapper fails, every file is reviewed. Git-range reviews only")
+	cmd.Flags().Bool(threatMapFlag, false, "before the review, ask the threat_map.agent (a cheap mapper using the nora persona; the old threat_mapper key still works but is deprecated) which changed files are security relevant, and send only those to the reviewers; the rest are listed in each status.json as threat_map_dropped. If the mapper fails, every file is reviewed. Git-range reviews only")
 	cmd.Flags().Bool("no-ignore", false, "review files matched by the repo-root .gitignore/.atcrignore that are normally filtered out of the payload")
 	cmd.Flags().String("scope", "", "review every non-ignored, git-tracked file under this repo-root-relative directory as a scoped baseline scan (no diff range; mutually exclusive with --base/--head/--merge-commit/--all)")
 	cmd.Flags().String("dir", "", "deprecated alias for --scope")

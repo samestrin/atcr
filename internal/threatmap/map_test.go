@@ -219,6 +219,53 @@ func TestNewAgent_LegacyPersonaKeyUsesTheEmbeddedPersona(t *testing.T) {
 	require.Equal(t, embeddedMapper(t), a.Persona())
 }
 
+func TestNewAgent_LegacyKeyFlagsTheAliasOnly(t *testing.T) {
+	reg := testRegistry()
+	reg.Agents["legacy"] = registry.AgentConfig{Provider: "cheap", Model: "small-5", Persona: personas.LegacyThreatMapperName}
+
+	a, err := NewAgent("legacy", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{}, &fakeLLM{})
+	require.NoError(t, err)
+	require.True(t, a.UsedLegacyKey())
+
+	a, err = NewAgent("threat_mapper", testRegistry(), registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{}, &fakeLLM{})
+	require.NoError(t, err)
+	require.True(t, a.UsedLegacyKey(), "an agent named threat_mapper with no persona key uses the alias")
+
+	a, err = NewAgent("mapper", testRegistry(), registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{}, &fakeLLM{})
+	require.NoError(t, err)
+	require.False(t, a.UsedLegacyKey())
+}
+
+// An existing threat_mapper.md override is tried before the alias maps, so it
+// keeps winning, and it is not a deprecated-alias use.
+func TestNewAgent_LegacyOverrideFileStillWins(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "threat_mapper.md"), []byte("old override {{.Payload}}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(project, "nora.md"), []byte("nora override {{.Payload}}"), 0o644))
+	reg := testRegistry()
+	reg.Agents["legacy"] = registry.AgentConfig{Provider: "cheap", Model: "small-5", Persona: personas.LegacyThreatMapperName}
+
+	a, err := NewAgent("legacy", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{Project: project}, &fakeLLM{})
+
+	require.NoError(t, err)
+	require.Equal(t, "old override {{.Payload}}", a.Persona())
+	require.False(t, a.UsedLegacyKey())
+}
+
+// With no threat_mapper.md, the alias lands on a nora.md override.
+func TestNewAgent_LegacyKeyReachesNoraOverride(t *testing.T) {
+	project := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(project, "nora.md"), []byte("nora override {{.Payload}}"), 0o644))
+	reg := testRegistry()
+	reg.Agents["legacy"] = registry.AgentConfig{Provider: "cheap", Model: "small-5", Persona: personas.LegacyThreatMapperName}
+
+	a, err := NewAgent("legacy", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{Project: project}, &fakeLLM{})
+
+	require.NoError(t, err)
+	require.Equal(t, "nora override {{.Payload}}", a.Persona())
+	require.True(t, a.UsedLegacyKey())
+}
+
 func TestNewAgent_ProjectPersonaFileWins(t *testing.T) {
 	project := t.TempDir()
 	override := "edited mapper {{.Payload}}"
