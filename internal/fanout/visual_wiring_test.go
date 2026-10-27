@@ -363,3 +363,149 @@ func TestRunReview_FelixAloneRunsOnlyTheVisualStage(t *testing.T) {
 	assert.Equal(t, []string{"visual"}, l.get())
 	assert.Equal(t, 1, res.Summary.Succeeded)
 }
+
+// failingCompleter is a reviewer completer whose every call fails.
+type failingCompleter struct{}
+
+func (failingCompleter) Complete(context.Context, llmclient.Invocation) (string, error) {
+	return "", errors.New("provider down")
+}
+
+// Review finding 1: a succeeding visual stage must not hide a review in which
+// every diff reviewer failed.
+func TestRunReview_EveryReviewerFailedIsStillAllAgentsFailedWithAVisualStage(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	req := reviewReq(repo, repo, base, head)
+	req.Visual = &fakeVisual{log: &callLog{}, reply: "NO FINDINGS"}
+
+	res, err := RunReview(context.Background(), failingCompleter{}, felixConfig(), req)
+	require.ErrorIs(t, err, ErrAllAgentsFailed)
+	require.NotNil(t, res, "artifacts are still written")
+	assert.Equal(t, StatusOK, statusJSON(t, res.Dir, VisualPersonaName)["status"])
+}
+
+func TestReviewerGate_IgnoresFelixUnlessItIsTheOnlyAgent(t *testing.T) {
+	ok := func(a string) AgentStatus { return AgentStatus{Agent: a, Status: StatusOK} }
+	bad := func(a string) AgentStatus { return AgentStatus{Agent: a, Status: StatusFailed} }
+	assert.False(t, reviewerSucceeded([]AgentStatus{bad("greta"), ok(VisualPersonaName)}))
+	assert.True(t, reviewerSucceeded([]AgentStatus{ok("greta"), bad(VisualPersonaName)}))
+	assert.True(t, reviewerSucceeded([]AgentStatus{ok(VisualPersonaName)}), "a felix-only run is judged on felix")
+	assert.False(t, reviewerSucceeded([]AgentStatus{bad(VisualPersonaName)}))
+}
+
+// Review finding 2: felix under serial_agents gets no slot either.
+func TestPrepareReview_FelixInSerialAgentsGetsNoSlot(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	cfg := felixConfig()
+	cfg.Project.Agents = []string{"greta"}
+	cfg.Project.SerialAgents = []string{"kai", VisualPersonaName}
+
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	var names []string
+	for _, s := range prep.Slots {
+		names = append(names, s.Primary.Name)
+	}
+	assert.ElementsMatch(t, []string{"greta", "kai"}, names)
+}
+
+// failingBrowser is a browser whose run fails.
+type failingBrowser struct{ log *callLog }
+
+func (b *failingBrowser) Name() string                    { return "broken-browser" }
+func (b *failingBrowser) Preflight(context.Context) error { return nil }
+func (b *failingBrowser) Run(context.Context, BrowserRun) (BrowserResult, error) {
+	b.log.add("browser")
+	return BrowserResult{}, errors.New("sandbox gone")
+}
+
+// Review finding 3: a failing browser stops the stage before call 2.
+func TestVisualStage_BrowserFailureStopsBeforeTheReview(t *testing.T) {
+	stage, l, _, _, _ := newOrderStage(t)
+	stage.Browser = &failingBrowser{log: l}
+
+	_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "broken-browser")
+	assert.Contains(t, err.Error(), "sandbox gone")
+	assert.Equal(t, []string{"author", "browser"}, l.get(), "the review call never runs")
+}
+
+// Review finding 4: secret_guard block on the diff sends nothing at all.
+func TestVisualStage_SecretGuardBlockSendsNothing(t *testing.T) {
+	stage, l, _, _, _ := newOrderStage(t)
+	stage.Settings = registry.Settings{SecretGuard: secretGuardBlock}
+
+	_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1",
+		Prompt: payload.PayloadContext{Payload: "+key = \"" + guardAWSKey + "\"\n"}})
+	require.ErrorIs(t, err, ErrSecretGuardBlocked)
+	assert.Empty(t, l.get())
+}
+
+// badPersonaAuthor's persona names a field the render context lacks.
+type badPersonaAuthor struct{ orderAuthor }
+
+func (a *badPersonaAuthor) Persona() string { return "# {{.NoSuchField}}" }
+
+// Review finding 4: a persona that cannot render fails before any call.
+func TestVisualStage_UnrenderablePersonaFailsBeforeAnyCall(t *testing.T) {
+	stage, l, _, _, _ := newOrderStage(t)
+	stage.Author = &badPersonaAuthor{orderAuthor{log: l}}
+
+	_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "render persona")
+	assert.Empty(t, l.get())
+}
+
+// Review finding 5: felix's payload is re-shed to felix's own window, and the
+// shed is recorded on felix's status.
+func TestVisualPayload_ShedsToFelixsOwnWindow(t *testing.T) {
+	small := payload.FileEntry{Path: "a.go", Body: strings.Repeat("a", 200)}
+	big := payload.FileEntry{Path: "b.go", Body: strings.Repeat("b", 40000)}
+	mp := modePayload{Entries: []payload.FileEntry{small, big}, Text: small.Body + big.Body, FileCount: 2}
+
+	// Find a window whose budget holds the small file but not both.
+	cfg := felixConfig()
+	var window int
+	for w := 1000; w < 200000; w += 100 {
+		ac := registry.AgentConfig{Model: "m-felix", ContextWindowTokens: &w}
+		b := appliedByteBudget(payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(false, maxTokensFor(cfg, ac))), 0, "")
+		if b > 1000 && b < 30000 {
+			window = w
+			break
+		}
+	}
+	require.NotZero(t, window)
+	ac := cfg.Registry.Agents[VisualPersonaName]
+	ac.ContextWindowTokens = &window
+	cfg.Registry.Agents[VisualPersonaName] = ac
+
+	text, count, trunc := visualPayload(cfg, ac, mp, "blocks")
+	assert.Equal(t, small.Body, text)
+	assert.Equal(t, 1, count)
+	assert.True(t, trunc.Truncated)
+	assert.Equal(t, []string{"b.go"}, trunc.FilesDropped)
+
+	// A window that holds everything leaves the payload whole.
+	text, count, trunc = visualPayload(felixConfig(), felixConfig().Registry.Agents[VisualPersonaName], mp, "blocks")
+	assert.Equal(t, mp.Text, text)
+	assert.Equal(t, 2, count)
+	assert.False(t, trunc.Truncated)
+}
+
+// The shed reaches felix's status.json.
+func TestRunVisualStage_RecordsTheShedOnFelix(t *testing.T) {
+	p := &PreparedReview{ID: "r", visual: &fakeVisual{log: &callLog{}, reply: "NO FINDINGS"},
+		visualInput: VisualStageInput{Truncation: payload.Truncation{Truncated: true, FilesDropped: []string{"b.go"}}}}
+	r := runVisualStage(context.Background(), p)
+	assert.True(t, r.Truncation.Truncated)
+	assert.Equal(t, []string{"b.go"}, r.Truncation.FilesDropped)
+
+	p.visual = &fakeVisual{log: &callLog{}, err: errors.New("x")}
+	r = runVisualStage(context.Background(), p)
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.True(t, r.Truncation.Truncated, "a failed stage still records what felix was sent")
+}
