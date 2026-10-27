@@ -5,8 +5,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/integrations/linear"
 	"github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -360,6 +363,50 @@ func TestLinearRunner_CommentsOnThePR(t *testing.T) {
 	assert.NotContains(t, c.bodies[0], plantedToken)
 	assert.NotContains(t, c.bodies[0], f.checkout)
 	assertNothingLeft(t, f)
+}
+
+// Through the real GitHub client and a fake GitHub server, the posted comment
+// carries severity counts and titles and no checkout path or secret.
+func TestLinearRunner_PostsThroughGitHubClient(t *testing.T) {
+	f := newPRFixture(t)
+	var mu sync.Mutex
+	var gotPath, gotAuth, gotBody string
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var p struct {
+			Body string `json:"body"`
+		}
+		_ = json.Unmarshal(raw, &p)
+		mu.Lock()
+		gotPath, gotAuth, gotBody = r.URL.Path, r.Header.Get("Authorization"), p.Body
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer gh.Close()
+	r := &LinearRunner{
+		Repos: f.repos(), Teams: []string{"EST"}, Statuses: []string{"In Review"},
+		Lookup:  &fakeLookup{prs: map[string]linear.PR{"iss-1": {Owner: "ACME", Repo: "Widget", Number: 7}}},
+		Scratch: f.scratch, Secrets: []string{plantedToken},
+		Commenter: &ghaction.Client{APIURL: gh.URL, Token: "gh-tok", HTTPClient: gh.Client()},
+		Review:    func(_ context.Context, dir string) ([]reconcile.Finding, error) { return stubFindings(dir), nil },
+	}
+	body := linearBody("iss-1", "EST", "st-review", "In Review", time.Now(), "stateId")
+	ev, err := linear.Verify(linearTestSecret, signedHeader(t, body), []byte(body), time.Now())
+	require.NoError(t, err)
+	job, ok := r.Dispatch(ev)
+	require.True(t, ok)
+	_, err = job.Resolve(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, job.Run(context.Background()))
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, "/repos/ACME/Widget/issues/7/comments", gotPath)
+	assert.Equal(t, "Bearer gh-tok", gotAuth)
+	assert.Contains(t, gotBody, "4 findings")
+	assert.NotContains(t, gotBody, plantedToken)
+	assert.NotContains(t, gotBody, f.checkout)
 }
 
 // A failed review still comments, without the cause's detail.

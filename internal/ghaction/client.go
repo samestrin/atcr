@@ -365,6 +365,14 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, repo string, req 
 	return resp.Number, nil
 }
 
+// PostIssueComment posts a conversation comment on a pull request via
+// POST /repos/{owner}/{repo}/issues/{number}/comments (a PR is an issue to this
+// endpoint). The body is redacted of the client's own token before it is sent.
+func (c *Client) PostIssueComment(ctx context.Context, owner, repo string, number int, body string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, number)
+	return c.post(ctx, path, map[string]string{"body": c.redactSecrets(body)})
+}
+
 // UpdatePullRequest refreshes an existing PR's title/body via
 // PATCH /repos/{owner}/{repo}/pulls/{prNumber}, reusing the PATCH-capable sendDo.
 // Both title and body are always sent (redacted) from the caller-supplied req —

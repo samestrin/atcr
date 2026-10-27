@@ -71,7 +71,9 @@ name (letters, digits and `_`, not starting with a digit) is rejected.
 | --- | --- | --- |
 | `webhook.slack.signing_secret_env` | The Slack app's **signing secret**, used to check each request's signature | Yes |
 | `webhook.slack.bot_token_env` | The Slack app's **bot token** (`xoxb-...`), used to post the reply | Yes |
-| `webhook.github_token_env` | A GitHub token | No |
+| `webhook.github_token_env` | A GitHub token (`pull_requests: write` posts the Linear summary comment) | No |
+| `webhook.linear.webhook_secret_env` | The Linear webhook's **signing secret**, used to check each request's signature | Yes, with `webhook.linear` |
+| `webhook.linear.api_key_env` | A Linear **API key** that can read the issue's attachments | Yes, with `webhook.linear` |
 
 If a required variable is not set, `atcr webhook` exits with status 2 before it
 starts listening, and the error names the variable, not a value.
@@ -206,8 +208,34 @@ webhook:
 6. **One job per pull request.** While a review of that pull request is
    running, from Linear or Slack, the new event is refused and logged.
 
-The checkout, review and cleanup are the same as for a Slack mention. The
-daemon logs the finding count when the review finishes.
+The checkout, review and cleanup are the same as for a Slack mention.
+
+7. **Summary comment.** When `webhook.github_token_env` names a set variable,
+   the daemon posts the summary as a comment on the pull request: a count per
+   severity and up to 10 finding titles, most severe first, with no file path,
+   credential or raw model text. A timed-out, cancelled or failed review posts
+   a one-line note saying so. Without the token nothing is posted and the
+   daemon only logs the finding count.
+
+### Linear setup
+
+1. In Linear, create a webhook (Settings, API, Webhooks) for **Issue** events,
+   with the URL `https://<your tunnel>/linear/webhook`, and copy its signing
+   secret.
+2. Create a personal API key that can read the team's issues.
+3. Export both, plus a GitHub token that may comment on the pull request:
+
+   | Variable (your choice of name) | Config key | Holds |
+   | --- | --- | --- |
+   | `LINEAR_WEBHOOK_SECRET` | `webhook.linear.webhook_secret_env` | The webhook's signing secret |
+   | `LINEAR_API_KEY` | `webhook.linear.api_key_env` | The Linear API key |
+   | `GITHUB_TOKEN` | `webhook.github_token_env` | A GitHub token with `pull_requests: write` |
+
+4. Set `trigger_statuses` to the workflow state names that should start a
+   review (for example `In Review`) and `teams` to the team keys or ids.
+5. Attach the GitHub pull request to the Linear issue (Linear's GitHub
+   integration does this when the branch name or PR title carries the issue
+   id). The job takes the first GitHub pull request attachment.
 
 ## Where reviews are written
 
