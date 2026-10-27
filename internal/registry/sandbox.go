@@ -154,14 +154,22 @@ func validateMemory(mem string) error {
 	case 'b', 'B':
 		num = num[:len(num)-1]
 	}
+	mult := 1.0
+	if num == "" {
+		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
+	}
 	switch num[len(num)-1] {
-	case 'k', 'm', 'g', 'K', 'M', 'G':
-		num = num[:len(num)-1]
+	case 'k', 'K':
+		mult, num = 1024, num[:len(num)-1]
+	case 'm', 'M':
+		mult, num = 1024*1024, num[:len(num)-1]
+	case 'g', 'G':
+		mult, num = 1024*1024*1024, num[:len(num)-1]
 	}
 	if !plainDecimalRegexp.MatchString(num) {
 		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
 	}
-	if v, err := strconv.ParseFloat(num, 64); err != nil || v <= 0 {
+	if v, err := strconv.ParseFloat(num, 64); err != nil || v*mult < 1 {
 		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
 	}
 	return nil
