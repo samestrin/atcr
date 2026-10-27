@@ -200,8 +200,6 @@ func TestAC11_PrivateStoreLiteralHasExactlyTwoReferences(t *testing.T) {
 		// Prose reference: names this repo's own tracked-debt file in a comment
 		// explaining a deliberately-still-open item.
 		"internal/reconcile/adapter/adapter.go": false,
-		// Prose reference: quotes the debt entry the test was written against.
-		"internal/localdebt/lock_test.go": false,
 	}
 
 	for _, rel := range strings.Split(strings.TrimSpace(string(out)), "\n") {

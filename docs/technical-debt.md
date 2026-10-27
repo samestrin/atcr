@@ -17,7 +17,7 @@ rendering of it at a moment in time.
 | Location | `.atcr/debt/`, resolved from the repository root |
 | Layout | One shard per calendar month: `YYYY-MM.jsonl` |
 | Shard key | The `YYYY-MM` prefix of the record's `run_id` |
-| Mutation model | Append-only; one atomic `O_APPEND` write per record, under a mkdir-based cross-process advisory lock |
+| Mutation model | Append-only; one atomic `O_APPEND` write per record, under a cross-process lock: an OS file lock (`flock`) on `.flock` in the store directory on Linux and macOS, released by the kernel if the holder dies; Windows keeps the older lock directory (`.lock`) |
 
 Every subcommand resolves the store through `--store`. With no `--store`, atcr walks
 up from the working directory to the nearest `.git`/`.atcr` marker and uses that

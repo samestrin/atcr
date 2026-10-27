@@ -1,3 +1,9 @@
+//go:build !unix
+
+// The legacy mkdir lock, kept for builds without syscall.Flock (Windows). Unix
+// builds use the flock lock in lock_unix.go. This lock keeps its known
+// stale-reclaim race on these platforms.
+
 package localdebt
 
 import (
