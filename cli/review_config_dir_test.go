@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func runReviewAutoFixWithConfigDir(t *testing.T, configDirExtra, worktreeConfig 
 	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
 
 	code, out := execCmdCapture(t, "review", "--base", "HEAD^", "--fail-on", "LOW",
-		"--auto-fix", "--no-sandbox", "--repo", "o/r", "--token", "tok",
+		"--auto-fix", "--auto-fix-base", "main", "--no-sandbox", "--repo", "o/r", "--token", "tok",
 		"--config-dir", configDir)
 	return code, out, gh
 }
@@ -114,4 +115,22 @@ func TestReviewCmd_ResumeRejectsConfigDir(t *testing.T) {
 	code, out := execCmdCapture(t, "review", "--resume", "latest", "--config-dir", t.TempDir())
 	require.Equal(t, 2, code, out)
 	require.Contains(t, out, "--resume does not support --config-dir")
+}
+
+// TestQualitySignalGateFrom_ReadsConfigRoot: under --config-dir the
+// quality-signal opt-in is read from the config directory, so a reviewed tree
+// that sets quality_signal: true cannot switch on a transmission.
+func TestQualitySignalGateFrom_ReadsConfigRoot(t *testing.T) {
+	isolate(t)
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	writeAtcrConfig(t, "agents: [bruce]\nquality_signal: true\n")
+	configDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".atcr", "config.yaml"),
+		[]byte("agents: [bruce]\n"), 0o644))
+
+	require.False(t, qualitySignalGateFrom(io.Discard, configDir),
+		"the reviewed tree's quality_signal must not count under --config-dir")
+	require.True(t, qualitySignalGateFrom(io.Discard, ""),
+		"without a config root the gate still reads the reviewed tree")
 }
