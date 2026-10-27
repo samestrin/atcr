@@ -24,6 +24,7 @@ func TestSelectVisionAgent(t *testing.T) {
 			"remote":  {Provider: "cloud", Model: "m", SupportsVision: true},
 			"blank":   {Provider: "default", Model: "m", SupportsVision: true},
 			"textual": {Provider: "local", Model: "m"},
+			"orphan":  {Provider: "gone", Model: "m", SupportsVision: true},
 		},
 	}
 	cases := []struct {
@@ -42,6 +43,7 @@ func TestSelectVisionAgent(t *testing.T) {
 		{"empty base_url refused", "blank", false, ErrVisionAgentRefused, false},
 		{"empty base_url with allowCloud", "blank", true, nil, false},
 		{"unknown agent", "nobody", true, ErrVisionAgentRefused, false},
+		{"unknown provider", "orphan", true, ErrVisionAgentRefused, false},
 		{"unset key", "", true, ErrVisionAgentUnset, false},
 	}
 	for _, tc := range cases {
