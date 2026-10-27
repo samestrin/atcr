@@ -1,60 +1,70 @@
 [
   {
     "name": "bruce",
+    "role": "generalist correctness reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "greta",
+    "role": "algorithmic correctness reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "kai",
+    "role": "architecture and design reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "mira",
+    "role": "production feasibility reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "dax",
+    "role": "test coverage and error-path reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "sasha",
+    "role": "security and injection reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "penny",
+    "role": "performance and resource reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "ingrid",
+    "role": "idiomatic-style and conventions reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "otto",
+    "role": "style, readability, and idiom reviewer",
     "version": "built-in",
     "source": "built-in",
     "language": []
   },
   {
     "name": "security/owasp",
+    "role": "",
     "version": "1.0.0",
     "source": "community",
     "language": [
