@@ -426,3 +426,115 @@ func TestWebhookDocStatesCredentialsAllowlistsAndLoopback(t *testing.T) {
 		assert.Contains(t, doc, want)
 	}
 }
+
+const (
+	whLinearSecretEnv = "ATCR_TEST_LINEAR_WEBHOOK_SECRET"
+	whLinearKeyEnv    = "ATCR_TEST_LINEAR_API_KEY"
+	whLinearSecret    = "test-linear-secret"
+	whLinearKey       = "lin_api_testkey"
+)
+
+// whLinearConfig is a webhook block with only the Linear trigger.
+func whLinearConfig(checkout string) string {
+	return "webhook:\n" +
+		"  listen: 127.0.0.1:0\n" +
+		"  job_timeout: 1m\n" +
+		"  repos:\n" +
+		"    acme/widget: " + checkout + "\n" +
+		"  linear:\n" +
+		"    webhook_secret_env: " + whLinearSecretEnv + "\n" +
+		"    api_key_env: " + whLinearKeyEnv + "\n" +
+		"    trigger_statuses: [In Review]\n" +
+		"    teams: [EST]\n"
+}
+
+// fakeLinear is an httptest stand-in for the Linear GraphQL API: every issue
+// has the acme/widget#7 PR attached. It records each Authorization header.
+func fakeLinear(t *testing.T) <-chan string {
+	t.Helper()
+	auths := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths <- r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, `{"data":{"issue":{"attachments":{"nodes":[{"url":"https://github.com/acme/widget/pull/7"}]}}}}`)
+	}))
+	t.Cleanup(srv.Close)
+	orig := linearAPIURL
+	linearAPIURL = srv.URL
+	t.Cleanup(func() { linearAPIURL = orig })
+	return auths
+}
+
+// postSignedLinear sends a signed Linear issue update that moved iss-1 to In
+// Review, as Linear would.
+func postSignedLinear(t *testing.T, base string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"action":"update","type":"Issue","webhookTimestamp":%d,"data":{"id":"iss-1","team":{"id":"tm","key":"EST"},"state":{"id":"st-1","name":"In Review"}},"updatedFrom":{"stateId":"st-0"}}`, time.Now().UnixMilli())
+	req, err := http.NewRequest(http.MethodPost, base+webhook.LinearWebhookPath, strings.NewReader(body))
+	require.NoError(t, err)
+	mac := hmac.New(sha256.New, []byte(whLinearSecret))
+	mac.Write([]byte(body))
+	req.Header.Set("Linear-Signature", hex.EncodeToString(mac.Sum(nil)))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// Epic 49.1 T3: with only a webhook.linear block the daemon serves the Linear
+// route, looks the PR up with the API key and reviews the PR head.
+func TestWebhookCmd_LinearStatusChangeReviewsLinkedPR(t *testing.T) {
+	isolate(t)
+	checkout := whPRFixture(t)
+	writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig(checkout))
+	t.Setenv(whLinearSecretEnv, whLinearSecret)
+	t.Setenv(whLinearKeyEnv, whLinearKey)
+	auths := fakeLinear(t)
+
+	reviewed := make(chan string, 2)
+	orig := webhookReviewerFn
+	webhookReviewerFn = func(context.Context, string) webhook.Reviewer {
+		return func(_ context.Context, dir string) ([]reconcile.Finding, error) {
+			b, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+			reviewed <- string(b)
+			return nil, nil
+		}
+	}
+	t.Cleanup(func() { webhookReviewerFn = orig })
+
+	base, stderr, stop := startWebhook(t)
+	assert.Contains(t, stderr.String(), webhook.LinearWebhookPath)
+	assert.NotContains(t, stderr.String(), webhook.SlackEventsPath, "no Slack route without a slack block")
+	postSignedLinear(t, base)
+
+	select {
+	case got := <-reviewed:
+		assert.Equal(t, "pr head\n", got, "the review runs on the linked PR's head")
+	case <-time.After(60 * time.Second):
+		t.Fatalf("no review; daemon stderr:\n%s", stderr.String())
+	}
+	assert.Equal(t, whLinearKey, <-auths, "the lookup authenticates with the API key")
+	require.NoError(t, stop())
+	assert.NotContains(t, stderr.String(), whLinearKey)
+	assert.NotContains(t, stderr.String(), whLinearSecret)
+}
+
+func TestWebhookCmd_MissingLinearCredentialNamesTheVariable(t *testing.T) {
+	for _, unset := range []string{whLinearSecretEnv, whLinearKeyEnv} {
+		t.Run(unset, func(t *testing.T) {
+			isolate(t)
+			writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig("/nonexistent/checkout"))
+			t.Setenv(whLinearSecretEnv, whLinearSecret)
+			t.Setenv(whLinearKeyEnv, whLinearKey)
+			t.Setenv(unset, "")
+			root := NewRootCmd()
+			root.SetArgs([]string{"webhook"})
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			err := root.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), unset)
+			assert.NotContains(t, err.Error(), whLinearSecret)
+			assert.NotContains(t, err.Error(), whLinearKey)
+		})
+	}
+}
