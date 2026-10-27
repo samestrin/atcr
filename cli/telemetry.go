@@ -62,13 +62,22 @@ var (
 // a remote host — is rejected. The errors never echo the value, so a URL carrying
 // userinfo cannot leak a password to stderr.
 func ValidateTelemetryEndpoint(endpoint string) error {
-	e := strings.TrimSpace(endpoint)
+	return validateHTTPSOrLoopbackURL("--telemetry-endpoint", endpoint)
+}
+
+// validateHTTPSOrLoopbackURL is the shared rule behind --telemetry-endpoint and
+// `atcr review --preview-url`: https:// always, http:// only for a loopback host
+// (127.0.0.0/8, ::1, localhost), and anything else rejected. flag names the flag
+// in the error; the value itself is never echoed.
+func validateHTTPSOrLoopbackURL(flag, value string) error {
+	invalid := errors.New(flag + " must be a valid https:// URL")
+	e := strings.TrimSpace(value)
 	if e == "" {
-		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+		return invalid
 	}
 	u, err := url.Parse(e)
-	if err != nil || u.Host == "" {
-		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+	if err != nil || u.Hostname() == "" {
+		return invalid
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "https":
@@ -81,9 +90,9 @@ func ValidateTelemetryEndpoint(endpoint string) error {
 		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
 			return nil
 		}
-		return errors.New("--telemetry-endpoint must use https:// (plaintext http:// is allowed only for a loopback host)")
+		return errors.New(flag + " must use https:// (plaintext http:// is allowed only for a loopback host)")
 	default:
-		return errors.New("--telemetry-endpoint must be a valid https:// URL")
+		return invalid
 	}
 }
 
