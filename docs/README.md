@@ -57,6 +57,10 @@ single source of truth the website build consumes, so it links every doc in
   and stdout/stderr isolation.
 - [GitHub Action — PR Review](github-action.md) — posting reconciled findings to
   a pull request.
+- [Slack-triggered reviews (`atcr webhook`)](webhook.md) — the loopback-only
+  daemon that reviews a GitHub pull request when the Slack app is mentioned:
+  credentials as environment-variable names, the workspace/channel/user and
+  repository allowlists, and what the thread reply may contain.
 - [Hermes Maintenance Agents](hermes-maintenance-agents.md) — configuration
   surface for wiring the external hermes agents to `atcr models check` across the
   mechanical/judgment/drafting roles.

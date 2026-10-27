@@ -84,6 +84,7 @@ var nonReportCommands = map[string]string{
 	"atcr reconcile":                    "writes reconciled artifacts",
 	"atcr review":                       "runs the reviewer fan-out",
 	"atcr serve":                        "runs the MCP server",
+	"atcr webhook":                      "runs the webhook daemon",
 	"atcr skill":                        "group: prints help",
 	"atcr skill export":                 "writes the embedded skill tree",
 	"atcr verify":                       "runs the skeptic stage",
