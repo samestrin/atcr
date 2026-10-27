@@ -1923,6 +1923,27 @@ type WebhookLinearConfig struct {
 	APIKeyEnv        string   `yaml:"api_key_env"`
 	TriggerStatuses  []string `yaml:"trigger_statuses"`
 	Teams            []string `yaml:"teams"`
+	// AutoFix is the optional auto-fix trigger (Epic 49.2); nil means a Linear
+	// status change only ever runs a review.
+	AutoFix *WebhookLinearAutoFixConfig `yaml:"auto_fix,omitempty"`
+}
+
+// WebhookLinearAutoFixConfig is the `webhook.linear.auto_fix:` block. Every key
+// is required: auto-fix pushes a branch and opens a pull request, so it runs
+// only for a listed status and a listed repository, with its own push token and
+// a daily job cap.
+type WebhookLinearAutoFixConfig struct {
+	// Statuses are the Linear status names that start an auto-fix job.
+	Statuses []string `yaml:"statuses"`
+	// Repos is the auto-fix repository allowlist, each an `owner/repo` that is
+	// also a key of webhook.repos.
+	Repos []string `yaml:"repos"`
+	// PushTokenEnv names the environment variable holding the push-capable
+	// GitHub token (contents:write, pull_requests:write). It must differ from
+	// webhook.github_token_env so the review path never holds push rights.
+	PushTokenEnv string `yaml:"push_token_env"`
+	// DailyJobCap is the most auto-fix jobs started in one day; at least 1.
+	DailyJobCap int `yaml:"daily_job_cap"`
 }
 
 // WebhookSlackConfig is the `webhook.slack:` block. Every allowlist is
@@ -2014,8 +2035,35 @@ func (w *WebhookConfig) Validate() error {
 		errs = append(errs, validateEnvName("webhook.linear.api_key_env", l.APIKeyEnv)...)
 		errs = append(errs, validateAllowlist("webhook.linear.trigger_statuses", l.TriggerStatuses)...)
 		errs = append(errs, validateAllowlist("webhook.linear.teams", l.Teams)...)
+		if a := l.AutoFix; a != nil {
+			errs = append(errs, a.validate(w)...)
+		}
 	}
 	return errors.Join(errs...)
+}
+
+// validate checks the auto-fix block against its parent webhook block: the
+// repository allowlist must be a subset of webhook.repos and the push token a
+// different variable from webhook.github_token_env.
+func (a *WebhookLinearAutoFixConfig) validate(w *WebhookConfig) []error {
+	var errs []error
+	errs = append(errs, validateAllowlist("webhook.linear.auto_fix.statuses", a.Statuses)...)
+	if len(a.Repos) == 0 {
+		errs = append(errs, errors.New("webhook.linear.auto_fix.repos must list at least one owner/repo from webhook.repos"))
+	}
+	for i, name := range a.Repos {
+		if _, ok := w.Repos[name]; !ok {
+			errs = append(errs, fmt.Errorf("webhook.linear.auto_fix.repos[%d] %q is not a key of webhook.repos", i, name))
+		}
+	}
+	errs = append(errs, validateEnvName("webhook.linear.auto_fix.push_token_env", a.PushTokenEnv)...)
+	if a.PushTokenEnv != "" && a.PushTokenEnv == w.GitHubTokenEnv {
+		errs = append(errs, errors.New("webhook.linear.auto_fix.push_token_env must name a different variable from webhook.github_token_env: the push token is kept apart from the review token"))
+	}
+	if a.DailyJobCap < 1 {
+		errs = append(errs, fmt.Errorf("webhook.linear.auto_fix.daily_job_cap must be >= 1, got %d", a.DailyJobCap))
+	}
+	return errs
 }
 
 // validateWebhookListen requires host:port with a numeric port and a loopback
