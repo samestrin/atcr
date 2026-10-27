@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -486,4 +487,224 @@ func signedHeader(t *testing.T, body string) http.Header {
 	h := http.Header{}
 	h.Set(linear.HeaderSignature, hex.EncodeToString(mac.Sum(nil)))
 	return h
+}
+
+// fakeFixer counts auto-fix runs. gate, when set, holds each run until closed.
+type fakeFixer struct {
+	mu      sync.Mutex
+	targets []AutoFixTarget
+	started chan struct{}
+	gate    chan struct{}
+}
+
+func (f *fakeFixer) Run(ctx context.Context, t AutoFixTarget) error {
+	f.mu.Lock()
+	f.targets = append(f.targets, t)
+	f.mu.Unlock()
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
+	if f.gate != nil {
+		select {
+		case <-f.gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (f *fakeFixer) runs() []AutoFixTarget {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]AutoFixTarget(nil), f.targets...)
+}
+
+// fakeGitHub serves the pull request head (branch "feature", same repo) and
+// records each PR comment.
+type fakeGitHub struct {
+	ts       *httptest.Server
+	headRepo string
+	mu       sync.Mutex
+	comments []string
+}
+
+func newFakeGitHub(t *testing.T) *fakeGitHub {
+	t.Helper()
+	g := &fakeGitHub{headRepo: "acme/widget"}
+	g.ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			_, _ = fmt.Fprintf(w, `{"number":7,"head":{"ref":"feature","repo":{"full_name":%q}}}`, g.headRepo)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			g.mu.Lock()
+			g.comments = append(g.comments, body.Body)
+			g.mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(g.ts.Close)
+	return g
+}
+
+func (g *fakeGitHub) posted() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.comments...)
+}
+
+// newAutoFixHarness is newLinearHarness with auto-fix on "Fix It" for
+// acme/widget, a fresh state file with dailyCap, and the fake GitHub server.
+func newAutoFixHarness(t *testing.T, lookup *fakeLookup, fixer *fakeFixer, dailyCap int) (*linearHarness, *fakeGitHub, string) {
+	t.Helper()
+	h := newLinearHarness(t, lookup, nil)
+	gh := newFakeGitHub(t)
+	path := filepath.Join(t.TempDir(), "auto-fix-state.json")
+	state, err := OpenAutoFixState(path, dailyCap)
+	require.NoError(t, err)
+	client := &ghaction.Client{APIURL: gh.ts.URL, Token: "push-tok", HTTPClient: gh.ts.Client()}
+	h.runner.AutoFix = &LinearAutoFix{
+		Statuses:  []string{"Fix It"},
+		Repos:     []string{"acme/widget"},
+		State:     state,
+		Heads:     client,
+		Fixer:     fixer,
+		Commenter: client,
+	}
+	return h, gh, path
+}
+
+// A redelivery, a second delivery of the same change, and the same change after
+// a restart (a new server over the same state file) run one auto-fix job.
+func TestLinearAutoFix_RepeatedDeliveryRunsOneJob(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{}
+	h, gh, path := newAutoFixHarness(t, lookup, fixer, 5)
+
+	now := time.Now()
+	body := linearBody("iss-1", "EST", "st-fix", "Fix It", now, "stateId")
+	h.send(t, body, "d-1")
+	h.send(t, body, "d-1")
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", now.Add(time.Second), "stateId", "updatedAt"), "d-2")
+	h.drain(t)
+
+	runs := fixer.runs()
+	require.Len(t, runs, 1)
+	assert.Equal(t, AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature"}, runs[0])
+	assert.Zero(t, h.review.Load(), "an auto-fix status runs no review")
+	assert.Empty(t, gh.posted())
+
+	// After a restart the in-memory dedupe is empty; the state file refuses.
+	h2, _, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	state, err := OpenAutoFixState(path, 5)
+	require.NoError(t, err)
+	h2.runner.AutoFix.State = state
+	h2.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", now.Add(2*time.Second), "stateId"), "d-3")
+	h2.drain(t)
+	assert.Len(t, fixer.runs(), 1, "the replay after a restart starts no second fix")
+	assert.Equal(t, 1, h2.logs.count(ErrAutoFixClaimed.Error()))
+}
+
+// A second event for the same issue while its auto-fix runs is refused, even
+// for another state.
+func TestLinearAutoFix_SecondEventForRunningIssueIsRefused(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{started: make(chan struct{}, 1), gate: make(chan struct{})}
+	h, _, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	h.runner.AutoFix.Statuses = []string{"Fix It", "Fix Again"}
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	<-fixer.started
+	h.send(t, linearBody("iss-1", "EST", "st-again", "Fix Again", time.Now(), "stateId"), "d-2")
+	require.Eventually(t, func() bool { return h.logs.count(ErrJobBusy.Error()) == 1 }, 10*time.Second, 5*time.Millisecond)
+	close(fixer.gate)
+	h.drain(t)
+
+	assert.Len(t, fixer.runs(), 1)
+	assert.Equal(t, 1, h.logs.count("linear:iss-1"), "the refusal names the issue")
+}
+
+// An unlisted team, a repository outside the auto-fix allowlist (though in
+// webhook.repos), a repository outside webhook.repos and a fork pull request
+// run no auto-fix and use no claim.
+func TestLinearAutoFix_UnlistedTeamOrRepoRunsNone(t *testing.T) {
+	cases := map[string]struct {
+		team     string
+		pr       linear.PR
+		allow    []string
+		headRepo string
+		log      string
+	}{
+		"unlisted team":            {team: "OPS", pr: widgetPR(), allow: []string{"acme/widget"}, log: "team not allowlisted"},
+		"repo not in auto-fix":     {team: "EST", pr: widgetPR(), allow: []string{"acme/other"}, log: ErrRepoNotAllowed.Error()},
+		"repo not in webhook.repo": {team: "EST", pr: linear.PR{Owner: "evil", Repo: "fork", Number: 7}, allow: []string{"evil/fork"}, log: ErrRepoNotAllowed.Error()},
+		"fork pull request":        {team: "EST", pr: widgetPR(), allow: []string{"acme/widget"}, headRepo: "evil/widget", log: ErrForkPR.Error()},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": c.pr}}
+			fixer := &fakeFixer{}
+			h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
+			h.runner.AutoFix.Repos = c.allow
+			if c.headRepo != "" {
+				gh.headRepo = c.headRepo
+			}
+			h.send(t, linearBody("iss-1", c.team, "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+			h.drain(t)
+
+			assert.Empty(t, fixer.runs())
+			assert.Zero(t, h.review.Load())
+			assert.Zero(t, h.runner.AutoFix.State.Count(time.Now()), "no claim is used")
+			assert.Equal(t, 1, h.logs.count(c.log))
+		})
+	}
+}
+
+// The cap-plus-one event of a day posts "daily cap reached" on the pull
+// request through GitHub and starts no job.
+func TestLinearAutoFix_DailyCapPostsCommentAndRunsNone(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR(), "iss-2": widgetPR()}}
+	fixer := &fakeFixer{}
+	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 1)
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	require.Eventually(t, func() bool { return len(fixer.runs()) == 1 }, 10*time.Second, 5*time.Millisecond)
+	h.idle(t)
+	h.send(t, linearBody("iss-2", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-2")
+	h.drain(t)
+
+	assert.Len(t, fixer.runs(), 1, "the cap-plus-one event starts no job")
+	comments := gh.posted()
+	require.Len(t, comments, 1)
+	assert.Contains(t, comments[0], "daily cap reached")
+	assert.Contains(t, comments[0], "acme/widget#7")
+	assert.NotContains(t, comments[0], "iss-2", "the comment carries the cap only")
+	assert.Equal(t, 1, h.logs.count(ErrAutoFixDailyCap.Error()))
+}
+
+// A status in both lists starts the auto-fix; a review status still reviews.
+func TestLinearAutoFix_ReviewStatusStillReviews(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{}
+	h, _, _ := newAutoFixHarness(t, lookup, fixer, 5)
+
+	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", time.Now(), "stateId"), "d-1")
+	h.drain(t)
+	assert.Equal(t, int32(1), h.review.Load())
+	assert.Empty(t, fixer.runs())
+}
+
+func TestLinearRunner_IgnoresIncompleteAutoFix(t *testing.T) {
+	body := linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId")
+	ev, err := linear.Verify(linearTestSecret, signedHeader(t, body), []byte(body), time.Now())
+	require.NoError(t, err)
+	r := &LinearRunner{Teams: []string{"EST"}, Lookup: &fakeLookup{}, AutoFix: &LinearAutoFix{Statuses: []string{"Fix It"}}}
+	_, ok := r.Dispatch(ev)
+	assert.False(t, ok)
 }
