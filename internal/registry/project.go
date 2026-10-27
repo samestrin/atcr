@@ -153,6 +153,10 @@ type ProjectConfig struct {
 	// ThreatMap is the optional `threat_map` block (Epic 37.0): the agent the
 	// --threat-map phase calls. Overrides the registry tier. See ThreatMapConfig.
 	ThreatMap *ThreatMapConfig `yaml:"threat_map,omitempty"`
+	// VisualReview is the optional `visual_review` block (Epic 36.0.2): the
+	// vision agent that reviews screenshots. Overrides the registry tier. See
+	// VisualReviewConfig.
+	VisualReview *VisualReviewConfig `yaml:"visual_review,omitempty"`
 	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
 	// nil means execution is unconfigured and `--exec` is refused.
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
