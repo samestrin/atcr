@@ -1089,3 +1089,35 @@ func TestUpdatePullRequestRedactsOutboundContent(t *testing.T) {
 	assert.NotContains(t, gotBody["title"], token, "an updated PR title must be redacted before it is sent")
 	assert.NotContains(t, gotBody["body"], token, "an updated PR body must be redacted before it is sent")
 }
+
+func TestPostIssueComment(t *testing.T) {
+	var gotPath, gotMethod, gotAuth string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod, gotAuth = r.URL.Path, r.Method, r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	require.NoError(t, c.PostIssueComment(context.Background(), "o", "r", 7, "critical: 1 - SQL injection"))
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/repos/o/r/issues/7/comments", gotPath)
+	assert.Equal(t, "Bearer tok", gotAuth)
+	assert.Equal(t, "critical: 1 - SQL injection", gotBody["body"])
+}
+
+func TestPostIssueCommentErrorIsTyped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Resource not accessible"}`))
+	}))
+	defer srv.Close()
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	var apiErr *APIError
+	require.ErrorAs(t, c.PostIssueComment(context.Background(), "o", "r", 7, "x"), &apiErr)
+	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+}
