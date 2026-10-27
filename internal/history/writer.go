@@ -47,7 +47,7 @@ import (
 // client-side and does not hold at all, whatever the buffer size.
 //
 // No external lock is taken here, and that is a deliberate trade rather than an
-// oversight. internal/localdebt does ship one (withLock in lock.go, mkdir-based),
+// oversight. internal/localdebt does ship one (withLock in lock_unix.go and lock_other.go),
 // but it guards read-modify-write over a whole file, where a lost update destroys
 // committed data. This ledger is append-only and read tolerantly — reader.go skips
 // a blank or malformed line instead of failing the read — so the worst outcome
