@@ -6,7 +6,7 @@ import "strings"
 // carried at the registry (~/.config/atcr/registry.yaml) and project
 // (.atcr/config.yaml) tiers. Agent names the normal `agents:` entry the
 // --threat-map phase calls; that entry's persona is the mapper prompt
-// (threat_mapper when it sets none). The block is inert without --threat-map.
+// (nora when it sets none; the legacy key threat_mapper is an alias). The block is inert without --threat-map.
 type ThreatMapConfig struct {
 	Agent string `yaml:"agent,omitempty"`
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/threatmap"
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,9 @@ func threatMapperFromFlags(ctx context.Context, cmd *cobra.Command, cfg *fanout.
 	agent, err := threatmap.NewAgent(name, cfg.Registry, cfg.Settings, cfg.PersonaDirs, newThreatMapLLM(ctx))
 	if err != nil {
 		return nil, usageError(fmt.Errorf("--threat-map: %w", err))
+	}
+	if agent.UsedLegacyKey() {
+		log.FromContext(ctx).Warn(threatmap.LegacyKeyWarning)
 	}
 	return threatMapAdapter{completer: agent}, nil
 }
