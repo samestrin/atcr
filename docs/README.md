@@ -42,6 +42,10 @@ single source of truth the website build consumes, so it links every doc in
   disagreement.
 - [Findings Format — `atcr-findings/v1`](findings-format.md) — the stable,
   machine-parseable on-disk findings contract.
+- [Visual Verification](visual-verification.md) — running a Playwright spec
+  against the change under review inside the sandbox: the Playwright-project
+  prerequisite, the in-sandbox dev server, `--preview-url`, the timeout, and
+  the sandbox backends that can host it.
 
 ## Personas
 
