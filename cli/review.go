@@ -767,6 +767,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		}
 		return usageError(err)
 	}
+	// Record each reviewer's persona role for the markdown reports' `name
+	// (role)` labels (Epic 83.0 T5), from the registry and persona dirs this
+	// review already loaded. Display metadata: a failed write leaves bare names.
+	_ = reconcile.WriteReviewerRoles(prep.Dir, registry.ReviewerRoles(cfg.Registry.Agents, cfg.PersonaDirs))
 
 	// The review id is the earliest correlation anchor (it exists only after
 	// PrepareReview). correlateAndRedact attaches it to the context logger so every
