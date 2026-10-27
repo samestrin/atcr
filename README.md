@@ -197,7 +197,7 @@ atcr review --resume latest --require-coverage 100
 - **Two-tier execution.** Complexity ceilings (`max_severity_for_fix`, `max_estimated_minutes`) let a cheap executor model handle simple fixes and escalate the rest to a frontier model — worked examples in `examples/registry-with-executor*.yaml`.
 - **Shortcut fixes rejected.** Fixes that smell like reward-hacking (deleted assertions, added suppressions, swallowed errors, stubbed bodies) are rejected/retried or flagged `NEEDS_REVIEW` rather than applied.
 
-`--repo` / `--token` / `--api-url` target a non-default GitHub remote. See [docs/auto-fix.md](docs/auto-fix.md) and [docs/security.md](docs/security.md).
+`--repo` / `--token` / `--api-url` target a non-default GitHub remote. The pull request targets the repository default branch; `--auto-fix-base <branch>` targets a named branch instead (local HEAD must be pushed and equal that branch). See [docs/auto-fix.md](docs/auto-fix.md) and [docs/security.md](docs/security.md).
 
 ## Agent consumption (`--axi`)
 
