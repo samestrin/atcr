@@ -63,3 +63,13 @@ func TestSelectVisionAgent(t *testing.T) {
 		})
 	}
 }
+
+// A nil registry refuses the agent rather than panicking, like the
+// threat-map mapper's no-registry guard.
+func TestSelectVisionAgent_NoRegistry(t *testing.T) {
+	t.Parallel()
+	settings := registry.Settings{VisualReview: registry.VisualReview{Agent: "eye"}}
+	got, err := SelectVisionAgent(nil, settings, true)
+	require.ErrorIs(t, err, ErrVisionAgentRefused)
+	assert.Empty(t, got.Name)
+}
