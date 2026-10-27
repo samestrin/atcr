@@ -153,3 +153,13 @@ func TestWriteSASTSidecar_WriteErrorFailsOpenWithANotice(t *testing.T) {
 		})
 	}
 }
+
+// A prepare that failed has no review dir; the hand-off passes its error on and
+// writes nothing.
+func TestSASTScanHandOff_PassesAPrepareErrorThrough(t *testing.T) {
+	boom := errors.New("scaffold failed")
+	scan := sastScan{scanner: "fake", findings: []sast.Finding{{File: "a.go", Line: 1, Rule: "r"}}}
+	prep, err := scan.handOff(nil, boom)
+	assert.Nil(t, prep)
+	assert.ErrorIs(t, err, boom)
+}
