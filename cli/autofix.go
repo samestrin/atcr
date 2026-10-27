@@ -105,9 +105,10 @@ func autoFixBaseBranch(override, defaultBranch string) string {
 }
 
 // validBranchName is a local shape check following git check-ref-format's rules
-// for a branch name (no network, no exec). It refuses anything git itself would.
+// for a branch name (no network, no exec), plus the reserved name HEAD, which
+// git refuses as a branch and GitHub refuses as a pull request base.
 func validBranchName(name string) bool {
-	if name == "" || name == "@" || strings.HasPrefix(name, "-") ||
+	if name == "" || name == "@" || name == "HEAD" || strings.HasPrefix(name, "-") ||
 		strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
 		strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") ||
 		strings.ContainsAny(name, " ~^:?*[\\") {
