@@ -167,10 +167,12 @@ func TestAutoFixRunner_CancelledContextRemovesWorktreeAndBranch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		for !stub.ran() || !hasStarted(f) {
-			time.Sleep(10 * time.Millisecond)
+		defer cancel()
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			if stub.ran() && hasStarted(f) {
+				return
+			}
 		}
-		cancel()
 	}()
 	start := time.Now()
 	err := r.Run(ctx, AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
