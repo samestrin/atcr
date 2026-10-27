@@ -406,6 +406,16 @@ func TestOSLevelFallbackConfig_MemoryGrammarMatchesValidation(t *testing.T) {
 	}
 }
 
+func TestOSLevelFallbackConfig_RejectsWhatValidationRejects(t *testing.T) {
+	for _, in := range []string{"1.5e3", "+5", "-5", "Inf", "NaN", "abc", "0", "0.5", ".5", "5.", "0x10", "1_0"} {
+		_, err := sandbox.ParseMemoryBytes(in)
+		assert.Error(t, err, in)
+		cfg := osLevelFallbackConfig(&registry.SandboxConfig{Memory: in})
+		assert.False(t, cfg.MaxMemoryBytesSet, in)
+		assert.Equal(t, sandbox.DefaultOSLevelConfig().MaxMemoryBytes, cfg.MaxMemoryBytes, in)
+	}
+}
+
 func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) {
 	stubOSLevel(t, nil)
 	ctx, buf := captureWarnings(t)

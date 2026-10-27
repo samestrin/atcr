@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -513,11 +514,15 @@ func parseDockerMemory(s string) (int64, error) {
 	return n * mult, nil
 }
 
-// ParseMemoryBytes parses a sandbox.memory value into bytes, accepting exactly
-// the grammar registry.validateMemory accepts: a positive plain decimal
-// (fractional allowed) with an optional k/m/g unit, optionally followed by "b".
+// ParseMemoryBytes parses a sandbox.memory value into bytes, accepting the
+// grammar registry.validateMemory accepts: a positive plain decimal
+// (digits, optional fractional part, at least one byte) with an optional k/m/g unit, optionally followed by "b".
 // An empty string is 0 bytes. It exists for backends other than docker, whose
 // own parseDockerMemory is narrower than the validator.
+// memoryDecimalRegexp mirrors registry's plainDecimalRegexp: no sign, exponent,
+// hex, Inf/NaN, or leading/trailing dot.
+var memoryDecimalRegexp = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
+
 func ParseMemoryBytes(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -539,7 +544,7 @@ func ParseMemoryBytes(s string) (int64, error) {
 		}
 	}
 	v, err := strconv.ParseFloat(num, 64)
-	if err != nil || v <= 0 || strings.ContainsAny(num, "eE+-xXiInN_") {
+	if err != nil || !memoryDecimalRegexp.MatchString(num) || v*mult < 1 {
 		return 0, fmt.Errorf("invalid memory value %q", s)
 	}
 	return int64(v * mult), nil
