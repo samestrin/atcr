@@ -140,7 +140,8 @@ type Agent struct {
 
 // NewAgent resolves the agents: entry called name into a mapper Agent. Its
 // persona is the entry's persona key, or threat_mapper when the key is unset.
-// A <persona>.md in the project or registry personas dir wins; otherwise only
+// The registry load sets an unset key to the agent's name, so that name counts
+// as unset unless a <name>.md persona file exists. A <persona>.md in the project or registry personas dir wins; otherwise only
 // threat_mapper has an embedded default. The mapper never falls back to
 // _base.md: that is the reviewer template, whose findings reply never parses
 // here.
@@ -156,7 +157,7 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 	if !ok {
 		return nil, fmt.Errorf("threatmap: mapper agent %q: provider %q not found in registry", name, ac.Provider)
 	}
-	persona, err := resolvePersona(ac.Persona, dirs)
+	persona, err := resolvePersona(name, ac.Persona, dirs)
 	if err != nil {
 		return nil, fmt.Errorf("threatmap: mapper agent %q: %w", name, err)
 	}
@@ -192,8 +193,11 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 	}, nil
 }
 
-// resolvePersona loads the mapper persona text for the persona ref ref.
-func resolvePersona(ref string, dirs registry.PersonaDirs) (string, error) {
+// resolvePersona loads the mapper persona text for the persona ref ref of the
+// agent called name. The registry load defaults an unset persona key to the
+// agent's own name, so a ref equal to name with no <name>.md file is treated
+// as unset and falls to threat_mapper.
+func resolvePersona(name, ref string, dirs registry.PersonaDirs) (string, error) {
 	if ref == "" {
 		ref = personas.ThreatMapperName
 	}
@@ -203,6 +207,9 @@ func resolvePersona(ref string, dirs registry.PersonaDirs) (string, error) {
 	}
 	if ok {
 		return p.Text, nil
+	}
+	if ref == name && ref != personas.ThreatMapperName {
+		return resolvePersona(name, "", dirs)
 	}
 	if ref != personas.ThreatMapperName {
 		return "", fmt.Errorf("persona %q not found in %s or %s: %w", ref, dirs.Project, dirs.Registry, registry.ErrPersonaNotFound)

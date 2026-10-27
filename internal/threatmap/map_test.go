@@ -349,3 +349,73 @@ func TestMap_WithTheEmbeddedPersona(t *testing.T) {
 	require.Contains(t, prompt, `"keep"`, "the persona states the reply shape Map parses")
 	require.False(t, strings.Contains(prompt, "{{"), "no template action is left unrendered")
 }
+
+// loadRegistry writes yaml to a registry file and loads it the way the CLI
+// does, so applyDefaults runs: an agent with no persona key comes back with
+// Persona set to its own name.
+func loadRegistry(t *testing.T, yaml string) *registry.Registry {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "registry.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(yaml), 0o644))
+	reg, err := registry.LoadRegistry(path)
+	require.NoError(t, err)
+	return reg
+}
+
+const scoutRegistry = `providers:
+  cheap:
+    base_url: https://cheap.example/v1
+    api_key_env: CHEAP_KEY
+agents:
+  scout:
+    provider: cheap
+    model: small-1
+`
+
+// A mapper entry with no persona key uses the embedded threat_mapper persona
+// whatever the agent is called, as docs/payload-modes.md says — even though
+// the registry load defaults its persona to the agent's own name.
+func TestNewAgent_UnsetPersonaDefaultsToThreatMapper(t *testing.T) {
+	reg := loadRegistry(t, scoutRegistry)
+	require.Equal(t, "scout", reg.Agents["scout"].Persona, "precondition: the load defaults persona to the agent name")
+
+	a, err := NewAgent("scout", reg, registry.Settings{TimeoutSecs: 30},
+		registry.PersonaDirs{Project: t.TempDir(), Registry: t.TempDir()}, &fakeLLM{})
+
+	require.NoError(t, err)
+	require.Equal(t, embeddedMapper(t), a.Persona())
+}
+
+// An edited threat_mapper.md still overrides the embedded default for a
+// mapper with no persona key.
+func TestNewAgent_UnsetPersonaUsesAnEditedThreatMapper(t *testing.T) {
+	project := t.TempDir()
+	override := "edited mapper {{.Payload}}"
+	require.NoError(t, os.WriteFile(filepath.Join(project, personas.ThreatMapperName+".md"), []byte(override), 0o644))
+
+	a, err := NewAgent("scout", loadRegistry(t, scoutRegistry), registry.Settings{TimeoutSecs: 30},
+		registry.PersonaDirs{Project: project}, &fakeLLM{})
+
+	require.NoError(t, err)
+	require.Equal(t, override, a.Persona())
+}
+
+// A <name>.md persona file named after the agent still wins, in either dir,
+// so an agent whose persona key was left to default to its own name keeps it.
+func TestNewAgent_OwnNamePersonaFileWins(t *testing.T) {
+	for _, tier := range []string{"project", "registry"} {
+		t.Run(tier, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "scout.md"), []byte("scout {{.Payload}}"), 0o644))
+			dirs := registry.PersonaDirs{Project: dir}
+			if tier == "registry" {
+				dirs = registry.PersonaDirs{Registry: dir}
+			}
+
+			a, err := NewAgent("scout", loadRegistry(t, scoutRegistry), registry.Settings{TimeoutSecs: 30}, dirs, &fakeLLM{})
+
+			require.NoError(t, err)
+			require.Equal(t, "scout {{.Payload}}", a.Persona())
+		})
+	}
+}

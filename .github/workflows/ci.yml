@@ -93,6 +93,12 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # TestChangelogHasSectionForEveryReleaseTag lists the v* tags; a default
+          # checkout has none and the test fails under CI. actions/checkout ignores
+          # fetch-tags at the default fetch-depth of 1, so the full history is needed.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5

@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/hookobs"
+	"github.com/samestrin/atcr/internal/integrations/linear"
 	"github.com/samestrin/atcr/internal/integrations/slack"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -25,23 +27,38 @@ import (
 // test can point the daemon at a fake Slack server.
 var slackAPIBaseURL = slack.DefaultAPIBaseURL
 
-// webhookReviewerFn builds the reviewer a Slack-triggered job runs. base
+// linearAPIURL is the Linear GraphQL endpoint a Linear-triggered job looks the
+// linked pull request up on. A var so a test can point it at a fake.
+var linearAPIURL = linear.DefaultAPIURL
+
+// githubAPIURL is the GitHub REST root the Linear summary comment is posted to;
+// empty means the public API. A var so a test can point it at a fake server.
+var githubAPIURL string
+
+// webhookReviewerFn builds the reviewer a Slack- or Linear-triggered job runs. base
 // carries the command's logger and hooks; root is the directory the daemon was
 // started in, whose .atcr/ config the review uses. A var so a test can stub
 // the model fan-out.
 var webhookReviewerFn = newWebhookReviewer
 
 // newWebhookCmd builds `atcr webhook`: the daemon that reviews a GitHub pull
-// request when someone mentions the Slack app with `review <pr-url>`.
+// request when someone mentions the Slack app with `review <pr-url>`, or when
+// a Linear issue linked to it moves to a trigger status.
 func newWebhookCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "webhook",
-		Short: "Run the webhook daemon that reviews a pull request when the Slack app is mentioned",
+		Short: "Run the webhook daemon that reviews a pull request from a Slack mention or a Linear status change",
 		Long: `Run the webhook daemon. A Slack user mentions the app with
 "review https://github.com/<owner>/<repo>/pull/<n>"; atcr checks the request's
 signature and the workspace, channel, user and repository allowlists, fetches
 the pull request into a throwaway worktree of the configured local checkout,
 reviews it and replies in the thread with severity counts and finding titles.
+
+With a webhook.linear block, a signed Linear issue update whose state changed
+to one of trigger_statuses, in one of teams, reviews the GitHub pull request
+attached to the issue when its repository is in repos. A redelivery, or a
+second delivery of the same status change, runs one review, and one review
+runs per pull request at a time.
 
 The daemon reads the webhook: block of .atcr/config.yaml in the current
 directory, and reviews run with that directory's review config. It binds
@@ -69,18 +86,29 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 	if cfg == nil {
 		return usageError(errors.New("no webhook: block in .atcr/config.yaml; see docs/webhook.md"))
 	}
-	if cfg.Slack == nil {
-		return usageError(errors.New("webhook.slack is not configured: it is the only trigger, so there is nothing to serve; see docs/webhook.md"))
+	if cfg.Slack == nil && cfg.Linear == nil {
+		return usageError(errors.New("neither webhook.slack nor webhook.linear is configured, so there is nothing to serve; see docs/webhook.md"))
 	}
-	signingSecret, err := requiredEnv("webhook.slack.signing_secret_env", cfg.Slack.SigningSecretEnv)
-	if err != nil {
-		return err
+	var signingSecret, botToken, linearSecret, linearKey string
+	var secrets []string
+	if cfg.Slack != nil {
+		if signingSecret, err = requiredEnv("webhook.slack.signing_secret_env", cfg.Slack.SigningSecretEnv); err != nil {
+			return err
+		}
+		if botToken, err = requiredEnv("webhook.slack.bot_token_env", cfg.Slack.BotTokenEnv); err != nil {
+			return err
+		}
+		secrets = append(secrets, signingSecret, botToken)
 	}
-	botToken, err := requiredEnv("webhook.slack.bot_token_env", cfg.Slack.BotTokenEnv)
-	if err != nil {
-		return err
+	if cfg.Linear != nil {
+		if linearSecret, err = requiredEnv("webhook.linear.webhook_secret_env", cfg.Linear.WebhookSecretEnv); err != nil {
+			return err
+		}
+		if linearKey, err = requiredEnv("webhook.linear.api_key_env", cfg.Linear.APIKeyEnv); err != nil {
+			return err
+		}
+		secrets = append(secrets, linearSecret, linearKey)
 	}
-	secrets := []string{signingSecret, botToken}
 	if cfg.GitHubTokenEnv != "" {
 		// Read only so the value is scrubbed from every reply: fetching uses
 		// the checkout's own git credentials.
@@ -93,35 +121,62 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor("", secrets...)))
 	logger := log.FromContext(ctx)
 	logf := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }
-	repoNames := make([]string, 0, len(cfg.Repos))
-	for name := range cfg.Repos {
-		repoNames = append(repoNames, name)
+	review := webhookReviewerFn(ctx, root)
+	opts := webhook.Options{
+		MaxBodyBytes: cfg.BodyLimit(),
+		JobTimeout:   cfg.JobTimeoutDuration(),
+		Logf:         logf,
 	}
-	runner := &webhook.ReviewRunner{
-		Repos: cfg.Repos,
-		Allow: slack.Allowlist{
-			Workspaces: cfg.Slack.Workspaces,
-			Channels:   cfg.Slack.Channels,
-			Users:      cfg.Slack.Users,
-			Repos:      repoNames,
-		},
-		Review:  webhookReviewerFn(ctx, root),
-		Poster:  &slack.Poster{Token: botToken, BaseURL: slackAPIBaseURL},
-		Secrets: secrets,
-		Logf:    logf,
+	var routes []string
+	if cfg.Slack != nil {
+		repoNames := make([]string, 0, len(cfg.Repos))
+		for name := range cfg.Repos {
+			repoNames = append(repoNames, name)
+		}
+		runner := &webhook.ReviewRunner{
+			Repos: cfg.Repos,
+			Allow: slack.Allowlist{
+				Workspaces: cfg.Slack.Workspaces,
+				Channels:   cfg.Slack.Channels,
+				Users:      cfg.Slack.Users,
+				Repos:      repoNames,
+			},
+			Review:  review,
+			Poster:  &slack.Poster{Token: botToken, BaseURL: slackAPIBaseURL},
+			Secrets: secrets,
+			Logf:    logf,
+		}
+		opts.SlackSigningSecret = signingSecret
+		opts.Dispatch = runner.Dispatch
+		routes = append(routes, "Slack events at "+webhook.SlackEventsPath)
 	}
-	srv := webhook.NewServer(webhook.Options{
-		MaxBodyBytes:       cfg.BodyLimit(),
-		JobTimeout:         cfg.JobTimeoutDuration(),
-		SlackSigningSecret: signingSecret,
-		Dispatch:           runner.Dispatch,
-		Logf:               logf,
-	})
+	if cfg.Linear != nil {
+		runner := &webhook.LinearRunner{
+			Repos:    cfg.Repos,
+			Teams:    cfg.Linear.Teams,
+			Statuses: cfg.Linear.TriggerStatuses,
+			Lookup:   &linear.Client{APIKey: linearKey, URL: linearAPIURL},
+			Review:   review,
+			Secrets:  secrets,
+			Logf:     logf,
+		}
+		// The summary goes on the pull request only when a GitHub token is
+		// configured; without one the job logs the finding count instead.
+		if cfg.GitHubTokenEnv != "" {
+			if tok := os.Getenv(cfg.GitHubTokenEnv); tok != "" {
+				runner.Commenter = &ghaction.Client{APIURL: githubAPIURL, Token: tok}
+			}
+		}
+		opts.LinearSigningSecret = linearSecret
+		opts.LinearDispatch = runner.Dispatch
+		routes = append(routes, "Linear webhooks at "+webhook.LinearWebhookPath)
+	}
+	srv := webhook.NewServer(opts)
 	ln, err := webhook.Listen(cfg.ListenAddress())
 	if err != nil {
 		return usageError(err)
 	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "atcr webhook: listening on http://%s (Slack events at %s)\n", ln.Addr(), webhook.SlackEventsPath)
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "atcr webhook: listening on http://%s (%s)\n", ln.Addr(), strings.Join(routes, "; "))
 	// Serve returns once ctx (cancelled on SIGINT/SIGTERM) is done and the
 	// running jobs have been cancelled and cleaned up.
 	if err := srv.Serve(ctx, ln); err != nil {
