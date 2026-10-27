@@ -66,6 +66,10 @@ This is a **forward-looking rule for every community/library persona**: the pers
 
 Every new persona — built-in **or** community — is named with a **human first name** (e.g. `bruce`, `sasha`, `penny`, `ingrid`, `anthony`, `delia`), never a role- or function-descriptor slug (the style of role-named identifier the built-in stragglers carried before their Phase 5 rename to human names). This is a **forward-looking rule for new contributions**: it does not require renaming any already-shipped persona, only that additions follow the convention instead of reintroducing role-based names. The rule applies uniformly to built-in and community personas — there is no built-in-only exemption.
 
+The rule is **enforced by a test**, not just by convention: `personas/naming_test.go` fails `go test` when any `.md` or `.yaml` file directly under `personas/` or `personas/community/` has a stem that is not one lowercase word of letters only (`^[a-z]+$`), so role slugs such as `frontend-qa` or `foo_bar` cannot be added back. The shared template `_base.md` is the only exception; subdirectories such as `testdata/` are not scanned.
+
+One legacy alias predates the rule: the embedded threat-map mapper persona, once named with a role slug of exactly the shape this rule forbids, is now **`nora`**, and the old role-slug key still resolves to `nora` as a deprecated alias (one deprecation warning per run). The retired-slug scan (`personas/retired_slugs_test.go`) keeps the old key out of this document, so the alias is named where it belongs, in [payload-modes.md → Threat-model scoping](payload-modes.md#threat-model-scoping---threat-map). No new persona may take a name of that shape.
+
 > **Single source of truth (shared with Epic 23.0 AC5).** Epic 23.0 is **absorbed by and superseded by Epic 19.6**: the role-based built-in stragglers were renamed to human names under 19.6's Phase 5 (see `human-names-migration.md`), so 23.0 is not run as a standalone renamer. 19.6's broader wording (built-in **and** community) subsumes 23.0 AC5's built-in-only scope — a superset, not a contradiction.
 
 ## 2. The prompt template
@@ -138,6 +142,8 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 > `{{.ScopeRule}}` carry the enumeration.
 >
 > The shipped fallback `personas/_base.md` is the one exception: its category rule still names six example categories. That was a deliberate call recorded in epic 35.16.4's Clarifications (see the comment above `categoryEnumeration` in `internal/payload/scope.go`), not a pattern to copy into a new persona.
+
+**The H1's em-dash text is the persona's displayed role.** The one-line lens description after the em dash in `# {{.AgentName}} — <one-line lens description>` is not decorative: `atcr personas list` shows it in a `ROLE` column (and as the `role` field in `--json`), and the markdown review report (`reconciled/report.md`, `atcr report`) labels each reviewer `name (role)`, for example `greta (algorithmic correctness reviewer)`. A persona whose H1 has no em-dash role gets an empty role — an empty cell and `"role": ""`, not an error — so write the H1 in exactly this shape. See [findings-format.md → Reviewer labels](findings-format.md#reviewer-labels-reviewer_rolesjson).
 
 **Required template variables** (the renderer fails if a referenced variable is missing, and the fixture test fails if any `{{ }}` action is left unrendered): `{{.AgentName}}`, `{{.ScopeRule}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.PayloadMode}}`, `{{.Payload}}`. The `{{if .ToolsEnabled}}…{{end}}` block is optional but recommended — it is included only for tool-using agents.
 
