@@ -122,8 +122,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		// the resumed review's manifest, not this flag, so accepting it here would
 		// silently ignore it (Sprint 35.0, Story 2 — same fresh-only rationale as --all).
 		"dir": "--dir starts a fresh scoped baseline review; a resume continues the original review's mode",
+		// --config-dir (Epic 49.2) is read only by the fresh path; a resume
+		// loads the reviewed tree's config, so refuse rather than drop it.
+		configDirFlag: "it applies to a fresh review only — run `atcr review --config-dir` instead",
 	}
-	for _, f := range []string{"auto-fix", "auto-fix-base", "debate", "single-model", "exec", "all", "dir"} {
+	for _, f := range []string{"auto-fix", "auto-fix-base", "debate", "single-model", "exec", "all", "dir", configDirFlag} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; %s", f, resumeStandalone[f]))
 		}

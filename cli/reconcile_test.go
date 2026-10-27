@@ -872,7 +872,7 @@ func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
 	readers := map[string]func(*cobra.Command) (string, error){
 		"failOnThreshold": failOnThreshold,
 		"resolveGateAndRawConsensus": func(cmd *cobra.Command) (string, error) {
-			gate, _, err := resolveGateAndRawConsensus(cmd)
+			gate, _, err := resolveGateAndRawConsensus(cmd, ".")
 			return gate, err
 		},
 		"resolveGateAndConsensus": func(cmd *cobra.Command) (string, error) {

@@ -115,6 +115,11 @@ func (b *DockerBackend) Name() string { return "docker" }
 // since that value is a context deadline and never appears in the docker run argv.
 func (b *DockerBackend) Timeout() time.Duration { return b.cfg.Timeout }
 
+// Image reports the image runs execute in, so a caller that needs a toolchain
+// the default image lacks (the Playwright browser backend needs Node and the
+// browsers) can refuse the default before running anything.
+func (b *DockerBackend) Image() string { return b.cfg.Image }
+
 // writableSeedCopy is the fixed shell text that seeds the writable /work tmpfs
 // from the read-only /src snapshot. /work is memory-backed and its pages count
 // against the container's --memory cgroup, so the copy skips the heavy

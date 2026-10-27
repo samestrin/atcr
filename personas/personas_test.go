@@ -326,6 +326,24 @@ func TestThreatMapper_IsEmbeddedButNotAReviewer(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestThreatMapper_HumanNameAndLegacyKey pins the Epic 83.0 rename: the mapper
+// persona is nora (nora.md), and the old role-slug key survives only as the
+// LegacyThreatMapperName alias constant, which is no reviewer either.
+func TestThreatMapper_HumanNameAndLegacyKey(t *testing.T) {
+	require.Equal(t, "nora", ThreatMapperName)
+	require.Equal(t, "threat_mapper", LegacyThreatMapperName)
+
+	data, err := files.ReadFile("nora.md")
+	require.NoError(t, err)
+	s, err := ThreatMapper()
+	require.NoError(t, err)
+	require.Equal(t, string(data), s)
+
+	require.NotContains(t, Names(), LegacyThreatMapperName)
+	_, err = Get(LegacyThreatMapperName)
+	require.Error(t, err)
+}
+
 // TestThreatMapper_Renders checks the mapper template renders against the
 // shared PayloadContext and keeps the persona layout the reviewers use.
 func TestThreatMapper_Renders(t *testing.T) {

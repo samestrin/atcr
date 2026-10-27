@@ -141,6 +141,31 @@ The block has exactly three fields:
 > opt-in below, or [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
 > of unsandboxed host execution instead.
 
+### Loading the config from another directory (`--config-dir`)
+
+By default `atcr review` reads `.atcr/config.yaml` from the tree it reviews. When
+that tree is a pull request you do not trust, its author controls that file,
+including `auto_fix.validate_command` and `sandbox:`. `--config-dir <dir>` loads
+the project config from `<dir>` instead, while the current directory stays the
+tree under review:
+
+```bash
+cd /tmp/pr-head-worktree
+atcr review --auto-fix --config-dir /srv/checkouts/my-repo
+```
+
+Under `--config-dir`, `<dir>/.atcr/config.yaml` supplies the roster, `fail_on`,
+`consensus`, `auto_fix:`, `sandbox:` and the `quality_signal` opt-in, and
+`<dir>/.atcr/registry.yaml` and `<dir>/.atcr/personas/` replace the reviewed
+tree's; those three are never read from the reviewed tree. Two things still
+come from the reviewed tree: `.atcr/ignore.yaml` (finding suppressions applied at
+reconcile), and the one-time telemetry notice, which reads that tree's
+`telemetry` opt-out and writes its notice marker there. The usage ping itself
+follows `<dir>`'s `telemetry` setting. A value that is not an
+existing directory, a directory with no `.atcr/config.yaml`, and `--resume` with
+the flag are usage errors (exit 2) before any review work. The patch is still
+applied to, validated in and committed from the current directory.
+
 ## OS-level fallback (`sandbox.fallback: os-level`)
 
 `sandbox.fallback` is an **opt-in** config field that names a second backend to

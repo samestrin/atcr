@@ -22,7 +22,12 @@ var names = []string{"bruce", "greta", "kai", "mira", "dax", "sasha", "penny", "
 // ThreatMapperName is the embedded threat-model mapper persona (Epic 37.0). It
 // is not a reviewer: it stays out of names, so Names, Get, `atcr init` and the
 // review panel never see it, and only internal/threatmap loads it.
-const ThreatMapperName = "threat_mapper"
+const ThreatMapperName = "nora"
+
+// LegacyThreatMapperName is the mapper's role-slug key before Epic 83.0 gave it
+// a human first name. It is kept only as an alias so configs that name it keep
+// resolving; no embedded file carries it.
+const LegacyThreatMapperName = "threat_mapper"
 
 // expectedEmbeddedFiles returns the set of .md files that must be present in the
 // embedded persona directory: one per registered persona, the shared base, and
