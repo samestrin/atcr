@@ -96,6 +96,22 @@ type RunSpec struct {
 	// the run image must ship /bin/sh and a `tar` supporting --exclude (true for
 	// alpine/golang-family images, false for distroless/scratch).
 	Writable bool
+	// Collect lists files to read back out of the writable tree after the run,
+	// as paths relative to the tree root (/work under Docker). Ignored unless
+	// Writable. Entries that are empty, absolute, or escape the tree ("..") are
+	// dropped; at most 64 are honoured. Only regular files come back — a symlink,
+	// or a path through a symlinked directory, is skipped — each truncated to
+	// CollectMaxFileBytes and all together to CollectMaxTotalBytes.
+	//
+	// The writable tree dies with the run, so collection happens before it does:
+	// OSLevelBackend copies from the scratch tree before cleanup; DockerBackend
+	// (whose /work is a tmpfs in a --rm container) runs an in-container
+	// `tar | base64` pass after the command and parses it off the end of the
+	// output on the host. That pass needs `tar`, `head`, `base64` and `dirname`
+	// in the run image (true for alpine/busybox), and for Script mode it is an
+	// EXIT trap, so a script that installs its own EXIT trap disables it. No
+	// extra mount is added.
+	Collect []string
 }
 
 func (s RunSpec) validate() error {
@@ -135,6 +151,11 @@ type RunResult struct {
 	Output string
 	// TimedOut is true when the run exceeded its deadline and was killed.
 	TimedOut bool
+	// Files holds the contents of RunSpec.Collect, keyed by the cleaned relative
+	// path. It is a non-nil (possibly empty) map whenever Collect was non-empty
+	// — including when Writable is false, where it stays empty — and nil
+	// otherwise. Files that were missing, not regular, or over budget are absent.
+	Files map[string][]byte
 }
 
 // Backend is a pluggable sandbox executor. DockerBackend (docker.go) and

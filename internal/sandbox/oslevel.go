@@ -1408,6 +1408,13 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 		Command: cmdStr,
 		Output:  truncate(buf.String(), maxOut),
 	}
+	// Read the requested files out of the writable copy now: the process group is
+	// reaped (nothing can still write) and the deferred RemoveAll has not run.
+	if collect := collectPaths(spec); len(collect) > 0 {
+		res.Files = collectFromTree(filepath.Join(scratchDir, osLevelScratchWorkSubdir), collect)
+	} else if len(spec.Collect) > 0 {
+		res.Files = map[string][]byte{}
+	}
 
 	// A cancellation-class end (deadline exceeded OR parent cancellation) is
 	// folded into TimedOut so it is never misreported as a spurious non-zero
