@@ -39,6 +39,13 @@ type prFixture struct {
 
 func newPRFixture(t *testing.T) prFixture {
 	t.Helper()
+	return newPRFixtureWith(t, nil)
+}
+
+// newPRFixtureWith is newPRFixture with extra files, path to body, committed
+// on the PR head only.
+func newPRFixtureWith(t *testing.T, prFiles map[string]string) prFixture {
+	t.Helper()
 	root := t.TempDir()
 	upstream := filepath.Join(root, "upstream")
 	require.NoError(t, os.MkdirAll(upstream, 0o755))
@@ -50,6 +57,12 @@ func newPRFixture(t *testing.T) prFixture {
 	// The PR head lives only under refs/pull, as on GitHub: no branch names it.
 	fixtureGit(t, upstream, "checkout", "-q", "-b", "pr")
 	require.NoError(t, os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("pr head\n"), 0o644))
+	for name, body := range prFiles {
+		path := filepath.Join(upstream, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		fixtureGit(t, upstream, "add", name)
+	}
 	fixtureGit(t, upstream, "commit", "-q", "-am", "pr")
 	prSHA := fixtureGit(t, upstream, "rev-parse", "HEAD")
 	fixtureGit(t, upstream, "update-ref", "refs/pull/7/head", prSHA)
