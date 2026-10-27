@@ -832,33 +832,37 @@ func formatLanguages(langs []string) string {
 	return strings.Join(langs, ", ")
 }
 
-// renderPersonaList writes the Name/Version/Source/Language table.
+// renderPersonaList writes the Name/Role/Version/Source/Language table. A
+// persona whose prompt H1 names no role gets an empty ROLE cell.
 func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	rows := make([]string, len(metas))
 	for i, m := range metas {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s",
-			sanitizeCell(m.Name), sanitizeCell(m.Version), sanitizeCell(m.Source), sanitizeCell(formatLanguages(m.Language)))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+			sanitizeCell(m.Name), sanitizeCell(m.Role), sanitizeCell(m.Version), sanitizeCell(m.Source),
+			sanitizeCell(formatLanguages(m.Language)))
 	}
-	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
+	return writeTable(w, "NAME\tROLE\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
 
-// renderScoredList writes the Name/Version/Source/Language/Corroboration/Raised/
-// Cases table, rendering each persona's rate as "XX.X%" or "n/a".
+// renderScoredList writes the Name/Role/Version/Source/Language/Corroboration/
+// Raised/Cases table, rendering each persona's rate as "XX.X%" or "n/a".
 func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s",
-			sanitizeCell(s.Name), sanitizeCell(s.Version), sanitizeCell(s.Source),
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
+			sanitizeCell(s.Name), sanitizeCell(s.Role), sanitizeCell(s.Version), sanitizeCell(s.Source),
 			sanitizeCell(formatLanguages(s.Language)), formatCorroboration(s.Rate, s.Detail),
 			formatRaised(s.Detail), formatScoreDetail(s.Detail))
 	}
-	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tRAISED\tCASES", rows)
+	return writeTable(w, "NAME\tROLE\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION\tRAISED\tCASES", rows)
 }
 
 // personaJSON is one row of `personas list --json`: the table's columns, with
-// Language as a list ([] rather than the table's "-").
+// Language as a list ([] rather than the table's "-") and Role as "" when the
+// prompt H1 names none.
 type personaJSON struct {
 	Name     string   `json:"name"`
+	Role     string   `json:"role"`
 	Version  string   `json:"version"`
 	Source   string   `json:"source"`
 	Language []string `json:"language"`
@@ -869,7 +873,7 @@ func toPersonaJSON(m commpersonas.PersonaMeta) personaJSON {
 	if langs == nil {
 		langs = []string{}
 	}
-	return personaJSON{Name: m.Name, Version: m.Version, Source: m.Source, Language: langs}
+	return personaJSON{Name: m.Name, Role: m.Role, Version: m.Version, Source: m.Source, Language: langs}
 }
 
 // scoredPersonaJSON is one row of `personas list --scores --json`. Score is null

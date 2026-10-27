@@ -148,5 +148,15 @@
     "model": "qwen/qwen3-coder-plus",
     "tasks": ["redteam-review"],
     "tags": ["exploit", "bypass", "qwen", "open-model"]
+  },
+  {
+    "name": "felix",
+    "version": "1.0.0",
+    "description": "Claude Sonnet frontend QA reviewer authoring Playwright specs and reviewing their screenshots (rendered-page lens)",
+    "path": "felix.yaml",
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-5",
+    "tasks": ["frontend-qa-review"],
+    "tags": ["playwright", "screenshot", "claude", "frontier-vendor"]
   }
 ]

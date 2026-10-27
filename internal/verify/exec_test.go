@@ -378,6 +378,44 @@ func captureWarnings(t *testing.T) (context.Context, *bytes.Buffer) {
 	return log.NewContext(context.Background(), logger), buf
 }
 
+func TestOSLevelFallbackConfig_CarriesMemoryAndPidsAsOperatorSet(t *testing.T) {
+	pids := 64
+	cfg := osLevelFallbackConfig(&registry.SandboxConfig{Memory: "256m", PidsLimit: &pids})
+	assert.Equal(t, int64(256*1024*1024), cfg.MaxMemoryBytes)
+	assert.True(t, cfg.MaxMemoryBytesSet)
+	assert.Equal(t, 64, cfg.MaxProcs)
+	assert.True(t, cfg.MaxProcsSet)
+
+	def := osLevelFallbackConfig(&registry.SandboxConfig{})
+	assert.False(t, def.MaxMemoryBytesSet)
+	assert.False(t, def.MaxProcsSet)
+}
+
+func TestOSLevelFallbackConfig_MemoryGrammarMatchesValidation(t *testing.T) {
+	for in, want := range map[string]int64{
+		"1.5g":  1610612736,
+		"512mb": 512 * 1024 * 1024,
+		"1024":  1024,
+		"64kb":  64 * 1024,
+		"2b":    2,
+	} {
+		sc := &registry.SandboxConfig{Memory: in}
+		cfg := osLevelFallbackConfig(sc)
+		assert.Equal(t, want, cfg.MaxMemoryBytes, in)
+		assert.True(t, cfg.MaxMemoryBytesSet, in)
+	}
+}
+
+func TestOSLevelFallbackConfig_RejectsWhatValidationRejects(t *testing.T) {
+	for _, in := range []string{"1.5e3", "+5", "-5", "Inf", "NaN", "abc", "0", "0.5", ".5", "5.", "0x10", "1_0"} {
+		_, err := sandbox.ParseMemoryBytes(in)
+		assert.Error(t, err, in)
+		cfg := osLevelFallbackConfig(&registry.SandboxConfig{Memory: in})
+		assert.False(t, cfg.MaxMemoryBytesSet, in)
+		assert.Equal(t, sandbox.DefaultOSLevelConfig().MaxMemoryBytes, cfg.MaxMemoryBytes, in)
+	}
+}
+
 func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) {
 	stubOSLevel(t, nil)
 	ctx, buf := captureWarnings(t)
@@ -395,9 +433,10 @@ func TestFallbackWarning_FiresOnEngagementNamingWhatIsNotEnforced(t *testing.T) 
 
 	out := buf.String()
 	assert.Contains(t, out, "os-level sandbox fallback engaged")
-	assert.Contains(t, out, "sandbox.memory")
 	assert.Contains(t, out, "sandbox.cpus")
-	assert.Contains(t, out, "sandbox.pids_limit")
+	// Enforced caps (Preflight refuses them where the host cannot) are not listed.
+	assert.NotContains(t, out, "sandbox.memory")
+	assert.NotContains(t, out, "sandbox.pids_limit")
 	assert.Contains(t, out, "sandbox.image")
 	assert.Equal(t, 1, strings.Count(out, "os-level sandbox fallback engaged"),
 		"exactly one warning per engagement")

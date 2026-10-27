@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,6 +203,12 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// byte-identical to pre-overlay behavior — this is --exec's pinned guarantee.
 		args = append(args, "-v", spec.SnapshotDir+":/work:ro")
 	}
+	collect := collectPaths(spec)
+	if len(collect) > 0 {
+		// The path list travels as env data, never interpolated into the shell text.
+		// (ATCR_COLLECT_MARK is added by Run, which owns the per-run nonce.)
+		args = append(args, "-e", "ATCR_COLLECT="+strings.Join(collect, "\n"))
+	}
 	if spec.Script != "" {
 		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`. The
 		// Writable:true copy step is prepended to the stdin body by Run, never here —
@@ -213,7 +220,11 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		// seeds /work from /src, cds into it, then execs the command via positional
 		// "$@". spec.Command is appended as distinct argv elements after "--" so no
 		// token is interpolated into the -c script text (see writableSetupExec).
-		args = append(args, cfg.Image, "/bin/sh", "-c", writableSetupExec, "--")
+		setup := writableSetupExec
+		if len(collect) > 0 {
+			setup = collectCommandExec
+		}
+		args = append(args, cfg.Image, "/bin/sh", "-c", setup, "--")
 		args = append(args, spec.Command...)
 	} else {
 		args = append(args, cfg.Image)
@@ -244,6 +255,13 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	containerName := "atcr-sbx-" + randHex(8)
 	named := make([]string, 0, len(args)+2)
 	named = append(named, args[0], "--name", containerName) // args[0] == "run"
+	collect := collectPaths(spec)
+	collecting := len(collect) > 0
+	collectMark := ""
+	if collecting {
+		collectMark = "atcr-collect-" + randHex(8)
+		named = append(named, "-e", "ATCR_COLLECT_MARK="+collectMark)
+	}
 	args = append(named, args[1:]...)
 	// Bound concurrent container spawns; block until a slot frees or ctx is done.
 	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
@@ -284,7 +302,11 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 			// Writable overlay: seed /work from /src and cd into it before the user's
 			// script body runs. The copy step is a fixed literal prepended to the stdin
 			// body (still data, not argv), so the injection-safety property is preserved.
-			script = writableSetupPrefix + script
+			if collecting {
+				script = collectScriptPrefix + script
+			} else {
+				script = writableSetupPrefix + script
+			}
 		}
 		cmd.Stdin = strings.NewReader(script)
 	}
@@ -293,13 +315,33 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	// before truncation. Allow a small headroom for rune-boundary backup.
 	maxBuf := int64(b.cfg.MaxOutputBytes) + 4096
 	lw := &limitedWriter{w: &buf, n: maxBuf}
-	cmd.Stdout = lw
-	cmd.Stderr = lw
+	// One writer value for both streams keeps os/exec's single-pipe ordering. When
+	// collecting, it splits the framed files off the end of the stream into their
+	// own bounded buffer so they are stripped from Output and never eat its budget.
+	var out io.Writer = lw
+	var fw *frameWriter
+	if collecting {
+		fw = newFrameWriter(lw, "\n"+collectMark+":begin", collectFrameCap)
+		out = fw
+	}
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	runErr := cmd.Run()
+	if fw != nil {
+		fw.finish()
+	}
 	res := RunResult{
 		Command: cmdStr,
 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
+	}
+	if len(spec.Collect) > 0 {
+		res.Files = map[string][]byte{}
+	}
+	if collecting {
+		if runCtx.Err() == nil {
+			res.Files = parseCollectFrame(fw.frame.Bytes(), collectMark+":end", collect)
+		}
 	}
 	logger.Info("sandbox exec",
 		"backend", b.Name(),
@@ -511,6 +553,42 @@ func parseDockerMemory(s string) (int64, error) {
 		return 0, fmt.Errorf("invalid memory value %q: %w", s, err)
 	}
 	return n * mult, nil
+}
+
+// ParseMemoryBytes parses a sandbox.memory value into bytes, accepting the
+// grammar registry.validateMemory accepts: a positive plain decimal
+// (digits, optional fractional part, at least one byte) with an optional k/m/g unit, optionally followed by "b".
+// An empty string is 0 bytes. It exists for backends other than docker, whose
+// own parseDockerMemory is narrower than the validator.
+// memoryDecimalRegexp mirrors registry's plainDecimalRegexp: no sign, exponent,
+// hex, Inf/NaN, or leading/trailing dot.
+var memoryDecimalRegexp = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?$`)
+
+func ParseMemoryBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	num := s
+	if c := num[len(num)-1]; c == 'b' || c == 'B' {
+		num = num[:len(num)-1]
+	}
+	mult := float64(1)
+	if num != "" {
+		switch num[len(num)-1] {
+		case 'k', 'K':
+			mult, num = 1024, num[:len(num)-1]
+		case 'm', 'M':
+			mult, num = 1024*1024, num[:len(num)-1]
+		case 'g', 'G':
+			mult, num = 1024*1024*1024, num[:len(num)-1]
+		}
+	}
+	v, err := strconv.ParseFloat(num, 64)
+	if err != nil || !memoryDecimalRegexp.MatchString(num) || v*mult < 1 {
+		return 0, fmt.Errorf("invalid memory value %q", s)
+	}
+	return int64(v * mult), nil
 }
 
 // randHex returns n random bytes hex-encoded, used to make a unique container
