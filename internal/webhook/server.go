@@ -268,11 +268,15 @@ func (s *Server) dispatchLinear(ev linear.Event, delivery string, now time.Time)
 	if !ok || job.Run == nil {
 		return
 	}
-	if !s.seen.firstSeen("linear:"+ev.Data.ID+":"+ev.Data.State.ID, now) {
+	key := "linear:" + ev.Data.ID + ":" + ev.Data.State.ID
+	if !s.seen.firstSeen(key, now) {
 		s.opts.Logf("webhook: linear delivery %q for issue %s already handled for this state; ignored", delivery, ev.Data.ID)
 		return
 	}
+	// A job that never reviewed must not burn the key for the window.
+	job.Unrun = func() { s.seen.forget(key) }
 	if err := s.jobs.Start(job); err != nil {
+		s.seen.forget(key)
 		s.opts.Logf("webhook: linear delivery %q for issue %s not started: %v", delivery, ev.Data.ID, err)
 	}
 }
