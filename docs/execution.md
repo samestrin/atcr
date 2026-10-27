@@ -104,9 +104,17 @@ delivers a genuinely narrower set:
   example in `~/bin` or an app bundle, is refused even where it can be read, and
   loading code libraries is limited to the toolchain prefixes.
 - **Wall-clock timeout and a concurrency cap**, as with the container backend.
+- **Memory and PID caps (Linux).** `sandbox.memory` and `sandbox.pids_limit`
+  (default 512 MiB and 256 processes) are enforced by a per-run cgroup v2 group
+  (`memory.max`, `pids.max`). Where the host delegates no writable cgroup, memory
+  falls back to a per-process `RLIMIT_DATA` limit and the PID cap is not
+  enforced: a `sandbox.pids_limit` you set makes preflight refuse the run, and
+  the default only logs a warning. macOS enforces neither cap, and preflight
+  refuses either key if you set it.
 
 It does **not** provide: a read-only root filesystem, `--cap-drop ALL`,
-`--security-opt no-new-privileges`, a non-root user, memory/CPU/PID caps, or a
+`--security-opt no-new-privileges`, a non-root user, a CPU cap, memory or PID
+caps on macOS, or a
 seccomp syscall filter (Docker applies its default seccomp profile to every
 container; the `bwrap` command line carries no `--seccomp` filter, and macOS
 `sandbox-exec` has no equivalent). On
