@@ -1,0 +1,7 @@
+name: felix
+version: 1.0.0
+description: Claude Sonnet frontend QA reviewer authoring Playwright specs and reviewing their screenshots (rendered-page lens)
+provider: openrouter
+model: anthropic/claude-sonnet-5
+persona: felix
+role: reviewer

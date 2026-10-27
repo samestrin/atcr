@@ -1,0 +1,21 @@
+diff --git a/web/src/styles/checkout.css b/web/src/styles/checkout.css
+index 1111111..2222222 100644
+--- a/web/src/styles/checkout.css
++++ b/web/src/styles/checkout.css
+@@ -4,8 +4,14 @@ .checkout-bar {
+   display: flex;
+   justify-content: space-between;
+-  padding: 12px 16px;
++  position: fixed;
++  bottom: 0;
++  height: 0;
++  overflow: hidden;
++  /* a rendered-page defect: the bar collapses to zero height, so the Pay now
++     button is missing from the screenshot; the diff alone cannot show it, so
++     the visual finding is filed out-of-scope against the generated spec */
+ }
+ .checkout-bar .total {
+-  color: #222;
++  color: #999; /* grey on #aaa fails contrast */
+   background: #aaa;
+ }
