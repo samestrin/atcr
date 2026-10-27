@@ -1,0 +1,19 @@
+NAME            ROLE                                      VERSION   SOURCE     LANGUAGE  CORROBORATION   RAISED  CASES
+sasha           security and injection reviewer           built-in  built-in   -         72.0%           25      20 counted · 5 excluded (outcome-ineligible)
+registryonly                                              -         registry   -         50.0%           12      12 counted · 0 excluded · provisional (under the 20-case trust floor)
+bruce           generalist correctness reviewer           built-in  built-in   -         n/a (raised 0)  0       3 counted · 0 excluded · provisional (under the 20-case trust floor)
+celeste         dependency and configuration reviewer     -         community  -         n/a             n/a     n/a
+dax             test coverage and error-path reviewer     built-in  built-in   -         n/a             n/a     n/a
+greta           algorithmic correctness reviewer          built-in  built-in   -         n/a             n/a     n/a
+ingrid          idiomatic-style and conventions reviewer  built-in  built-in   -         n/a             n/a     n/a
+kai             architecture and design reviewer          built-in  built-in   -         n/a             n/a     n/a
+mira            production feasibility reviewer           built-in  built-in   -         n/a             n/a     n/a
+otto            style, readability, and idiom reviewer    built-in  built-in   -         n/a             n/a     n/a
+penny           performance and resource reviewer         built-in  built-in   -         n/a             n/a     n/a
+security/owasp                                            1.0.0     community  go        n/a             n/a     n/a
+
+CORROBORATION, RAISED and CASES cover all run history with no run floor.
+Reconcile uses only the last 180 days with a 20-run floor.
+In use by reconcile: sasha
+Reconcile scores a persona only on the model it runs on in that review, so a persona that
+switched models is neutral there until it has 20 runs on the new model.

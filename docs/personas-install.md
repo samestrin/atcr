@@ -73,29 +73,29 @@ Lists installed personas — both built-in and community — as a table:
 
 ```bash
 atcr personas list
-# NAME             VERSION    SOURCE      LANGUAGE
-# bruce            built-in   built-in    -
-# sasha            built-in   built-in    -
-# security/owasp   1.2.0      community   -
-# language/go-fmt  0.3.0      community   go
+# NAME             ROLE                             VERSION    SOURCE      LANGUAGE
+# bruce            generalist correctness reviewer  built-in   built-in    -
+# sasha            security and injection reviewer  built-in   built-in    -
+# security/owasp   OWASP Top-10 reviewer            1.2.0      community   -
+# language/go-fmt                                   0.3.0      community   go
 ```
 
-Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`; with `--scores`, also `registry`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
+Columns: `NAME`, `ROLE` (the text after the em dash in the persona prompt's H1, `# {{.AgentName}} — <role>`; built-in, community and project personas alike, and an empty cell when the prompt has no H1, the H1 has no em dash, or the persona ships no prompt), `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`; with `--scores`, also `registry`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
 
 **With corroboration scores.** Add `--scores` to append a `CORROBORATION` column, a `RAISED` column and a `CASES` column:
 
 ```bash
 atcr personas list --scores
-# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION   RAISED  CASES
-# security/owasp   1.2.0      community   -         72.4%           58      31 counted · 8 excluded (outcome-ineligible)
-# greta            built-in   built-in    -         55.0%           20      12 counted (3 unlabelled) · 0 excluded · provisional (under the 20-case trust floor)
-# mira             built-in   built-in    -         n/a (raised 0)  0       24 counted · 0 excluded
-# sasha            built-in   built-in    -         n/a             n/a     n/a
+# NAME             ROLE                              VERSION    SOURCE      LANGUAGE  CORROBORATION   RAISED  CASES
+# security/owasp   OWASP Top-10 reviewer             1.2.0      community   -         72.4%           58      31 counted · 8 excluded (outcome-ineligible)
+# greta            algorithmic correctness reviewer  built-in   built-in    -         55.0%           20      12 counted (3 unlabelled) · 0 excluded · provisional (under the 20-case trust floor)
+# mira             production feasibility reviewer   built-in   built-in    -         n/a (raised 0)  0       24 counted · 0 excluded
+# sasha            security and injection reviewer   built-in   built-in    -         n/a             n/a     n/a
 ```
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona.
 
-A lens with scorecard history but no persona file — the registry runs more lenses than ship persona files — appears as its own row with SOURCE `registry` and VERSION `-`. It is not an installable persona; the row exists because `--scores` is the audit surface for lens authority, and a measured lens it cannot show is the one omission that surface cannot afford.
+A lens with scorecard history but no persona file — the registry runs more lenses than ship persona files — appears as its own row with SOURCE `registry`, VERSION `-` and an empty ROLE. It is not an installable persona; the row exists because `--scores` is the audit surface for lens authority, and a measured lens it cannot show is the one omission that surface cannot afford.
 
 `RAISED` is the rate's denominator: the findings the persona raised across its counted cases. A persona that was measured but raised nothing has no rate to report, so its `CORROBORATION` cell reads `n/a (raised 0)` rather than `0.0%`. A `0.0%` always means the persona raised findings and none were corroborated.
 
@@ -118,7 +118,7 @@ No scorecard data found at <path>
 
 When the store holds reviewer records but every one was excluded from scoring (for example, all of them were written before the outcome field existed), the footer says that instead, with the record count, so a full store is never reported as an empty one. New reconcile runs are scored.
 
-**As JSON.** Add `--json` (with or without `--scores`) to print the same rows as a JSON array, one object per table row, with `name`, `version`, `source` and `language` (a list, `[]` when unscoped). With `--scores`, each object also has `score` and `in_use_by_reconcile`. `score` is `null` where the table shows `n/a`; otherwise it holds `corroboration` (a fraction from 0 to 1, or `null` for a persona that raised nothing, the table's `n/a (raised 0)`), `raised`, `counted`, `excluded` and `reasons` (the count behind each reason, counted and excluded ones alike). `in_use_by_reconcile` is `true` for the personas the footer's `In use by reconcile` list names. The footers are not printed with `--json`, so stdout is only the array; warnings still go to stderr.
+**As JSON.** Add `--json` (with or without `--scores`) to print the same rows as a JSON array, one object per table row, with `name`, `role` (`""` when the prompt names no role), `version`, `source` and `language` (a list, `[]` when unscoped). With `--scores`, each object also has `score` and `in_use_by_reconcile`. `score` is `null` where the table shows `n/a`; otherwise it holds `corroboration` (a fraction from 0 to 1, or `null` for a persona that raised nothing, the table's `n/a (raised 0)`), `raised`, `counted`, `excluded` and `reasons` (the count behind each reason, counted and excluded ones alike). `in_use_by_reconcile` is `true` for the personas the footer's `In use by reconcile` list names. The footers are not printed with `--json`, so stdout is only the array; warnings still go to stderr.
 
 **Pair tallies.** Add `--pairs` instead of `--scores` to render the pair surface: one row per persona pair that clears the pair floors, with columns `PAIR`, `CASES`, `RATE` (the share of the pair's shared findings the two split on) and `MARKER` (`DROP-CANDIDATE` for a sufficient pair whose rate sits at or below the provisional threshold). A pair whose member no longer resolves against the roster is omitted without error; when no pair clears the floors the command prints `No persona pair clears the floors in the scorecard store at <path>`. `--pairs` and `--scores` are mutually exclusive, and `--json` prints the rows as their own array (`key`, `a`, `b`, `cases`, `agreed`, `disagreed`, `disagreement_rate`, `drop_candidate`). See [scorecard.md](scorecard.md#atcr-personas-list---pairs) for the full contract.
 
