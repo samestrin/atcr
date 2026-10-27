@@ -166,7 +166,8 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("pr", 0, "pull-request number to stamp on this run's audit record; falls back to GITHUB_REF (refs/pull/<n>/...) when unset")
 	cmd.Flags().Bool("axi", false, "emit a token-dense, ANSI/Markdown-free TOON payload on stdout for agent consumption; diagnostics and progress stay on stderr (Agent eXperience Interface)")
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
-	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1)")
+	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1); with felix in the roster, felix writes e2e/felix-<review id>.spec.ts, the browser runs it in the sandbox, and the visual_review.agent reviews the screenshots")
+	cmd.Flags().Bool(allowCloudVisionFlag, false, "with --preview-url: let the visual_review.agent sit on a non-loopback host; the screenshot pixels then leave this machine, and secret_guard does not scan pixels")
 	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr/config.yaml, registry.yaml and personas are not read; its .atcr/ignore.yaml and the one-time telemetry notice still are")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
@@ -703,6 +704,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	if err != nil {
 		return err
 	}
+	visual, err := visualStageFromFlags(ctx, cmd, cfg, baseline)
+	if err != nil {
+		return err
+	}
 
 	now := time.Now()
 	req := fanout.ReviewRequest{
@@ -736,6 +741,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		Fresh: reviewNoFileCacheRequested(cmd),
 		// --threat-map (Epic 37.0): nil unless the flag is set.
 		ThreatMapper: threatMapper,
+		// --preview-url (Epic 36.0.2): nil unless felix is in the roster and the flag is set.
+		Visual: visual,
 	}
 
 	// Run the two review phases separately so build-phase failures (persona

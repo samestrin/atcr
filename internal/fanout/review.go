@@ -160,6 +160,13 @@ type ReviewRequest struct {
 	// ErrThreatMapNeedsRange. nil (the default, and every caller that does not
 	// opt in, such as the MCP handler) leaves the payload unscoped.
 	ThreatMapper ThreatMapper
+	// Visual, when non-nil and felix is in the roster, runs the visual review
+	// (Epic 36.0.2) after the reviewers: call 1, the browser, then call 2. The
+	// CLI builds it from --preview-url, like ThreatMapper. Felix never gets a
+	// reviewer slot; with felix in the roster and Visual nil the stage is
+	// skipped with a warning. Git-range reviews only: the baseline and
+	// --diff-file preparations reject it with ErrVisualNeedsRange.
+	Visual VisualReviewer
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -303,6 +310,10 @@ type PreparedReview struct {
 	// (Epic 37.0), stamped onto every agent's status.json as threat_map_dropped.
 	// nil when the run did not map or the mapper failed.
 	threatMapDropped []string
+	// visual is the visual review stage and visualInput its input (Epic
+	// 36.0.2), both zero when the stage does not run.
+	visual      VisualReviewer
+	visualInput VisualStageInput
 }
 
 // baselineWriteback is the write-back state captured while a baseline payload is
@@ -430,7 +441,7 @@ func (p *PreparedReview) AgentCount() int { return len(p.Slots) }
 // reachable by non-CLI callers (the MCP server, the benchmark harness), and the
 // CLI emits its own flag-named usage error earlier at flag-parse time.
 func validateReviewRequest(cfg *ReviewConfig, req ReviewRequest) error {
-	if len(rosterNames(cfg.Project)) == 0 {
+	if len(reviewerRoster(cfg.Project)) == 0 && (req.Visual == nil || !visualInRoster(cfg.Project)) {
 		return ErrEmptyRoster
 	}
 	if req.OutputDir != "" && req.IDOverride != "" {
@@ -703,7 +714,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 		// to earlier versions', and "no range" stays distinct from "range read,
 		// nothing retrieved".
 		Prefetch:  pfStatus,
-		Roster:    rosterNames(cfg.Project),
+		Roster:    reviewerRoster(cfg.Project),
 		StartedAt: req.StartedAt,
 		Partial:   false, // finalized by ExecuteReview once outcomes are known
 		// Persist --no-ignore so a resume recovers the filtering mode from disk
@@ -731,7 +742,11 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// and capped at the resolved cache_max_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache, threatMapDropped: threatMapDropped(threatMap)}, nil
+	visual, visualInput, err := prepareVisual(ctx, cfg, req, payloads, changed)
+	if err != nil {
+		return nil, err
+	}
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, Changed: changed, GroundingDisabledReason: groundingDisabledReason, manifest: m, cache: revCache, cacheNoRead: req.NoCache, threatMapDropped: threatMapDropped(threatMap), visual: visual, visualInput: visualInput}, nil
 }
 
 // payloadsCarryPrefetchContext reports whether any mode payload's pre-budget
@@ -962,6 +977,9 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if req.ThreatMapper != nil {
 		return nil, ErrThreatMapNeedsRange
 	}
+	if req.Visual != nil {
+		return nil, ErrVisualNeedsRange
+	}
 	// Load the incremental file-hash skip index (Sprint 35.0 Story 4/5) and pass it,
 	// with the --fresh bypass, into the candidate build. Load never errors/returns nil
 	// (a missing/corrupt index degrades to a full scan), so a first-ever run behaves
@@ -1143,6 +1161,9 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	}
 	if req.ThreatMapper != nil {
 		return nil, ErrThreatMapNeedsRange
+	}
+	if req.Visual != nil {
+		return nil, ErrVisualNeedsRange
 	}
 	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
 	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
@@ -1559,6 +1580,11 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
 	results, stage := runEngine(ctx, completer, p, poolDir)
+	// The visual review (Epic 36.0.2) runs after the reviewers and is written
+	// with them, as felix.
+	if p.visual != nil {
+		results = append(results, runVisualStage(ctx, p))
+	}
 
 	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
 	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
@@ -1611,7 +1637,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum, ChunkRecordErr: p.chunks.writeErr()}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
 	// returned regardless so the caller knows where to look.
-	if _, outErr := Outcome(results); outErr != nil {
+	if _, outErr := Outcome(reviewerResults(results)); outErr != nil {
 		recordReviewOutcome(interrupted, true)
 		return res, outErr
 	}
@@ -3201,12 +3227,20 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 		return nil
 	}
 
+	// felix is the visual review's persona (Epic 36.0.2): it runs as its own
+	// stage after the reviewers, never as a diff reviewer.
 	for _, name := range cfg.Project.Agents {
+		if name == VisualPersonaName {
+			continue
+		}
 		if err := add(name, false); err != nil {
 			return nil, nil, err
 		}
 	}
 	for _, name := range cfg.Project.SerialAgents {
+		if name == VisualPersonaName {
+			continue
+		}
 		if err := add(name, true); err != nil {
 			return nil, nil, err
 		}
