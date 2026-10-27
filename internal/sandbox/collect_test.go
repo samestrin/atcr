@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -231,9 +232,89 @@ func TestCollectFrameShell_RealShell(t *testing.T) {
 	assert.Equal(t, map[string][]byte{"out/shot.png": []byte("PNG")}, files)
 }
 
-func TestOSLevelRun_CollectWiring(t *testing.T) {
-	// collectPaths gates on Writable; the OS-level backend copies from the scratch
-	// work subdir, which collectFromTree covers above.
+func TestCollectPaths_GatedOnWritable(t *testing.T) {
 	assert.Nil(t, collectPaths(RunSpec{Collect: []string{"a"}}))
 	assert.Equal(t, []string{"a"}, collectPaths(RunSpec{Writable: true, Collect: []string{"a"}}))
+}
+
+func TestNormalizeCollect_CapsEntryCount(t *testing.T) {
+	var in []string
+	for i := 0; i < collectMaxPaths+20; i++ {
+		in = append(in, fmt.Sprintf("f%d", i))
+	}
+	got := normalizeCollect(in)
+	require.Len(t, got, collectMaxPaths)
+	assert.Equal(t, "f0", got[0])
+}
+
+func TestCollectFromTree_TotalCapTruncatesMidFile(t *testing.T) {
+	root := t.TempDir()
+	var names []string
+	sizes := []int{3.5 * 1024 * 1024, 3.5 * 1024 * 1024, 3.5 * 1024 * 1024, 3.5 * 1024 * 1024, CollectMaxFileBytes, 10}
+	for i, sz := range sizes {
+		n := fmt.Sprintf("f%d", i)
+		names = append(names, n)
+		require.NoError(t, os.WriteFile(filepath.Join(root, n), bytes.Repeat([]byte("x"), sz), 0o600))
+	}
+	files := collectFromTree(root, names)
+	assert.Len(t, files["f4"], CollectMaxTotalBytes-4*int(3.5*1024*1024), "file crossing the total cap is truncated to the remainder")
+	assert.NotContains(t, files, "f5", "files after the budget is spent are dropped")
+}
+
+func TestCollectFromTree_MissingRootIsEmpty(t *testing.T) {
+	assert.Empty(t, collectFromTree(filepath.Join(t.TempDir(), "nope"), []string{"a"}))
+}
+
+func TestDockerBackendRun_ScriptModeCollects(t *testing.T) {
+	frame := tarFrame(t, []tar.Header{{Name: "./o.txt", Typeflag: tar.TypeReg, Mode: 0o600}}, []string{"DATA"})
+	frame = bytes.TrimSuffix(frame, []byte("\nM:end\n"))
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("FRAME_FILE", filepath.Join(t.TempDir(), "frame"))
+	require.NoError(t, os.WriteFile(os.Getenv("FRAME_FILE"), frame, 0o600))
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = writeFakeDocker(t, `if [ "$1" = "run" ]; then cat > "$STDIN_FILE"; `+
+		strings.TrimPrefix(fakeDockerFrameBody(), `if [ "$1" = "run" ]; then`))
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Script: "echo hi\nexit 3\n", SnapshotDir: t.TempDir(), Writable: true, Collect: []string{"o.txt"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "program output", res.Output)
+	assert.Equal(t, map[string][]byte{"o.txt": []byte("DATA")}, res.Files)
+
+	stdin, err := os.ReadFile(stdinFile)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(stdin), collectScriptPrefix), "script gets the framing prefix")
+	assert.True(t, strings.HasSuffix(string(stdin), "echo hi\nexit 3\n"), "script body follows verbatim")
+}
+
+func TestOSLevelBackendRun_CollectsFromWritableCopy(t *testing.T) {
+	snapshot := t.TempDir()
+	cfg := DefaultOSLevelConfig()
+	// The shim writes into the writable copy (HOME's sibling `work`, as in the
+	// seed test above), including a symlink that must not be collected.
+	cfg.ToolPath = writeFakeOSLevel(t, `WORK="$(dirname "$HOME")/work"
+mkdir -p "$WORK/out"
+printf PNG > "$WORK/out/shot.png"
+ln -s /etc/hostname "$WORK/link"
+exit 0`)
+	cfg.MaxConcurrent = 1
+	b := withContainment(t, NewOSLevelBackend(cfg))
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command: []string{"true"}, SnapshotDir: snapshot, Writable: true,
+		Collect: []string{"out/shot.png", "link", "../x"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]byte{"out/shot.png": []byte("PNG")}, res.Files)
+
+	// Not writable: collection is ignored, Files is an empty non-nil map.
+	res, err = b.Run(context.Background(), RunSpec{
+		Command: []string{"true"}, SnapshotDir: snapshot, Collect: []string{"out/shot.png"},
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, res.Files)
+	assert.Empty(t, res.Files)
 }
