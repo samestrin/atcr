@@ -31,6 +31,9 @@ type Job struct {
 	// Run does the work. Its context is cancelled at the per-job timeout and
 	// on shutdown; Run must return promptly once it is.
 	Run func(ctx context.Context) error
+	// Unrun, when set, is called once if the job ends without having called
+	// Run: Resolve failed, the resolved PR was busy, or Start refused it.
+	Unrun func()
 }
 
 // jobs runs Jobs in their own goroutines, each under a timeout, at most one
@@ -86,6 +89,12 @@ func (j *jobs) run(job Job) {
 			j.logf("webhook: job %s panicked: %v", job.Key, r)
 		}
 	}()
+	ran := false
+	defer func() {
+		if !ran && job.Unrun != nil {
+			job.Unrun()
+		}
+	}()
 	if job.Resolve != nil {
 		key, err := job.Resolve(ctx)
 		if err != nil {
@@ -99,6 +108,7 @@ func (j *jobs) run(job Job) {
 		}
 		defer release()
 	}
+	ran = true
 	err := job.Run(ctx)
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -154,6 +164,13 @@ type dedupe struct {
 
 func newDedupe(window time.Duration) *dedupe {
 	return &dedupe{window: window, seen: map[string]time.Time{}}
+}
+
+// forget drops id so the next delivery of it is new again.
+func (d *dedupe) forget(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.seen, id)
 }
 
 // firstSeen records id at now and reports whether it was not already seen
