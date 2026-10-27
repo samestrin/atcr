@@ -71,16 +71,17 @@ func TestEmit_NoRolesReportMDUnchanged(t *testing.T) {
 	assert.Contains(t, a.String(), "reviewers: nora\n")
 }
 
-// RunReconcile threads the roles it is given into the report.md it writes,
-// and the Result it returns carries them for a later RenderMarkdown.
-func TestRunReconcile_WithReviewerRolesLabelsReportMD(t *testing.T) {
+// RunReconcile reads the reviewer_roles.json sidecar the review wrote into
+// the review dir, labels report.md with it, and returns it on the Result.
+func TestRunReconcile_ReadsReviewerRolesSidecar(t *testing.T) {
 	root, reviewDir := buildPostMortemReplay(t)
 	roles := map[string]string{"greta": "algorithmic correctness reviewer"}
+	require.NoError(t, WriteReviewerRoles(reviewDir, roles))
 
 	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
 		Root:         root,
 		ReconciledAt: time.Unix(1700000000, 0).UTC(),
-	}, WithReviewerRoles(roles))
+	})
 	require.NoError(t, err)
 	assert.Equal(t, roles, res.ReviewerRoles)
 
@@ -88,4 +89,43 @@ func TestRunReconcile_WithReviewerRolesLabelsReportMD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(md), "greta (algorithmic correctness reviewer)")
 	assert.NotContains(t, string(md), "mira (", "a reviewer missing from the map stays bare")
+}
+
+func TestReviewerRolesSidecar_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	roles := map[string]string{"nora": "threat-model mapper", "greta": "algorithmic correctness reviewer"}
+	require.NoError(t, WriteReviewerRoles(dir, roles))
+	assert.Equal(t, roles, ReadReviewerRoles(dir))
+}
+
+// No roles writes no file, so a review dir with no labelled persona is the
+// same set of files as before.
+func TestWriteReviewerRoles_EmptyWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, WriteReviewerRoles(dir, nil))
+	require.NoError(t, WriteReviewerRoles(dir, map[string]string{}))
+	_, err := os.Lstat(filepath.Join(dir, ReviewerRolesJSON))
+	assert.True(t, os.IsNotExist(err))
+}
+
+// The roles are display metadata: a sidecar that is missing, malformed, too
+// big, or not a regular file yields no roles, never an error, and the report
+// keeps bare names.
+func TestReadReviewerRoles_TolerantRead(t *testing.T) {
+	assert.Nil(t, ReadReviewerRoles(t.TempDir()), "missing")
+
+	bad := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bad, ReviewerRolesJSON), []byte("{not json"), 0o644))
+	assert.Nil(t, ReadReviewerRoles(bad), "malformed")
+
+	big := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(big, ReviewerRolesJSON),
+		[]byte(`{"roles":{"a":"`+strings.Repeat("x", maxReviewerRolesBytes)+`"}}`), 0o644))
+	assert.Nil(t, ReadReviewerRoles(big), "oversized")
+
+	link := t.TempDir()
+	target := filepath.Join(t.TempDir(), "elsewhere.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"roles":{"a":"b"}}`), 0o644))
+	require.NoError(t, os.Symlink(target, filepath.Join(link, ReviewerRolesJSON)))
+	assert.Nil(t, ReadReviewerRoles(link), "symlink")
 }

@@ -257,13 +257,22 @@ func RenderReviewSummaryAXI(w io.Writer, s ReviewSummaryAXI) error {
 // maxTextLen; file paths render verbatim inside backtick code spans (no escape,
 // no truncation — preserving unicode paths byte-for-byte, AC 01-06 Edge Case 3).
 func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
-	return renderMarkdownFull(w, findings, df, ContestedReport{})
+	return renderMarkdownFull(w, findings, df, ContestedReport{}, nil)
+}
+
+// RenderMarkdownWithRoles is RenderMarkdownWithContested with each reviewer on
+// a findings line labelled `name (role)` from roles (reconcile.ReviewerLabels),
+// a reviewer with no role keeping its bare name (Epic 83.0 T5). Nil roles is
+// the same report as RenderMarkdownWithContested. Only this markdown view
+// labels reviewers; the json, sarif, axi and pipe formats stay bare-name.
+func RenderMarkdownWithRoles(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile, cr ContestedReport, roles map[string]string) error {
+	return renderMarkdownFull(w, findings, df, cr, roles)
 }
 
 // renderMarkdownFull is the markdown renderer with the optional contested-findings
 // section (Epic 6.0). An empty ContestedReport writes no contested section, so the
 // output is byte-identical to the pre-6.0 report for every existing caller.
-func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile, cr ContestedReport) error {
+func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile, cr ContestedReport, roles map[string]string) error {
 	var b bytes.Buffer
 	b.WriteString("# atcr Review Report\n\n")
 	verified := anyVerification(findings)
@@ -329,7 +338,7 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 			lastSev = f.Severity
 		}
 		fmt.Fprintf(&b, "- %s — confidence %s, reviewers: %s\n",
-			codeSpan(f.File, f.Line), esc(f.Confidence), esc(joinReviewers(f.Reviewers)))
+			codeSpan(f.File, f.Line), esc(f.Confidence), esc(joinReviewers(reconcile.ReviewerLabels(f.Reviewers, roles))))
 		writePathWarning(&b, f)
 		if f.Disagreement != "" {
 			fmt.Fprintf(&b, "  - Severity disagreement: %s\n", esc(f.Disagreement))
