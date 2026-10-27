@@ -95,7 +95,7 @@ func countLines(s string) int {
 // The ledger is uncounted in the byte budget on the ORDINARY shed
 // (internal/payload's unexported newClaimLedgerEntry, in claims.go, sets
 // Size 0) — it is engine-rendered framing, not reviewable diff content. The
-// fallback re-fit is the exception: refitFallbackPayload (review.go:4477)
+// fallback re-fit is the exception: refitFallbackPayload (review.go:4511)
 // re-sizes every entry to len(Body), and a ledger LARGER THAN that budget then
 // sheds like any other entry; at or below it the shedExempt bound still protects it.
 func diffPrefixLines(chunk string) int {
@@ -777,7 +777,7 @@ func promoteRePackedDegradation(out *Result, g []Result) {
 		// which keep a lone reserve on a zero budget because it names the cause:
 		// here no single agent's reserve can be named as the cause. The rule is
 		// stated once, at the tool-loop fallback in review.go, directly above
-		// `fbReasoningReserve` (internal/fanout/review.go:3996).
+		// `fbReasoningReserve` (internal/fanout/review.go:4030).
 		out.ReasoningReserveTokens = 0
 	}
 	if len(dropped) > 0 {
