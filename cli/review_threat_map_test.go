@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/threatmap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,7 +72,7 @@ func threatMapProvider(t *testing.T, mapperReply string) (*httptest.Server, func
 }
 
 // threatMapConfig writes a registry with reviewers greta and kai plus the
-// mapper agent scout on the embedded threat_mapper persona, and a
+// mapper agent scout on the embedded nora persona, and a
 // project config whose roster is the two reviewers. projectExtra is appended
 // to .atcr/config.yaml.
 func threatMapConfig(t *testing.T, srvURL, projectExtra string) {
@@ -83,7 +84,7 @@ func threatMapConfig(t *testing.T, srvURL, projectExtra string) {
 	reg := "providers:\n  p:\n    api_key_env: " + testReviewKeyEnv + "\n    base_url: " + srvURL + "\nagents:\n" +
 		"  greta:\n    provider: p\n    model: m-greta\n    persona: greta\n" +
 		"  kai:\n    provider: p\n    model: m-kai\n    persona: kai\n" +
-		"  scout:\n    provider: p\n    model: m-scout\n    persona: threat_mapper\n"
+		"  scout:\n    provider: p\n    model: m-scout\n    persona: nora\n"
 	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(reg), 0o644))
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [greta, kai]\n"+projectExtra), 0o644))
@@ -135,6 +136,33 @@ func TestReviewCmd_ThreatMap_ScopesEveryReviewerToTheKeptFile(t *testing.T) {
 		st := agentStatus(t, dir, agent)
 		assert.Equal(t, []any{"README.md", "style.css"}, st["threat_map_dropped"], agent)
 		assert.Equal(t, []any{}, st["files_dropped"], agent)
+	}
+}
+
+// The deprecated persona key still maps, with the warning exactly once; the new
+// key never warns.
+func TestReviewCmd_ThreatMap_LegacyPersonaKeyWarnsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		persona string
+		want    int
+	}{{"threat_mapper", 1}, {"nora", 0}} {
+		t.Run(tc.persona, func(t *testing.T) {
+			isolate(t)
+			t.Setenv(testReviewKeyEnv, "secret")
+			initThreatMapRepo(t)
+			srv, bodies := threatMapProvider(t, `{"keep": ["auth.go"]}`)
+			threatMapConfig(t, srv.URL, "threat_map:\n  agent: scout\n")
+			regPath := filepath.Join(homeDir(t), ".config", "atcr", "registry.yaml")
+			raw, err := os.ReadFile(regPath)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(regPath, []byte(strings.Replace(string(raw), "persona: nora", "persona: "+tc.persona, 1)), 0o644))
+
+			code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^", "--threat-map")
+
+			require.Equal(t, 0, code, stderr)
+			require.Len(t, bodies()["m-scout"], 1)
+			require.Equal(t, tc.want, strings.Count(stderr, threatmap.LegacyKeyWarning), stderr)
+		})
 	}
 }
 
@@ -211,4 +239,11 @@ func TestReviewCmd_ThreatMap_UsageErrors(t *testing.T) {
 			assert.Empty(t, bodies(), "no provider is called")
 		})
 	}
+}
+
+func homeDir(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	return home
 }
