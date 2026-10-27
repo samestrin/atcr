@@ -169,6 +169,10 @@ type Settings struct {
 	// opt-in --threat-map phase calls. The project tier overrides the registry
 	// tier; there is no CLI override, the flag only turns the phase on.
 	ThreatMap ThreatMap
+	// VisualReview is the resolved `visual_review` block (Epic 36.0.2): the
+	// vision agent that reviews screenshots. The project tier overrides the
+	// registry tier; there is no CLI override.
+	VisualReview VisualReview
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -254,6 +258,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		// project tiers only, like MaxPrefetchBytes, and overlays field by field.
 		overlaySemanticPrefetch(&s.SemanticPrefetch, reg.ContextPrefetch, &semanticTopKSet)
 		overlayThreatMap(&s.ThreatMap, reg.ThreatMap)
+		overlayVisualReview(&s.VisualReview, reg.VisualReview)
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
 		// so they are overlaid here rather than through applyTier.
@@ -300,6 +305,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		overlaySemanticPrefetch(&s.SemanticPrefetch, proj.ContextPrefetch, &semanticTopKSet)
 		overlayThreatMap(&s.ThreatMap, proj.ThreatMap)
+		overlayVisualReview(&s.VisualReview, proj.VisualReview)
 		if v := strings.TrimSpace(proj.ReviewStrategy); v != "" {
 			s.ReviewStrategy = v
 		}
