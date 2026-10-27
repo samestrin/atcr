@@ -389,9 +389,9 @@ func TestPlaywrightBackend_Errors(t *testing.T) {
 	}{
 		{"empty spec", "", &fakeSandbox{}, "spec"},
 		{"absolute spec", "/etc/passwd", &fakeSandbox{}, "spec"},
-		{"escaping spec", "../x.spec.ts", &fakeSandbox{}, "spec"},
-		{"flag spec", "--config=evil.ts", &fakeSandbox{}, "spec"},
-		{"missing spec", "e2e/nope.spec.ts", &fakeSandbox{}, "spec"},
+		{"escaping spec", "../x.spec.ts", &fakeSandbox{}, "outside the repo or looks like a flag"},
+		{"flag spec", "--config=evil.ts", &fakeSandbox{}, "outside the repo or looks like a flag"},
+		{"missing spec", "e2e/nope.spec.ts", &fakeSandbox{}, "is not a file in the repo"},
 		{"sandbox fault", "e2e/home.spec.ts", &fakeSandbox{err: errors.New("docker gone")}, "docker gone"},
 		{"no report", "e2e/home.spec.ts", &fakeSandbox{result: sandbox.RunResult{ExitCode: 1, Output: "Error: Cannot find module '@playwright/test'"}}, "Cannot find module"},
 		{"bad report", "e2e/home.spec.ts", &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte("not json")}}}, "parse playwright report"},
@@ -407,6 +407,44 @@ func TestPlaywrightBackend_Errors(t *testing.T) {
 			}
 			if tc.sb.runCount() != 0 {
 				t.Fatalf("sandbox ran for an invalid spec")
+			}
+		})
+	}
+}
+
+// TestPlaywrightBackend_SpecGuardRefusesExistingFiles places a real file at
+// every target, so only the escape/flag guard (not the existence check after
+// it) can refuse these specs.
+func TestPlaywrightBackend_SpecGuardRefusesExistingFiles(t *testing.T) {
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	files := map[string]string{
+		"playwright.config.ts":                       "export default {}\n",
+		"node_modules/@playwright/test/package.json": `{}`,
+		"-x.spec.ts":       "// spec named like a flag\n",
+		"e2e/home.spec.ts": "// spec\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(parent, "escaping.spec.ts"), []byte("// outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range []string{"../escaping.spec.ts", "e2e/../../escaping.spec.ts", "-x.spec.ts"} {
+		t.Run(spec, func(t *testing.T) {
+			fake := &fakeSandbox{}
+			_, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: spec})
+			if err == nil || !strings.Contains(err.Error(), "outside the repo or looks like a flag") {
+				t.Fatalf("Run err = %v, want the escape/flag guard's refusal", err)
+			}
+			if fake.runCount() != 0 {
+				t.Fatalf("sandbox ran %d times for a refused spec", fake.runCount())
 			}
 		})
 	}
