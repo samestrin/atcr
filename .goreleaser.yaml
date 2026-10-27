@@ -27,6 +27,14 @@
 # timestamp via mod_timestamp, so checksums are stable for the same tag.
 version: 2
 
+# Resolve the current and previous tag from the app's `v*` series only. The
+# standalone ./reconcile module is tagged `reconcile/vX.Y.Z`; without this,
+# goreleaser takes the newest tag of ANY namespace, stamps the binary with
+# `reconcile/v0.12.0` and builds release notes from the wrong previous tag.
+git:
+  ignore_tags:
+    - "reconcile/*"
+
 builds:
   - main: ./cmd/atcr
     binary: atcr
