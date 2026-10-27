@@ -74,6 +74,7 @@ name (letters, digits and `_`, not starting with a digit) is rejected.
 | `webhook.github_token_env` | A GitHub token (`pull_requests: write` posts the Linear summary comment) | No |
 | `webhook.linear.webhook_secret_env` | The Linear webhook's **signing secret**, used to check each request's signature | Yes, with `webhook.linear` |
 | `webhook.linear.api_key_env` | A Linear **API key** that can read the issue's attachments | Yes, with `webhook.linear` |
+| `webhook.linear.auto_fix.push_token_env` | A GitHub token with `contents: write` and `pull_requests: write`, used to push the fix branch, open the fix pull request, read the linked pull request's head branch and post the daily-cap refusal comment. Must name a **different variable** from `webhook.github_token_env`, so the review path never holds push rights | Yes, with `webhook.linear.auto_fix` |
 
 If a required variable is not set, `atcr webhook` exits with status 2 before it
 starts listening, and the error names the variable, not a value.
@@ -236,6 +237,74 @@ The checkout, review and cleanup are the same as for a Slack mention.
 5. Attach the GitHub pull request to the Linear issue (Linear's GitHub
    integration does this when the branch name or PR title carries the issue
    id). The job takes the first GitHub pull request attachment.
+
+### Linear-triggered auto-fix (`webhook.linear.auto_fix`)
+
+With an `auto_fix:` block under `webhook.linear:`, a status change can run
+`atcr review --auto-fix` on the issue's linked pull request instead of a
+review: atcr checks out the pull request's head, generates a fix, validates it
+in the sandbox and opens a **new** pull request with it. Every key is
+required.
+
+```yaml
+webhook:
+  repos:
+    acme/widget: /srv/checkouts/widget
+  linear:
+    webhook_secret_env: LINEAR_WEBHOOK_SECRET
+    api_key_env: LINEAR_API_KEY
+    trigger_statuses: [In Review]
+    teams: [EST]
+    auto_fix:
+      statuses: [Auto-Fix]              # Linear status names that start an auto-fix
+      repos: [acme/widget]              # each must also be a key of webhook.repos
+      push_token_env: GITHUB_PUSH_TOKEN # push-capable token; NOT webhook.github_token_env
+      daily_job_cap: 5                  # most auto-fix jobs per UTC day; at least 1
+```
+
+- **Trigger and statuses.** Only an Issue `update` whose state changed, in an
+  allowlisted team, to a status named in `auto_fix.statuses` (matched ignoring
+  case) starts an auto-fix. A status listed in both `trigger_statuses` and
+  `auto_fix.statuses` starts the auto-fix, not a review. Any other edit runs
+  nothing.
+- **Repository allowlist.** The linked pull request's repository must be named
+  in `auto_fix.repos`, which config validation requires to be a subset of
+  `webhook.repos`. A pull request in any other repository is refused and
+  logged; auto-fix pushes code, so its allowlist is deliberately narrower than
+  the review one.
+- **Push token.** The variable named by `push_token_env` must hold a GitHub
+  token with `contents: write` and `pull_requests: write`. It must be a
+  different variable from `webhook.github_token_env` (config validation
+  rejects the same name), so the token that reads pull requests for reviews
+  never gains push rights. The daemon exits with status 2 at startup if the
+  named variable is unset, naming the variable and never a value. The token is
+  handed to the `atcr review --auto-fix` child through its environment only —
+  never as a command-line argument, which `ps` would show — and its value is
+  scrubbed from every daemon and child log line.
+- **Which branch the fix targets.** The fix pull request targets the **linked
+  pull request's head branch** (the daemon reads it from GitHub and passes it
+  as `--auto-fix-base`), so the fix stacks on the pull request under review
+  rather than on the default branch. The job runs `atcr review --auto-fix` as
+  a subprocess in a throwaway worktree of that head, with
+  `--config-dir` pointed at your checkout from `webhook.repos`, so the
+  validation command and sandbox come from your config, never the pull
+  request's. See
+  [Which branch the fix pull request targets](auto-fix.md#which-branch-the-fix-pull-request-targets).
+- **Caps and refusals.** Each Linear issue id plus state id starts **one
+  auto-fix, ever**: the pair is recorded on disk (below) before the job runs,
+  so a redelivery, a repeated status change or a daemon restart does not open
+  a second fix pull request. At most `daily_job_cap` jobs start per UTC day;
+  once the cap is used the daemon posts a comment on the pull request naming
+  the cap and starts no job (move the issue to the status again the next day
+  to retry). A job whose pull request lookup fails, or whose pull request is
+  busy with another job, uses neither the claim nor the daily count. One job
+  per pull request runs at a time, as with reviews, and `webhook.job_timeout`
+  bounds the whole run.
+
+The claims and the day's count live in `.atcr/webhook/auto-fix-state.json`
+under the project the daemon runs in, written before each job starts, so they
+survive a restart. A state file that cannot be read or parsed stops the daemon
+at startup rather than risking a duplicate fix.
 
 ## Where reviews are written
 
