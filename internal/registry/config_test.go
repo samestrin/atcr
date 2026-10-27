@@ -1059,3 +1059,53 @@ func TestValidateCommunityPersonaYAML_RejectsSupportsVision(t *testing.T) {
 		"the error must name the offending key so the persona author can remove it")
 	assert.Contains(t, err.Error(), "sample", "the error must name the persona")
 }
+
+// linearWebhookBlock is a complete webhook.linear block appended to the valid
+// webhook body by the Epic 49.1 T1 tests.
+const linearWebhookBlock = "  linear:\n" +
+	"    webhook_secret_env: LINEAR_WEBHOOK_SECRET\n" +
+	"    api_key_env: LINEAR_API_KEY\n" +
+	"    trigger_statuses: [In Review]\n" +
+	"    teams: [EST]\n"
+
+// Epic 49.1 T1: a complete webhook.linear block loads into the struct.
+func TestLoadProjectConfig_WebhookLinearBlockLoads(t *testing.T) {
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Webhook)
+	l := cfg.Webhook.Linear
+	require.NotNil(t, l)
+	assert.Equal(t, "LINEAR_WEBHOOK_SECRET", l.WebhookSecretEnv)
+	assert.Equal(t, "LINEAR_API_KEY", l.APIKeyEnv)
+	assert.Equal(t, []string{"In Review"}, l.TriggerStatuses)
+	assert.Equal(t, []string{"EST"}, l.Teams)
+
+	// Absent block stays nil: Linear requests are refused.
+	cfg, err = LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.Webhook.Linear)
+}
+
+// Epic 49.1 T1: a bad env-var name, or a missing/empty status or team list,
+// is rejected at load.
+func TestLoadProjectConfig_WebhookLinearRejectsInvalid(t *testing.T) {
+	cases := []struct{ name, from, to, want string }{
+		{"secret env is a token", "LINEAR_WEBHOOK_SECRET", "lin_wh-123", "webhook.linear.webhook_secret_env"},
+		{"api key env is a token", "LINEAR_API_KEY", "lin_api_abc-1", "webhook.linear.api_key_env"},
+		{"missing secret env", "    webhook_secret_env: LINEAR_WEBHOOK_SECRET\n", "", "webhook.linear.webhook_secret_env"},
+		{"missing api key env", "    api_key_env: LINEAR_API_KEY\n", "", "webhook.linear.api_key_env"},
+		{"no statuses", "    trigger_statuses: [In Review]\n", "", "webhook.linear.trigger_statuses"},
+		{"empty status list", "[In Review]", "[]", "webhook.linear.trigger_statuses"},
+		{"blank status", "[In Review]", `["In Review", " "]`, "webhook.linear.trigger_statuses[1]"},
+		{"no teams", "    teams: [EST]\n", "", "webhook.linear.teams"},
+		{"blank team", "[EST]", `[EST, ""]`, "webhook.linear.teams[1]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := strings.Replace(validWebhookBody(t.TempDir())+linearWebhookBlock, c.from, c.to, 1)
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}

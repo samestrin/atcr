@@ -1909,6 +1909,20 @@ type WebhookConfig struct {
 	Repos map[string]string `yaml:"repos,omitempty"`
 	// Slack is the optional Slack trigger; nil means Slack requests are refused.
 	Slack *WebhookSlackConfig `yaml:"slack,omitempty"`
+	// Linear is the optional Linear trigger (Epic 49.1); nil means Linear
+	// requests are refused.
+	Linear *WebhookLinearConfig `yaml:"linear,omitempty"`
+}
+
+// WebhookLinearConfig is the `webhook.linear:` block. Secrets are environment
+// variable names, never values. Both lists are required and non-empty: an issue
+// must be in a listed team and move to a listed status to trigger a review, so
+// an omitted list never silently means "any".
+type WebhookLinearConfig struct {
+	WebhookSecretEnv string   `yaml:"webhook_secret_env"`
+	APIKeyEnv        string   `yaml:"api_key_env"`
+	TriggerStatuses  []string `yaml:"trigger_statuses"`
+	Teams            []string `yaml:"teams"`
 }
 
 // WebhookSlackConfig is the `webhook.slack:` block. Every allowlist is
@@ -1994,6 +2008,12 @@ func (w *WebhookConfig) Validate() error {
 		errs = append(errs, validateAllowlist("webhook.slack.workspaces", s.Workspaces)...)
 		errs = append(errs, validateAllowlist("webhook.slack.channels", s.Channels)...)
 		errs = append(errs, validateAllowlist("webhook.slack.users", s.Users)...)
+	}
+	if l := w.Linear; l != nil {
+		errs = append(errs, validateEnvName("webhook.linear.webhook_secret_env", l.WebhookSecretEnv)...)
+		errs = append(errs, validateEnvName("webhook.linear.api_key_env", l.APIKeyEnv)...)
+		errs = append(errs, validateAllowlist("webhook.linear.trigger_statuses", l.TriggerStatuses)...)
+		errs = append(errs, validateAllowlist("webhook.linear.teams", l.Teams)...)
 	}
 	return errors.Join(errs...)
 }
