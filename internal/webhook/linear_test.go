@@ -54,6 +54,7 @@ func linearRequest(t *testing.T, url, body, delivery string) *http.Request {
 // fakeLookup maps issue ids to PRs and counts calls. gate, when set, holds
 // every lookup until it is closed.
 type fakeLookup struct {
+	mu    sync.Mutex
 	prs   map[string]linear.PR
 	gate  chan struct{}
 	calls atomic.Int32
@@ -68,7 +69,9 @@ func (f *fakeLookup) PullRequest(ctx context.Context, issueID string) (linear.PR
 			return linear.PR{}, ctx.Err()
 		}
 	}
+	f.mu.Lock()
 	pr, ok := f.prs[issueID]
+	f.mu.Unlock()
 	if !ok {
 		return linear.PR{}, linear.ErrNoPR
 	}
@@ -305,6 +308,40 @@ func TestLinear_LookupFailureRunsNoReview(t *testing.T) {
 	h.drain(t)
 	assert.Zero(t, h.review.Load())
 	assert.Equal(t, 1, h.logs.count(linear.ErrNoPR.Error()))
+}
+
+// A job that never reviewed (here: no PR linked yet) does not burn the dedupe
+// key, so the same issue and state delivered again runs one review.
+func TestLinear_LookupFailureForgetsTheDedupeKey(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{}}
+	h := newLinearHarness(t, lookup, nil)
+	now := time.Now()
+	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", now, "stateId"), "d-1")
+	h.idle(t)
+	assert.Zero(t, h.review.Load())
+
+	lookup.mu.Lock()
+	lookup.prs["iss-1"] = widgetPR() // the developer linked the PR
+	lookup.mu.Unlock()
+	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", now.Add(time.Second), "stateId"), "d-2")
+	h.drain(t)
+	assert.Equal(t, int32(1), h.review.Load(), "one review after the retry")
+	assert.Zero(t, h.logs.count("already handled"))
+}
+
+// A delivery that ran a review keeps its key: delivered again, none runs.
+func TestLinear_RanReviewKeepsTheDedupeKey(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	h := newLinearHarness(t, lookup, func(context.Context, string) ([]reconcile.Finding, error) {
+		return nil, errors.New("review failed")
+	})
+	now := time.Now()
+	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", now, "stateId"), "d-1")
+	h.idle(t)
+	h.send(t, linearBody("iss-1", "EST", "st-review", "In Review", now.Add(time.Second), "stateId"), "d-2")
+	h.drain(t)
+	assert.Equal(t, int32(1), h.review.Load())
+	assert.Equal(t, 1, h.logs.count("already handled"))
 }
 
 func TestLinear_RouteRefusesBadRequests(t *testing.T) {
