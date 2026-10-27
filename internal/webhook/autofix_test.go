@@ -19,7 +19,7 @@ import (
 const (
 	// testPushToken is the push token's value; it must reach the child only
 	// through its environment, never an argument or a log line.
-	testPushToken = "ghp_PushTokenValue0123456789abcdefABCDEF"
+	testPushToken = "atcr-test-push-token-7f3a9c41d2"
 	// testPushTokenEnv is the daemon variable that holds it.
 	testPushTokenEnv = "ATCR_TEST_AUTOFIX_PUSH_TOKEN"
 )
