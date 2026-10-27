@@ -155,6 +155,9 @@ func validateMemory(mem string) error {
 		num = num[:len(num)-1]
 	}
 	mult := 1.0
+	if num == "" {
+		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
+	}
 	switch num[len(num)-1] {
 	case 'k', 'K':
 		mult, num = 1024, num[:len(num)-1]
