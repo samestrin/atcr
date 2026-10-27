@@ -583,6 +583,11 @@ type AgentStatus struct {
 	// and it never sets Truncated. Absent when the run did not map, or the
 	// mapper failed and every file was reviewed.
 	ThreatMapDropped []string `json:"threat_map_dropped,omitempty"`
+	// ImagesSentOffMachine is true on the visual review's record when its
+	// screenshots were sent to a non-loopback vision endpoint, which only
+	// --allow-cloud-vision permits (Epic 36.0.2): the pixels left the machine,
+	// and secret_guard does not scan pixels. Absent otherwise.
+	ImagesSentOffMachine bool `json:"images_sent_off_machine,omitempty"`
 	// FallbackUsed/FallbackFrom/FallbackModel record that this slot's configured
 	// primary model overflowed/failed and was served by a litellm fallback model
 	// instead. FallbackFrom names the substituted-FROM primary/persona (unique per
