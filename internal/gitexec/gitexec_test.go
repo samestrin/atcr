@@ -262,6 +262,8 @@ const execWrapperFile = "internal/gitexec/gitexec.go"
 //     exec.LookPath("gitleaks") resolves.
 //   - internal/sast/semgrep.go execs the semgrep binary via the path
 //     exec.LookPath("semgrep") resolves.
+//   - internal/webhook/autofix.go execs the atcr binary itself (AutoFixRunner.Binary,
+//     else os.Executable) for `atcr review --auto-fix`.
 //
 // The AC4 scan flags every indirected exec (a `git`-via-variable call is exactly the
 // snapshot.go form found and migrated in the Phase 1 gate), so these must be
@@ -285,6 +287,7 @@ var indirectNonGitExecFiles = map[string]int{
 	"internal/sandbox/oslevel.go":      1, // toolPath() — sandbox-exec / bwrap
 	"internal/payload/secretscan.go":   1, // bin from exec.LookPath("gitleaks") — the secret scanner
 	"internal/sast/semgrep.go":         1, // bin from exec.LookPath("semgrep") — the optional SAST scanner
+	"internal/webhook/autofix.go":      1, // bin — the atcr executable run for `review --auto-fix`
 }
 
 // checkIndirectGrants compares the indirected-exec sites actually found in each
