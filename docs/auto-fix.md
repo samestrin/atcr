@@ -38,6 +38,21 @@ missing piece in one message.
 The only way to run `--auto-fix` validation directly on the host is the explicit
 [`--no-sandbox`](#opting-out---no-sandbox) opt-out, described below.
 
+## Which branch the fix pull request targets
+
+When validation passes, `--auto-fix` pushes the fix and opens a **new** pull
+request. By default that pull request targets the **repository default
+branch**; `--auto-fix-base <branch>` targets the named branch instead (the
+flag requires `--auto-fix`, and an invalid branch name is a usage error before
+any review work). Either way, your local HEAD must be pushed and equal to that
+base branch, since the fix commits on top of it.
+
+When the [webhook daemon](webhook.md#linear-triggered-auto-fix-webhooklinearauto_fix)
+runs `atcr review --auto-fix` for a Linear status change, it passes
+`--auto-fix-base` itself: the fix pull request targets the **linked pull
+request's head branch**, so the fix stacks on the pull request under review
+rather than on the default branch.
+
 ## What runs in the sandbox — and how it differs from `--exec`
 
 `--exec` mounts a **pristine, read-only snapshot** of the review's code at
