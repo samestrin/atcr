@@ -49,6 +49,9 @@ type VisualStageInput struct {
 	RepoDir string
 	// RunID is the review id; visualSpecRunID turns it into the spec name.
 	RunID string
+	// ReviewDir is the review's directory (.atcr/reviews/<id>); the browser
+	// run's evidence is written under its visual/. Empty writes none.
+	ReviewDir string
 	// Prompt is felix's render context: the reviewers' diff payload for its
 	// configured payload mode.
 	Prompt payload.PayloadContext
@@ -61,7 +64,9 @@ type VisualStageInput struct {
 
 // VisualStage runs call 1 (Author writes e2e/felix-<run id>.spec.ts), the
 // browser (Browser runs that spec against PreviewURL), then call 2 (Vision,
-// as Agent, reviews the screenshots). A failing step stops the stage.
+// as Agent, reviews the screenshots). Between the browser and call 2 the run's
+// evidence is written under the review dir's visual/. A failing step stops
+// the stage.
 type VisualStage struct {
 	Author     SpecAuthor
 	Browser    BrowserBackend
@@ -106,7 +111,16 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	if err != nil {
 		return VisualReviewResult{}, fmt.Errorf("visual review: browser %s: %w", s.Browser.Name(), err)
 	}
-	return RunVisualReview(ctx, s.Vision, s.Agent, s.Settings, VisualReviewRequest{Prompt: prompt, SpecPath: spec, Browser: shots, Changed: in.Changed})
+	artifacts, err := persistVisualEvidence(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), in.ReviewDir, shots)
+	if err != nil {
+		return VisualReviewResult{}, fmt.Errorf("visual review: %w", err)
+	}
+	vr, err := RunVisualReview(ctx, s.Vision, s.Agent, s.Settings, VisualReviewRequest{Prompt: prompt, SpecPath: spec, Browser: shots, Changed: in.Changed})
+	if err != nil {
+		return VisualReviewResult{}, err
+	}
+	vr.Artifacts = artifacts
+	return vr, nil
 }
 
 // visualSpecRunID maps a review id (<date>_<slug>, which may carry "_", "."
@@ -258,6 +272,7 @@ func reviewerSucceeded(statuses []AgentStatus) bool {
 func runVisualStage(ctx context.Context, p *PreparedReview) Result {
 	in := p.visualInput
 	in.RunID = p.ID
+	in.ReviewDir = p.Dir
 	vr, err := p.visual.RunVisual(ctx, in)
 	if err != nil {
 		log.FromContext(ctx).Warn("visual review failed", "agent", VisualPersonaName, "err", err)

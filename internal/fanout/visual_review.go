@@ -110,6 +110,9 @@ type VisualReviewResult struct {
 	Result     Result
 	Findings   []stream.Finding
 	Ungrounded int
+	// Artifacts are the browser evidence VisualStage wrote under the review
+	// dir; RunVisualReview itself writes none.
+	Artifacts VisualArtifacts
 }
 
 // RunVisualReview is call 2 of the visual review: it sends the screenshots as
