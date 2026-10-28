@@ -47,6 +47,22 @@ func FetchPersonaMD(client HTTPClient, baseURL, name string) ([]byte, error) {
 	return data, nil
 }
 
+// ValidationError reports a fetched community persona that this binary's
+// validator rejects. Nothing is written for it. The catalog is served from main,
+// so a newer catalog can carry a persona an older binary cannot validate (for
+// example a role it does not know); callers that install a whole catalog use
+// errors.As to skip such a persona instead of failing every install.
+type ValidationError struct {
+	Name string
+	Err  error
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("persona %q failed validation: %v", e.Name, e.Err)
+}
+
+func (e *ValidationError) Unwrap() error { return e.Err }
+
 // InstallUnit installs a community persona as a single self-contained unit: the
 // <name>.yaml metadata plus its co-located <name>.md custom prompt when present
 // (Clarification C2 — one installable unit, one delivery path). The YAML is
@@ -80,7 +96,7 @@ func InstallUnit(client HTTPClient, baseURL, name, destDir string) error {
 		return err
 	}
 	if err := registry.ValidateCommunityPersonaYAML(name, yamlData); err != nil {
-		return fmt.Errorf("persona %q failed validation: %w", name, err)
+		return &ValidationError{Name: name, Err: err}
 	}
 
 	return writePersonaUnit(client, baseURL, name, yamlDest, yamlData)

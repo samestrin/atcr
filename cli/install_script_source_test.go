@@ -1,0 +1,122 @@
+package cli
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// fakeGoScript stands in for the go toolchain: it answers the `go env` queries
+// install.sh makes and records each `go install` call (working directory and
+// arguments) to $FAKE_GO_LOG instead of building anything.
+const fakeGoScript = `#!/usr/bin/env bash
+case "$1 $2" in
+  "env GOVERSION") echo go1.25.0; exit 0 ;;
+  "env GOBIN") echo "$FAKE_GOBIN"; exit 0 ;;
+  "env GOPATH") echo "$FAKE_GOBIN"; exit 0 ;;
+esac
+if [ "$1" = "install" ]; then echo "$PWD|$*" >>"$FAKE_GO_LOG"; exit 0; fi
+echo "fake-go: unexpected call: $*" >&2; exit 97
+`
+
+// runInstallScriptWithFakeGo runs script under bash with the fake go first on
+// PATH and returns the single recorded `go install` call as "<dir>|<args>".
+func runInstallScriptWithFakeGo(t *testing.T, script string) string {
+	t.Helper()
+	call, _ := runInstallWithFakeGo(t, script, "", false)
+	return call
+}
+
+// runInstallWithFakeGo runs script under bash with the fake go first on PATH,
+// either as a file argument or (piped) on stdin the way `curl … | bash` runs
+// it, from workDir (a fresh temp dir when empty). It returns the single
+// recorded `go install` call as "<dir>|<args>" and the script's output.
+func runInstallWithFakeGo(t *testing.T, script, workDir string, piped bool) (string, string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not found")
+	}
+	fakeDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(fakeDir, "go"), []byte(fakeGoScript), 0o755))
+	logPath := filepath.Join(t.TempDir(), "go.log")
+
+	cmd := exec.Command(bash, script)
+	if piped {
+		src, err := os.ReadFile(script)
+		require.NoError(t, err)
+		cmd = exec.Command(bash)
+		cmd.Stdin = strings.NewReader(string(src))
+	}
+	cmd.Dir = workDir
+	if cmd.Dir == "" {
+		cmd.Dir = t.TempDir() // the caller's working directory must not matter
+	}
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PATH=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env,
+		"PATH="+fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"FAKE_GO_LOG="+logPath,
+		"FAKE_GOBIN="+t.TempDir(),
+	)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "install.sh failed:\n%s", out)
+
+	log, err := os.ReadFile(logPath)
+	require.NoError(t, err, "install.sh never ran go install:\n%s", out)
+	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+	require.Len(t, lines, 1, "install.sh runs go install exactly once")
+	return lines[0], string(out)
+}
+
+// TestInstallScript_FromCloneBuildsTheCheckout: run from a clone, install.sh
+// installs the clone's own code (`go install ./cmd/atcr` in the checkout root),
+// not the latest published release.
+func TestInstallScript_FromCloneBuildsTheCheckout(t *testing.T) {
+	root, err := filepath.Abs("..")
+	require.NoError(t, err)
+
+	call := runInstallScriptWithFakeGo(t, filepath.Join(root, "install.sh"))
+	dir, args, _ := strings.Cut(call, "|")
+	gotDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	wantDir, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	assert.Equal(t, wantDir, gotDir, "go install runs in the checkout root")
+	assert.Equal(t, "install ./cmd/atcr", args)
+}
+
+// TestInstallScript_OutsideCloneInstallsLatest: a copy of install.sh that does
+// not sit in an atcr checkout installs the latest published release.
+func TestInstallScript_OutsideCloneInstallsLatest(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "install.sh"))
+	require.NoError(t, err)
+	script := filepath.Join(t.TempDir(), "install.sh")
+	require.NoError(t, os.WriteFile(script, src, 0o755))
+
+	call := runInstallScriptWithFakeGo(t, script)
+	_, args, _ := strings.Cut(call, "|")
+	assert.Equal(t, "install github.com/samestrin/atcr/cmd/atcr@latest", args)
+}
+
+// TestInstallScript_PipedToBashInstallsLatest: piped into bash there is no
+// script file, so no checkout to build; install.sh installs the latest release
+// cleanly (no unset-variable error under `set -u`), even when the working
+// directory happens to be an atcr checkout.
+func TestInstallScript_PipedToBashInstallsLatest(t *testing.T) {
+	root, err := filepath.Abs("..")
+	require.NoError(t, err)
+	call, out := runInstallWithFakeGo(t, filepath.Join(root, "install.sh"), root, true)
+	_, args, _ := strings.Cut(call, "|")
+	assert.Equal(t, "install github.com/samestrin/atcr/cmd/atcr@latest", args)
+	assert.NotContains(t, out, "unbound variable")
+}

@@ -2,10 +2,11 @@
 
 // Integration tests for the repo-root install.sh wrapper.
 //
-// The happy-path test runs a REAL, unstubbed
-// `go install github.com/samestrin/atcr/cmd/atcr@latest` via install.sh, per the
+// The happy-path test runs a REAL, unstubbed `go install` via install.sh, per the
 // project's recorded convention (.planning/.knowledge/kb-2026-07-11-9e4bcd.md): no
-// mocked Go environment for the happy path.
+// mocked Go environment for the happy path. Run from this checkout, install.sh
+// builds the checkout (`go install ./cmd/atcr`); the `@latest` and checkout
+// choice itself is covered without the network in install_script_source_test.go.
 //
 // PRECONDITION / SKIP-GUARD (Sprint 33.2, Phase 1): until the repo is public
 // (Phase 3) and the reconcile `replace` directive is dropped (Phase 4), a true

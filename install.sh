@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# atcr install.sh — thin wrapper around `go install …@latest` with a Go-toolchain
-# preflight and a non-fatal PATH containment check.
+# atcr install.sh — thin wrapper around `go install` with a Go-toolchain preflight
+# and a non-fatal PATH containment check. Run from an atcr clone, it installs that
+# checkout's code; anywhere else it installs the latest published release.
 #
 # Usage:    ./install.sh
 # Requires: a Go 1.25+ toolchain on PATH.
@@ -28,8 +29,21 @@ if [[ "$goversion" =~ ^go([0-9]+)\.([0-9]+) ]]; then
   fi
 fi
 
-# 2. Install the latest published atcr binary (real, unsuppressed exit code + stderr).
-go install github.com/samestrin/atcr/cmd/atcr@latest
+# 2. Install atcr (real, unsuppressed exit code + stderr). When this script sits in
+#    an atcr checkout, build that checkout: a user who cloned the repo expects the
+#    clone's code, and `@latest` resolves to the last tag, which can be older.
+#    Otherwise (a copy of the script on its own, or piped into bash, where there is
+#    no script file and so no checkout) install the latest release.
+script_dir=""
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+if [ -n "$script_dir" ] && [ -d "$script_dir/cmd/atcr" ] && grep -qx 'module github.com/samestrin/atcr' "$script_dir/go.mod" 2>/dev/null; then
+  echo "Installing atcr from the checkout at $script_dir"
+  (cd "$script_dir" && go install ./cmd/atcr)
+else
+  go install github.com/samestrin/atcr/cmd/atcr@latest
+fi
 
 # 3. Non-fatal PATH containment check — exact colon-delimited segment match, never
 #    substring. Computed BEFORE the success guidance so "run atcr doctor" is only
