@@ -230,6 +230,27 @@ type JSONFinding struct {
 	// field on the extracted library Finding). omitempty keeps every undiscounted
 	// finding byte-identical to pre-35.16.17 findings.json.
 	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
+	// VisualEvidence carries what the browser saw for a finding raised from a
+	// visual run (Epic 36.0.3): the screenshots and console log the run wrote
+	// under the review's visual/ directory, which the finding's EVIDENCE cell
+	// names by review-dir-relative path. Stamped by stampVisualEvidence on the
+	// RunReconcile path only for references whose sidecar file exists, so a
+	// review with no visual run (and every pre-36.0.3 findings.json) is
+	// byte-identical under omitempty.
+	VisualEvidence *VisualEvidence `json:"visual_evidence,omitempty"`
+}
+
+// VisualEvidence is the browser evidence attached to a finding (Epic 36.0.3).
+// Every path is relative to the review directory (e.g. "visual/home.png"), so a
+// consumer resolves it against the same directory that holds reconciled/.
+type VisualEvidence struct {
+	// Screenshots are the screenshot files the finding's EVIDENCE names.
+	Screenshots []string `json:"screenshots,omitempty"`
+	// ConsoleLog is the console log file the finding's EVIDENCE names.
+	ConsoleLog string `json:"console_log,omitempty"`
+	// ConsoleExcerpt is the head of ConsoleLog, bounded by visualExcerptMaxLines
+	// and visualExcerptMaxBytes.
+	ConsoleExcerpt string `json:"console_excerpt,omitempty"`
 }
 
 // stampFindingIDs sets each record's ID to history.FindingID of its current

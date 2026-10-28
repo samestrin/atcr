@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -391,6 +392,10 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		// SiblingLocation is stamped by ToJSONFinding (Epic 35.16.15) from the
 		// ATCR stream.Finding; the library Merged carries no routing marker.
 		"SiblingLocation": true,
+		// VisualEvidence is stamped by stampVisualEvidence (Epic 36.0.3) AFTER
+		// JSONFindings() from the review's visual/ sidecar files, which the library
+		// Merged knows nothing of, so it is downstream-only here too.
+		"VisualEvidence": true,
 	}
 	m := Merged{
 		Finding: Finding{
@@ -650,4 +655,179 @@ func TestEmit_ReportRecordsConsensusLevelUnconditionally(t *testing.T) {
 		assert.Contains(t, string(got), "- Consensus level: "+level,
 			"report.md must name the level even when nothing was filtered")
 	}
+}
+
+// writeVisualFile writes name under reviewDir/visual, creating the directory.
+func writeVisualFile(t *testing.T, reviewDir, name, content string) {
+	t.Helper()
+	dir := filepath.Join(reviewDir, VisualDir)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+}
+
+// TestJSONFinding_VisualEvidenceField pins the additive visual_evidence field
+// (Epic 36.0.3): present as an object when set, absent entirely when nil.
+func TestJSONFinding_VisualEvidenceField(t *testing.T) {
+	b, err := json.Marshal(JSONFinding{VisualEvidence: &VisualEvidence{
+		Screenshots:    []string{"visual/home.png"},
+		ConsoleLog:     "visual/console.log",
+		ConsoleExcerpt: "TypeError: x is undefined",
+	}})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"visual_evidence":{"screenshots":["visual/home.png"],"console_log":"visual/console.log","console_excerpt":"TypeError: x is undefined"}`)
+
+	b2, err := json.Marshal(JSONFinding{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b2), "visual_evidence")
+}
+
+// TestVisualRefs pins the EVIDENCE parser: only a token that starts with
+// visual/ counts, sentence punctuation is trimmed, duplicates collapse, and a
+// path that climbs out of the visual directory is dropped.
+func TestVisualRefs(t *testing.T) {
+	cases := []struct {
+		name     string
+		evidence string
+		want     []string
+	}{
+		{"none", "token never expires here", nil},
+		{"screenshot and log", "console error; screenshot visual/home.png, log visual/console.log.", []string{"visual/home.png", "visual/console.log"}},
+		{"quoted and bracketed", "see (visual/a.png) and `visual/b.png`", []string{"visual/a.png", "visual/b.png"}},
+		{"duplicate", "visual/a.png visual/a.png", []string{"visual/a.png"}},
+		{"nested repo path is not a reference", "src/visual/logo.png is too large", nil},
+		{"traversal dropped", "visual/../summary.json visual/./x.png", nil},
+		{"bare directory", "artifacts in visual/", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, visualRefs(c.evidence))
+		})
+	}
+}
+
+// TestStampVisualEvidence_FillsFromEvidenceRefs is the T2 success case: a
+// finding whose EVIDENCE names sidecar files that exist under the review's
+// visual/ directory gets a visual_evidence object with the screenshot paths and
+// an excerpt of the console log.
+func TestStampVisualEvidence_FillsFromEvidenceRefs(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeVisualFile(t, reviewDir, "home.png", "\x89PNG")
+	writeVisualFile(t, reviewDir, "console.log", "[error] TypeError: x is undefined\n    at app.js:3\n")
+
+	jf := []JSONFinding{
+		{File: "e2e/atcr-visual.spec.ts", Line: 1, Category: "ui-console",
+			Evidence: "TypeError: x is undefined; screenshot visual/home.png; log visual/console.log"},
+		{File: "auth.go", Line: 42, Evidence: "token never expires here"},
+	}
+	stampVisualEvidence(jf, reviewDir)
+
+	require.NotNil(t, jf[0].VisualEvidence)
+	assert.Equal(t, []string{"visual/home.png"}, jf[0].VisualEvidence.Screenshots)
+	assert.Equal(t, "visual/console.log", jf[0].VisualEvidence.ConsoleLog)
+	assert.Equal(t, "[error] TypeError: x is undefined\n    at app.js:3", jf[0].VisualEvidence.ConsoleExcerpt)
+	assert.Nil(t, jf[1].VisualEvidence, "a finding without a reference stays byte-identical")
+
+	b, err := json.Marshal(jf[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"visual_evidence":{`)
+}
+
+// TestStampVisualEvidence_IgnoresMissingAndUnsafeFiles: a reference to a file
+// the run did not write, a symlink, or a review with no visual/ directory never
+// produces the object, so a review with no visual run is byte-identical.
+func TestStampVisualEvidence_IgnoresMissingAndUnsafeFiles(t *testing.T) {
+	t.Run("no visual dir", func(t *testing.T) {
+		jf := []JSONFinding{{Evidence: "visual/home.png"}}
+		stampVisualEvidence(jf, t.TempDir())
+		assert.Nil(t, jf[0].VisualEvidence)
+	})
+	t.Run("missing file", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		writeVisualFile(t, reviewDir, "other.png", "x")
+		jf := []JSONFinding{{Evidence: "visual/home.png visual/console.log"}}
+		stampVisualEvidence(jf, reviewDir)
+		assert.Nil(t, jf[0].VisualEvidence)
+	})
+	t.Run("symlinked file", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "secret.log")
+		require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o644))
+		require.NoError(t, os.MkdirAll(filepath.Join(reviewDir, VisualDir), 0o755))
+		require.NoError(t, os.Symlink(outside, filepath.Join(reviewDir, VisualDir, "console.log")))
+		jf := []JSONFinding{{Evidence: "visual/console.log"}}
+		stampVisualEvidence(jf, reviewDir)
+		assert.Nil(t, jf[0].VisualEvidence)
+	})
+	t.Run("symlinked visual dir", func(t *testing.T) {
+		reviewDir := t.TempDir()
+		outside := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(outside, "home.png"), []byte("x"), 0o644))
+		require.NoError(t, os.Symlink(outside, filepath.Join(reviewDir, VisualDir)))
+		jf := []JSONFinding{{Evidence: "visual/home.png"}}
+		stampVisualEvidence(jf, reviewDir)
+		assert.Nil(t, jf[0].VisualEvidence)
+	})
+	t.Run("empty review dir", func(t *testing.T) {
+		jf := []JSONFinding{{Evidence: "visual/home.png"}}
+		stampVisualEvidence(jf, "")
+		assert.Nil(t, jf[0].VisualEvidence)
+	})
+}
+
+// TestStampVisualEvidence_TruncatesExcerpt bounds the console excerpt so a
+// chatty page cannot bloat findings.json.
+func TestStampVisualEvidence_TruncatesExcerpt(t *testing.T) {
+	reviewDir := t.TempDir()
+	var log strings.Builder
+	for i := 0; i < 500; i++ {
+		log.WriteString("[error] something failed again and again\n")
+	}
+	writeVisualFile(t, reviewDir, "console.log", log.String())
+	jf := []JSONFinding{{Evidence: "visual/console.log"}}
+	stampVisualEvidence(jf, reviewDir)
+	require.NotNil(t, jf[0].VisualEvidence)
+	ex := jf[0].VisualEvidence.ConsoleExcerpt
+	assert.LessOrEqual(t, len(ex), visualExcerptMaxBytes)
+	assert.LessOrEqual(t, strings.Count(ex, "\n")+1, visualExcerptMaxLines)
+	assert.True(t, strings.HasPrefix(ex, "[error] something failed"))
+}
+
+// TestRunReconcile_StampsVisualEvidence runs the real pipeline: a reviewer
+// finding whose EVIDENCE names a screenshot under the review's visual/ directory
+// reaches findings.json with visual_evidence, and its neighbour does not.
+func TestRunReconcile_StampsVisualEvidence(t *testing.T) {
+	root := gitRepoWithSources(t, map[string]string{
+		"e2e/atcr-visual.spec.ts": "test('home', async () => {})\n",
+		"auth.go":                 "package auth\n",
+	})
+	reviewDir := t.TempDir()
+	writeVisualFile(t, reviewDir, "home.png", "\x89PNG")
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "felix/findings.txt",
+		"MEDIUM|e2e/atcr-visual.spec.ts:1|Uncaught TypeError on load|guard the lookup|ui-console|10|screenshot visual/home.png|felix\n"+
+			"LOW|auth.go:1|package auth has no doc comment|add one|style|2|ev|felix\n")
+
+	_, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+
+	got, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	stamped := 0
+	for _, f := range got {
+		if f.Category == "ui-console" {
+			require.NotNil(t, f.VisualEvidence)
+			assert.Equal(t, []string{"visual/home.png"}, f.VisualEvidence.Screenshots)
+			stamped++
+		} else {
+			assert.Nil(t, f.VisualEvidence)
+		}
+	}
+	assert.Equal(t, 1, stamped)
+
+	raw, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", FindingsJSON))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(raw), `"visual_evidence"`))
 }
