@@ -149,3 +149,34 @@ func TestCheck_Usage(t *testing.T) {
 		t.Fatalf("code %d", c)
 	}
 }
+
+// TestCheck_IgnoresExternalDiff: a diff.external in the repo's config must not run.
+func TestCheck_IgnoresExternalDiff(t *testing.T) {
+	dir := t.TempDir()
+	fx(t, dir, "init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(dir, "CHANGELOG.md"), logEmpty)
+	fx(t, dir, "add", "-A")
+	fx(t, dir, "commit", "-q", "-m", "base")
+	base := fx(t, dir, "rev-parse", "HEAD")
+	writeFile(t, filepath.Join(dir, "CHANGELOG.md"), logHeader)
+	fx(t, dir, "commit", "-q", "-am", "next")
+	head := fx(t, dir, "rev-parse", "HEAD")
+
+	marker := filepath.Join(dir, "PWNED")
+	script := filepath.Join(t.TempDir(), "ext.sh")
+	writeFile(t, script, "#!/bin/sh\ntouch '"+marker+"'\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fx(t, dir, "config", "diff.external", script)
+
+	var o, e bytes.Buffer
+	t.Setenv(envBody, "")
+	t.Setenv(envLabels, "")
+	if c := run([]string{"check", "--repo", dir, "--base", base, "--head", head}, &o, &e); c != 0 {
+		t.Fatalf("code %d: %s", c, e.String())
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("diff.external ran")
+	}
+}

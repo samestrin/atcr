@@ -116,7 +116,13 @@ func checkPR(ctx context.Context, repo, base, head, body string, labels []string
 }
 
 func git(ctx context.Context, repo string, args ...string) ([]byte, error) {
-	cmd := gitexec.CommandContextFn(ctx, append([]string{"-C", repo}, args...)...)
+	full := []string{"-C", repo, args[0]}
+	if args[0] == "diff" || args[0] == "show" {
+		// Right after the subcommand, the only place git accepts it: a poisoned
+		// diff.external in the repo's .git/config must not run.
+		full = append(full, "--no-ext-diff")
+	}
+	cmd := gitexec.CommandContextFn(ctx, append(full, args[1:]...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
