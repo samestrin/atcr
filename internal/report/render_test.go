@@ -73,6 +73,26 @@ var goldenCases = []struct {
 	{"checklist", FormatChecklist, "checklist.md", nil},
 	{"sarif", FormatSarif, "report.sarif.json", sampleSarif()},
 	{"axi", FormatAXI, "report.axi", withFindingIDs(sample())},
+	{"markdown-visual", FormatMarkdown, "report-visual.md", sampleVisual()},
+	{"sarif-visual", FormatSarif, "report-visual.sarif.json", sampleVisual()},
+}
+
+// sampleVisual is sample() plus an out-of-scope browser finding carrying the
+// screenshots and console excerpt a visual run attaches (Epic 36.0.3), so the
+// visual goldens lock the image links, the console block and the SARIF
+// attachments while the sample()-driven goldens prove the no-visual output is
+// unchanged.
+func sampleVisual() []reconcile.JSONFinding {
+	return append(sample(), reconcile.JSONFinding{
+		Severity: "LOW", File: "web/index.html", Line: 1, Category: reconcile.CategoryOutOfScope,
+		Problem: "uncaught TypeError on load", Evidence: "ui-console: visual/console.log, visual/home.png",
+		Reviewers: []string{"felix"}, Confidence: "LOW",
+		VisualEvidence: &reconcile.VisualEvidence{
+			Screenshots:    []string{"visual/home.png", "visual/home-mobile.png"},
+			ConsoleLog:     "visual/console.log",
+			ConsoleExcerpt: "TypeError: x is undefined\n    at main.js:3",
+		},
+	})
 }
 
 // TestRender_GoldenFiles compares each format's full render output byte-for-byte
