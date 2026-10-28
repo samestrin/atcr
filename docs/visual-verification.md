@@ -123,6 +123,44 @@ is non-loopback the run warns about this and felix's `status.json` records
 `images_sent_off_machine: true`; a loopback vision agent writes no such field.
 The flag only applies with `--preview-url`.
 
+## Evidence and findings: `.atcr/reviews/<id>/visual/`
+
+Everything the browser run captures is written under the review directory, in
+`.atcr/reviews/<id>/visual/`:
+
+- **Screenshots**, one image file per capture. The file name is the runner's
+  attachment name sanitized to `[a-z0-9._-]` (at most 64 bytes, de-duplicated
+  with `-2`, `-3`, … suffixes), so a name can never escape `visual/`.
+- **`console.txt`** — the captured console output, when non-empty.
+- **`network.txt`** — the failed network requests, when non-empty.
+
+The text files pass `secret_guard` under the configured policy before they are
+written (the screenshot pixels are not scanned, as above). Nothing is written —
+and no `visual/` directory is created — when the run captured no screenshots.
+
+The browser run also **files its own findings**, separate from the vision
+agent's: one MEDIUM `out-of-scope` finding per distinct console error and per
+distinct failed network request, filed at line 1 of felix's spec. Each finding's
+EVIDENCE starts with a tag naming its source — `ui-console:` for a console
+error, `ui-network:` for a failed request — and names the saved `visual/<file>`
+evidence. Because these findings are **`out-of-scope`**, the reconciler counts
+them in the summary and keeps them in the artifacts, but it never promotes them
+and they **never fail the `--fail-on` severity gate**: a broken page the change
+did not cause cannot block the review.
+
+A finding whose EVIDENCE names files under `visual/` carries structured
+`visual_evidence` in `findings.json`: the screenshot paths, the console log it
+cites, and an excerpt of that log (the head, capped at 20 lines or 2048 bytes).
+A reference counts only when the file actually exists as a regular file inside
+a real (not symlinked) `visual/` directory, so a finding that merely mentions
+such a path is left untouched.
+
+Reports render that evidence. The markdown report embeds the screenshots as
+links and the console excerpt in a fenced block. The SARIF report carries one
+**attachment** per screenshot on the finding's result, each with a
+review-dir-relative `visual/<file>` URI, so a SARIF viewer can open the
+screenshot alongside the finding.
+
 ## The deferred Isolate backend
 
 The original plan for running browser code included an Isolate-based engine.

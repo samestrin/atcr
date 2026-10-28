@@ -141,6 +141,29 @@ func TestVisualVerificationDocCoversTheVisualReview(t *testing.T) {
 	}
 }
 
+// TestVisualVerificationDocCoversVisualEvidence pins the epic 36.0.3 T5
+// contract: the doc names the evidence directory .atcr/reviews/<id>/visual/,
+// the ui-console and ui-network evidence tags, that these findings are
+// out-of-scope and never fail the severity gate, and the SARIF attachments.
+func TestVisualVerificationDocCoversVisualEvidence(t *testing.T) {
+	doc := visualVerificationDoc(t)
+
+	section, ok := markdownSection(doc, regexp.MustCompile(`(?i)evidence and findings`))
+	if !ok {
+		t.Fatal("docs/visual-verification.md has no section on the visual evidence and findings")
+	}
+	for _, tok := range []string{
+		".atcr/reviews/", "visual/", "console.txt", "network.txt",
+		"ui-console:", "ui-network:",
+		"out-of-scope", "never fail", "--fail-on",
+		"sarif", "attachment",
+	} {
+		if !strings.Contains(strings.ToLower(section), tok) {
+			t.Errorf("the visual-evidence section omits %q", tok)
+		}
+	}
+}
+
 // TestVisualVerificationDocIsIndexed keeps the doc reachable: docs/README.md
 // is the index the website build consumes, and the drift test
 // (TestDocsIndexCoversEveryDoc) covers presence, so this pins the index entry
