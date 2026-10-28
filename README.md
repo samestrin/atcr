@@ -47,7 +47,7 @@ go install github.com/samestrin/atcr/cmd/atcr@latest
 # 2. One-command onboarding: scaffold .atcr/ + set up the Synthetic provider.
 #    Run it inside a git repository, from its root. Skip the key prompt (press
 #    Enter) and export the key yourself, as in step 3.
-ATCR_TELEMETRY=0 atcr quickstart       # see the first-run note below
+atcr quickstart
 
 # 3. Export the key quickstart named, then verify every configured endpoint
 #    before spending a real review on it
@@ -60,8 +60,6 @@ atcr review && atcr reconcile
 # 5. Read the report
 atcr report --format md
 ```
-
-> **First-run note.** On a repository's first run, `atcr quickstart` prints a one-time telemetry notice and, as it does, writes a stub `.atcr/config.yaml`; quickstart then reports `Using existing workspace` and skips writing the personas and roster, so `atcr doctor` and `atcr review` stop with `no agents selected`. Setting `ATCR_TELEMETRY=0` for that one command (as above, and it also opts you out of the usage ping), or passing `atcr quickstart --force` on a repository with no `.atcr/` edits to lose, avoids it. If you hit it already, run `atcr quickstart --force`.
 
 Prefer to wire a provider by hand? `atcr init` scaffolds the project config and the nine editable personas into `.atcr/`; then point a provider + agents at any OpenAI-compatible endpoint in `~/.config/atcr/registry.yaml` (see [docs/registry.md](docs/registry.md)) and export its key (for example `export OPENROUTER_API_KEY=sk-...`).
 
