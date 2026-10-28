@@ -817,7 +817,52 @@ func writeFindingsList(b *bytes.Buffer, findings []JSONFinding, roles map[string
 		if m.Evidence != "" {
 			fmt.Fprintf(b, "  - Evidence: %s\n", esc(m.Evidence))
 		}
+		WriteVisualEvidence(b, m.VisualEvidence)
 	}
+}
+
+// WriteVisualEvidence renders a finding's browser evidence (Epic 36.0.3) as
+// sub-items of its list entry: one "![screenshot](visual/<file>)" image per
+// screenshot, then the console log name with its excerpt in a fenced block
+// indented to the sub-item, so the block stays inside the finding. Shared by
+// the reconciled report.md and the `atcr report` markdown view. Paths are
+// re-validated (validVisualRef) and the excerpt re-bounded, since the report
+// view reads a findings.json that may have been edited. A nil or empty ve
+// writes nothing, keeping report.md byte-identical without a visual run.
+func WriteVisualEvidence(b *bytes.Buffer, ve *VisualEvidence) {
+	if ve == nil {
+		return
+	}
+	for _, uri := range ScreenshotURIs(ve) {
+		fmt.Fprintf(b, "  - Screenshot: ![screenshot](%s)\n", uri)
+	}
+	excerpt := renderableExcerpt(ve.ConsoleExcerpt)
+	if strings.TrimSpace(excerpt) == "" {
+		excerpt = ""
+	}
+	logValid := validVisualRef(ve.ConsoleLog)
+	if !logValid && excerpt == "" {
+		return
+	}
+	b.WriteString("  - Console:")
+	if logValid {
+		// A valid reference holds no backtick, so the code span cannot break.
+		fmt.Fprintf(b, " `%s`", ve.ConsoleLog)
+	}
+	b.WriteString("\n")
+	if excerpt == "" {
+		return
+	}
+	fence := codeFence(excerpt)
+	fmt.Fprintf(b, "    %stext\n", fence)
+	for _, line := range strings.Split(excerpt, "\n") {
+		if line != "" {
+			b.WriteString("    ")
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(b, "    %s\n", fence)
 }
 
 // writeSeverityConfidenceTable writes the counts-by-severity x confidence grid.

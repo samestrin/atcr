@@ -68,6 +68,17 @@ type sarifResult struct {
 	Level     string             `json:"level"`
 	Message   sarifText          `json:"message"`
 	Locations []sarifLocationObj `json:"locations"`
+	// Attachments are the finding's screenshots (Epic 36.0.3). omitempty keeps
+	// a finding without visual evidence byte-identical to pre-36.0.3 output.
+	Attachments []sarifAttachment `json:"attachments,omitempty"`
+}
+
+// sarifAttachment is a SARIF attachment object: an artifact relevant to the
+// result. The uri is review-dir-relative ("visual/<file>"), like the paths in
+// findings.json.
+type sarifAttachment struct {
+	Description      sarifText             `json:"description"`
+	ArtifactLocation sarifArtifactLocation `json:"artifactLocation"`
 }
 
 // sarifLocationObj is a SARIF location entry. The type is named with the Obj
@@ -113,10 +124,11 @@ func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.
 	warned := make(map[string]bool)
 	for _, f := range findings {
 		results = append(results, sarifResult{
-			RuleID:    sarifRuleID(f.Category),
-			Level:     sarifLevel(f.Severity, diag, warned),
-			Message:   sarifText{Text: sarifMessageText(f)},
-			Locations: []sarifLocationObj{sarifLocation(f, diag)},
+			RuleID:      sarifRuleID(f.Category),
+			Level:       sarifLevel(f.Severity, diag, warned),
+			Message:     sarifText{Text: sarifMessageText(f)},
+			Locations:   []sarifLocationObj{sarifLocation(f, diag)},
+			Attachments: sarifAttachments(f),
 		})
 	}
 
@@ -139,6 +151,20 @@ func renderSarifWithDiag(w io.Writer, findings []reconcile.JSONFinding, diag io.
 	}
 	_, err = w.Write(append(data, '\n'))
 	return err
+}
+
+// sarifAttachments returns one attachment per screenshot the finding's
+// VisualEvidence names, using reconcile.ScreenshotURIs so SARIF links exactly
+// the screenshots the markdown view embeds. Nil when there are none.
+func sarifAttachments(f reconcile.JSONFinding) []sarifAttachment {
+	var out []sarifAttachment
+	for _, uri := range reconcile.ScreenshotURIs(f.VisualEvidence) {
+		out = append(out, sarifAttachment{
+			Description:      sarifText{Text: "screenshot"},
+			ArtifactLocation: sarifArtifactLocation{URI: uri},
+		})
+	}
+	return out
 }
 
 // sarifRules collects one rule per distinct finding Category in first-seen order
