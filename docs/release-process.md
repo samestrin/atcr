@@ -96,6 +96,36 @@ Both targets **agree on the numeric `X.Y.Z`** portion of the tag — the leading
 therefore yields `cli.version = v0.1.0` and `internal/version.Version =
 0.1.0`.
 
+## Stability Promise (1.x)
+
+Starting at `v1.0.0`, the documented compatibility surface of `atcr` is the
+inventory in [`docs/stable-surface.md`](stable-surface.md): every command,
+flag, config key, `ATCR_*` environment variable, and persona name. That file
+is generated from the code and enforced by a drift test
+(`cli/stable_surface_test.go` fails CI when the code and the inventory
+differ), so it always reflects what a release actually ships.
+
+**What 1.x promises:** no breaking change to anything in the inventory —
+renaming or removing a command, flag, config key, environment variable, or
+persona, or changing a flag's type or meaning — without a deprecation release
+first. A deprecation release keeps the old name working as a deprecated alias
+that warns once per run, and only a later release may remove it. Users'
+configs and scripts keep working across every 1.x upgrade.
+
+**What 1.x does not promise:**
+
+- Output wording. Human-readable and report text may change between releases;
+  do not parse prose output in scripts. Structured output (JSON flags) is
+  covered by the inventory where it is documented as stable.
+- Internal seams and tuning switches, even though they appear in the
+  inventory: `ATCR_CATALOG_URL` and `ATCR_CATALOG_SNAPSHOT` (test seams),
+  `ATCR_TIER4_INDEX_MAX_FILES` and `ATCR_DISABLE_AST_GROUPING` (tuning
+  switches), and the `telemetry_notice_shown` config entry (state atcr
+  writes, not a user setting). They may change or disappear in any release
+  without a deprecation step.
+- Undocumented surface: anything not listed in `docs/stable-surface.md`
+  (internal commands, test-only flags) is not covered.
+
 ## What Triggers a Release
 
 A release is triggered by **pushing a bare `vX.Y.Z` git tag** to the
