@@ -405,6 +405,14 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 			continue
 		}
 		if err := commpersonas.InstallUnit(client, baseURL, name, destDir); err != nil {
+			// A persona this binary cannot validate (the catalog on main is newer
+			// than the binary) wrote nothing: skip it rather than fail every
+			// install. Network and write failures still roll back below.
+			var invalid *commpersonas.ValidationError
+			if errors.As(err, &invalid) {
+				_, _ = fmt.Fprintf(errOut, "warning: %v — skipping; this atcr version cannot use it (upgrade atcr to install it)\n", err)
+				continue
+			}
 			rollback()
 			return fmt.Errorf("failed to install community persona %q: %w%s", name, err, offlineHint)
 		}
