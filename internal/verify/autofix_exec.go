@@ -85,6 +85,15 @@ func ResolveAutoFixSandbox(ctx context.Context, enabled bool, sc *registry.Sandb
 	if sc == nil {
 		return nil, ErrAutoFixSandboxUnconfigured
 	}
+	if osLevelPrimaryConfigured(sc) {
+		// Same docker-less primary path as ResolveExecBackend: no DockerConfig,
+		// no docker spawn, and a plain refusal on a failed preflight.
+		osBackend := newOSLevelBackendFn(osLevelFallbackConfig(sc))
+		if err := osBackend.Preflight(ctx); err != nil {
+			return nil, fmt.Errorf("--auto-fix sandbox preflight failed: %w", err)
+		}
+		return withPendingPrimaryNotice(osBackend, sc), nil
+	}
 	cfg := sandbox.DefaultDockerConfig()
 	if sc.DockerPath != "" {
 		cfg.DockerPath = sc.DockerPath
