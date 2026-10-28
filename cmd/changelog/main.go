@@ -18,7 +18,10 @@
 // non-test file under cli/, internal/, cmd/, reconcile/ or personas/ without
 // adding a fragment (unless the "no-changelog" label or a "changelog: none"
 // line in the PR body opts out), and a PR that edits the Unreleased section of
-// CHANGELOG.md directly. The PR body and labels are read from the
+// CHANGELOG.md directly. The one Unreleased edit it allows is a move: the PR
+// only removes "- " bullets (with any "### " headings left empty and blank
+// lines), and each removed bullet appears verbatim in a fragment the same PR
+// adds. The PR body and labels are read from the
 // CHANGELOG_PR_BODY and CHANGELOG_PR_LABELS (JSON array) environment variables.
 package main
 
