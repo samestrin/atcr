@@ -245,3 +245,65 @@ func TestDrainTelemetry_NoSendOutlivesTheDrain(t *testing.T) {
 		time.Second, 10*time.Millisecond,
 		"the per-request budget must expire no later than the drain bound, or a send is abandoned mid-flight")
 }
+
+// execTransmittingWithInput is execTransmitting with stdin wired, for the
+// interactive scaffolding commands (quickstart prompts for a provider key).
+func execTransmittingWithInput(t *testing.T, in string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmdWithClient(newProcessTelemetryClient(""))
+	root.SetArgs(args)
+	root.SetIn(strings.NewReader(in))
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	err := root.ExecuteContext(context.Background())
+	return exitCode(err), outBuf.String(), errBuf.String()
+}
+
+// TestTelemetryDisclosure_FreshRepoQuickstartStillScaffolds is Epic 84.0 review
+// finding F1. The notice used to persist its bookkeeping by creating a stub
+// .atcr/config.yaml in the root PersistentPreRunE — before quickstart looked for
+// an existing workspace. On a fresh repo, plain `atcr quickstart` (the README's
+// headline step) then said "Using existing workspace", wrote no personas or
+// roster, and `atcr review` stopped with "no agents selected".
+func TestTelemetryDisclosure_FreshRepoQuickstartStillScaffolds(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+
+	code, _, errOut := execTransmittingWithInput(t, quickstartInput, "quickstart", "--offline")
+	require.Equal(t, 0, code, "quickstart on a fresh repo must succeed; stderr:\n%s", errOut)
+	assert.Contains(t, errOut, defaultNoticeMarker, "the first run must still disclose")
+	assert.NotContains(t, errOut, "Using existing workspace",
+		"the notice's bookkeeping must not masquerade as an existing workspace")
+
+	assert.FileExists(t, filepath.Join(".atcr", "personas", "bruce.md"), "quickstart must scaffold the personas")
+	cfg, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+	require.NoError(t, err, "the scaffolded config must carry a roster the strict loader accepts")
+	assert.NotEmpty(t, cfg.Agents, "the scaffolded config must list the roster")
+
+	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "telemetry_notice_shown",
+		"the notice must still be recorded once scaffolding has run")
+	_, _, errOut2 := execTransmitting(t, "version")
+	assert.NotContains(t, errOut2, defaultNoticeMarker, "the notice stays one-time per repo")
+}
+
+// TestTelemetryDisclosure_FreshRepoInitStillScaffolds is F1 for `atcr init`,
+// whose all-or-nothing writers refused to overwrite the notice's stub config.
+func TestTelemetryDisclosure_FreshRepoInitStillScaffolds(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+
+	code, _, errOut := execTransmitting(t, "init")
+	require.Equal(t, 0, code, "init on a fresh repo must succeed; stderr:\n%s", errOut)
+	assert.Contains(t, errOut, defaultNoticeMarker, "the first run must still disclose")
+	assert.FileExists(t, filepath.Join(".atcr", "personas", "bruce.md"))
+	_, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+	require.NoError(t, err)
+
+	_, _, errOut2 := execTransmitting(t, "version")
+	assert.NotContains(t, errOut2, defaultNoticeMarker, "the notice stays one-time per repo")
+}
