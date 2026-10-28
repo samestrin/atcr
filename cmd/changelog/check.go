@@ -172,7 +172,7 @@ func evaluate(changes []change, frags map[string]string, baseLog, headLog, body 
 			"Add changelog.d/<category>-<slug>.md (category: "+strings.Join(categories, ", ")+") holding \"- \" bullet lines. "+
 			"If the change is not user-visible, add the \""+optOutLabel+"\" label or a line \"changelog: none\" to the PR description.")
 	}
-	if b, h := unreleasedBody(baseLog), unreleasedBody(headLog); b != h && !(hasUnreleased(headLog) && movedToFragments(b, h, frags)) {
+	if b, h := unreleasedBody(baseLog), unreleasedBody(headLog); b != h && (!hasUnreleased(headLog) || !movedToFragments(b, h, frags)) {
 		problems = append(problems, "this PR edits the \"## [Unreleased]\" section of "+changelogFile+" directly. "+
 			"Revert that edit and write the entry to changelog.d/<category>-<slug>.md instead; fragments are assembled into "+changelogFile+" at release time.")
 	}
