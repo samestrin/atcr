@@ -2,10 +2,12 @@ package reconcile
 
 import (
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // VisualDir is the review-dir subdirectory a visual run writes its screenshots
@@ -108,4 +110,75 @@ func consoleExcerpt(path string) string {
 	}
 	// The byte cut can split a rune; dropping invalid bytes only shortens s.
 	return strings.TrimRight(strings.ToValidUTF8(s, ""), "\r\n")
+}
+
+// validVisualRef reports whether ref is exactly one plain "visual/<file>"
+// reference as visualRefs would extract it. findings.json can be hand-edited
+// before `atcr report` reads it, so a renderer re-checks every path here
+// rather than trusting VisualEvidence.
+func validVisualRef(ref string) bool {
+	refs := visualRefs(ref)
+	return len(refs) == 1 && refs[0] == ref
+}
+
+// visualRefURI percent-encodes a valid reference for use as a link target or
+// SARIF uri, so a "#" or "?" in a file name stays part of the path.
+func visualRefURI(ref string) string {
+	return (&url.URL{Path: ref}).EscapedPath()
+}
+
+// ScreenshotURIs returns the encoded link targets of ve's valid screenshot
+// references, deduplicated in order. Invalid references are dropped. It is the
+// one place both markdown renderers and the SARIF renderer derive screenshot
+// links from (Epic 36.0.3).
+func ScreenshotURIs(ve *VisualEvidence) []string {
+	if ve == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, ref := range ve.Screenshots {
+		if !validVisualRef(ref) || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, visualRefURI(ref))
+	}
+	return out
+}
+
+// renderableExcerpt normalizes a console excerpt for a fenced block: line
+// endings become "\n", other control characters (terminal escapes) are
+// dropped, and the stamp-time budget is reapplied so a hand-edited excerpt
+// cannot bloat the report.
+func renderableExcerpt(s string) string {
+	if len(s) > visualExcerptMaxBytes {
+		s = s[:visualExcerptMaxBytes]
+	}
+	s = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(strings.ToValidUTF8(s, ""))
+	s = strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	if lines := strings.SplitN(s, "\n", visualExcerptMaxLines+1); len(lines) > visualExcerptMaxLines {
+		s = strings.Join(lines[:visualExcerptMaxLines], "\n")
+	}
+	return strings.TrimRight(s, "\n")
+}
+
+// codeFence returns a backtick fence one longer than the longest backtick run
+// in s (at least three), so no line of s can close it.
+func codeFence(s string) string {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
 }

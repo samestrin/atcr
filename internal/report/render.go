@@ -361,6 +361,9 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 		if f.Evidence != "" {
 			fmt.Fprintf(&b, "  - Evidence: %s\n", escTrunc(f.Evidence))
 		}
+		// Browser evidence (Epic 36.0.3): screenshot links and the console
+		// excerpt, through the same writer the reconciled report.md uses.
+		reconcile.WriteVisualEvidence(&b, f.VisualEvidence)
 		// Skeptic section: only for findings the verify stage touched (AC 06-01
 		// Scenario 1). A nil block (v1 finding) renders nothing extra (AC 06-02).
 		if f.Verification != nil {
