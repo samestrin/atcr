@@ -11,6 +11,15 @@
 // is written to a temporary file and renamed into place before any fragment is
 // deleted, so a crash leaves the fragments where they were. --dry-run prints
 // the section and writes nothing.
+//
+//	go run ./cmd/changelog check --base <commit> --head <commit>
+//
+// check is the CI gate for a pull request: it fails a PR that changes a
+// non-test file under cli/, internal/, cmd/, reconcile/ or personas/ without
+// adding a fragment (unless the "no-changelog" label or a "changelog: none"
+// line in the PR body opts out), and a PR that edits the Unreleased section of
+// CHANGELOG.md directly. The PR body and labels are read from the
+// CHANGELOG_PR_BODY and CHANGELOG_PR_LABELS (JSON array) environment variables.
 package main
 
 import (
@@ -38,8 +47,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "check" {
+		return runCheck(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || args[0] != "assemble" {
-		_, _ = fmt.Fprintln(stderr, "usage: changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--dir changelog.d] [--changelog CHANGELOG.md]")
+		_, _ = fmt.Fprintln(stderr, "usage: changelog check --base <commit> --head <commit> | changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--dir changelog.d] [--changelog CHANGELOG.md]")
 		return 2
 	}
 	fs := flag.NewFlagSet("changelog assemble", flag.ContinueOnError)
