@@ -307,3 +307,70 @@ func TestTelemetryDisclosure_FreshRepoInitStillScaffolds(t *testing.T) {
 	_, _, errOut2 := execTransmitting(t, "version")
 	assert.NotContains(t, errOut2, defaultNoticeMarker, "the notice stays one-time per repo")
 }
+
+// TestTelemetryDisclosure_StubFromEarlierCommandStillScaffolds is F1 on the path
+// the clean-install run took: `atcr version` (or any command) runs first and
+// records the notice in a stub config, then quickstart / init must still
+// scaffold rather than take the stub for a returning user's workspace.
+func TestTelemetryDisclosure_StubFromEarlierCommandStillScaffolds(t *testing.T) {
+	for _, args := range [][]string{{"quickstart", "--offline"}, {"init"}} {
+		t.Run(args[0], func(t *testing.T) {
+			isolate(t)
+			initGitRepo(t)
+			t.Setenv("ATCR_TELEMETRY", "1")
+
+			_, _, errOut := execTransmitting(t, "version")
+			require.Contains(t, errOut, defaultNoticeMarker)
+			_, err := os.Stat(filepath.Join(".atcr", "config.yaml"))
+			require.NoError(t, err, "precondition: the notice left a stub config")
+
+			code, _, errOut := execTransmittingWithInput(t, quickstartInput, args...)
+			require.Equal(t, 0, code, "stderr:\n%s", errOut)
+			assert.NotContains(t, errOut, "Using existing workspace")
+			assert.NotContains(t, errOut, defaultNoticeMarker, "the stub's record of the notice must survive")
+			assert.FileExists(t, filepath.Join(".atcr", "personas", "bruce.md"))
+			cfg, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+			require.NoError(t, err)
+			assert.NotEmpty(t, cfg.Agents)
+			require.NotNil(t, cfg.TelemetryNoticeShown)
+			assert.True(t, *cfg.TelemetryNoticeShown)
+		})
+	}
+}
+
+// TestTelemetryDisclosure_StubOptOutSurvivesScaffolding: a stub can also hold an
+// opt-out (`atcr config set` on it). Replacing the stub must never re-enable
+// telemetry or the quality signal.
+func TestTelemetryDisclosure_StubOptOutSurvivesScaffolding(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	writeAtcrConfig(t, "telemetry_notice_shown: true\ntelemetry: false\nquality_signal: false\n")
+
+	code, _, errOut := execTransmittingWithInput(t, quickstartInput, "quickstart", "--offline")
+	require.Equal(t, 0, code, "stderr:\n%s", errOut)
+	assert.FileExists(t, filepath.Join(".atcr", "personas", "bruce.md"))
+	tel, err := registry.LoadTelemetrySetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, tel)
+	assert.False(t, *tel, "the recorded telemetry opt-out must survive")
+	qs, err := registry.LoadQualitySignalSetting(".")
+	require.NoError(t, err)
+	require.NotNil(t, qs)
+	assert.False(t, *qs, "the recorded quality-signal opt-out must survive")
+}
+
+// TestQuickstart_RealConfigWithoutPersonasIsStillExisting guards the other side:
+// a config carrying anything beyond the stub keys is a real workspace, and
+// quickstart keeps layering onto it rather than replacing it.
+func TestQuickstart_RealConfigWithoutPersonasIsStillExisting(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	writeAtcrConfig(t, "agents: [bruce]\ntelemetry_notice_shown: true\n")
+
+	code, _, errOut := execTransmittingWithInput(t, quickstartInput, "quickstart", "--offline")
+	require.Equal(t, 0, code, "stderr:\n%s", errOut)
+	assert.Contains(t, errOut, "Using existing workspace")
+	data, err := os.ReadFile(filepath.Join(".atcr", "config.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "agents: [bruce]\ntelemetry_notice_shown: true\n", string(data), "a real config is never rewritten")
+}
