@@ -123,6 +123,18 @@ func localRegistryYAML() string {
 	return b.String()
 }
 
+// hasWorkspaceConfig reports whether dir already holds a project config that
+// quickstart should layer onto. A stub atcr wrote on its own (the first-run
+// telemetry notice record, see registry.LoadStubConfig) does not count: it is
+// replaced by init's writers, keeping its settings (Epic 84.0 F1).
+func hasWorkspaceConfig(dir string) bool {
+	if _, err := os.Lstat(registry.DefaultProjectConfigPath(dir)); err != nil {
+		return false
+	}
+	_, stub := registry.LoadStubConfig(dir)
+	return !stub
+}
+
 // runQuickstart orchestrates the onboarding wizard. It first reuses `atcr init`'s
 // writers to lay down .atcr/config.yaml and the editable personas, then (in later
 // steps) sets up the synthetic provider, guides the user through the API-key env
@@ -138,7 +150,7 @@ func runQuickstart(o quickstartOpts) error {
 	// step and continue with provider/key/workflow setup (mirroring the per-file
 	// skip guards used for the registry and workflow below).
 	cfgPath := registry.DefaultProjectConfigPath(o.dir)
-	if _, statErr := os.Lstat(cfgPath); statErr == nil && !o.force {
+	if hasWorkspaceConfig(o.dir) && !o.force {
 		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
 	} else if err := runInit(o.dir, o.force, o.out, o.errOut); err != nil {
 		return err
@@ -194,7 +206,7 @@ func runQuickstartLocal(o quickstartOpts) error {
 		roster = append(roster, a.name)
 	}
 	cfgPath := registry.DefaultProjectConfigPath(o.dir)
-	if _, statErr := os.Lstat(cfgPath); statErr == nil && !o.force {
+	if hasWorkspaceConfig(o.dir) && !o.force {
 		_, _ = fmt.Fprintf(o.errOut, "Using existing workspace at %s (run with --force to regenerate config + personas).\n", filepath.Dir(cfgPath))
 		_, _ = fmt.Fprintf(o.errOut, "Its roster is unchanged: add %s to the agents list in %s to review with the local models.\n", strings.Join(roster, ", "), cfgPath)
 	} else if err := runInitRoster(o.dir, o.force, roster, builtins.CommunityGet, o.out, o.errOut); err != nil {
