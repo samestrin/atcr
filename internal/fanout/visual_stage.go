@@ -120,7 +120,9 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 		return VisualReviewResult{}, err
 	}
 	vr.Artifacts = artifacts
-	vr.Browser = shots
+	if vr.Browser, err = guardBrowserText(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), shots); err != nil {
+		return VisualReviewResult{}, err
+	}
 	vr.Spec = spec
 	return vr, nil
 }
