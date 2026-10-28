@@ -113,6 +113,10 @@ type VisualReviewResult struct {
 	// Artifacts are the browser evidence VisualStage wrote under the review
 	// dir; RunVisualReview itself writes none.
 	Artifacts VisualArtifacts
+	// Browser and Spec are the run the findings came from; runVisualStage
+	// turns the console errors and failed requests in Browser into findings.
+	Browser BrowserResult
+	Spec    string
 }
 
 // RunVisualReview is call 2 of the visual review: it sends the screenshots as
