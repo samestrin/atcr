@@ -147,6 +147,8 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("reverify", false, "with --verify: re-verify findings that already carry a verdict (the verify meaning of the deprecated --fresh)")
 	cmd.Flags().Bool("no-file-cache", false, "with --all/--scope: bypass the file-hash skip and re-review every in-scope file (the baseline meaning of the deprecated --fresh)")
 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict; with --all/--scope: bypass the file-hash skip and re-review every in-scope file (deprecated: resolves to --reverify with --verify, to --no-file-cache with --all/--scope)")
+	// Hidden like the other deprecated aliases: the inventory lists it as one.
+	_ = cmd.Flags().MarkHidden("fresh")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")

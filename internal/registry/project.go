@@ -130,7 +130,10 @@ type ProjectConfig struct {
 	// CacheMaxBytes overrides the diff-cache total-size cap (Epic 5.2). A pointer
 	// so an explicit 0 (unbounded) survives default application; unset inherits
 	// the registry tier or the embedded DefaultCacheMaxBytes.
-	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	CacheMaxBytes *int64 `yaml:"max_cache_bytes,omitempty"`
+	// LegacyCacheMaxBytes is the deprecated spelling (cache_max_bytes) of
+	// CacheMaxBytes, folded in at load with one warning per run.
+	LegacyCacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty" deprecated:"max_cache_bytes"`
 	// MaxSprintPlanBytes overrides the sprint-plan byte ceiling (plan 19.10 F9). A
 	// pointer so an explicit value survives default application; unset inherits
 	// the registry tier or the embedded DefaultMaxSprintPlanBytes.
@@ -240,10 +243,10 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")
 	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
-	b.WriteString("# cache_max_bytes: total-size cap (bytes) for the diff cache under .atcr/cache.\n")
+	b.WriteString("# max_cache_bytes: total-size cap (bytes) for the diff cache under .atcr/cache.\n")
 	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
 	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
-	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
+	fmt.Fprintf(&b, "max_cache_bytes: %d\n", DefaultCacheMaxBytes)
 	b.WriteString("# max_sprint_plan_bytes: byte ceiling for a --sprint-plan file's SCOPE\n")
 	b.WriteString("#   CONSTRAINT injection into every reviewer's payload. Default 64 KiB; raise it\n")
 	b.WriteString("#   to give larger-context models more sprint/epic plan detail. Must be > 0.\n")
@@ -324,6 +327,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if err := decodeStrictYAML(data, &cfg); err != nil && !errors.Is(err, errEmptyDocument) {
 		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
 	}
+	if err := cfg.foldDeprecatedKeys(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
 
 	// The roster is the union of both lanes (matching fanout's ErrEmptyRoster
 	// contract): a serial-only config is legitimate when every provider is
@@ -351,7 +357,7 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
 	}
 	if cfg.CacheMaxBytes != nil && *cfg.CacheMaxBytes < 0 {
-		return nil, fmt.Errorf("%s: cache_max_bytes must be >= 0 (0 = unbounded)", base)
+		return nil, fmt.Errorf("%s: max_cache_bytes must be >= 0 (0 = unbounded)", base)
 	}
 	if cfg.MaxSprintPlanBytes != nil && *cfg.MaxSprintPlanBytes <= 0 {
 		return nil, fmt.Errorf("%s: max_sprint_plan_bytes must be > 0, got %d", base, *cfg.MaxSprintPlanBytes)

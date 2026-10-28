@@ -43,6 +43,7 @@ var sharedSettingsKeys = []string{
 	"payload_byte_budget",
 	"max_parallel",
 	"cache_max_bytes",
+	"max_cache_bytes",
 	"max_sprint_plan_bytes",
 	"max_claim_bytes",
 	"max_prefetch_bytes",
@@ -161,6 +162,9 @@ func parseRegistryFile(path string) (*Registry, error) {
 			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
 		}
 		return nil, fmt.Errorf("failed to parse %s: %w", base, amendWithAgentFieldHints(err, data))
+	}
+	if err := reg.foldDeprecatedKeys(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	reg.stampSource(SourceUser)
 	return &reg, nil
