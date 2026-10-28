@@ -101,6 +101,46 @@ func TestVisualVerificationDocStatesDarwinReason(t *testing.T) {
 	}
 }
 
+// TestVisualVerificationDocCoversTheVisualReview pins the epic 36.0.2 T6
+// contract: the doc names the felix persona, the two model calls, the
+// local-by-default vision model, and the --allow-cloud-vision opt-in, and it
+// must carry the sentence that screenshot pixels leave the machine and are
+// not scanned by secret_guard — the fact an operator cannot afford to learn
+// from a warning at run time.
+func TestVisualVerificationDocCoversTheVisualReview(t *testing.T) {
+	doc := visualVerificationDoc(t)
+	lower := strings.ToLower(doc)
+
+	section, ok := markdownSection(doc, regexp.MustCompile(`(?i)visual review: felix`))
+	if !ok {
+		t.Fatal("docs/visual-verification.md has no section on the felix visual review")
+	}
+	for _, tc := range []struct {
+		label  string
+		tokens []string
+	}{
+		{"persona", []string{"felix", "never reviews the diff"}},
+		{"the two calls", []string{"two model calls", "writes the spec", "reviews the screenshots", "visual_review.agent"}},
+		{"local-by-default vision model", []string{"local by default", "supports_vision", "loopback", "usage error"}},
+		{"--allow-cloud-vision opt-in", []string{"--allow-cloud-vision", "images_sent_off_machine"}},
+	} {
+		for _, tok := range tc.tokens {
+			if !strings.Contains(strings.ToLower(section), tok) {
+				t.Errorf("the felix visual-review section omits %q (%s)", tok, tc.label)
+			}
+		}
+	}
+
+	// The sentence the epic names, asserted on the whole doc: pixels leave the
+	// machine with --allow-cloud-vision, and secret_guard does not scan them.
+	if !strings.Contains(lower, "pixels leave the machine") {
+		t.Error("docs/visual-verification.md must state that screenshot pixels leave the machine when --allow-cloud-vision is used")
+	}
+	if !strings.Contains(lower, "does not scan pixels") {
+		t.Error("docs/visual-verification.md must state that secret_guard does not scan pixels")
+	}
+}
+
 // TestVisualVerificationDocIsIndexed keeps the doc reachable: docs/README.md
 // is the index the website build consumes, and the drift test
 // (TestDocsIndexCoversEveryDoc) covers presence, so this pins the index entry

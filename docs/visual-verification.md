@@ -83,6 +83,46 @@ and the browser inside one run cannot reach each other. The backend refuses it
 with `ErrBrowserBackendUnsupported` before anything runs. **Use the Docker
 backend or run on Linux** — Linux's OS-level sandbox keeps loopback.
 
+## The visual review: felix and the vision agent
+
+Visual verification becomes a visual **review** when the `felix` persona is in
+the roster (`agents:` in `.atcr/config.yaml`). Felix is a community persona for
+frontend QA. It never reviews the diff: it gets no reviewer slot, and with
+`--preview-url` it runs after the reviewers as a separate stage. Without
+`--preview-url` felix is skipped with a warning.
+
+The stage makes **two model calls**, to two different agents:
+
+1. **Call 1 — felix writes the spec.** Felix's own `agents:` entry and persona
+   prompt receive the reviewers' diff and author a Playwright spec, written to
+   `e2e/felix-<review id>.spec.ts` in the repo under review (an existing file
+   is never overwritten). The browser then runs that spec in the sandbox.
+2. **Call 2 — the vision agent reviews the screenshots.** The agent named by
+   `visual_review.agent` receives the screenshots, plus the persona's rendered
+   screenshot-review prompt and the captured console, failed-request and
+   failed-test text, and replies with findings that are reported under felix's
+   name.
+
+The vision agent is **local by default**. It must declare
+`supports_vision: true` in the registry, and its provider's `base_url` must be
+a loopback host — so out of the box screenshots never leave the machine. An
+empty `base_url` is the client's remote default and counts as non-loopback. An
+unset `visual_review.agent`, a missing agent, one without `supports_vision`,
+or a non-loopback provider without the opt-in is a usage error (exit 2) raised
+before any provider call.
+
+### `--allow-cloud-vision`: pixels leave the machine
+
+`atcr review --allow-cloud-vision` is the opt-in that lets a vision agent on a
+non-loopback provider receive the screenshots. With it, **the screenshot
+pixels leave the machine**, and **`secret_guard` does not scan pixels**: the
+guard scans every text bound for the provider (the prompt, the screenshot
+names, and the captured console, failed-request, failed-test and spec-path
+text), but the image bytes themselves pass through unscanned. When the agent
+is non-loopback the run warns about this and felix's `status.json` records
+`images_sent_off_machine: true`; a loopback vision agent writes no such field.
+The flag only applies with `--preview-url`.
+
 ## The deferred Isolate backend
 
 The original plan for running browser code included an Isolate-based engine.
