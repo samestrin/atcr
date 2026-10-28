@@ -65,6 +65,15 @@ func osLevelFallbackConfigured(sc *registry.SandboxConfig) bool {
 	return sc != nil && strings.TrimSpace(sc.Fallback) == registry.SandboxFallbackOSLevel
 }
 
+// osLevelPrimaryConfigured reports whether sc selects the OS-level backend as
+// the PRIMARY backend (`sandbox.backend: os-level`). It is an exact sentinel
+// match for the same reason as osLevelFallbackConfigured: a config that skipped
+// Validate() must not reach the docker-less path with a value the allowlist
+// would have rejected. Anything else keeps the docker path.
+func osLevelPrimaryConfigured(sc *registry.SandboxConfig) bool {
+	return sc != nil && strings.TrimSpace(sc.Backend) == registry.SandboxBackendOSLevel
+}
+
 // osLevelFallbackConfig builds the OS-level backend config from the operator's
 // sandbox block. The timeout, Memory and PidsLimit carry over; Memory and
 // PidsLimit are marked operator-set so Preflight refuses them on a host that
@@ -125,6 +134,31 @@ func warnOSLevelFallbackEngaged(ctx context.Context, sc *registry.SandboxConfig,
 		"backend", registry.SandboxFallbackOSLevel,
 		"docker_preflight_error", truncateCause(cause),
 		"unenforced_config", strings.Join(dropped, ","),
+		"unenforced_defaults", osLevelUnenforcedDefaults,
+		"runs_as", "invoking user (not uid 65534)")
+}
+
+// warnOSLevelPrimarySelected is the os-level PRIMARY path's notice. It is
+// deliberately not warnOSLevelFallbackEngaged: the operator asked for this
+// backend directly, so nothing changed under them and there is no docker cause
+// to report. What it does say is which docker-only keys the config carries that
+// this backend accepts and ignores, and the containment it does not provide.
+func warnOSLevelPrimarySelected(ctx context.Context, sc *registry.SandboxConfig) {
+	ignored := make([]string, 0, 3)
+	if sc != nil {
+		if strings.TrimSpace(sc.Image) != "" {
+			ignored = append(ignored, "sandbox.image")
+		}
+		if strings.TrimSpace(sc.DockerPath) != "" {
+			ignored = append(ignored, "sandbox.docker_path")
+		}
+		if strings.TrimSpace(sc.CPUs) != "" {
+			ignored = append(ignored, "sandbox.cpus")
+		}
+	}
+	log.FromContext(ctx).Warn("os-level sandbox backend selected directly",
+		"backend", registry.SandboxBackendOSLevel,
+		"ignored_docker_config", strings.Join(ignored, ","),
 		"unenforced_defaults", osLevelUnenforcedDefaults,
 		"runs_as", "invoking user (not uid 65534)")
 }
@@ -199,6 +233,11 @@ func (b boundedCause) Unwrap() error { return b.cause }
 // for the containment the OS-level shape does not enforce. It never enables
 // execution implicitly.
 //
+// When sandbox.backend is exactly "os-level" the docker path is skipped
+// entirely: the OS-level backend is built, preflighted and returned with no
+// docker construction or spawn, and image, docker_path and cpus are ignored.
+// That is a separate path from sandbox.fallback, with its own notice.
+//
 // Returns the ready backend, the resolved test command, and the per-run timeout.
 func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
 	if !execEnabled {
@@ -206,6 +245,18 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 	}
 	if sc == nil {
 		return nil, nil, 0, ErrExecNoBackend
+	}
+	if osLevelPrimaryConfigured(sc) {
+		// Selected directly: no DockerConfig is built and docker is never spawned,
+		// so a Docker-less host pays nothing for a backend it does not use. A
+		// failed preflight is a plain refusal — no fallback was attempted, so
+		// ErrSandboxNoUsableBackend does not apply.
+		osCfg := osLevelFallbackConfig(sc)
+		osBackend := newOSLevelBackendFn(osCfg)
+		if err := osBackend.Preflight(ctx); err != nil {
+			return nil, nil, 0, fmt.Errorf("--exec preflight failed: %w", err)
+		}
+		return withPendingPrimaryNotice(osBackend, sc), sc.TestCommand, osCfg.Timeout, nil
 	}
 	cfg := sandbox.DefaultDockerConfig()
 	if sc.DockerPath != "" {
@@ -286,7 +337,8 @@ func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.Sand
 }
 
 // pendingFallbackWarning decorates a resolved backend with the fallback-engaged
-// notice, so the warning fires when the CALLER commits to the run rather than the
+// notice (or, on the os-level primary path, the selected-directly notice; see
+// withPendingPrimaryNotice), so the warning fires when the CALLER commits to the run rather than the
 // instant the resolver's preflight passed.
 //
 // The ordering defect it fixes: both callers run their own gates (snapshot
@@ -338,8 +390,19 @@ func withPendingFallbackWarning(b sandbox.Backend, sc *registry.SandboxConfig, c
 	}
 }
 
+// withPendingPrimaryNotice wraps b so the os-level primary notice is emitted
+// when the caller commits, through the same decorator and the same
+// EmitPendingFallbackWarning call the CLI sites already make.
+func withPendingPrimaryNotice(b sandbox.Backend, sc *registry.SandboxConfig) sandbox.Backend {
+	return &pendingFallbackWarning{
+		Backend: b,
+		emit:    func(ctx context.Context) { warnOSLevelPrimarySelected(ctx, sc) },
+	}
+}
+
 // EmitPendingFallbackWarning fires the fallback-engaged notice a resolver
-// deferred, once the caller has committed to the run. Callers invoke it
+// deferred, once the caller has committed to the run. It also fires the
+// os-level primary notice, which is deferred the same way. Callers invoke it
 // unconditionally after their gates pass; it is a no-op for any backend carrying
 // no pending notice (nil, docker, or an undecorated os-level backend), so a call
 // site never has to ask which backend it got.

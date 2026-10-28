@@ -562,3 +562,132 @@ func TestResolveExecBackend_FallbackWithoutConfiguredTimeoutStillExecutes(t *tes
 	assert.Positive(t, timeout, "the caller must never receive a zero timeout from the fallback path")
 	assert.Positive(t, gotCfg.MaxOutputBytes)
 }
+
+// --- os-level as the PRIMARY backend (Epic 35.25 T2) ------------------------
+
+// osLevelPrimaryConfig is a `backend: os-level` config that also carries every
+// docker-only key, pointed at a recording docker shim. The shim is the proof
+// obligation: on this path nothing may ever invoke it, so its capture file must
+// never come into existence.
+func osLevelPrimaryConfig(t *testing.T) (*registry.SandboxConfig, string) {
+	t.Helper()
+	dockerPath, capture := fakeDockerRecording(t)
+	secs := 45
+	return &registry.SandboxConfig{
+		Backend:     registry.SandboxBackendOSLevel,
+		DockerPath:  dockerPath,
+		Image:       "golang:1.25",
+		CPUs:        "1.5",
+		TimeoutSecs: &secs,
+		TestCommand: []string{"go", "test", "./..."},
+	}, capture
+}
+
+// assertNoDockerSpawn fails when the recording shim ran even once.
+func assertNoDockerSpawn(t *testing.T, capture string) {
+	t.Helper()
+	_, err := os.Stat(capture)
+	assert.True(t, os.IsNotExist(err), "os-level primary must spawn zero docker subprocesses")
+}
+
+func TestResolveExecBackend_OSLevelPrimarySkipsDockerEntirely(t *testing.T) {
+	fake, gotCfg, calls := stubOSLevel(t, nil)
+	sc, capture := osLevelPrimaryConfig(t)
+
+	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "os-level", b.Name())
+	assert.Same(t, sandbox.Backend(fake), unwrapBackend(b))
+	assert.Equal(t, []string{"go", "test", "./..."}, cmd)
+	assert.Equal(t, 45*time.Second, timeout)
+	assert.Equal(t, 45*time.Second, gotCfg.Timeout)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights, "the os-level backend runs its own Preflight")
+	assertNoDockerSpawn(t, capture)
+}
+
+// TestResolveExecBackend_OSLevelPrimaryPreflightFailureIsNotAFallbackOutcome pins
+// that a broken primary os-level backend refuses plainly: no docker attempt, and
+// no ErrSandboxNoUsableBackend, which means "primary AND fallback both failed".
+func TestResolveExecBackend_OSLevelPrimaryPreflightFailureIsNotAFallbackOutcome(t *testing.T) {
+	osCause := errors.New("bwrap: command not found")
+	_, _, calls := stubOSLevel(t, osCause)
+	sc, capture := osLevelPrimaryConfig(t)
+
+	b, cmd, timeout, err := ResolveExecBackend(context.Background(), true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.Nil(t, cmd)
+	assert.Zero(t, timeout)
+	assert.Equal(t, 1, *calls)
+	assert.ErrorIs(t, err, osCause)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
+	assert.Contains(t, err.Error(), "preflight")
+	assertNoDockerSpawn(t, capture)
+}
+
+// TestResolveExecBackend_OSLevelPrimaryIsAnExactSentinelMatch mirrors
+// osLevelFallbackConfigured's discipline: a config that skipped Validate() must
+// not reach the docker-less path with a value the allowlist would reject.
+func TestResolveExecBackend_OSLevelPrimaryIsAnExactSentinelMatch(t *testing.T) {
+	for _, v := range []string{"OS-Level", "oslevel", "os-level-ish"} {
+		t.Run(v, func(t *testing.T) {
+			_, _, calls := stubOSLevel(t, nil)
+			sc, capture := osLevelPrimaryConfig(t)
+			sc.Backend = v
+
+			b, _, _, err := ResolveExecBackend(context.Background(), true, sc)
+
+			require.NoError(t, err)
+			assert.Equal(t, "docker", b.Name())
+			assert.Equal(t, 0, *calls)
+			runArgsLine(t, capture) // docker was used
+		})
+	}
+}
+
+func TestOSLevelPrimaryNotice_FiresOnceOnCommitNamingIgnoredKeys(t *testing.T) {
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc, _ := osLevelPrimaryConfig(t)
+
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
+	require.NoError(t, err)
+	assert.Empty(t, buf.String(), "the notice is deferred until the caller commits")
+
+	EmitPendingFallbackWarning(ctx, b)
+	EmitPendingFallbackWarning(ctx, b)
+
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "os-level sandbox backend selected directly"),
+		"one commit is one notice")
+	assert.Contains(t, out, "sandbox.image")
+	assert.Contains(t, out, "sandbox.docker_path")
+	assert.Contains(t, out, "sandbox.cpus")
+	assert.Contains(t, out, osLevelUnenforcedDefaults)
+	assert.NotContains(t, out, "fallback engaged",
+		"the operator chose os-level; nothing changed under them")
+}
+
+func TestOSLevelPrimaryNotice_ListsOnlyTheDockerKeysThatWereSet(t *testing.T) {
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc := &registry.SandboxConfig{
+		Backend:     registry.SandboxBackendOSLevel,
+		TestCommand: []string{"go", "test"},
+	}
+
+	b, _, _, err := ResolveExecBackend(ctx, true, sc)
+	require.NoError(t, err)
+	EmitPendingFallbackWarning(ctx, b)
+
+	out := buf.String()
+	assert.Contains(t, out, "os-level sandbox backend selected directly")
+	assert.NotContains(t, out, "sandbox.image")
+	assert.NotContains(t, out, "sandbox.docker_path")
+	assert.NotContains(t, out, "sandbox.cpus")
+	assert.Contains(t, out, "uid 65534", "unenforced defaults are named even with nothing set")
+}

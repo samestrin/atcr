@@ -484,3 +484,51 @@ func TestCheckOSLevelSnapshotUsable_ForwardsWritableShape(t *testing.T) {
 	require.NoError(t, CheckOSLevelSnapshotUsable(fake, nil, ordinary, true))
 	assert.True(t, gotWritable, "writable=true must be forwarded to CheckSnapshotUsable")
 }
+
+func TestResolveAutoFixSandbox_OSLevelPrimarySkipsDockerEntirely(t *testing.T) {
+	fake, gotCfg, calls := stubOSLevel(t, nil)
+	sc, capture := osLevelPrimaryConfig(t)
+
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "os-level", b.Name())
+	assert.Same(t, sandbox.Backend(fake), unwrapBackend(b))
+	assert.Equal(t, 45*time.Second, gotCfg.Timeout)
+	assert.Equal(t, 1, *calls)
+	assert.Equal(t, 1, fake.preflights)
+	assertNoDockerSpawn(t, capture)
+}
+
+func TestResolveAutoFixSandbox_OSLevelPrimaryPreflightFailureIsNotAFallbackOutcome(t *testing.T) {
+	osCause := errors.New("bwrap: command not found")
+	stubOSLevel(t, osCause)
+	sc, capture := osLevelPrimaryConfig(t)
+
+	b, err := ResolveAutoFixSandbox(context.Background(), true, sc)
+
+	require.Error(t, err)
+	assert.Nil(t, b)
+	assert.ErrorIs(t, err, osCause)
+	assert.NotErrorIs(t, err, ErrSandboxNoUsableBackend)
+	assertNoDockerSpawn(t, capture)
+}
+
+func TestResolveAutoFixSandbox_OSLevelPrimaryNoticeFiresOnceOnCommit(t *testing.T) {
+	stubOSLevel(t, nil)
+	ctx, buf := captureWarnings(t)
+	sc, _ := osLevelPrimaryConfig(t)
+
+	b, err := ResolveAutoFixSandbox(ctx, true, sc)
+	require.NoError(t, err)
+	assert.Empty(t, buf.String())
+
+	EmitPendingFallbackWarning(ctx, b)
+	EmitPendingFallbackWarning(ctx, b)
+
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "os-level sandbox backend selected directly"))
+	assert.Contains(t, out, "sandbox.image")
+	assert.NotContains(t, out, "fallback engaged")
+}
