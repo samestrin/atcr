@@ -14,6 +14,11 @@ import (
 // load rather than at execution time.
 const SandboxBackendDocker = "docker"
 
+// SandboxBackendOSLevel selects the OS-level backend (sandbox-exec on macOS,
+// bwrap on Linux) as the primary executor. It needs no container image. Its
+// value MUST equal SandboxFallbackOSLevel and the backend's own Name().
+const SandboxBackendOSLevel = "os-level"
+
 // SandboxFallbackOSLevel is the only accepted `sandbox.fallback` value: the
 // OS-level backend (sandbox-exec on macOS, bwrap on Linux) that verify's
 // resolvers engage when Docker's preflight fails AND an operator has explicitly
@@ -30,7 +35,7 @@ const SandboxFallbackOSLevel = "os-level"
 // check (verify.ResolveExecBackend). A nil block means execution is unconfigured
 // and `--exec` is refused.
 type SandboxConfig struct {
-	// Backend selects the executor; only "docker" is supported today.
+	// Backend selects the executor: "docker" (default) or "os-level".
 	Backend string `yaml:"backend,omitempty"`
 	// Image is the base container image (must be present locally; runs are
 	// network-isolated so it cannot be pulled on demand).
@@ -64,14 +69,15 @@ func (s *SandboxConfig) Validate() error {
 	if s == nil {
 		return nil
 	}
-	if b := strings.TrimSpace(s.Backend); b != "" && b != SandboxBackendDocker {
-		return fmt.Errorf("sandbox.backend %q is unsupported (only %q)", s.Backend, SandboxBackendDocker)
+	b := strings.TrimSpace(s.Backend)
+	if b != "" && b != SandboxBackendDocker && b != SandboxBackendOSLevel {
+		return fmt.Errorf("sandbox.backend %q is unsupported (only %q or %q)", s.Backend, SandboxBackendDocker, SandboxBackendOSLevel)
 	}
 	// Trimmed in place, like Fallback below: the sibling resolvers test this
 	// field for raw non-emptiness and copy it verbatim (internal/verify/exec.go:
 	// `sc.Image != ""`), so operator padding must not survive config load.
 	s.Image = strings.TrimSpace(s.Image)
-	if s.Image == "" {
+	if s.Image == "" && b != SandboxBackendOSLevel {
 		return errors.New("sandbox.image is required when a sandbox block is present (a base image carrying the toolchain your test_command needs)")
 	}
 	if len(s.TestCommand) == 0 {
@@ -132,6 +138,9 @@ func (s *SandboxConfig) Validate() error {
 	s.Fallback = strings.TrimSpace(s.Fallback)
 	if s.Fallback != "" && s.Fallback != SandboxFallbackOSLevel {
 		return fmt.Errorf("sandbox.fallback %q is unsupported (only %q)", s.Fallback, SandboxFallbackOSLevel)
+	}
+	if b == SandboxBackendOSLevel && s.Fallback == SandboxFallbackOSLevel {
+		return errors.New("sandbox.fallback \"os-level\" is redundant with sandbox.backend \"os-level\" (the primary backend has nothing to fall back from)")
 	}
 	return nil
 }
