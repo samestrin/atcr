@@ -1,0 +1,1 @@
+- The visual review files a MEDIUM `out-of-scope` finding for each distinct console error and failed request the browser run captured, citing the saved `visual/` evidence (epic 36.0.3).
