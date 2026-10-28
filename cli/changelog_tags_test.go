@@ -48,7 +48,7 @@ func TestChangelogHasSectionForEveryReleaseTag(t *testing.T) {
 		t.Fatal(err)
 	}
 	if missing := missingChangelogSections("\n"+string(b), tags); len(missing) > 0 {
-		t.Fatalf("release tags with no `## [X.Y.Z]` heading in CHANGELOG.md: %v; rename [Unreleased] when a tag is cut", missing)
+		t.Fatalf("release tags with no `## [X.Y.Z]` heading in CHANGELOG.md: %v; run `go run ./cmd/changelog assemble` before the tag is pushed", missing)
 	}
 }
 
