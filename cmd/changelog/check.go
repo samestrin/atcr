@@ -91,7 +91,7 @@ func parseLabels(raw string) ([]string, error) {
 func checkPR(ctx context.Context, repo, base, head, body string, labels []string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	out, err := git(ctx, repo, "diff", "--name-status", "--no-renames", "-z", base+"..."+head)
+	out, err := gitOutput(ctx, repo, "diff", "--name-status", "--no-renames", "-z", base+"..."+head)
 	if err != nil {
 		return nil, err
 	}
@@ -99,23 +99,23 @@ func checkPR(ctx context.Context, repo, base, head, body string, labels []string
 	if err != nil {
 		return nil, err
 	}
-	mergeBase, err := git(ctx, repo, "merge-base", base, head)
+	mergeBase, err := gitOutput(ctx, repo, "merge-base", base, head)
 	if err != nil {
 		return nil, err
 	}
 	mb := strings.TrimSpace(string(mergeBase))
-	baseLog, err := git(ctx, repo, "show", mb+":"+changelogFile)
+	baseLog, err := gitOutput(ctx, repo, "show", mb+":"+changelogFile)
 	if err != nil {
 		return nil, err
 	}
-	headLog, err := git(ctx, repo, "show", head+":"+changelogFile)
+	headLog, err := gitOutput(ctx, repo, "show", head+":"+changelogFile)
 	if err != nil {
 		return nil, err
 	}
 	return evaluate(changes, string(baseLog), string(headLog), body, labels), nil
 }
 
-func git(ctx context.Context, repo string, args ...string) ([]byte, error) {
+func gitOutput(ctx context.Context, repo string, args ...string) ([]byte, error) {
 	full := []string{"-C", repo, args[0]}
 	if args[0] == "diff" || args[0] == "show" {
 		// Right after the subcommand, the only place git accepts it: a poisoned
