@@ -1,0 +1,1 @@
+- Documented the first-run `atcr quickstart` telemetry-notice pitfall in the README quickstart, added the `export LLM_SYNTHETIC_API_KEY` step before `atcr doctor`, and added `docs/clean-install-check.md`, a recorded clean-install walkthrough. (epic 84.0)

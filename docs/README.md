@@ -58,6 +58,7 @@ single source of truth the website build consumes, so it links every doc in
 ## Integration
 
 - [CI Integration](ci-integration.md) — wiring atcr into a CI gate.
+- [Clean-install check](clean-install-check.md) — the recorded walkthrough of the README quickstart.
 - [Agentic Consumption](agentic-consumption.md) — driving `atcr` from another
   autonomous agent via `--axi`: token-dense TOON output, exit codes, pagination,
   and stdout/stderr isolation.
