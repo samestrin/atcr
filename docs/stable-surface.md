@@ -346,6 +346,7 @@ No flags.
 | Flag | Type | Default |
 |---|---|---|
 | `--all` | bool | `false` |
+| `--allow-cloud-vision` | bool | `false` |
 | `--allow-config-edits` | bool | `false` |
 | `--api-url` | string | `` |
 | `--auto-fix-base` | string | `` |
