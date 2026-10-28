@@ -1,7 +1,7 @@
 # Decision: v1.0 naming review of the stable surface
 
 - Date: 2026-10-28
-- Status: proposed (waiting on the owner's accept or reject for each rename)
+- Status: accepted (the owner accepted R1, R2 and R3 on 2026-10-28)
 - Epic: 84.0 (v1.0 Stabilization and Release), task T3
 
 ## Context
@@ -27,9 +27,9 @@ working as an alias that prints one deprecation warning per run.
 
 | # | Surface | Current name | Proposed name | Why | Owner |
 |---|---|---|---|---|---|
-| R1 | flag | `atcr verify --fresh` | `atcr verify --reverify` | The same meaning has two names. `atcr review` already split its old `--fresh` into `--reverify` (re-verify findings that carry a verdict) and `--no-file-cache`, and marked `--fresh` deprecated (`cli/review.go`). `atcr verify --fresh` still means exactly what `review --reverify` means (`cli/verify.go`). | pending |
-| R2 | registry key | `executor.fix_timeout` | `executor.fix_timeout_secs` | It is an integer number of seconds (`internal/registry/config.go`, `TimeoutSecs`). Every other integer-seconds key ends in `_secs` (`timeout_secs`, `agents.<name>.timeout_secs`, `sandbox.timeout_secs`); the keys without the suffix (`auto_fix.validate_timeout`, `webhook.job_timeout`) take a duration string such as `30s`. Without the suffix a user cannot tell which form `fix_timeout` takes. | pending |
-| R3 | registry and project key | `cache_max_bytes` | `max_cache_bytes` | The other size caps in the same struct are `max_<thing>_bytes` (`max_claim_bytes`, `max_prefetch_bytes`, `max_sprint_plan_bytes`). `cache_max_bytes` is the only one in the reverse order. | pending |
+| R1 | flag | `atcr verify --fresh` | `atcr verify --reverify` | The same meaning has two names. `atcr review` already split its old `--fresh` into `--reverify` (re-verify findings that carry a verdict) and `--no-file-cache`, and marked `--fresh` deprecated (`cli/review.go`). `atcr verify --fresh` still means exactly what `review --reverify` means (`cli/verify.go`). | accepted |
+| R2 | registry key | `executor.fix_timeout` | `executor.fix_timeout_secs` | It is an integer number of seconds (`internal/registry/config.go`, `TimeoutSecs`). Every other integer-seconds key ends in `_secs` (`timeout_secs`, `agents.<name>.timeout_secs`, `sandbox.timeout_secs`); the keys without the suffix (`auto_fix.validate_timeout`, `webhook.job_timeout`) take a duration string such as `30s`. Without the suffix a user cannot tell which form `fix_timeout` takes. | accepted |
+| R3 | registry and project key | `cache_max_bytes` | `max_cache_bytes` | The other size caps in the same struct are `max_<thing>_bytes` (`max_claim_bytes`, `max_prefetch_bytes`, `max_sprint_plan_bytes`). `cache_max_bytes` is the only one in the reverse order. | accepted |
 
 ## Reviewed and not proposed
 
@@ -78,5 +78,14 @@ working as an alias that prints one deprecation warning per run.
 
 ## Decision
 
-Pending. This section will record the owner's accept or reject for R1, R2 and
-R3.
+The owner answered the board card "atcr v1.0 renames (epic 84.0 T3)" on
+2026-10-28 (Paperclip interaction `9bfc4c59`, on issue EST-3046):
+
+| # | Rename | Owner |
+|---|---|---|
+| R1 | `atcr verify --fresh` → `atcr verify --reverify` | accept |
+| R2 | `executor.fix_timeout` → `executor.fix_timeout_secs` | accept |
+| R3 | `cache_max_bytes` → `max_cache_bytes` | accept |
+
+Task T4 applies all three. Each old name keeps working as an alias that prints
+one deprecation warning per run, and the inventory is regenerated.
