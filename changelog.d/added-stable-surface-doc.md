@@ -1,1 +1,0 @@
-- `docs/stable-surface.md` lists every command, flag, persona, registry/config key and `ATCR_*` environment variable in the v1.0 compatibility surface, generated from the command tree and persona files; `go test ./cli -run TestStableSurfaceInventory` fails when it is stale (regenerate with `-update-stable-surface`). (epic 84.0)
