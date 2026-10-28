@@ -9,18 +9,18 @@ The commands, flags and personas below are the v1.0 compatibility surface.
 
 ### `atcr`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--axi` | bool | `false` |
-| `--legacy-pipe` | bool | `false` |
-| `--log-format` | string | `text` |
-| `--telemetry-endpoint` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` |  |
+| `--log-format` | string | `text` |  |
+| `--telemetry-endpoint` | string | `` |  |
 
 ### `atcr audit-report`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--pr` | int | `0` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--pr` | int | `0` |  |
 
 ### `atcr benchmark`
 
@@ -28,36 +28,37 @@ No flags.
 
 ### `atcr benchmark export`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--allow-partial-coverage` | bool | `false` |
-| `--in` | string | `` |
-| `--output` | string | `` |
-| `--suite-path` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--allow-partial-coverage` | bool | `false` |  |
+| `--in` | string | `` |  |
+| `--output` | string | `` |  |
+| `--suite-path` | string | `` |  |
 
 ### `atcr benchmark fit`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--in` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--in` | string | `` |  |
 
 ### `atcr benchmark run`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--checkpoint` | string | `` |
-| `--fail-on-case-failure` | bool | `false` |
-| `--max-case-failures` | int | `-1` |
-| `--max-consecutive-case-failures` | int | `0` |
-| `--output` | string | `` |
-| `--replicates` | int | `1` |
-| `--suite-path` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--checkpoint` | string | `` |  |
+| `--fail-on-case-failure` | bool | `false` |  |
+| `--max-case-failures` | int | `-1` |  |
+| `--max-consecutive-case-failures` | int | `0` |  |
+| `--out` | string | `` | deprecated alias |
+| `--output` | string | `` |  |
+| `--replicates` | int | `1` |  |
+| `--suite-path` | string | `` |  |
 
 ### `atcr benchmark verify`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--suite-path` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--suite-path` | string | `` |  |
 
 ### `atcr config`
 
@@ -69,9 +70,9 @@ No flags.
 
 ### `atcr debate`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--single-model` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--single-model` | bool | `false` |  |
 
 ### `atcr debt`
 
@@ -79,159 +80,170 @@ No flags.
 
 ### `atcr debt add`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--category` | string | `` |
-| `--est` | int | `0` |
-| `--file` | string | `` |
-| `--fix` | string | `` |
-| `--problem` | string | `` |
-| `--severity` | string | `` |
-| `--status` | string | `open` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--category` | string | `` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--est` | int | `0` |  |
+| `--file` | string | `` |  |
+| `--fix` | string | `` |  |
+| `--problem` | string | `` |  |
+| `--severity` | string | `` |  |
+| `--status` | string | `open` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt backfill-justifications`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--dry-run` | bool | `false` |
-| `--review-root` | string | `` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--dry-run` | bool | `false` |  |
+| `--review-root` | string | `` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt compact`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--dry-run` | bool | `false` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--dry-run` | bool | `false` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt dashboard`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--check` | bool | `false` |
-| `--json` | bool | `false` |
-| `--output` | string | `` |
-| `--store` | string | `` |
-| `--top` | int | `10` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--check` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--output` | string | `` |  |
+| `--store` | string | `` |  |
+| `--top` | int | `10` |  |
 
 ### `atcr debt list`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--category` | string | `` |
-| `--component` | string | `` |
-| `--json` | bool | `false` |
-| `--max` | int | `0` |
-| `--origin` | string | `` |
-| `--severity` | string | `` |
-| `--sort` | string | `severity` |
-| `--status` | string | `` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--category` | string | `` |  |
+| `--component` | string | `` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--max` | int | `0` |  |
+| `--origin` | string | `` |  |
+| `--severity` | string | `` |  |
+| `--sort` | string | `severity` |  |
+| `--status` | string | `` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt recluster`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--kind` | string | `` |
-| `--reason` | string | `` |
-| `--store` | string | `` |
-| `--with` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--kind` | string | `` |  |
+| `--reason` | string | `` |  |
+| `--store` | string | `` |  |
+| `--with` | string | `` |  |
 
 ### `atcr debt resolve`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--json` | bool | `false` |
-| `--max` | int | `10` |
-| `--reason` | string | `` |
-| `--severity` | string | `` |
-| `--status` | string | `resolved` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--max` | int | `10` |  |
+| `--reason` | string | `` |  |
+| `--severity` | string | `` |  |
+| `--status` | string | `resolved` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt sync-outcomes`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--report` | bool | `false` |
-| `--store` | string | `` |
-| `--td` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--report` | bool | `false` |  |
+| `--store` | string | `` |  |
+| `--td` | string | `` |  |
 
 ### `atcr diff-smell`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--diff` | string | `` |
-| `--fail-on` | string | `` |
-| `--json` | bool | `false` |
-| `--repo-root` | string | `.` |
-| `--rev` | string | `HEAD` |
-| `--staged` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--diff` | string | `` |  |
+| `--fail-on` | string | `` |  |
+| `--json` | bool | `false` |  |
+| `--repo-root` | string | `.` |  |
+| `--repo` | string | `.` | deprecated alias |
+| `--rev` | string | `HEAD` |  |
+| `--staged` | bool | `false` |  |
 
 ### `atcr doctor`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--agents` | stringSlice | `[]` |
-| `--json` | bool | `false` |
-| `--max-tokens` | int | `8192` |
-| `--timeout` | int | `60` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--agents` | stringSlice | `[]` |  |
+| `--json` | bool | `false` |  |
+| `--max-tokens` | int | `8192` |  |
+| `--timeout` | int | `60` |  |
 
 ### `atcr github`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--api-url` | string | `` |
-| `--check-name` | string | `atcr` |
-| `--fail-on` | string | `` |
-| `--inline-comments` | bool | `false` |
-| `--pr` | int | `0` |
-| `--repo` | string | `` |
-| `--sha` | string | `` |
-| `--token` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--api-url` | string | `` |  |
+| `--check-name` | string | `atcr` |  |
+| `--fail-on` | string | `` |  |
+| `--inline-comments` | bool | `false` |  |
+| `--pr` | int | `0` |  |
+| `--repo` | string | `` |  |
+| `--sha` | string | `` |  |
+| `--token` | string | `` |  |
 
 ### `atcr history`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--json` | bool | `false` |
-| `--package` | string | `` |
-| `--prune` | string | `` |
-| `--since` | string | `90d` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--json` | bool | `false` |  |
+| `--package` | string | `` |  |
+| `--prune` | string | `` |  |
+| `--since` | string | `90d` |  |
 
 ### `atcr ignore`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--reason` | string | `` |
-| `--review` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--reason` | string | `` |  |
+| `--review` | string | `` |  |
 
 ### `atcr init`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--dry-run` | bool | `false` |
-| `--force` | bool | `false` |
-| `--offline` | bool | `false` |
-| `--refresh-personas` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dry-run` | bool | `false` |  |
+| `--force` | bool | `false` |  |
+| `--offline` | bool | `false` |  |
+| `--refresh-personas` | bool | `false` |  |
 
 ### `atcr leaderboard`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--json` | bool | `false` |
-| `--model` | string | `` |
-| `--persona` | string | `` |
-| `--since` | string | `30d` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--export` | bool | `false` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--model` | string | `` |  |
+| `--output` | string | `` | deprecated alias |
+| `--persona` | string | `` |  |
+| `--since` | string | `30d` |  |
 
 ### `atcr leaderboard export`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--model` | string | `` |
-| `--output` | string | `` |
-| `--persona` | string | `` |
-| `--since` | string | `30d` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--model` | string | `` |  |
+| `--output` | string | `` |  |
+| `--persona` | string | `` |  |
+| `--since` | string | `30d` |  |
 
 ### `atcr models`
 
@@ -239,15 +251,15 @@ No flags.
 
 ### `atcr models check`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--json` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--json` | bool | `false` |  |
 
 ### `atcr models refresh`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--output` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--output` | string | `` |  |
 
 ### `atcr personas`
 
@@ -259,12 +271,12 @@ No flags.
 
 ### `atcr personas list`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--detail` | string | `` |
-| `--json` | bool | `false` |
-| `--pairs` | bool | `false` |
-| `--scores` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--detail` | string | `` |  |
+| `--json` | bool | `false` |  |
+| `--pairs` | bool | `false` |  |
+| `--scores` | bool | `false` |  |
 
 ### `atcr personas remove`
 
@@ -272,10 +284,10 @@ No flags.
 
 ### `atcr personas search`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--model` | string | `` |
-| `--provider` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--model` | string | `` |  |
+| `--provider` | string | `` |  |
 
 ### `atcr personas submit`
 
@@ -287,117 +299,122 @@ No flags.
 
 ### `atcr personas upgrade`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--all` | bool | `false` |
-| `--dry-run` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--all` | bool | `false` |  |
+| `--dry-run` | bool | `false` |  |
 
 ### `atcr quality-report`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--format` | string | `md` |
-| `--json` | bool | `false` |
-| `--store` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--format` | string | `md` |  |
+| `--json` | bool | `false` |  |
+| `--store` | string | `` |  |
 
 ### `atcr quickstart`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--force` | bool | `false` |
-| `--offline` | bool | `false` |
-| `--open` | bool | `false` |
-| `--preset` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--force` | bool | `false` |  |
+| `--offline` | bool | `false` |  |
+| `--open` | bool | `false` |  |
+| `--preset` | string | `` |  |
 
 ### `atcr range`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--base` | string | `` |
-| `--head` | string | `` |
-| `--merge-commit` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--base` | string | `` |  |
+| `--head` | string | `` |  |
+| `--merge-commit` | string | `` |  |
 
 ### `atcr reconcile`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--cloud-endpoint` | string | `` |
-| `--consensus` | string | `` |
-| `--dry-run` | bool | `false` |
-| `--fail-on` | string | `` |
-| `--no-local-debt` | bool | `false` |
-| `--no-scorecard` | bool | `false` |
-| `--repo-root` | string | `.` |
-| `--require-verified` | bool | `false` |
-| `--sources` | stringSlice | `[]` |
-| `--sync-cloud` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--cloud-endpoint` | string | `` |  |
+| `--consensus` | string | `` |  |
+| `--dry-run` | bool | `false` |  |
+| `--fail-on` | string | `` |  |
+| `--no-local-debt` | bool | `false` |  |
+| `--no-scorecard` | bool | `false` |  |
+| `--preview` | bool | `false` | deprecated alias |
+| `--repo-root` | string | `.` |  |
+| `--repo` | string | `.` | deprecated alias |
+| `--require-verified` | bool | `false` |  |
+| `--sources` | stringSlice | `[]` |  |
+| `--sync-cloud` | bool | `false` |  |
 
 ### `atcr report`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--disagreements` | bool | `false` |
-| `--format` | string | `md` |
-| `--json` | bool | `false` |
-| `--output` | string | `` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--disagreements` | bool | `false` |  |
+| `--format` | string | `md` |  |
+| `--json` | bool | `false` |  |
+| `--output` | string | `` |  |
 
 ### `atcr review`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--all` | bool | `false` |
-| `--allow-cloud-vision` | bool | `false` |
-| `--allow-config-edits` | bool | `false` |
-| `--api-url` | string | `` |
-| `--auto-fix-base` | string | `` |
-| `--auto-fix` | bool | `false` |
-| `--axi` | bool | `false` |
-| `--base` | string | `` |
-| `--byte-budget` | int64 | `0` |
-| `--cloud-endpoint` | string | `` |
-| `--config-dir` | string | `` |
-| `--debate` | bool | `false` |
-| `--dry-run` | bool | `false` |
-| `--exec` | bool | `false` |
-| `--fail-on` | string | `` |
-| `--force` | bool | `false` |
-| `--fresh` | bool | `false` |
-| `--head` | string | `` |
-| `--id` | string | `` |
-| `--legacy-pipe` | bool | `false` |
-| `--max-parallel` | int | `0` |
-| `--max-tokens` | int | `0` |
-| `--max-units` | int | `512` |
-| `--merge-commit` | string | `` |
-| `--min-severity` | string | `` |
-| `--no-cache` | bool | `false` |
-| `--no-file-cache` | bool | `false` |
-| `--no-ignore` | bool | `false` |
-| `--no-sandbox` | bool | `false` |
-| `--output-dir` | string | `` |
-| `--payload` | string | `` |
-| `--pr` | int | `0` |
-| `--preview-url` | string | `` |
-| `--repo` | string | `` |
-| `--require-coverage` | float64 | `0` |
-| `--require-verified` | bool | `false` |
-| `--resume` | string | `` |
-| `--reverify` | bool | `false` |
-| `--scope` | string | `` |
-| `--single-model` | bool | `false` |
-| `--sprint-plan` | string | `` |
-| `--sync-cloud` | bool | `false` |
-| `--thorough` | bool | `false` |
-| `--threat-map` | bool | `false` |
-| `--timeout` | int | `0` |
-| `--token` | string | `` |
-| `--verify` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--all` | bool | `false` |  |
+| `--allow-cloud-vision` | bool | `false` |  |
+| `--allow-config-edits` | bool | `false` |  |
+| `--api-url` | string | `` |  |
+| `--auto-fix-base` | string | `` |  |
+| `--auto-fix` | bool | `false` |  |
+| `--axi` | bool | `false` |  |
+| `--base` | string | `` |  |
+| `--byte-budget` | int64 | `0` |  |
+| `--cloud-endpoint` | string | `` |  |
+| `--config-dir` | string | `` |  |
+| `--debate` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--dry-run` | bool | `false` |  |
+| `--exec` | bool | `false` |  |
+| `--fail-on` | string | `` |  |
+| `--force` | bool | `false` |  |
+| `--fresh` | bool | `false` |  |
+| `--head` | string | `` |  |
+| `--id` | string | `` |  |
+| `--legacy-pipe` | bool | `false` |  |
+| `--max-parallel` | int | `0` |  |
+| `--max-tokens` | int | `0` |  |
+| `--max-units` | int | `512` |  |
+| `--merge-commit` | string | `` |  |
+| `--min-severity` | string | `` |  |
+| `--no-cache` | bool | `false` |  |
+| `--no-file-cache` | bool | `false` |  |
+| `--no-ignore` | bool | `false` |  |
+| `--no-sandbox` | bool | `false` |  |
+| `--output-dir` | string | `` |  |
+| `--payload` | string | `` |  |
+| `--pr` | int | `0` |  |
+| `--preview-url` | string | `` |  |
+| `--preview` | bool | `false` | deprecated alias |
+| `--repo` | string | `` |  |
+| `--require-coverage` | float64 | `0` |  |
+| `--require-verified` | bool | `false` |  |
+| `--resume` | string | `` |  |
+| `--reverify` | bool | `false` |  |
+| `--scope` | string | `` |  |
+| `--single-model` | bool | `false` |  |
+| `--sprint-plan` | string | `` |  |
+| `--sync-cloud` | bool | `false` |  |
+| `--thorough` | bool | `false` |  |
+| `--threat-map` | bool | `false` |  |
+| `--timeout` | int | `0` |  |
+| `--token` | string | `` |  |
+| `--verify` | bool | `false` |  |
 
 ### `atcr scorecard`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--json` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--json` | bool | `false` |  |
 
 ### `atcr serve`
 
@@ -409,12 +426,13 @@ No flags.
 
 ### `atcr skill export`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--dest` | string | `` |
-| `--force` | bool | `false` |
-| `--harness` | string | `claude` |
-| `--user` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dest` | string | `` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--force` | bool | `false` |  |
+| `--harness` | string | `claude` |  |
+| `--user` | bool | `false` |  |
 
 ### `atcr status`
 
@@ -422,19 +440,34 @@ No flags.
 
 ### `atcr trust`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--all` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--all` | bool | `false` |  |
 
 ### `atcr verify`
 
-| Flag | Type | Default |
-|---|---|---|
-| `--exec` | bool | `false` |
-| `--fresh` | bool | `false` |
-| `--min-severity` | string | `` |
-| `--repo-root` | string | `.` |
-| `--thorough` | bool | `false` |
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--exec` | bool | `false` |  |
+| `--fresh` | bool | `false` |  |
+| `--min-severity` | string | `` |  |
+| `--repo-root` | string | `.` |  |
+| `--repo` | string | `.` | deprecated alias |
+| `--thorough` | bool | `false` |  |
+
+### `atcr verify diff`
+
+Deprecated alias command.
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--diff` | string | `` |  |
+| `--fail-on` | string | `` |  |
+| `--json` | bool | `false` |  |
+| `--repo-root` | string | `.` |  |
+| `--repo` | string | `.` | deprecated alias |
+| `--rev` | string | `HEAD` |  |
+| `--staged` | bool | `false` |  |
 
 ### `atcr version`
 

@@ -19,7 +19,8 @@ var updateStableSurface = flag.Bool("update-stable-surface", false, "rewrite doc
 
 // renderStableSurface builds the v1.0 stable-surface inventory (commands,
 // flags, personas) from the live command tree and the embedded persona files.
-// Hidden commands and flags are deprecated aliases and stay out of the promise.
+// Hidden commands and flags are deprecated aliases that existing scripts still
+// call, so they are listed too and marked deprecated.
 func renderStableSurface() string {
 	var b strings.Builder
 	b.WriteString("# Stable surface\n\n")
@@ -31,21 +32,25 @@ func renderStableSurface() string {
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
 		fmt.Fprintf(&b, "### `%s`\n\n", c.CommandPath())
+		if c.Hidden {
+			b.WriteString("Deprecated alias command.\n\n")
+		}
 		var rows []string
 		c.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
-			if f.Hidden {
-				return
-			}
 			name := "--" + f.Name
 			if f.Shorthand != "" {
 				name = "-" + f.Shorthand + ", " + name
 			}
-			rows = append(rows, fmt.Sprintf("| `%s` | %s | `%s` |\n", name, f.Value.Type(), f.DefValue))
+			status := ""
+			if f.Hidden {
+				status = "deprecated alias"
+			}
+			rows = append(rows, fmt.Sprintf("| `%s` | %s | `%s` | %s |\n", name, f.Value.Type(), f.DefValue, status))
 		})
 		if len(rows) == 0 {
 			b.WriteString("No flags.\n\n")
 		} else {
-			b.WriteString("| Flag | Type | Default |\n|---|---|---|\n")
+			b.WriteString("| Flag | Type | Default | Status |\n|---|---|---|---|\n")
 			sort.Strings(rows)
 			for _, r := range rows {
 				b.WriteString(r)
@@ -55,7 +60,7 @@ func renderStableSurface() string {
 		subs := append([]*cobra.Command(nil), c.Commands()...)
 		sort.Slice(subs, func(i, j int) bool { return subs[i].Name() < subs[j].Name() })
 		for _, s := range subs {
-			if s.Hidden || s.Name() == "help" || s.Name() == "completion" {
+			if s.Name() == "help" || s.Name() == "completion" {
 				continue
 			}
 			walk(s)
