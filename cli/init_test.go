@@ -1069,6 +1069,47 @@ func TestInstallCommunityPersonas_SkipsInvalidIndexNames(t *testing.T) {
 	assert.Contains(t, errOut.String(), "invalid name", "the invalid entry is skipped with a warning")
 }
 
+// futureRoleUnitYAML is a community persona this binary cannot validate: its role
+// is one a newer atcr added. The catalog is served from main, so an older binary
+// meets personas like this (epic 84.0 AC3: v0.4.0 failed quickstart on `nadia`,
+// role `redteam`).
+const futureRoleUnitYAML = `provider: anthropic
+model: claude-sonnet-4-6
+role: future-role
+version: "1.0.0"
+description: "a persona from a newer atcr"
+`
+
+// TestInstallCommunityPersonas_SkipsPersonaThisBinaryCannotValidate: a catalog
+// persona that fails this binary's validation is skipped with a warning naming
+// it, nothing is written for it, and the rest of the catalog still installs. A
+// newer catalog must not stop an older binary's init/quickstart.
+func TestInstallCommunityPersonas_SkipsPersonaThisBinaryCannotValidate(t *testing.T) {
+	index := `[
+	  {"name":"owasp","version":"1.2.0","description":"sec","path":"owasp.yaml"},
+	  {"name":"nadia","version":"1.0.0","description":"d","path":"nadia.yaml"},
+	  {"name":"sonny","version":"1.2.0","description":"d","path":"sonny.yaml"}
+	]`
+	srv := unitServer(t, index, map[string]string{
+		"/owasp.yaml": communityUnitYAML,
+		"/owasp.md":   communityUnitMD,
+		"/nadia.yaml": futureRoleUnitYAML,
+		"/nadia.md":   communityUnitMD,
+		"/sonny.yaml": communityUnitYAML,
+	})
+	dest := t.TempDir()
+	errOut := &bytes.Buffer{}
+
+	require.NoError(t, installCommunityPersonas(srv.Client(), srv.URL, dest, nil, &bytes.Buffer{}, errOut),
+		"a persona this binary cannot validate must not fail the whole install")
+	assert.Equal(t, []string{"owasp", "sonny"}, communityPinNames(t, dest), "the valid personas on both sides of it still install")
+	assert.NoFileExists(t, filepath.Join(dest, "nadia.yaml"))
+	assert.NoFileExists(t, filepath.Join(dest, "nadia.md"))
+	assert.Contains(t, errOut.String(), `persona "nadia"`, "the warning names the skipped persona")
+	assert.Contains(t, errOut.String(), "role must be one of", "the warning carries the validation error")
+	assert.Contains(t, errOut.String(), "skipping")
+}
+
 // --- Epic 35.16.16 T5: atcr init --refresh-personas --------------------------
 
 // refreshFixture inits a workspace, then makes bruce.md stale (stamped with old

@@ -142,6 +142,39 @@ func TestQuickstart_FetchAndPin_InstallsCommunity(t *testing.T) {
 	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"), "community persona fetched and pinned during quickstart")
 }
 
+// TestQuickstart_FinishesWhenCatalogHasPersonaThisBinaryCannotValidate covers
+// epic 84.0 AC3: the online catalog is newer than the binary and carries a
+// persona with a role this binary does not know. Quickstart skips it and still
+// finishes, writing the registry.
+func TestQuickstart_FinishesWhenCatalogHasPersonaThisBinaryCannotValidate(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	index := `[{"name":"bruce","version":"2.0.0","description":"d","path":"bruce.yaml"},{"name":"nadia","version":"1.0.0","description":"d","path":"nadia.yaml"}]`
+	srv := unitServer(t, index, map[string]string{"/bruce.yaml": communityUnitYAML, "/nadia.yaml": futureRoleUnitYAML})
+	t.Setenv("ATCR_PERSONAS_URL", srv.URL)
+
+	destDir := filepath.Join(home, ".config", "atcr", "personas")
+	oldDir := personasDir
+	personasDir = func() (string, error) { return destDir, nil }
+	t.Cleanup(func() { personasDir = oldDir })
+
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            dir,
+		fetchCommunity: true,
+		in:             strings.NewReader(quickstartInput),
+		out:            &bytes.Buffer{},
+		errOut:         errOut,
+	}))
+
+	assert.FileExists(t, filepath.Join(destDir, "bruce.yaml"))
+	assert.NoFileExists(t, filepath.Join(destDir, "nadia.yaml"))
+	assert.FileExists(t, filepath.Join(home, ".config", "atcr", "registry.yaml"), "quickstart finished and wrote the registry")
+	assert.Contains(t, errOut.String(), `persona "nadia"`)
+}
+
 // TestQuickstart_Online_InstallsNonEmptyCommunityRoster covers AC 07-01
 // Scenario 2 end-to-end through `runQuickstart`: online quickstart installs the
 // identical non-empty, index-derived community roster as `init`, via the same
