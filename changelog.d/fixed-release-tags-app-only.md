@@ -1,1 +1,0 @@
-- Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)

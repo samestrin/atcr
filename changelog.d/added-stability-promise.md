@@ -1,1 +1,0 @@
-- `docs/release-process.md` now has a "Stability Promise (1.x)" section: starting at `v1.0.0`, no breaking change to the inventoried surface in `docs/stable-surface.md` (commands, flags, config keys, `ATCR_*` environment variables, persona names) without a deprecation release first; output wording and experimental entries are not covered. (epic 84.0)

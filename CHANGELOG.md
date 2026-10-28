@@ -16,6 +16,44 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 Changes not yet released are in [`changelog.d/`](changelog.d/), one file per change.
 
+## [1.0.0] - 2026-10-28
+
+### Highlights
+
+- First stable release. From `v1.0.0` the commands, flags, config keys, `ATCR_*` environment variables and persona names listed in [docs/stable-surface.md](docs/stable-surface.md) do not break within 1.x without a deprecation release first; see the Stability Promise in [docs/release-process.md](docs/release-process.md).
+- Three names changed before the freeze, each with a deprecated alias that still works: `atcr verify --reverify`, `executor.fix_timeout_secs` and `max_cache_bytes`.
+- `atcr review --preview-url <url>` adds a visual review by the `felix` persona, with console errors and failed requests filed as findings.
+- `sandbox.backend: os-level` and `atcr review --config-dir <dir>` make Docker-less hosts and untrusted-pull-request auto-fix practical.
+- The README quickstart was checked on a clean install, and changelog entries now live in `changelog.d/` fragments.
+
+### Added
+
+- A new `Changelog` CI check (`go run ./cmd/changelog check`) fails a pull request that changes a non-test file under `cli/`, `internal/`, `cmd/`, `reconcile/` or `personas/` without adding a `changelog.d/<category>-<slug>.md` fragment, unless it carries the `no-changelog` label or a `changelog: none` line in its description, and fails one that edits the `## [Unreleased]` section of `CHANGELOG.md` directly. (epic 85.0)
+- With the `felix` persona in the roster, `atcr review --preview-url <url>` runs a visual review after the reviewers: felix writes a Playwright spec to `e2e/felix-<review id>.spec.ts` in the repo under review (an existing file is never overwritten), the browser runs it in the sandbox, and the `visual_review.agent` reviews the screenshots and reports findings under felix's name. Felix never reviews the diff itself. Without `--preview-url` felix is skipped with a warning; with it, a missing or refused vision agent, a missing `sandbox:` block or a baseline (`--all`/`--scope`) scan is a usage error (exit 2) before any provider call. Screenshots go only to a vision agent on a loopback host unless `--allow-cloud-vision` is passed; then the pixels leave the machine, `secret_guard` does not scan them, and felix's `status.json` records `images_sent_off_machine`. (epic 36.0.2)
+- `sandbox.backend: os-level` selects the OS-level backend (`sandbox-exec` on macOS, `bwrap` on Linux) as the primary sandbox for `--exec` and `--auto-fix`, so a permanently Docker-less host no longer declares an unused `sandbox.image` or pays a doomed Docker preflight on every run. No image is required; `sandbox.image`, `sandbox.docker_path`, and `sandbox.cpus` are accepted but ignored, and committing to the run logs one notice naming the ignored keys and the unenforced containment (CPU caps, `uid 65534`, `cap-drop ALL`, `no-new-privileges`, read-only rootfs). Combining it with `sandbox.fallback: os-level` is rejected at config load; the Docker-preferred fallback path is unchanged. See [docs/execution.md](docs/execution.md#selecting-the-os-level-backend-directly-sandboxbackend-os-level). (epic 35.25)
+- `atcr review --preview-url <url>` names the page a visual-verification spec opens (`https://`, or `http://` on a loopback host only), validated as a usage error (exit 2) before any review work. Visual verification runs a Playwright spec inside the sandbox — no network, so the repo's own Playwright `webServer` config starts the dev server in the same run — and returns its screenshots, console errors and failed network requests. The repo under review must already carry a `playwright.config.*` and an installed `@playwright/test` (the backend never scaffolds one), and the sandbox image must carry Node and the browsers; a run over the 2 minute timeout is killed and reported as timed out, and the darwin OS-level backend is refused (use Docker or Linux). See [docs/visual-verification.md](docs/visual-verification.md). (epic 36.0.1)
+- `atcr review --config-dir <dir>` loads the project config (`.atcr/config.yaml`, including `auto_fix.validate_command`, `sandbox:`, `fail_on`, `consensus` and the `quality_signal` opt-in, plus `.atcr/registry.yaml` and `.atcr/personas/`) from `<dir>` while the current directory stays the tree under review, so an auto-fix of an untrusted pull request runs the operator's validation command rather than the pull request's. The reviewed tree's `.atcr/config.yaml`, `.atcr/registry.yaml` and `.atcr/personas/` are not read; its `.atcr/ignore.yaml` (finding suppressions) and the one-time telemetry notice (which reads that tree's `telemetry` opt-out and writes its notice marker) still are. A value that is not an existing directory, a directory without `.atcr/config.yaml`, or the flag with `--resume` is a usage error (exit 2) before any review work. See [docs/auto-fix.md](docs/auto-fix.md#loading-the-config-from-another-directory---config-dir). (epic 49.2)
+- `docs/release-process.md` now has a "Stability Promise (1.x)" section: starting at `v1.0.0`, no breaking change to the inventoried surface in `docs/stable-surface.md` (commands, flags, config keys, `ATCR_*` environment variables, persona names) without a deprecation release first; output wording and experimental entries are not covered. (epic 84.0)
+- `docs/stable-surface.md` lists every command, flag, persona, registry/config key and `ATCR_*` environment variable in the v1.0 compatibility surface, generated from the command tree and persona files; `go test ./cli -run TestStableSurfaceInventory` fails when it is stale (regenerate with `-update-stable-surface`). (epic 84.0)
+- The visual review files a MEDIUM `out-of-scope` finding for each distinct console error and failed request the browser run captured, citing the saved `visual/` evidence (epic 36.0.3).
+- `docs/webhook.md` now documents the Linear auto-fix trigger: the `webhook.linear.auto_fix:` block (`statuses`, the `repos` allowlist that must be a subset of `webhook.repos`, the separate `push_token_env` token with `contents: write` and `pull_requests: write`, and `daily_job_cap`), the on-disk claim and daily-cap state, and the refusals (one auto-fix per issue and state ever, a PR comment once the day's cap is used). `docs/auto-fix.md` now states which branch the fix pull request targets: the repository default branch, the `--auto-fix-base` branch when given, or the linked pull request's head branch when the webhook daemon runs the job. Documentation only. (epic 49.2)
+
+### Changed
+
+- The `Changelog` CI check now lets a pull request remove entries from the `## [Unreleased]` section of `CHANGELOG.md` when each removed `- ` bullet appears word for word in a `changelog.d/` fragment the same pull request adds, so entries listed there before fragments existed can be moved into fragments. Adding, rewording or reordering entries under `## [Unreleased]` still fails the check. (epic 85.0)
+- Changelog entries are no longer added to the `## [Unreleased]` list in `CHANGELOG.md`. Each change adds its own file under `changelog.d/` (`<category>-<short-slug>.md`, holding `- ` bullet lines), and cutting a release runs `go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD` before the tag is pushed, which writes the release's section and deletes the fragments. The rules are at the top of `CHANGELOG.md`; the release step is in `docs/release-process.md`. Documentation only. (epic 85.0)
+- Documented the first-run `atcr quickstart` telemetry-notice pitfall in the README quickstart, added the `export LLM_SYNTHETIC_API_KEY` step before `atcr doctor`, and added `docs/clean-install-check.md`, a recorded clean-install walkthrough. (epic 84.0)
+- Three names changed before the v1.0 freeze: `atcr verify --fresh` is now `atcr verify --reverify`, the registry key `executor.fix_timeout` is now `executor.fix_timeout_secs`, and the registry and project key `cache_max_bytes` is now `max_cache_bytes`. Each old name keeps working as a deprecated alias that prints one warning on stderr per run (never on stdout, so `--json` and `--axi` output stay clean); setting both an old and its new name is a load error. `atcr review --fresh` is now hidden in help. See [docs/decisions/2026-10-28-v1-naming-review.md](docs/decisions/2026-10-28-v1-naming-review.md). (epic 84.0)
+- `docs/visual-verification.md` now documents the visual evidence the browser run saves under `.atcr/reviews/<id>/visual/` (sanitized screenshots, `console.txt`, `network.txt`), the MEDIUM `out-of-scope` findings it files per distinct console error and failed request with their `ui-console:` / `ui-network:` evidence tags — findings that are never promoted and never fail the `--fail-on` severity gate — and the SARIF report's one attachment per screenshot. Documentation only. (epic 36.0.3)
+
+### Deprecated
+
+- The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)
+
+### Fixed
+
+- Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)
+
 ## [0.5.0] - 2026-10-27
 
 ### Highlights
@@ -808,7 +846,8 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 
 - Updated stale `cmd/atcr/...` comment cross-references and the `newRootCmd` symbol name to `cli/...`/`NewRootCmdWithClient` in ~12 non-relocated files, closing out documentation drift left by the Sprint 34.0 CLI relocation.
 
-[Unreleased]: https://github.com/samestrin/atcr/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/samestrin/atcr/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v1.0.0
 [0.5.0]: https://github.com/samestrin/atcr/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/samestrin/atcr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/samestrin/atcr/compare/v0.2.0...v0.3.0
