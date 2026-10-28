@@ -3,12 +3,15 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -106,7 +109,7 @@ func renderStableSurface(root string) string {
 	}
 
 	b.WriteString("## Environment variables\n\n")
-	b.WriteString("Every `ATCR_*` name read by non-test Go source, with the files that reference it.\n\n")
+	b.WriteString("Every `ATCR_*` name read through `os.Getenv` or `os.LookupEnv` in non-test Go source, with the files that reference it.\n\n")
 	b.WriteString("| Variable | Referenced in |\n|---|---|\n")
 	env := scanEnvVars(root)
 	names := make([]string, 0, len(env))
@@ -123,7 +126,7 @@ func renderStableSurface(root string) string {
 // collectConfigKeys records the Go type of every yaml key reachable from t, walking
 // nested structs, pointers, slices and maps (map keys render as <name>).
 func collectConfigKeys(t reflect.Type, prefix string, keys map[string]string) {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -144,7 +147,7 @@ func collectConfigKeys(t reflect.Type, prefix string, keys map[string]string) {
 		elem := f.Type
 		for {
 			switch elem.Kind() {
-			case reflect.Ptr, reflect.Slice:
+			case reflect.Pointer, reflect.Slice:
 				elem = elem.Elem()
 				continue
 			case reflect.Map:
@@ -158,12 +161,18 @@ func collectConfigKeys(t reflect.Type, prefix string, keys map[string]string) {
 	}
 }
 
-var atcrEnvRE = regexp.MustCompile(`"(ATCR_[A-Z0-9_]+)"`)
-
-// scanEnvVars maps each ATCR_* string literal in non-test Go source under root
-// to the sorted, repo-relative files that mention it.
+// scanEnvVars maps each ATCR_* name that non-test Go source passes to
+// os.Getenv or os.LookupEnv, directly or through a package-level string
+// constant, to the sorted, repo-relative files that read it. Comments, prompt
+// strings and test helpers are ignored.
 func scanEnvVars(root string) map[string][]string {
-	out := map[string][]string{}
+	type parsed struct {
+		rel  string
+		dir  string
+		file *ast.File
+	}
+	var files []parsed
+	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -177,27 +186,78 @@ func scanEnvVars(root string) map[string][]string {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		seen := map[string]bool{}
-		for _, m := range atcrEnvRE.FindAllSubmatch(data, -1) {
-			name := string(m[1])
-			if !seen[name] {
-				seen[name] = true
-				out[name] = append(out[name], "`"+rel+"`")
-			}
-		}
+		files = append(files, parsed{filepath.ToSlash(rel), filepath.Dir(path), f})
 		return nil
 	})
 	if err != nil {
 		panic(err)
 	}
-	for _, files := range out {
-		sort.Strings(files)
+
+	// Package-level string constants, keyed by directory then identifier.
+	consts := map[string]map[string]string{}
+	for _, pf := range files {
+		for _, decl := range pf.file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, id := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						if v, err := strconv.Unquote(lit.Value); err == nil {
+							if consts[pf.dir] == nil {
+								consts[pf.dir] = map[string]string{}
+							}
+							consts[pf.dir][id.Name] = v
+						}
+					}
+				}
+			}
+		}
+	}
+
+	out := map[string][]string{}
+	for _, pf := range files {
+		seen := map[string]bool{}
+		ast.Inspect(pf.file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 1 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "Getenv" && sel.Sel.Name != "LookupEnv") {
+				return true
+			}
+			if x, ok := sel.X.(*ast.Ident); !ok || x.Name != "os" {
+				return true
+			}
+			name := ""
+			switch a := call.Args[0].(type) {
+			case *ast.BasicLit:
+				if a.Kind == token.STRING {
+					name, _ = strconv.Unquote(a.Value)
+				}
+			case *ast.Ident:
+				name = consts[pf.dir][a.Name]
+			}
+			if strings.HasPrefix(name, "ATCR_") && !seen[name] {
+				seen[name] = true
+				out[name] = append(out[name], "`"+pf.rel+"`")
+			}
+			return true
+		})
+	}
+	for _, f := range out {
+		sort.Strings(f)
 	}
 	return out
 }

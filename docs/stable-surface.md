@@ -686,21 +686,19 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 
 ## Environment variables
 
-Every `ATCR_*` name read by non-test Go source, with the files that reference it.
+Every `ATCR_*` name read through `os.Getenv` or `os.LookupEnv` in non-test Go source, with the files that reference it.
 
 | Variable | Referenced in |
 |---|---|
-| `ATCR_API_KEY` | `cli/cloudsync.go`, `internal/telemetrytest/telemetrytest.go` |
+| `ATCR_API_KEY` | `cli/cloudsync.go` |
 | `ATCR_AXI_MAX_LINES` | `cli/main.go` |
 | `ATCR_CATALOG_SNAPSHOT` | `internal/personas/snapshot.go` |
 | `ATCR_CATALOG_URL` | `internal/personas/upgrade.go` |
-| `ATCR_DECLINE` | `internal/verify/executor.go` |
-| `ATCR_DECLINED` | `internal/verify/executor.go` |
 | `ATCR_DISABLE_AST_GROUPING` | `internal/reconcile/astgrouping.go` |
-| `ATCR_LEGACY_PIPE` | `cli/axi.go`, `cli/main.go`, `cli/report.go` |
+| `ATCR_LEGACY_PIPE` | `cli/axi.go` |
 | `ATCR_LOG_LEVEL` | `cli/main.go` |
 | `ATCR_PERSONAS_URL` | `internal/personas/client.go` |
-| `ATCR_QUALITY_SIGNAL` | `cli/qualitysignal.go`, `internal/telemetrytest/telemetrytest.go` |
+| `ATCR_QUALITY_SIGNAL` | `cli/qualitysignal.go` |
 | `ATCR_REGISTRY_URL` | `internal/registry/overlay.go` |
-| `ATCR_TELEMETRY` | `cli/main.go`, `internal/telemetrytest/telemetrytest.go` |
+| `ATCR_TELEMETRY` | `cli/main.go` |
 | `ATCR_TIER4_INDEX_MAX_FILES` | `internal/reconcile/symbolindex.go` |
