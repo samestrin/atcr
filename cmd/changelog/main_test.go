@@ -72,15 +72,15 @@ func TestAssemble_EachCategory(t *testing.T) {
 
 func TestAssemble_OrderAndPlacement(t *testing.T) {
 	dir := setup(t, baseChangelog, map[string]string{
-		"security-z.md": "- sec. (epic 1)\n",
-		"fixed-b.md":    "- fix b. (epic 1)\n",
-		"fixed-a.md":    "- fix a. (epic 1)\n- fix a2. (epic 1)\n",
-		"added-x.md":    "- add. (epic 1)\n",
-		"removed-r.md":  "- rem. (epic 1)\n",
+		"security-z.md":   "- sec. (epic 1)\n",
+		"fixed-b.md":      "- fix b. (epic 1)\n",
+		"fixed-a.md":      "- fix a. (epic 1)\n- fix a2. (epic 1)\n",
+		"added-x.md":      "- add. (epic 1)\n",
+		"removed-r.md":    "- rem. (epic 1)\n",
 		"deprecated-d.md": "- dep. (epic 1)\n",
-		"changed-c.md":  "- chg. (epic 1)\n",
-		"README.md":     "not a fragment\n",
-		".gitkeep":      "",
+		"changed-c.md":    "- chg. (epic 1)\n",
+		"README.md":       "not a fragment\n",
+		".gitkeep":        "",
 	})
 	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
 	if code != 0 {
