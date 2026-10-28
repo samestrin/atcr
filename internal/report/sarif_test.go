@@ -462,6 +462,7 @@ func TestSarif_SchemaConformance(t *testing.T) {
 		"file-level":  {{Severity: "MEDIUM", File: "x.go", Line: 0, Problem: "p", Category: "c"}},
 		"empty-cat":   {{Severity: "LOW", File: "y.go", Line: 3, Problem: "p", Category: ""}},
 		"empty-file":  {{Severity: "LOW", File: "", Line: 5, Problem: "p", Category: "c"}},
+		"visual":      sampleVisual(), // screenshots as result attachments
 	}
 	for name, findings := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -474,4 +475,18 @@ func TestSarif_SchemaConformance(t *testing.T) {
 				"renderSarif output must conform to the SARIF 2.1.0 schema")
 		})
 	}
+}
+
+// Screenshots become result attachments (Epic 36.0.3 T4); a finding whose
+// VisualEvidence names no usable screenshot (none, or only references that
+// fail validation) emits no attachments key at all.
+func TestSarif_VisualAttachments(t *testing.T) {
+	out := renderSarifString(t, sampleVisual())
+	assert.Contains(t, out, `"uri": "visual/home.png"`)
+	assert.Contains(t, out, `"uri": "visual/home-mobile.png"`)
+	assert.Equal(t, 1, strings.Count(out, `"attachments"`), "only the visual finding carries attachments")
+
+	bad := []reconcile.JSONFinding{{Severity: "LOW", File: "a.go", Line: 1, Problem: "p", Category: "c",
+		VisualEvidence: &reconcile.VisualEvidence{Screenshots: []string{"../x.png"}, ConsoleLog: "visual/c.log"}}}
+	assert.NotContains(t, renderSarifString(t, bad), "attachments")
 }
