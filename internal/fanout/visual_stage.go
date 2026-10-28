@@ -120,6 +120,8 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 		return VisualReviewResult{}, err
 	}
 	vr.Artifacts = artifacts
+	vr.Browser = shots
+	vr.Spec = spec
 	return vr, nil
 }
 
@@ -279,6 +281,7 @@ func runVisualStage(ctx context.Context, p *PreparedReview) Result {
 		return Result{Agent: VisualPersonaName, Status: StatusFailed, Err: err, Truncation: in.Truncation}
 	}
 	r := vr.Result
+	r.Content = appendVisualFindings(r.Content, visualBrowserFindings(vr.Spec, vr.Browser, vr.Artifacts))
 	r.Truncation = in.Truncation
 	// The vision agent may also sit in the roster as a reviewer; the visual
 	// record is felix's, and its model names the vision agent's.
