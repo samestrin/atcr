@@ -25,7 +25,7 @@ Execution requires two things, both explicit:
 agents:
   - greta
 sandbox:
-  backend: docker            # only "docker" is supported today
+  backend: docker            # "docker" (default) or "os-level" (see below)
   image: golang:1.25         # MUST be present locally (runs are network-isolated)
   test_command: [go, test, ./...]
   # optional hardening overrides (sane defaults apply):
@@ -63,8 +63,9 @@ Every run is executed in an ephemeral container with:
 - **Resource caps** — memory, CPU, and PID limits, plus a wall-clock timeout.
 
 Bare-metal execution is intentionally unsupported. The backend is pluggable;
-Docker is the primary implementation, and an OS-level backend is available as an
-explicit opt-in fallback (see below). Podman is a future addition.
+Docker is the default implementation, and the OS-level backend can either be
+selected directly as the primary backend (`sandbox.backend: os-level`) or engaged
+as an explicit opt-in fallback (both below). Podman is a future addition.
 
 ### What the OS-level fallback guarantees instead
 
@@ -123,6 +124,49 @@ backend does not. The per-platform caveats an operator accepts by opting in are
 listed in full under
 [What you give up relative to Docker](auto-fix.md#what-you-give-up-relative-to-docker).
 
+### Selecting the OS-level backend directly (`sandbox.backend: os-level`)
+
+The fallback path above still constructs Docker and runs its preflight on every
+invocation before the OS-level backend can engage. On a host with no Docker at
+all, select the OS-level backend as the **primary** backend instead:
+
+```yaml
+# .atcr/config.yaml
+sandbox:
+  backend: os-level
+  test_command: [go, test, ./...]
+```
+
+- **No image is needed.** `sandbox.image` is required only for the Docker
+  backend; with `backend: os-level` it may be omitted. Docker is never
+  constructed or spawned, so a Docker-less host pays no doomed preflight against
+  a missing daemon. `sandbox.test_command` is still required.
+- **Docker-only keys are accepted but ignored.** `sandbox.image`,
+  `sandbox.docker_path`, and `sandbox.cpus` still pass validation but have no
+  effect. `sandbox.memory`, `sandbox.pids_limit`, and `sandbox.timeout_secs`
+  still apply, with the per-platform caveats listed above.
+- **It warns once when you commit to the run.** The notice
+  `os-level sandbox backend selected directly` names the ignored docker keys and
+  the containment this backend does not enforce: **CPU caps** and the non-root
+  **`uid 65534`** identity (the run executes as the invoking user), plus
+  `--cap-drop ALL`, `no-new-privileges`, and the read-only root filesystem. Like
+  the fallback notice it goes through the context logger, so
+  `ATCR_LOG_LEVEL=error` silences it. It is deliberately a different message
+  from the fallback-engaged warning: you selected this backend yourself, so
+  nothing changed under you.
+- **It cannot be combined with `sandbox.fallback: os-level`.** That combination
+  is rejected at config load (`sandbox.fallback "os-level" is redundant with
+  sandbox.backend "os-level"`): the primary backend has nothing to fall back
+  from. The fallback remains the Docker-preferred path and is unchanged.
+- **A failed preflight is a plain refusal.** There is no Docker attempt and no
+  second backend, so if `sandbox-exec`/`bwrap` is missing or the platform cannot
+  contain the run, the command refuses rather than degrading to host execution.
+
+The guarantees are exactly the narrower set listed in
+[What the OS-level fallback guarantees instead](#what-the-os-level-fallback-guarantees-instead);
+selecting the backend directly changes only *how* it is reached, not what it
+enforces.
+
 ### Preflight
 
 Before any execution the backend verifies, in order: the Docker daemon is
@@ -131,7 +175,8 @@ network-isolated, so it cannot be pulled on demand — run `docker pull <image>`
 first), and a trivial hardened container runs to completion. Any failure refuses
 the run, unless `sandbox.fallback: os-level` is configured — in which case the
 OS-level backend is preflighted in turn, and the run is refused only if that
-fails too.
+fails too. With `sandbox.backend: os-level` none of these Docker steps runs: the
+OS-level backend's own preflight is the only one.
 
 ## The tools
 
