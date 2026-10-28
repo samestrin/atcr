@@ -44,6 +44,7 @@ func TestEvaluate_Migration(t *testing.T) {
 		addedOne   = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n- d new. (epic 4)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		halfBullet = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n  wrapped. (epic 2)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		pointerCut = "# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+		headingCut = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n- b thing\n  wrapped. (epic 2)\n\n### Fixed\n\n- c fixed. (epic 3)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		reordered  = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n### Added\n\n- b thing\n  wrapped. (epic 2)\n- a thing. (epic 1)\n\n### Fixed\n\n- c fixed. (epic 3)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 	)
 	tests := []struct {
@@ -65,6 +66,7 @@ func TestEvaluate_Migration(t *testing.T) {
 		{"half a bullet removed fails", []change{fragA, fragB, fragC}, all, halfBullet, true},
 		{"pointer line removed fails", []change{fragA, fragB, fragC}, all, pointerCut, true},
 		{"reorder only fails", nil, nil, reordered, true},
+		{"heading removed over a kept bullet fails", []change{fragA}, all, headingCut, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

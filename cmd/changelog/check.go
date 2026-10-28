@@ -112,7 +112,20 @@ func checkPR(ctx context.Context, repo, base, head, body string, labels []string
 	if err != nil {
 		return nil, err
 	}
-	return evaluate(changes, string(baseLog), string(headLog), body, labels), nil
+	frags := map[string]string{}
+	if unreleasedBody(string(baseLog)) != unreleasedBody(string(headLog)) {
+		for _, c := range changes {
+			if !isAddedFragment(c) {
+				continue
+			}
+			b, err := gitOutput(ctx, repo, "show", head+":"+c.path)
+			if err != nil {
+				return nil, err
+			}
+			frags[c.path] = string(b)
+		}
+	}
+	return evaluate(changes, frags, string(baseLog), string(headLog), body, labels), nil
 }
 
 func gitOutput(ctx context.Context, repo string, args ...string) ([]byte, error) {
@@ -151,14 +164,15 @@ func parseNameStatus(out []byte) ([]change, error) {
 }
 
 // evaluate returns one message per failed rule; none means the PR passes.
-func evaluate(changes []change, baseLog, headLog, body string, labels []string) []string {
+// frags holds the content of each fragment the PR adds, keyed by path.
+func evaluate(changes []change, frags map[string]string, baseLog, headLog, body string, labels []string) []string {
 	var problems []string
 	if !optedOut(body, labels) && needsFragment(changes) && !addsFragment(changes) {
 		problems = append(problems, "this PR changes code under "+strings.Join(codeDirs, ", ")+" but adds no fragment. "+
 			"Add changelog.d/<category>-<slug>.md (category: "+strings.Join(categories, ", ")+") holding \"- \" bullet lines. "+
 			"If the change is not user-visible, add the \""+optOutLabel+"\" label or a line \"changelog: none\" to the PR description.")
 	}
-	if unreleasedBody(baseLog) != unreleasedBody(headLog) {
+	if b, h := unreleasedBody(baseLog), unreleasedBody(headLog); b != h && !movedToFragments(b, h, changes, frags) {
 		problems = append(problems, "this PR edits the \"## [Unreleased]\" section of "+changelogFile+" directly. "+
 			"Revert that edit and write the entry to changelog.d/<category>-<slug>.md instead; fragments are assembled into "+changelogFile+" at release time.")
 	}
@@ -197,11 +211,91 @@ func needsFragment(changes []change) bool {
 // addsFragment reports whether the PR adds a top-level, well-named fragment.
 func addsFragment(changes []change) bool {
 	for _, c := range changes {
-		rest, ok := strings.CutPrefix(c.path, fragmentDir)
-		if c.status != 'A' || !ok || path.Base(rest) != rest {
+		if isAddedFragment(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAddedFragment(c change) bool {
+	rest, ok := strings.CutPrefix(c.path, fragmentDir)
+	if c.status != 'A' || !ok || path.Base(rest) != rest {
+		return false
+	}
+	_, ok = categoryOf(rest)
+	return ok
+}
+
+// movedToFragments reports whether the Unreleased edit from base to head only
+// moves listed entries out into fragments the PR adds: head is base with lines
+// removed, and every removed line is blank, a "### " heading, or part of a
+// whole "- " bullet (with its indented continuation lines) that appears
+// verbatim, as whole lines, in an added fragment. A heading goes only with
+// every bullet under it, and at least one bullet must go.
+func movedToFragments(base, head string, changes []change, frags map[string]string) bool {
+	var added []string
+	for _, c := range changes {
+		if content, ok := frags[c.path]; ok && isAddedFragment(c) {
+			added = append(added, "\n"+strings.ReplaceAll(content, "\r\n", "\n")+"\n")
+		}
+	}
+	bl, hl := strings.Split(base, "\n"), strings.Split(head, "\n")
+	removed := make([]bool, len(bl))
+	i := 0
+	for _, h := range hl {
+		for i < len(bl) && bl[i] != h {
+			removed[i] = true
+			i++
+		}
+		if i == len(bl) {
+			return false // head has a line base does not: an addition or a reorder
+		}
+		i++
+	}
+	for ; i < len(bl); i++ {
+		removed[i] = true
+	}
+	moved, headingGone := false, false
+	for i := 0; i < len(bl); i++ {
+		line := bl[i]
+		if strings.HasPrefix(line, "### ") {
+			headingGone = removed[i]
 			continue
 		}
-		if _, ok := categoryOf(rest); ok {
+		if strings.HasPrefix(line, "- ") {
+			if headingGone && !removed[i] {
+				return false // a kept bullet would fall under another heading
+			}
+			j := i + 1
+			for j < len(bl) && strings.TrimSpace(bl[j]) != "" && strings.TrimLeft(bl[j], " \t") != bl[j] {
+				j++
+			}
+			for k := i + 1; k < j; k++ {
+				if removed[k] != removed[i] {
+					return false // part of a bullet removed
+				}
+			}
+			if removed[i] {
+				bullet := "\n" + strings.Join(bl[i:j], "\n") + "\n"
+				if !containsAny(added, bullet) {
+					return false
+				}
+				moved = true
+			}
+			i = j - 1
+			continue
+		}
+		if removed[i] && strings.TrimSpace(line) != "" {
+			return false
+		}
+	}
+	return moved
+}
+
+func containsAny(texts []string, sub string) bool {
+	for _, t := range texts {
+		if strings.Contains(t, sub) {
 			return true
 		}
 	}
