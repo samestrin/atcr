@@ -39,9 +39,12 @@ repo-wide — a deliberate, separate decision, not an automatic bump.
 The epic/sprint headings from before `v0.1.0` (`## [1.0.0]` … `## [33.2.0]`) are
 kept verbatim in [`CHANGELOG-history.md`](../CHANGELOG-history.md) as the
 historical **development** changelog; they were never git tags. Since 2026-10-11,
-`CHANGELOG.md` has one `## [X.Y.Z]` section per release tag, plus `## [Unreleased]`
-for changes not yet tagged. Cutting a release renames `[Unreleased]` to the new
-tag's version and date.
+`CHANGELOG.md` has one `## [X.Y.Z]` section per release tag, plus `## [Unreleased]`.
+Since epic 85.0, changes not yet tagged are not listed under `## [Unreleased]`:
+each PR adds its own fragment file under [`changelog.d/`](../changelog.d/), and
+cutting a release assembles the fragments into the new tag's section (step 2 of
+[Cutting a Release](#cutting-a-release)). `## [Unreleased]` keeps only a pointer
+line to `changelog.d/`.
 
 ### Forward-only — no retroactive backfill
 
@@ -124,10 +127,33 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    the epic/sprint number. Increment from the latest `v*` tag
    (`git tag -l 'v*' | sort -V | tail -1`) per the change's scope
    (patch/minor/major, staying `< v2` unless the module path gains a `/vN`
-   suffix). Add or update the corresponding `CHANGELOG.md` release notes for the
-   cut; the changelog heading no longer has to equal the tag number.
+   suffix). The changelog heading is the tag's number without the `v`
+   (`v0.6.0` → `## [0.6.0]`).
 
-2. **Dry-run locally first (non-optional — run it for every cut).** From an
+2. **Assemble the changelog before tagging.** On a branch from an up-to-date
+   `main`, turn the fragments in [`changelog.d/`](../changelog.d/) into the
+   release's `CHANGELOG.md` section, with the version (no `v`) and today's date:
+
+   ```sh
+   go run ./cmd/changelog assemble --version 0.6.0 --date 2026-11-02 --dry-run
+   go run ./cmd/changelog assemble --version 0.6.0 --date 2026-11-02
+   ```
+
+   The `--dry-run` prints the section and changes nothing; read it first. The
+   real run inserts `## [0.6.0] - 2026-11-02` below `## [Unreleased]`, grouped
+   Added, Changed, Deprecated, Removed, Fixed, Security, and deletes the
+   fragments it used (`changelog.d/README.md` stays). It fails, writing nothing,
+   if a fragment name has no valid category, if `changelog.d/` has no fragments,
+   or if the version already has a section. Then update the compare links at
+   the end of `CHANGELOG.md` by hand: point `[Unreleased]` at `v0.6.0...HEAD`
+   and add `[0.6.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v0.6.0`
+   (previous tag on the left). Merge that PR to `main` **before** pushing the
+   tag: `TestChangelogHasSectionForEveryReleaseTag`
+   ([`cli/changelog_tags_test.go`](../cli/changelog_tags_test.go)) fails CI on
+   every branch once a `v*` tag exists with no matching `## [X.Y.Z]` heading.
+   Do not rename the `## [Unreleased]` heading or add entries under it.
+
+3. **Dry-run locally first (non-optional — run it for every cut).** From an
    up-to-date `main`, run:
 
    ```sh
@@ -143,7 +169,7 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    hard-to-retract** GitHub Release, so this dry run is a required step, not a
    convenience.
 
-3. **Cut the real tag.** From an up-to-date `main`:
+4. **Cut the real tag.** From an up-to-date `main`:
 
    ```sh
    git tag v0.1.0
@@ -155,7 +181,7 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    once and could fire an unintended release (or the disjoint `reconcile/v*`
    module gate).
 
-4. **Let the workflow publish.** The tag push fires
+5. **Let the workflow publish.** The tag push fires
    [`release.yml`](../.github/workflows/release.yml), which runs
    `goreleaser release --clean` and publishes the GitHub Release automatically —
    no further manual step is required. Watch the workflow run to confirm it
