@@ -397,7 +397,7 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
 	// directly-constructed proj/reg (bypassing the file loader) could carry one.
 	if s.CacheMaxBytes < 0 {
-		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
+		return Settings{}, fmt.Errorf("max_cache_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
 	}
 	// MaxSprintPlanBytes (F9): 0/negative has no valid meaning (no unbounded
 	// plan-injection use case). Catches a directly-constructed proj/reg that

@@ -122,7 +122,7 @@ func WithEscalation(c EscalationConfig) RangeOption {
 // **0 DISABLES the ledger entirely** — no `git log` runs, no commit text reaches
 // a provider, and no ledger entry is prepended. That is the operator escape
 // hatch the setting exists for, and it is why 0 is not the "unlimited" sentinel
-// it is on payload_byte_budget and cache_max_bytes: the ledger entry carries
+// it is on payload_byte_budget and max_cache_bytes: the ledger entry carries
 // Size 0 and is uncounted on the ORDINARY shed, so an unbounded ledger would be
 // unbounded prompt text nothing could see or shed. (It is not exempt everywhere:
 // the fallback re-fit re-sizes every entry to len(Body) and funds the exempt

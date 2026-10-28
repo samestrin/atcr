@@ -16,8 +16,8 @@ func TestPrecedence_CacheMaxBytesDefault(t *testing.T) {
 }
 
 func TestPrecedence_CacheMaxBytesChain(t *testing.T) {
-	reg := loadRegistryWith(t, "cache_max_bytes: 1048576\n")
-	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: 2097152\n"))
+	reg := loadRegistryWith(t, "max_cache_bytes: 1048576\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_cache_bytes: 2097152\n"))
 	require.NoError(t, err)
 
 	s := resolve(t, CLIOverrides{}, proj, reg)
@@ -25,7 +25,7 @@ func TestPrecedence_CacheMaxBytesChain(t *testing.T) {
 }
 
 func TestPrecedence_CacheMaxBytesRegistryOverridesEmbedded(t *testing.T) {
-	reg := loadRegistryWith(t, "cache_max_bytes: 1048576\n")
+	reg := loadRegistryWith(t, "max_cache_bytes: 1048576\n")
 	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
 	require.NoError(t, err)
 
@@ -36,7 +36,7 @@ func TestPrecedence_CacheMaxBytesRegistryOverridesEmbedded(t *testing.T) {
 func TestPrecedence_CacheMaxBytesExplicitZeroIsUnbounded(t *testing.T) {
 	// 0 is the documented unbounded escape hatch (parity with payload_byte_budget
 	// and max_parallel) and must survive default application.
-	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: 0\n"))
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_cache_bytes: 0\n"))
 	require.NoError(t, err)
 
 	s := resolve(t, CLIOverrides{}, proj, nil)
@@ -44,9 +44,9 @@ func TestPrecedence_CacheMaxBytesExplicitZeroIsUnbounded(t *testing.T) {
 }
 
 func TestProjectConfig_CacheMaxBytesNegativeRejected(t *testing.T) {
-	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: -1\n"))
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_cache_bytes: -1\n"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cache_max_bytes")
+	assert.Contains(t, err.Error(), "max_cache_bytes")
 }
 
 func TestRegistry_CacheMaxBytesNegativeRejected(t *testing.T) {
@@ -56,8 +56,8 @@ providers:
     api_key_env: KEY
 agents:
   bruce: {provider: p, model: m}
-cache_max_bytes: -5
+max_cache_bytes: -5
 `))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cache_max_bytes")
+	assert.Contains(t, err.Error(), "max_cache_bytes")
 }

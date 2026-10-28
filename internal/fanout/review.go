@@ -259,7 +259,7 @@ type PreparedReview struct {
 	runCeiling time.Duration
 	manifest   *payload.Manifest
 	// cache is the diff cache for this review (Epic 5.2), rooted at
-	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
+	// <root>/.atcr/cache and sized by the resolved max_cache_bytes. nil only if
 	// caching could not be set up; ExecuteReview wires it into the engine when
 	// non-nil. cacheNoRead carries the --no-cache request (bypass reads, still
 	// write).
@@ -739,7 +739,7 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	}
 	// Wire the diff cache (Epic 5.2): reviewer outputs are content-addressed
 	// under <root>/.atcr/cache (sibling of reviews/, already excluded from git)
-	// and capped at the resolved cache_max_bytes. The store is shared across the
+	// and capped at the resolved max_cache_bytes. The store is shared across the
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
 	visual, visualInput, err := prepareVisual(ctx, cfg, req, payloads, changed)

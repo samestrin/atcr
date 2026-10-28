@@ -80,7 +80,7 @@ executor:
   # Complexity ceilings (Sprint 32.1) — the upper bound of fix work this tier attempts.
   max_estimated_minutes: 15      # skip-and-log any finding whose EST_MINUTES exceeds 15 (1..10080)
   # max_severity_for_fix: HIGH   # optional severity ceiling; a value below min_severity_for_fix is a load error
-  # fix_timeout: 120             # optional per-fix timeout (seconds)
+  # fix_timeout_secs: 120             # optional per-fix timeout (seconds)
   temperature: 0.0               # API temperature [0,2]; default 0.0 (deterministic fixes)
   # system_prompt: |             # optional: replaces the default fixer framing verbatim (supersedes persona)
   #   You are a senior Go engineer. Emit only gofmt-clean, idiomatic Go and nothing else.

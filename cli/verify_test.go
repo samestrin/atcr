@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +124,8 @@ func findVerifyCmd(t *testing.T) bool {
 func TestVerifyCmd_Exists(t *testing.T) {
 	require.True(t, findVerifyCmd(t), "verify subcommand must be registered")
 	_, help := execCmdCapture(t, "verify", "--help")
-	require.Contains(t, help, "--fresh")
+	require.Contains(t, help, "--reverify")
+	require.NotContains(t, help, "--fresh", "the deprecated alias is hidden")
 	require.Contains(t, help, "--thorough")
 	require.Contains(t, help, "--min-severity")
 	require.Contains(t, help, "--exec")
@@ -211,9 +213,43 @@ func TestVerifyCmd_FreshReverifies(t *testing.T) {
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
 		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
 	}})
-	code, _ := execCmdCapture(t, "verify", "--fresh", "r")
+	code, out := execCmdCapture(t, "verify", "--fresh", "r")
 	require.Equal(t, 0, code)
+	require.Equal(t, 1, strings.Count(out, "--reverify"), "one deprecation warning naming --reverify")
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"), "--fresh re-attempts; no skeptic -> unverifiable")
+}
+
+// TestVerifyCmd_ReverifyReverifies: --reverify (the R1 rename) behaves as --fresh did.
+func TestVerifyCmd_ReverifyReverifies(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
+	}})
+	code, out := execCmdCapture(t, "verify", "--reverify", "r")
+	require.Equal(t, 0, code)
+	require.NotContains(t, out, "deprecated")
+	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyCmd_FreshWarnsOnStderrOnly: the deprecation warning for --fresh goes
+// to stderr, once, and never into stdout.
+func TestVerifyCmd_FreshWarnsOnStderrOnly(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
+	}})
+	var stdout, stderr bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"verify", "--fresh", "r"})
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	require.NotContains(t, stdout.String(), "--reverify", "stdout stays free of the warning")
+	require.Equal(t, 1, strings.Count(stderr.String(), "--reverify"), "one warning on stderr")
 }
 
 // TestVerifyCmd_RepoFlagThreadsReviewedRoot proves Epic 22.1 task 2: `atcr verify`

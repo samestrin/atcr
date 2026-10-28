@@ -144,6 +144,9 @@ func collectConfigKeys(t reflect.Type, prefix string, keys map[string]string) {
 		}
 		key := prefix + name
 		keys[key] = f.Type.String()
+		if repl := f.Tag.Get("deprecated"); repl != "" {
+			keys[key] += ", deprecated alias of `" + repl + "`"
+		}
 		elem := f.Type
 		for {
 			switch elem.Kind() {
