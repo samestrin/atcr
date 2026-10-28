@@ -1,0 +1,1 @@
+- The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)
