@@ -22,6 +22,26 @@ func TestLoadManifest_Embedded(t *testing.T) {
 	require.NotEmpty(t, m.Models, "manifest ships at least one model")
 }
 
+// Synthetic rejects a bare model name with HTTP 400 ("Your model name should
+// start with an hf: prefix"), so a quickstart registry built from bare names
+// fails every doctor probe and every review agent. Pin the prefix on both the
+// bundled manifest and the registry.yaml quickstart writes from it.
+func TestLoadManifest_EmbeddedModelsUseHFPrefix(t *testing.T) {
+	m, err := LoadManifest()
+	require.NoError(t, err)
+	for _, model := range m.Models {
+		assert.True(t, strings.HasPrefix(model, "hf:"), "synthetic model id %q must start with hf:", model)
+	}
+
+	out := RegistryYAML(m, []string{"alice", "bob", "carol"})
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "model: "); ok {
+			assert.True(t, strings.HasPrefix(v, "hf:"), "generated registry model %q must start with hf:", v)
+		}
+	}
+	assert.Contains(t, out, "model: hf:", "generated registry binds agents to hf: models")
+}
+
 func TestSignupLink(t *testing.T) {
 	// No referral → the bare signup URL.
 	m := &Manifest{SignupURL: "https://synthetic.new/", Referral: ""}
