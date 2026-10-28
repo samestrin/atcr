@@ -368,3 +368,47 @@ func syncDir(dir string) error {
 	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
+
+// stubConfigKeys are the only keys atcr writes into .atcr/config.yaml on its
+// own, without `atcr init`: the first-run notice bookkeeping (which creates the
+// file) and the two `atcr config set` opt-outs.
+var stubConfigKeys = map[string]bool{
+	telemetryNoticeShownKey: true,
+	"telemetry":             true,
+	"quality_signal":        true,
+}
+
+// LoadStubConfig reports whether .atcr/config.yaml under root is a stub atcr
+// wrote before the workspace was scaffolded, and if so returns its settings.
+//
+// The first-run telemetry notice creates the file on whatever command runs
+// first, so in a fresh repo `atcr version` followed by `atcr quickstart` used to
+// find a config, report "Using existing workspace" and write no personas or
+// roster (Epic 84.0 F1). A stub is a regular file whose keys are all in
+// stubConfigKeys with boolean values (an empty file counts); anything else —
+// a roster, any other setting, a symlink, a parse error — is a real config.
+// The caller writes the scaffolded config and re-applies the returned settings,
+// so a recorded opt-out survives.
+func LoadStubConfig(root string) (settings map[string]bool, stub bool) {
+	path := DefaultProjectConfigPath(root)
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	var probe map[string]interface{}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return nil, false
+	}
+	settings = map[string]bool{}
+	for k, v := range probe {
+		b, ok := v.(bool)
+		if !stubConfigKeys[k] || !ok {
+			return nil, false
+		}
+		settings[k] = b
+	}
+	return settings, true
+}
