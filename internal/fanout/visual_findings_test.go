@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"context"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"strings"
@@ -121,4 +122,31 @@ type browserVisual struct{ res VisualReviewResult }
 
 func (b *browserVisual) RunVisual(context.Context, VisualStageInput) (VisualReviewResult, error) {
 	return b.res, nil
+}
+
+type noisyBrowser struct{ *orderBrowser }
+
+func (b noisyBrowser) Run(ctx context.Context, run BrowserRun) (BrowserResult, error) {
+	res, err := b.orderBrowser.Run(ctx, run)
+	res.Console = []ConsoleEntry{{Level: "error", Text: "token=" + guardAWSKey}}
+	res.NetworkFailures = []NetworkFailure{{Method: "GET", URL: "http://localhost/?key=" + guardAWSKey, Status: 500}}
+	return res, err
+}
+
+// RunVisual hands back the guarded browser result and the spec it ran.
+func TestVisualStage_ReturnsGuardedBrowserAndSpec(t *testing.T) {
+	stage, _, _, browser, _ := newOrderStage(t)
+	stage.Browser = noisyBrowser{browser}
+	stage.Settings = registry.Settings{SecretGuard: secretGuardRedact}
+
+	res, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
+	require.NoError(t, err)
+	assert.Equal(t, browser.run.Spec, res.Spec)
+	assert.NotEmpty(t, res.Spec)
+	require.Len(t, res.Browser.Console, 1)
+	require.Len(t, res.Browser.NetworkFailures, 1)
+	assert.NotContains(t, res.Browser.Console[0].Text, guardAWSKey)
+	assert.Contains(t, res.Browser.Console[0].Text, payload.SecretPlaceholder)
+	assert.NotContains(t, res.Browser.NetworkFailures[0].URL, guardAWSKey)
+	assert.Contains(t, res.Browser.NetworkFailures[0].URL, payload.SecretPlaceholder)
 }
