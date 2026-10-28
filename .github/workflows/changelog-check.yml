@@ -1,0 +1,45 @@
+# Changelog fragment gate. Kept out of ci.yml on purpose: it must re-run when a
+# label or the PR description changes (labeled/unlabeled/edited), and ci.yml's
+# per-ref cancel-in-progress would then cancel and restart the whole test suite.
+#
+# The PR body and labels are untrusted. They reach the check only through env:
+# values, never through a ${{ }} expansion inside a run: line. The job runs
+# with a read-only token and no secrets, so a fork PR can run it.
+name: Changelog
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fragment:
+    name: Changelog fragment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Check for a fragment and for direct Unreleased edits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHANGELOG_PR_BODY: ${{ github.event.pull_request.body }}
+          CHANGELOG_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: go run ./cmd/changelog check --base "$BASE_SHA" --head "$HEAD_SHA"
