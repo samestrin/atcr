@@ -233,6 +233,25 @@ func TestVerifyCmd_ReverifyReverifies(t *testing.T) {
 	require.Equal(t, "unverifiable", readFindingVerdict(t, "r"))
 }
 
+// TestVerifyCmd_FreshWarnsOnStderrOnly: the deprecation warning for --fresh goes
+// to stderr, once, and never into stdout.
+func TestVerifyCmd_FreshWarnsOnStderrOnly(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t)
+	verifyFixture(t, "r", []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
+	}})
+	var stdout, stderr bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"verify", "--fresh", "r"})
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	require.NotContains(t, stdout.String(), "--reverify", "stdout stays free of the warning")
+	require.Equal(t, 1, strings.Count(stderr.String(), "--reverify"), "one warning on stderr")
+}
+
 // TestVerifyCmd_RepoFlagThreadsReviewedRoot proves Epic 22.1 task 2: `atcr verify`
 // grows a --repo flag that threads the reviewed-repo root (default ".") into
 // verify.Verify's repoRoot — the root skeptics inspect and the exec validator
