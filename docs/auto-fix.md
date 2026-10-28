@@ -148,10 +148,13 @@ The block has exactly three fields:
   immediate false timeout mid-run.
 
 > **Note on the `sandbox:` block requirement.** Because validation is sandboxed
-> by default, `--auto-fix` needs a `sandbox:` block (with an `image` and
-> `test_command`) just as `--exec` does — the container image is where your
+> by default, `--auto-fix` needs a `sandbox:` block (with an `image` — unless the
+> backend is `os-level` — and a `test_command`) just as `--exec` does — the
+> container image is where your
 > validation command runs. If Docker is genuinely unavailable in your
-> environment, you have two options, in order of preference: the still-contained
+> environment, you have three options, in order of preference:
+[`sandbox.backend: os-level`](#selecting-the-os-level-backend-directly-sandboxbackend-os-level)
+to skip Docker entirely, the still-contained
 > [`sandbox.fallback: os-level`](#os-level-fallback-sandboxfallback-os-level)
 > opt-in below, or [`--no-sandbox`](#opting-out---no-sandbox) to accept the risk
 > of unsandboxed host execution instead.
@@ -324,6 +327,47 @@ Concretely, opting in accepts all of the following:
 `sandbox.fallback` and `--no-sandbox` are **separate, non-overlapping** escape
 hatches, and neither implies the other: the flag accepts fully unsandboxed host
 execution, while this config field substitutes a still-contained backend.
+
+## Selecting the OS-level backend directly (`sandbox.backend: os-level`)
+
+The fallback above is Docker-preferred: it still builds the Docker backend and
+pays its preflight on every run before the OS-level backend can engage. On a
+host with no Docker at all, select the OS-level backend as the **primary**
+backend instead:
+
+```yaml
+# .atcr/config.yaml
+sandbox:
+  backend: os-level
+  test_command: [go, test, ./...]   # no image needed
+```
+
+This applies to **both** `--auto-fix` validation and `--exec` reproduction, like
+the fallback. The differences from the fallback path:
+
+- **No image, no Docker.** `sandbox.image` is not required, Docker is never
+  constructed or spawned, and a failed Docker daemon is never consulted. A
+  failed OS-level preflight is a plain refusal — there is no second backend to
+  try, and the run never degrades to unsandboxed host execution.
+- **Docker-only keys are ignored.** `sandbox.image`, `sandbox.docker_path`, and
+  `sandbox.cpus` still pass config validation but have no effect.
+- **A commit-time notice, not the fallback warning.** When the run commits to
+  the backend, ATCR logs `os-level sandbox backend selected directly`, naming
+  the ignored docker keys and what is not enforced: **CPU caps** and the
+  non-root **`uid 65534`** identity (validation runs as the invoking user), plus
+  `cap-drop ALL`, `no-new-privileges`, and the read-only root filesystem. It
+  goes through the context logger, so `ATCR_LOG_LEVEL=error` silences it — same
+  caveat as the fallback notice.
+- **`sandbox.fallback: os-level` is rejected alongside it.** The primary backend
+  has nothing to fall back from, so the combination fails at config load with
+  `sandbox.fallback "os-level" is redundant with sandbox.backend "os-level"`.
+
+What the backend enforces — and what you give up relative to Docker, CPU and uid
+included — is identical to the fallback path; see
+[What you give up relative to Docker](#what-you-give-up-relative-to-docker).
+Selecting it directly changes only how the backend is reached. The fallback
+remains the right choice on a Docker host that should prefer containers and drop
+to OS-level confinement only when Docker breaks.
 
 ## Opting out (`--no-sandbox`)
 
