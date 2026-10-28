@@ -1004,7 +1004,7 @@ func TestVerifyDiffCmd_RegisteredUnderVerify(t *testing.T) {
 func TestVerifyDiffCmd_ParentFlagsUnchanged(t *testing.T) {
 	out, err := execute(t, "verify", "--help")
 	require.NoError(t, err)
-	for _, f := range []string{"--fresh", "--thorough", "--min-severity", "--exec", "--repo"} {
+	for _, f := range []string{"--reverify", "--thorough", "--min-severity", "--exec", "--repo"} {
 		require.Contains(t, out, f, "`atcr verify` must keep its own flag %s", f)
 	}
 }

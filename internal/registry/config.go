@@ -480,7 +480,7 @@ type PayloadEscalationConfig struct {
 // references a key in providers:; Model is the model id; Persona defaults to
 // "fixer". MinSeverity (yaml: min_severity_for_fix) is the severity floor a
 // verified finding must meet to receive a fix (default MEDIUM, normalized to
-// canonical upper-case at load). TimeoutSecs (yaml: fix_timeout) is a pointer so
+// canonical upper-case at load). TimeoutSecs (yaml: fix_timeout_secs) is a pointer so
 // an explicit value is distinguishable from unset.
 //
 // Fix-generation tunables (Epic 7.0.1): Temperature, SystemPrompt, and Rules let
@@ -491,16 +491,19 @@ type PayloadEscalationConfig struct {
 // (persona is superseded for that call). Rules are coding guidelines appended to
 // the fix prompt as constraints. All three are optional and backward-compatible.
 type ExecutorConfig struct {
-	Name         string   `yaml:"name,omitempty"`
-	Provider     string   `yaml:"provider"`
-	Model        string   `yaml:"model"`
-	Persona      string   `yaml:"persona,omitempty"`
-	Role         string   `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
-	MinSeverity  string   `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
-	TimeoutSecs  *int     `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
-	Temperature  *float64 `yaml:"temperature,omitempty"`          // API temperature [0,2]; nil = deterministic 0.0 default
-	SystemPrompt string   `yaml:"system_prompt,omitempty"`        // full fix-prompt framing override; supersedes persona when set
-	Rules        []string `yaml:"rules,omitempty"`                // coding guidelines appended to the fix prompt as constraints
+	Name        string `yaml:"name,omitempty"`
+	Provider    string `yaml:"provider"`
+	Model       string `yaml:"model"`
+	Persona     string `yaml:"persona,omitempty"`
+	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
+	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
+	TimeoutSecs *int   `yaml:"fix_timeout_secs,omitempty"`     // per-fix timeout (secs); nil = inherit shared timeout
+	// LegacyTimeoutSecs is the deprecated spelling (fix_timeout) of TimeoutSecs. It
+	// is folded into TimeoutSecs at load (with one warning per run) and is nil after.
+	LegacyTimeoutSecs *int     `yaml:"fix_timeout,omitempty" deprecated:"executor.fix_timeout_secs"`
+	Temperature       *float64 `yaml:"temperature,omitempty"`   // API temperature [0,2]; nil = deterministic 0.0 default
+	SystemPrompt      string   `yaml:"system_prompt,omitempty"` // full fix-prompt framing override; supersedes persona when set
+	Rules             []string `yaml:"rules,omitempty"`         // coding guidelines appended to the fix prompt as constraints
 	// Agent-mode tool loop (Epic 7.4). AgentMode opts the executor into a read-only
 	// tool loop (reusing the skeptics' dispatcher) so it can read files / search the
 	// codebase before proposing a fix; default false = the Epic 7.0 snippet path,
@@ -890,7 +893,10 @@ type Registry struct {
 	// (Epic 5.2); a pointer so an explicit 0 (unbounded) survives default
 	// application. The project tier overrides it; unset falls through to the
 	// embedded DefaultCacheMaxBytes.
-	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	CacheMaxBytes *int64 `yaml:"max_cache_bytes,omitempty"`
+	// LegacyCacheMaxBytes is the deprecated spelling (cache_max_bytes) of
+	// CacheMaxBytes, folded in at load with one warning per run.
+	LegacyCacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty" deprecated:"max_cache_bytes"`
 	// MaxSprintPlanBytes is the user-level (global) tier of the sprint-plan byte
 	// ceiling (plan 19.10 F9), the same limit ProjectConfig.MaxSprintPlanBytes
 	// carries at the project tier. A pointer so unset falls through to the project
@@ -1034,7 +1040,7 @@ func (r *Registry) validate() error {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
 	}
 	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
-		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
+		errs = append(errs, fmt.Errorf("max_cache_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
 	}
 	if r.MaxClaimBytes != nil && *r.MaxClaimBytes < 0 {
 		errs = append(errs, fmt.Errorf("max_claim_bytes must be >= 0 (0 = disabled), got %d", *r.MaxClaimBytes))
@@ -1220,7 +1226,7 @@ func (r *Registry) validateExecutor() []error {
 		errs = append(errs, errors.New("executor: name must not contain the '; ' evidence separator"))
 	}
 	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
-		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
+		errs = append(errs, fmt.Errorf("executor: fix_timeout_secs must be within 1..%d", MaxTimeoutSecs))
 	}
 	// Temperature (Epic 7.0.1): bounded to [0,2] like the agent guard. A pointer so
 	// an explicit 0.0 (the deterministic default) is distinguishable from unset.

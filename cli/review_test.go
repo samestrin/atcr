@@ -969,13 +969,16 @@ func TestReviewFreshFlag_SingleRegistrationDistinctFromForce(t *testing.T) {
 	assert.NotSame(t, fresh, force, "--fresh and --force must be distinct *pflag.Flag instances")
 }
 
-// AC 05-01 Edge Case 3: `atcr verify --fresh` is a separate flag instance whose usage
-// string is unchanged (the dual-meaning broadening applies only to `atcr review`).
-func TestVerifyFreshFlag_UsageUnchangedAndDistinct(t *testing.T) {
-	verifyFresh := newVerifyCmd().Flags().Lookup("fresh")
+// `atcr verify --fresh` is the hidden deprecated alias of --reverify (epic 84.0 R1),
+// a separate flag instance from review's --fresh.
+func TestVerifyFreshFlag_DeprecatedAliasOfReverify(t *testing.T) {
+	cmd := newVerifyCmd()
+	verifyFresh := cmd.Flags().Lookup("fresh")
 	require.NotNil(t, verifyFresh)
-	assert.Equal(t, "re-verify findings that already carry a verdict", verifyFresh.Usage,
-		"atcr verify --fresh must keep its original single meaning")
+	assert.True(t, verifyFresh.Hidden, "verify --fresh is a hidden deprecated alias")
+	assert.Contains(t, verifyFresh.Deprecated, "--reverify")
+	require.NotNil(t, cmd.Flags().Lookup("reverify"))
+	assert.False(t, cmd.Flags().Lookup("reverify").Hidden)
 	assert.NotSame(t, verifyFresh, newReviewCmd().Flags().Lookup("fresh"),
 		"review and verify --fresh are separate flag instances")
 }

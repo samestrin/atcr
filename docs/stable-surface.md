@@ -377,7 +377,7 @@ No flags.
 | `--exec` | bool | `false` |  |
 | `--fail-on` | string | `` |  |
 | `--force` | bool | `false` |  |
-| `--fresh` | bool | `false` |  |
+| `--fresh` | bool | `false` | deprecated alias |
 | `--head` | string | `` |  |
 | `--id` | string | `` |  |
 | `--legacy-pipe` | bool | `false` |  |
@@ -449,10 +449,11 @@ No flags.
 | Flag | Type | Default | Status |
 |---|---|---|---|
 | `--exec` | bool | `false` |  |
-| `--fresh` | bool | `false` |  |
+| `--fresh` | bool | `false` | deprecated alias |
 | `--min-severity` | string | `` |  |
 | `--repo-root` | string | `.` |  |
 | `--repo` | string | `.` | deprecated alias |
+| `--reverify` | bool | `false` |  |
 | `--thorough` | bool | `false` |  |
 
 ### `atcr verify diff`
@@ -547,7 +548,7 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `agents.<name>.timeout_secs` | *int |
 | `agents.<name>.tool_budget_bytes` | *int64 |
 | `agents.<name>.tools` | bool |
-| `cache_max_bytes` | *int64 |
+| `cache_max_bytes` | *int64, deprecated alias of `max_cache_bytes` |
 | `chunk_byte_budget` | *int64 |
 | `consensus` | string |
 | `context_prefetch` | *registry.ContextPrefetchConfig |
@@ -565,7 +566,8 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `debate.triggers` | []string |
 | `executor` | *registry.ExecutorConfig |
 | `executor.agent_mode` | bool |
-| `executor.fix_timeout` | *int |
+| `executor.fix_timeout` | *int, deprecated alias of `executor.fix_timeout_secs` |
+| `executor.fix_timeout_secs` | *int |
 | `executor.max_estimated_minutes` | *int |
 | `executor.max_severity_for_fix` | string |
 | `executor.max_tool_calls` | *int |
@@ -580,6 +582,7 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `executor.temperature` | *float64 |
 | `fail_on` | string |
 | `initial_backoff_ms` | *int |
+| `max_cache_bytes` | *int64 |
 | `max_claim_bytes` | *int64 |
 | `max_parallel` | *int |
 | `max_prefetch_bytes` | *int64 |
@@ -619,7 +622,7 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `auto_fix.apply_target` | string |
 | `auto_fix.validate_command` | []string |
 | `auto_fix.validate_timeout` | string |
-| `cache_max_bytes` | *int64 |
+| `cache_max_bytes` | *int64, deprecated alias of `max_cache_bytes` |
 | `chunk_byte_budget` | *int64 |
 | `consensus` | string |
 | `context_prefetch` | *registry.ContextPrefetchConfig |
@@ -631,6 +634,7 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `context_prefetch.semantic.endpoint` | string |
 | `context_prefetch.semantic.top_k` | *int |
 | `fail_on` | string |
+| `max_cache_bytes` | *int64 |
 | `max_claim_bytes` | *int64 |
 | `max_parallel` | *int |
 | `max_prefetch_bytes` | *int64 |

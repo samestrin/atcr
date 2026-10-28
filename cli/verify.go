@@ -36,7 +36,9 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().String("repo-root", ".", "repo root skeptics inspect and validate finding file paths against (default: current directory)")
 	cmd.Flags().String("repo", ".", "deprecated alias for --repo-root")
 	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
-	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
+	cmd.Flags().Bool("reverify", false, "re-verify findings that already carry a verdict")
+	cmd.Flags().Bool("fresh", false, "deprecated alias for --reverify")
+	_ = cmd.Flags().MarkDeprecated("fresh", "use --reverify instead")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
 	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
@@ -256,7 +258,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return err // refuse-without-backend / preflight failure (exit 2)
 	}
 
+	reverify, _ := cmd.Flags().GetBool("reverify")
 	fresh, _ := cmd.Flags().GetBool("fresh")
+	fresh = fresh || reverify
 	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{
 		Fresh:             fresh,
