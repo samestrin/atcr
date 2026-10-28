@@ -38,7 +38,9 @@ func newVerifyCmd() *cobra.Command {
 	_ = cmd.Flags().MarkDeprecated("repo", "use --repo-root instead")
 	cmd.Flags().Bool("reverify", false, "re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("fresh", false, "deprecated alias for --reverify")
-	_ = cmd.Flags().MarkDeprecated("fresh", "use --reverify instead")
+	// Hidden rather than MarkDeprecated — see addDebtStoreFlag for why. runVerify
+	// writes the one deprecation warning to stderr itself.
+	_ = cmd.Flags().MarkHidden("fresh")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
 	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
@@ -260,6 +262,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	reverify, _ := cmd.Flags().GetBool("reverify")
 	fresh, _ := cmd.Flags().GetBool("fresh")
+	if cmd.Flags().Changed("fresh") {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: --fresh is deprecated; use --reverify")
+	}
 	fresh = fresh || reverify
 	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verifyRun(cmd.Context(), repoRoot, reviewDir, cfg.Registry, verify.Options{

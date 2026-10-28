@@ -976,7 +976,7 @@ func TestVerifyFreshFlag_DeprecatedAliasOfReverify(t *testing.T) {
 	verifyFresh := cmd.Flags().Lookup("fresh")
 	require.NotNil(t, verifyFresh)
 	assert.True(t, verifyFresh.Hidden, "verify --fresh is a hidden deprecated alias")
-	assert.Contains(t, verifyFresh.Deprecated, "--reverify")
+	assert.Contains(t, verifyFresh.Usage, "--reverify")
 	require.NotNil(t, cmd.Flags().Lookup("reverify"))
 	assert.False(t, cmd.Flags().Lookup("reverify").Hidden)
 	assert.NotSame(t, verifyFresh, newReviewCmd().Flags().Lookup("fresh"),
