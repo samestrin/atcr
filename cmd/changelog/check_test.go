@@ -45,6 +45,7 @@ func TestEvaluate_Migration(t *testing.T) {
 		halfBullet = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n  wrapped. (epic 2)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		pointerCut = "# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		headingCut = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n- b thing\n  wrapped. (epic 2)\n\n### Fixed\n\n- c fixed. (epic 3)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+		blankCut   = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n### Added\n\n- a thing. (epic 1)\n- b thing\n  wrapped. (epic 2)\n\n### Fixed\n\n- c fixed. (epic 3)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 		reordered  = "# Changelog\n\n## [Unreleased]\n\nSee changelog.d/.\n\n### Added\n\n- b thing\n  wrapped. (epic 2)\n- a thing. (epic 1)\n\n### Fixed\n\n- c fixed. (epic 3)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
 	)
 	tests := []struct {
@@ -67,6 +68,7 @@ func TestEvaluate_Migration(t *testing.T) {
 		{"pointer line removed fails", []change{fragA, fragB, fragC}, all, pointerCut, true},
 		{"reorder only fails", nil, nil, reordered, true},
 		{"heading removed over a kept bullet fails", []change{fragA}, all, headingCut, true},
+		{"only a blank line removed fails", []change{fragA, fragB, fragC}, all, blankCut, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,6 +241,34 @@ func TestCheck_IgnoresExternalDiff(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("diff.external ran")
+	}
+}
+
+// TestEvaluate_MigrationKeepsHeading: moving every bullet out must not also
+// rename or drop the "## [Unreleased]" heading, which assemble relies on.
+func TestEvaluate_MigrationKeepsHeading(t *testing.T) {
+	const (
+		base     = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing. (epic 1)\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+		kept     = "# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+		renamed  = "# Changelog\n\n## [Released]\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+		headless = "# Changelog\n\n## [0.5.0] - 2026-10-27\n\n- old\n"
+	)
+	changes := []change{{'A', "changelog.d/added-a.md"}}
+	frags := map[string]string{"changelog.d/added-a.md": "- a thing. (epic 1)\n"}
+	for _, tc := range []struct {
+		name, head string
+		fail       bool
+	}{
+		{"heading kept passes", kept, false},
+		{"heading renamed fails", renamed, true},
+		{"heading deleted fails", headless, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(evaluate(changes, frags, base, tc.head, "", nil), "\n")
+			if tc.fail != strings.Contains(got, "edits the \"## [Unreleased]\"") {
+				t.Fatalf("fail=%v, got %q", tc.fail, got)
+			}
+		})
 	}
 }
 

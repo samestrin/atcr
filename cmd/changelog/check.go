@@ -172,7 +172,7 @@ func evaluate(changes []change, frags map[string]string, baseLog, headLog, body 
 			"Add changelog.d/<category>-<slug>.md (category: "+strings.Join(categories, ", ")+") holding \"- \" bullet lines. "+
 			"If the change is not user-visible, add the \""+optOutLabel+"\" label or a line \"changelog: none\" to the PR description.")
 	}
-	if b, h := unreleasedBody(baseLog), unreleasedBody(headLog); b != h && !movedToFragments(b, h, changes, frags) {
+	if b, h := unreleasedBody(baseLog), unreleasedBody(headLog); b != h && !(hasUnreleased(headLog) && movedToFragments(b, h, frags)) {
 		problems = append(problems, "this PR edits the \"## [Unreleased]\" section of "+changelogFile+" directly. "+
 			"Revert that edit and write the entry to changelog.d/<category>-<slug>.md instead; fragments are assembled into "+changelogFile+" at release time.")
 	}
@@ -233,12 +233,10 @@ func isAddedFragment(c change) bool {
 // whole "- " bullet (with its indented continuation lines) that appears
 // verbatim, as whole lines, in an added fragment. A heading goes only with
 // every bullet under it, and at least one bullet must go.
-func movedToFragments(base, head string, changes []change, frags map[string]string) bool {
+func movedToFragments(base, head string, frags map[string]string) bool {
 	var added []string
-	for _, c := range changes {
-		if content, ok := frags[c.path]; ok && isAddedFragment(c) {
-			added = append(added, "\n"+strings.ReplaceAll(content, "\r\n", "\n")+"\n")
-		}
+	for _, content := range frags {
+		added = append(added, "\n"+strings.ReplaceAll(content, "\r\n", "\n")+"\n")
 	}
 	bl, hl := strings.Split(base, "\n"), strings.Split(head, "\n")
 	removed := make([]bool, len(bl))
@@ -300,6 +298,11 @@ func containsAny(texts []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// hasUnreleased reports whether log still has its "## [Unreleased]" heading.
+func hasUnreleased(log string) bool {
+	return strings.Contains("\n"+strings.ReplaceAll(log, "\r\n", "\n")+"\n", "\n"+unreleasedHeading+"\n")
 }
 
 // unreleasedBody returns the text under "## [Unreleased]" up to the next

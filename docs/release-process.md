@@ -152,6 +152,11 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    ([`cli/changelog_tags_test.go`](../cli/changelog_tags_test.go)) fails CI on
    every branch once a `v*` tag exists with no matching `## [X.Y.Z]` heading.
    Do not rename the `## [Unreleased]` heading or add entries under it.
+   The `Changelog` CI check (`go run ./cmd/changelog check`) fails a PR that
+   edits that section, except one that only moves entries out of it: every
+   removed `- ` bullet appears word for word in a `changelog.d/` fragment the
+   same PR adds, and nothing else under the heading changes but blank lines and
+   `### ` headings left empty.
 
 3. **Dry-run locally first (non-optional — run it for every cut).** From an
    up-to-date `main`, run:
