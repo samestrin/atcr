@@ -447,10 +447,16 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 // community personas, whose prompts are embedded too.
 func runInitRoster(dir string, force bool, roster []string, personaText func(string) (string, error), out, errOut io.Writer) error {
 	targets := initTargets(dir)
+	// A config holding only what atcr writes on its own (the first-run notice
+	// record, `atcr config set` opt-outs) is not a workspace: it is replaced, and
+	// its settings are re-applied below (Epic 84.0 F1).
+	stubSettings, stub := registry.LoadStubConfig(dir)
 	var existing []string
 	for _, path := range targets {
 		_, err := os.Lstat(path)
 		switch {
+		case err == nil && stub && path == targets[0]:
+			// replaced below, not reported as an overwrite
 		case err == nil:
 			existing = append(existing, path)
 		case !errors.Is(err, fs.ErrNotExist):
@@ -528,7 +534,15 @@ func runInitRoster(dir string, force bool, roster []string, personaText func(str
 		return nil
 	}
 
+	if stub && !force {
+		if err := os.Remove(targets[0]); err != nil {
+			return fmt.Errorf("failed to write %s: %w", targets[0], err)
+		}
+	}
 	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster), false); err != nil {
+		return err
+	}
+	if err := reapplyStubSettings(dir, stubSettings); err != nil {
 		return err
 	}
 
@@ -563,6 +577,26 @@ func runInitRoster(dir string, force bool, roster []string, personaText func(str
 		_, _ = fmt.Fprintf(out, "  created %s\n", path)
 	}
 	_, _ = fmt.Fprintln(out, "Next: define providers and agents in ~/.config/atcr/registry.yaml (see docs/registry.md)")
+	return nil
+}
+
+// reapplyStubSettings writes the settings a replaced stub config held into the
+// freshly scaffolded one, so a recorded opt-out or notice record survives.
+func reapplyStubSettings(dir string, settings map[string]bool) error {
+	setters := map[string]func(string, bool) error{
+		"telemetry":              registry.SetTelemetrySetting,
+		"quality_signal":         registry.SetQualitySignalSetting,
+		"telemetry_notice_shown": registry.SetTelemetryNoticeShown,
+	}
+	for _, key := range []string{"telemetry", "quality_signal", "telemetry_notice_shown"} {
+		v, ok := settings[key]
+		if !ok {
+			continue
+		}
+		if err := setters[key](dir, v); err != nil {
+			return fmt.Errorf("cannot keep %s from the previous config: %w", key, err)
+		}
+	}
 	return nil
 }
 

@@ -75,8 +75,10 @@ To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.
 ```
 
 To record that it has been shown, atcr writes `telemetry_notice_shown: true` into
-`.atcr/config.yaml`, **creating that file if it does not exist**. This key is
-bookkeeping only — nothing reads it to decide whether to transmit, and deleting it
+`.atcr/config.yaml`, **creating that file if it does not exist**. A config that
+holds nothing but this record (and any `atcr config set` opt-outs) is not a
+workspace yet: `atcr init` and `atcr quickstart` replace it with the scaffolded
+config and carry those settings over. This key is bookkeeping only — nothing reads it to decide whether to transmit, and deleting it
 simply makes the notice appear once more. If you have already opted out, the
 notice never prints: there is nothing to disclose.
 

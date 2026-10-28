@@ -6,13 +6,13 @@ A walk through the README quickstart in a clean environment, following only the 
 
 | Step | Command | Result |
 |------|---------|--------|
-| Install | `go install ./cmd/atcr` (the checkout; `@latest` resolves to the tagged release once 1.0.0 is cut) | Builds in 11 s, `atcr version` runs |
-| Onboard | `atcr quickstart --offline` | **Failed:** printed `Using existing workspace`, left `.atcr/` holding only a stub `config.yaml` and no personas |
-| Verify | `atcr doctor` | **Failed:** `no agents selected` |
-| Onboard (fixed) | `ATCR_TELEMETRY=0 atcr quickstart --offline` | Writes `.atcr/config.yaml`, nine personas, `~/.config/atcr/registry.yaml` and `.github/workflows/atcr.yml` |
+| Install | `go install ./cmd/atcr` (the checkout; `@latest` resolves to the tagged release once 1.0.0 is cut) | Builds in 9 s; `atcr version` runs and prints the one-time telemetry notice |
+| Onboard | `atcr quickstart --offline` (Enter at the key prompt) | Writes `.atcr/config.yaml` (keeping `telemetry_notice_shown: true` from the notice), nine personas, `~/.config/atcr/registry.yaml` and `.github/workflows/atcr.yml` |
 | Verify | `atcr doctor` | Lists nine agents, each `missing_key` with the hint to set `LLM_SYNTHETIC_API_KEY` |
 | Review | `LLM_SYNTHETIC_API_KEY=<invalid> atcr review` | Reaches the provider; all nine agents fail with HTTP 401, as expected for an invalid key |
 
-**Cause of the failure:** the first-run telemetry notice (`cli/telemetry.go`) records `telemetry_notice_shown` in `.atcr/config.yaml` before quickstart looks for an existing workspace, so quickstart treats the stub as a returning user's workspace. The README now documents the workaround; the code fix is filed as technical debt.
+The onboard step was also run in a second fresh repository without `atcr version` first, as the README orders it: the notice prints, then quickstart scaffolds the nine personas and `atcr doctor` lists nine agents.
 
-**Not covered:** a successful review against a live provider, because the run had no valid Synthetic key. The 401 shows the config, key lookup and request path work.
+**Earlier failure, now fixed:** the first recorded run (Epic 84.0 T5) found that the first-run telemetry notice's record in `.atcr/config.yaml` made quickstart report `Using existing workspace` and write no personas or roster, so `atcr doctor` stopped with `no agents selected`. `atcr init` and `atcr quickstart` now treat a config holding only that record (and any `atcr config set` opt-outs) as unscaffolded, and carry its settings into the new config.
+
+**Not covered:** a successful review against a live provider, because the run had no valid Synthetic key. The review step ran with `ATCR_TELEMETRY=0` so the check sent no usage ping. The 401 shows the config, key lookup and request path work.
