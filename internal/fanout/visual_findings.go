@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	reclib "github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // The EVIDENCE prefixes of the findings the browser run's own capture yields
