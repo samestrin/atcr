@@ -107,7 +107,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr github` | Post reconciled findings to a GitHub pull request as a check run |
 | `atcr scorecard` | Display the per-reviewer scorecard for a single reconcile run; `--json` prints its records as JSON — see [docs/scorecard.md](docs/scorecard.md) |
 | `atcr quality-report` | Render the aggregate persona+model dismissed/confirmed prompt-quality signal (distinct from `atcr report`; content-free — persona, model, and counts only); `--json` is the same as `--format json` |
-| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate; `--json` prints the table's rows, and `atcr leaderboard export [--output <file>]` prints the anonymized public submission document — see [docs/scorecard.md](docs/scorecard.md) |
+| `atcr leaderboard` | Aggregate scorecard records across runs, ranked by corroboration rate; `--json` prints the table's rows, and `atcr leaderboard export [--output <file>]` prints the public submission document, with the submitter removed — see [docs/scorecard.md](docs/scorecard.md) |
 | `atcr benchmark` | Standard benchmark-suite tooling for the public leaderboard |
 | `atcr personas` | Manage community reviewer personas; `submit` contributes a locally-tuned persona back upstream as a PR — see [docs/personas-authoring.md](docs/personas-authoring.md) |
 | `atcr models` | Inspect model bindings, drift, and the catalog snapshot |
