@@ -1,0 +1,1 @@
+- Embedding programs that call `Main` or `MainWithHooks` more than once no longer leak a goroutine and a signal registration per call: each call now stops listening for SIGINT/SIGTERM when it returns. (epic 46.0)
