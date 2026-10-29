@@ -115,6 +115,12 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	// dropped if it arrives before the goroutine blocks on the channel.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	// Bound the handler's lifecycle to this call. Defers run LIFO, so Stop runs
+	// first and the runtime can no longer send on sigCh by the time close does
+	// (a send on a closed channel panics); the close then lets handleSignals'
+	// goroutine return instead of leaking blocked on the receive.
+	defer close(sigCh)
+	defer signal.Stop(sigCh)
 
 	// Publish the shutdown moment separately from cancellation. A hook observing
 	// a cancelled context cannot tell a shutdown from an ordinary per-agent
@@ -194,7 +200,9 @@ func terminalErrorLine(err error) string {
 // handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a
 // graceful-shutdown notice to out, cancels the root context, and then force-exits
 // with code 1 if cooperative shutdown overruns gracefulShutdownTimeout. SIGTERM
-// and SIGINT are treated identically — both mean "shut down".
+// and SIGINT are treated identically — both mean "shut down". Closing sigCh
+// instead makes the goroutine return quietly; the returned channel closes when
+// it has returned.
 //
 // Only the first signal is handled and a buffered second signal is intentionally
 // never drained: forcing exit on a second Ctrl-C would race the in-flight
@@ -202,9 +210,17 @@ func terminalErrorLine(err error) string {
 // engine), aborting exactly the partial results epic 4.1 exists to preserve.
 // main() has no flush-done seam to gate such a force-quit on, so the grace timer
 // is the bounded backstop against a genuine hang.
-func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) {
+func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
-		<-sigCh
+		defer close(done)
+		// A closed channel is runMain tearing the handler down on return, not a
+		// signal: the receive yields nil with ok=false. Return without cancelling,
+		// printing the notice or starting the grace timer, so a run that finished
+		// normally can never be force-exited by a stray timer.
+		if _, ok := <-sigCh; !ok {
+			return
+		}
 		// Notices go to out (os.Stderr in production), not the structured logger, by
 		// design: that logger is request-scoped (built per-invocation in cobra's
 		// PersistentPreRunE) and is absent on the early --help/--version signal paths
@@ -216,6 +232,7 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 		_, _ = fmt.Fprintln(out, "Graceful shutdown timed out, forcing exit")
 		forceExit(1)
 	}()
+	return done
 }
 
 // Exit-code semantics, centralized: 0 success, 1 failure (including

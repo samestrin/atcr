@@ -485,6 +485,36 @@ func TestHandleSignals_ForceExitsAfterGracePeriod(t *testing.T) {
 	assert.Contains(t, buf.String(), "forcing exit", "AC7: timeout notice printed")
 }
 
+// TestHandleSignals_ClosedChannelReturnsQuietly verifies the bounded lifecycle
+// runMain relies on: closing sigCh (runMain's deferred close, after
+// signal.Stop) makes the handler goroutine return without treating the
+// closed-channel nil as a signal — no cancel, no notice, no grace timer and so
+// no forceExit.
+func TestHandleSignals_ClosedChannelReturnsQuietly(t *testing.T) {
+	grace := 10 * time.Millisecond
+	code := stubForceExit(t, grace)
+
+	var cancelled int32
+	sigCh := make(chan os.Signal, 1)
+	var buf bytes.Buffer
+	done := handleSignals(sigCh, func() { atomic.StoreInt32(&cancelled, 1) }, &buf)
+
+	close(sigCh)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler goroutine did not exit after sigCh was closed")
+	}
+
+	// Wait well past the grace period: a goroutine that had started the grace
+	// timer would have fired forceExit by now.
+	time.Sleep(5 * grace)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&cancelled), "cancel must not be called on a closed channel")
+	assert.Empty(t, buf.String(), "no notice may be printed on a closed channel")
+	assert.Equal(t, int32(-1), atomic.LoadInt32(code), "forceExit must not be called on a closed channel")
+}
+
 // TestCommandTree_QualityReportDistinctFromReport covers AC 04-04: the new
 // quality-report subcommand is a structurally independent command registered
 // alongside `atcr report`, with a distinct name and its own RunE (not a wrapper or
