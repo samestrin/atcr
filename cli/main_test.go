@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -513,6 +514,54 @@ func TestHandleSignals_ClosedChannelReturnsQuietly(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&cancelled), "cancel must not be called on a closed channel")
 	assert.Empty(t, buf.String(), "no notice may be printed on a closed channel")
 	assert.Equal(t, int32(-1), atomic.LoadInt32(code), "forceExit must not be called on a closed channel")
+}
+
+// TestMain_RepeatedRunsDoNotLeakGoroutines is the end-to-end gate for runMain's
+// bounded signal lifecycle (Epic 46.0): driving Main and MainWithHooks many
+// times in one binary, the way TestMainWithHooks_ZeroHooks_MatchesMain does,
+// must leave the goroutine count at its pre-run baseline. Without runMain's
+// deferred signal.Stop + close(sigCh), every run strands one handleSignals
+// goroutine parked on <-sigCh, so the count climbs by one per run and never
+// settles.
+//
+// One warm-up run precedes the baseline because the first signal.Notify in the
+// process starts the runtime's signal-watching goroutine, which lives for the
+// life of the binary and is not a per-run leak. The comparison is <= rather
+// than == so a goroutine from an earlier test that exits during this one
+// cannot fail it; a per-run leak still overshoots by the run count.
+func TestMain_RepeatedRunsDoNotLeakGoroutines(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"atcr", "--version"}
+
+	run := func(withHooks bool) {
+		var out, errOut bytes.Buffer
+		var code int
+		if withHooks {
+			code = MainWithHooks(context.Background(), &out, &errOut, Hooks{})
+		} else {
+			code = Main(context.Background(), &out, &errOut)
+		}
+		require.Equal(t, 0, code, "--version must succeed; stderr: %s", errOut.String())
+	}
+
+	run(false)
+	baseline := runtime.NumGoroutine()
+
+	const runs = 20
+	for i := 0; i < runs; i++ {
+		run(i%2 == 1)
+	}
+
+	// Eventually's message is formatted before it polls, so the settled count
+	// is reported by the LessOrEqual below rather than in that message.
+	var last int
+	settled := assert.Eventually(t, func() bool {
+		last = runtime.NumGoroutine()
+		return last <= baseline
+	}, 2*time.Second, 10*time.Millisecond)
+	require.LessOrEqual(t, last, baseline,
+		"goroutines must return to baseline after %d runs (settled=%v)", runs, settled)
 }
 
 // TestCommandTree_QualityReportDistinctFromReport covers AC 04-04: the new
