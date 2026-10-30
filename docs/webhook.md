@@ -292,9 +292,11 @@ webhook:
   request's. See
   [Which branch the fix pull request targets](auto-fix.md#which-branch-the-fix-pull-request-targets).
 - **Caps and refusals.** Each Linear issue id plus state id starts **one
-  auto-fix, ever**: the pair is recorded on disk (below) before the job runs,
-  so a redelivery, a repeated status change or a daemon restart does not open
-  a second fix pull request. At most `daily_job_cap` jobs start per UTC day;
+  auto-fix within 30 days**: the pair is recorded on disk (below) before the
+  job runs, so a redelivery, a repeated status change or a daemon restart does
+  not open a second fix pull request. A pair is remembered for 30 days from
+  its claim, far longer than Linear retries a delivery; after that, moving the
+  issue to the same status again starts a new auto-fix. At most `daily_job_cap` jobs start per UTC day;
   once the cap is used the daemon posts a comment on the pull request naming
   the cap and starts no job (move the issue to the status again the next day
   to retry). A job whose pull request lookup fails, or whose pull request is
