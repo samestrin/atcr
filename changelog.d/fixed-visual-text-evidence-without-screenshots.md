@@ -1,0 +1,1 @@
+- A visual review run with console errors or failed requests but no screenshot bytes now still writes `visual/console.txt` and `visual/network.txt`. (epic 90)
