@@ -44,6 +44,32 @@ func GitRef(ref string) error {
 	return nil
 }
 
+// BranchName validates a branch name with git check-ref-format's branch rules
+// (no network, no exec), plus the reserved name HEAD, which git refuses as a
+// branch and GitHub refuses as a pull request base. Unlike GitRef it rejects
+// "@", "@{", a trailing "/" or ".", "//", and any "/"-separated component that
+// starts with "." or ends in ".lock". Callers trim whitespace first.
+func BranchName(name string) error {
+	if name == "" {
+		return &ValidationError{"branch name", name, "must not be empty"}
+	}
+	if name == "@" || name == "HEAD" || strings.HasPrefix(name, "-") ||
+		strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") ||
+		strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") ||
+		strings.IndexFunc(name, func(r rune) bool {
+			return r < 0x20 || r == 0x7f || strings.ContainsRune(" ~^:?*[\\", r)
+		}) >= 0 {
+		return &ValidationError{"branch name", name, "is not a valid git branch name"}
+	}
+	// The last component covers a whole-name ".lock" suffix too.
+	for _, part := range strings.Split(name, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return &ValidationError{"branch name", name, "is not a valid git branch name"}
+		}
+	}
+	return nil
+}
+
 // FilePath validates a file path: non-empty, no path traversal (".."), and no
 // reference to the system directories /etc, /proc, /sys (and their macOS canonical
 // equivalents /private/etc and /private/var, since macOS /etc and /var are symlinks).

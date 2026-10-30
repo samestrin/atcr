@@ -17,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
+	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
@@ -89,7 +90,7 @@ func autoFixBaseOverride(cmd *cobra.Command) (string, error) {
 	}
 	raw, _ := cmd.Flags().GetString("auto-fix-base")
 	name := strings.TrimSpace(raw)
-	if !validBranchName(name) {
+	if validation.BranchName(name) != nil {
 		return "", usageError(fmt.Errorf("--auto-fix-base %q is not a valid branch name", raw))
 	}
 	return name, nil
@@ -104,27 +105,10 @@ func autoFixBaseBranch(override, defaultBranch string) string {
 	return defaultBranch
 }
 
-// validBranchName is a local shape check following git check-ref-format's rules
-// for a branch name (no network, no exec), plus the reserved name HEAD, which
-// git refuses as a branch and GitHub refuses as a pull request base.
+// validBranchName reports whether name passes validation.BranchName, which
+// holds the branch rules (git check-ref-format's, plus the reserved name HEAD).
 func validBranchName(name string) bool {
-	if name == "" || name == "@" || name == "HEAD" || strings.HasPrefix(name, "-") ||
-		strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, ".lock") ||
-		strings.Contains(name, "..") || strings.Contains(name, "//") || strings.Contains(name, "@{") ||
-		strings.ContainsAny(name, " ~^:?*[\\") {
-		return false
-	}
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			return false
-		}
-	}
-	for _, part := range strings.Split(name, "/") {
-		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
-			return false
-		}
-	}
-	return true
+	return validation.BranchName(name) == nil
 }
 
 // autoFixRefusal is the --auto-fix gate's refusal error. Error() returns the
