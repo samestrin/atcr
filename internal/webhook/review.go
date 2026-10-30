@@ -102,9 +102,9 @@ func (r *ReviewRunner) run(ctx context.Context, label string, cmd slack.ReviewCo
 
 	var text string
 	if err != nil {
-		text = failureText(label, err)
+		text = failureText(label, err, slackFormat)
 	} else {
-		text = summarize(label, findings, newScrubber(dir, r.Secrets))
+		text = summarize(label, findings, newScrubber(dir, r.Secrets), slackFormat)
 	}
 	if perr := r.Poster.PostThreadReply(context.WithoutCancel(ctx), channel, thread, text); perr != nil {
 		err = errors.Join(err, fmt.Errorf("webhook: slack reply for %s: %w", label, perr))
@@ -114,8 +114,8 @@ func (r *ReviewRunner) run(ctx context.Context, label string, cmd slack.ReviewCo
 
 // failureText says that the review of label did not finish, and never why in
 // any detail: the cause may carry a path or the model's own words.
-func failureText(label string, err error) string {
-	head := "*ATCR review of " + slack.EscapeText(label) + "*"
+func failureText(label string, err error, f replyFormat) string {
+	head := f.heading(label)
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return head + " timed out."
@@ -125,13 +125,13 @@ func failureText(label string, err error) string {
 	return head + " failed. The daemon log has the details."
 }
 
-// summarize builds the reply: a count per severity, then up to maxReplyTitles
-// titles, most severe first.
-func summarize(label string, findings []reconcile.Finding, s *scrubber) string {
+// summarize builds the reply in format f: a count per severity, then up to
+// maxReplyTitles titles, most severe first.
+func summarize(label string, findings []reconcile.Finding, s *scrubber, f replyFormat) string {
 	if s == nil {
 		s = newScrubber("", nil)
 	}
-	head := "*ATCR review of " + slack.EscapeText(label) + "*"
+	head := f.heading(label)
 	if len(findings) == 0 {
 		return head + ": no findings."
 	}
@@ -142,13 +142,13 @@ func summarize(label string, findings []reconcile.Finding, s *scrubber) string {
 	}
 	counts := map[string]int{}
 	entries := make([]entry, 0, len(findings))
-	for _, f := range findings {
-		sev := reconcile.NormalizeSeverity(f.Severity)
+	for _, fd := range findings {
+		sev := reconcile.NormalizeSeverity(fd.Severity)
 		if _, known := reconcile.SeverityRank[sev]; !known {
 			sev = otherSeverity
 		}
 		counts[sev]++
-		entries = append(entries, entry{sev: sev, title: s.title(f.Problem)})
+		entries = append(entries, entry{sev: sev, title: f.escape(s.plainTitle(fd.Problem))})
 	}
 	slices.SortStableFunc(entries, func(a, b entry) int {
 		return cmp.Compare(reconcile.SeverityRank[b.sev], reconcile.SeverityRank[a.sev])
@@ -187,10 +187,13 @@ func newScrubber(root string, secrets []string) *scrubber {
 	return &scrubber{root: root, redact: log.NewRedactor("", secrets...)}
 }
 
-// title returns the first line of problem with secrets and token shapes
+// title returns plainTitle(problem) escaped for Slack.
+func (s *scrubber) title(problem string) string { return slack.EscapeText(s.plainTitle(problem)) }
+
+// plainTitle returns the first line of problem with secrets and token shapes
 // redacted, every word that holds a path separator (a path or a URL) replaced
-// by [path], truncated to maxTitleRunes and escaped for Slack.
-func (s *scrubber) title(problem string) string {
+// by [path], and truncated to maxTitleRunes. It is not escaped for any target.
+func (s *scrubber) plainTitle(problem string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(problem), "\n")
 	if s.root != "" {
 		line = strings.ReplaceAll(line, s.root, "[path]/")
@@ -210,7 +213,32 @@ func (s *scrubber) title(problem string) string {
 	if r := []rune(line); len(r) > maxTitleRunes {
 		line = strings.TrimSpace(string(r[:maxTitleRunes-1])) + "…"
 	}
-	return slack.EscapeText(line)
+	return line
+}
+
+// replyFormat is the markup of the target a summary is posted to.
+type replyFormat struct {
+	bold   string              // the bold delimiter
+	escape func(string) string // escapes untrusted text
+}
+
+// slackFormat is Slack mrkdwn, for a thread reply.
+var slackFormat = replyFormat{bold: "*", escape: slack.EscapeText}
+
+// githubFormat is GitHub markdown, for a PR comment.
+var githubFormat = replyFormat{bold: "**", escape: markdownEscaper.Replace}
+
+// markdownEscaper backslash-escapes the characters GitHub markdown can read as
+// emphasis, code, a link, an HTML tag or an entity, so untrusted text renders
+// as itself.
+var markdownEscaper = strings.NewReplacer(
+	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "~", `\~`,
+	"[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`, "&", `\&`,
+)
+
+// heading is the bold "ATCR review of label" line.
+func (f replyFormat) heading(label string) string {
+	return f.bold + "ATCR review of " + f.escape(label) + f.bold
 }
 
 func (r *ReviewRunner) logf(format string, args ...any) {

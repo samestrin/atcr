@@ -1,0 +1,1 @@
+- The Linear webhook's PR comment is now GitHub markdown: the heading is `**bold**`, and a finding title's `&`, `<` and other markdown characters are backslash-escaped instead of shown as Slack's `&amp;` and `&lt;`. The Slack thread reply keeps Slack mrkdwn. (epic 87)
