@@ -631,9 +631,12 @@ func procParents(ctx context.Context) (map[int]int, error) {
 	return parents, nil
 }
 
-// parseProcStatPPID extracts the ppid from a /proc/<pid>/stat line. The comm
-// field is parenthesised and may itself contain spaces or ')', so parsing
-// starts after the LAST ')': the fields there are state, then ppid.
+// parseProcStatPPID extracts the ppid from a /proc/<pid>/stat line. Per proc(5)
+// (/proc/pid/stat; proc_pid_stat(5) on newer man-pages), field 2 is comm, the
+// executable's filename in parentheses, and fields 3 and 4 are state (one
+// character) and ppid. comm may itself contain spaces or ')', but every field
+// proc(5) lists after it is a single state character or a number, so the LAST
+// ')' closes comm: parsing starts after it, where the fields are state, then ppid.
 func parseProcStatPPID(stat []byte) (int, bool) {
 	i := bytes.LastIndexByte(stat, ')')
 	if i < 0 {
