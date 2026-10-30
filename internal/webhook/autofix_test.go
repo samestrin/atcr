@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -346,4 +348,62 @@ func TestAutoFixRunner_FlushesLastLineWithoutNewline(t *testing.T) {
 		"webhook: auto-fix acme/widget#7: last line, token [redacted]",
 	}, logs.all())
 	assertNothingLeft(t, f)
+}
+
+// TestTerminate_KillsWhenSIGTERMCannotBeSent covers the fallback Windows takes,
+// where a process cannot be sent SIGTERM: terminate kills it instead. The
+// signal seam fails the way os.Process.Signal does there.
+func TestTerminate_KillsWhenSIGTERMCannotBeSent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("starts a POSIX sleep")
+	}
+	cmd := exec.Command("sleep", "30")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+	var signalled []os.Signal
+	killed := 0
+	oldSignal, oldKill := signalProcess, killProcess
+	t.Cleanup(func() { signalProcess, killProcess = oldSignal, oldKill })
+	signalProcess = func(_ *os.Process, sig os.Signal) error {
+		signalled = append(signalled, sig)
+		return errors.New("os: unsupported signal type")
+	}
+	killProcess = func(p *os.Process) error {
+		killed++
+		return oldKill(p)
+	}
+
+	require.NoError(t, terminate(cmd.Process))
+	assert.Equal(t, []os.Signal{syscall.SIGTERM}, signalled, "SIGTERM is tried first")
+	assert.Equal(t, 1, killed, "the process is killed when SIGTERM cannot be sent")
+	err := cmd.Wait()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, "signal: killed", exitErr.Error())
+}
+
+// TestTerminate_SIGTERMSentOrProcessGoneDoesNotKill covers the other outcomes:
+// a delivered SIGTERM leaves cleanup to the child, an already-exited child is
+// reported as done, and a child that never started is nothing to stop.
+func TestTerminate_SIGTERMSentOrProcessGoneDoesNotKill(t *testing.T) {
+	oldSignal, oldKill := signalProcess, killProcess
+	t.Cleanup(func() { signalProcess, killProcess = oldSignal, oldKill })
+	killProcess = func(*os.Process) error {
+		t.Error("terminate killed a process it did not need to")
+		return nil
+	}
+	p := &os.Process{Pid: -1}
+
+	signalProcess = func(*os.Process, os.Signal) error { return nil }
+	assert.NoError(t, terminate(p))
+
+	signalProcess = func(*os.Process, os.Signal) error { return os.ErrProcessDone }
+	assert.ErrorIs(t, terminate(p), os.ErrProcessDone)
+
+	signalProcess = func(*os.Process, os.Signal) error {
+		t.Error("terminate signalled a process that never started")
+		return nil
+	}
+	assert.NoError(t, terminate(nil))
 }

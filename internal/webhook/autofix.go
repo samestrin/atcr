@@ -85,7 +85,8 @@ type AutoFixRunner struct {
 
 // Run checks out t's pull request head and runs `atcr review --auto-fix` in
 // it, bounded by ctx: when ctx is done the child gets SIGTERM, then a kill
-// after autoFixKillGrace, and the worktree and its branch are removed either
+// after autoFixKillGrace (on unix, of its whole process group, so nothing it
+// started outlives it), and the worktree and its branch are removed either
 // way. A missing push token or base is refused before anything is checked out.
 func (r *AutoFixRunner) Run(ctx context.Context, t AutoFixTarget) error {
 	var token string
@@ -119,10 +120,11 @@ func (r *AutoFixRunner) Run(ctx context.Context, t AutoFixTarget) error {
 		cmd.Env = append(childEnv(os.Environ()), autoFixTokenVar+"="+token)
 		out := newAutoFixLogWriter(label, append([]string{token}, r.Secrets...), r.Logf)
 		cmd.Stdout, cmd.Stderr = out, out
-		cmd.Cancel = func() error { return terminate(cmd.Process) }
+		reap := configureProcessGroup(cmd)
 		cmd.WaitDelay = autoFixKillGrace
 
 		err := cmd.Run()
+		reap()
 		out.Flush()
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("webhook: auto-fix of %s: %w", label, cerr)
@@ -148,17 +150,24 @@ func childEnv(env []string) []string {
 	return out
 }
 
+// signalProcess and killProcess are the calls terminate makes. Vars so a test
+// can fail the signal the way Windows does and reach the Kill fallback.
+var (
+	signalProcess = (*os.Process).Signal
+	killProcess   = (*os.Process).Kill
+)
+
 // terminate asks p to stop with SIGTERM, which `atcr` turns into a cancelled
 // context and a cleanup. Where SIGTERM cannot be sent (Windows) p is killed.
 func terminate(p *os.Process) error {
 	if p == nil {
 		return nil
 	}
-	err := p.Signal(syscall.SIGTERM)
+	err := signalProcess(p, syscall.SIGTERM)
 	if err == nil || errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	return p.Kill()
+	return killProcess(p)
 }
 
 // autoFixLogWriter logs the child's output one line at a time, each with every

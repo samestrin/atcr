@@ -44,6 +44,30 @@ func TestGitRef(t *testing.T) {
 	assert.EqualError(t, GitRef(long), `invalid git ref "`+long+`": must be <= 255 characters`)
 }
 
+func TestBranchName(t *testing.T) {
+	for _, ok := range []string{"main", "feature/linear-123", "release/1.x", "HEADS", "my-HEAD", "v1.2", "a@b", "a.lockx"} {
+		assert.NoError(t, BranchName(ok), ok)
+	}
+	// One case per rule, including the ones GitRef does not apply (HEAD, @,
+	// @{, trailing / or ., //, dot-leading or .lock-suffixed components).
+	for _, bad := range []string{
+		"", "-x", "two words", "bad\tname", "a\x7fb", "a..b", "a~1", "a:b",
+		"HEAD", "@", "a@{b", ".hidden/branch", "a/.hidden", "a//b", "foo/", "foo.",
+		"a^b", "a?b", "a*b", "a[b", "a\\b",
+		"foo.lock", "a/foo.lock", "a.lock/b",
+	} {
+		err := BranchName(bad)
+		require.Error(t, err, "BranchName should reject %q", bad)
+		var ve *ValidationError
+		require.ErrorAs(t, err, &ve)
+		assert.Equal(t, "branch name", ve.Field)
+	}
+	// GitRef keeps its narrower contract: it still accepts names BranchName refuses.
+	for _, ref := range []string{"HEAD", "foo.lock", "foo/", "@"} {
+		assert.NoError(t, GitRef(ref), ref)
+	}
+}
+
 func TestFilePath(t *testing.T) {
 	require.NoError(t, FilePath("reviews/out"))
 	require.NoError(t, FilePath("/home/user/reviews"))

@@ -185,6 +185,9 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 				runner.Commenter = &ghaction.Client{APIURL: githubAPIURL, Token: tok}
 			}
 		}
+		if runner.Commenter == nil {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "atcr webhook: warning: webhook.linear is set but no GitHub token resolves from webhook.github_token_env, so Linear review findings will only be logged, not posted to the pull request")
+		}
 		if a := cfg.Linear.AutoFix; a != nil {
 			state, err := webhook.OpenAutoFixState(autoFixStatePath(root), a.DailyJobCap)
 			if err != nil {

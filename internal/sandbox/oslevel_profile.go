@@ -21,11 +21,10 @@ import (
 // the real binary and attempt a forbidden write and an outbound connection,
 // prove enforcement.
 //
-// SECCOMP IS A DOCKER PARITY GAP: Docker runs every container under its default
-// seccomp profile, but neither generator here installs a syscall filter (the
-// bwrap argv carries no --seccomp), so syscalls Docker's profile blocks stay
-// reachable inside this backend. docs/execution.md lists it under "It does not
-// provide"; implementing --seccomp is out of scope (epic 35.23).
+// SECCOMP IS A DOCKER PARITY GAP: neither generator here installs a syscall
+// filter (the bwrap argv carries no --seccomp), so syscalls Docker's default
+// seccomp profile blocks stay reachable inside this backend. docs/execution.md
+// lists this gap under "It does not provide".
 
 // sandbox-exec profile clauses that are not path-scoped.
 //
@@ -145,9 +144,10 @@ func mapExecutableRule() string {
 // and failed 14 of 16 proofs.
 //
 // The readers were bash, sh, touch, cat, go, nc, git, ls and Python. `go test`,
-// make and npm were not in that suite; epic 35.23.1 T2 adds those legs and
-// re-takes this capture, and any name they need is added here, never a wider
-// prefix.
+// make and npm were not in that suite; the go test, make and npm legs epic
+// 35.23.1 T2 added (oslevel_profile_narrowing_darwin_integration_test.go) pass
+// under this measured set. Any name a new reader needs is added here, never a
+// wider prefix.
 var darwinSysctlReadNames = []string{
 	"hw.machine",
 	"hw.ncpu",

@@ -672,8 +672,12 @@ func debtLess(key string) (func(a, b debtView) bool, error) {
 // copy-pasteable into `atcr debt resolve <id>` — the visible half of "an item
 // filed by add is closeable by resolve". Problem text is truncated so a long
 // finding never wraps the terminal into an unreadable block; the full text lives
-// in the store. Every cell passes through cell so a stray tab or newline in a
-// free-text field cannot tear a row or misalign the tabwriter block.
+// in the store. The Problem cell is not capped at 60 runes, though: a
+// discounted record appends its marker after the cut (listProblem), so the
+// longest Problem cell is about 166 runes (60 of Problem, the 25-rune marker
+// prefix, an 80-rune reason and the closing paren). Every cell passes through
+// cell so a stray tab or newline in a free-text field cannot tear a row or
+// misalign the tabwriter block.
 func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "ID\tSEVERITY\tSTATUS\tORIGIN\tEST\tFILE\tCATEGORY\tPROBLEM"); err != nil {
@@ -692,16 +696,19 @@ func renderDebtTable(w io.Writer, recs []localdebt.Record) error {
 // listProblem is the Problem cell of a `debt` listing (renderDebtTable and
 // renderResolveList): Problem truncated to 60 runes, then the discount marker
 // RowProblem carries in the TD table, " (confidence discounted: <reason>)", with
-// the reason truncated to 40 runes. Truncating RowProblem whole would cut the
-// marker off any Problem of 60 runes or more, which is the row the reader most
-// needs it on; the marker is appended after the cut so it always shows. An
-// undiscounted row renders exactly as before the marker existed.
+// the reason truncated to 80 runes so the 76-rune reconcile.PanelWideReason
+// shows in full. The marker comes from localdebt.DiscountMarker, the helper
+// RowProblem uses, so the listing and the TD table cannot spell it differently.
+// Truncating RowProblem whole would cut the marker off any Problem of 60 runes
+// or more, which is the row the reader most needs it on; the marker is appended
+// after the cut so it always shows. An undiscounted row renders exactly as
+// before the marker existed.
 func listProblem(r localdebt.Record) string {
 	p := truncate(r.Problem, 60)
 	if r.ConfidenceDiscount == "" {
 		return p
 	}
-	return p + " (confidence discounted: " + truncate(r.ConfidenceDiscount, 40) + ")"
+	return p + localdebt.DiscountMarker(truncate(r.ConfidenceDiscount, 80))
 }
 
 // debtIDCell renders a record's id for a table or dashboard row. Every writer
