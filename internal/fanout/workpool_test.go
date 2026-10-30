@@ -33,8 +33,11 @@ func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 	fake := newFake()
 	fake.delay = time.Millisecond
 	baseline := runtime.NumGoroutine()
+	noiseUp := startOutsideGoroutines(t, 64)
 	var peakG atomic.Int64
+	var noiseOnce sync.Once
 	fake.onStart = func(string) {
+		noiseOnce.Do(func() { <-noiseUp })
 		n := int64(runtime.NumGoroutine())
 		for {
 			p := peakG.Load()
@@ -57,6 +60,27 @@ func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 	// goroutine-per-slot engine this replaces sat near baseline+700 here.
 	assert.LessOrEqual(t, peakG.Load()-int64(baseline), int64(workers+2),
 		"live goroutines follow the worker count, not the unit count")
+}
+
+// startOutsideGoroutines stands in for another test's goroutines: once the
+// returned channel closes, n goroutines that are not part of any run stay
+// parked until the test ends. They start after the caller's setup, from a
+// goroutine of their own, so nothing the caller started is their parent.
+func startOutsideGoroutines(t *testing.T, n int) <-chan struct{} {
+	t.Helper()
+	stop, up := make(chan struct{}), make(chan struct{})
+	var wg sync.WaitGroup
+	t.Cleanup(func() { close(stop); wg.Wait() })
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wg.Add(n)
+		for range n {
+			go func() { defer wg.Done(); <-stop }()
+		}
+		close(up)
+	}()
+	return up
 }
 
 // TestRun_UnboundedLaneKeepsOneWorkerPerUnit pins maxParallel <= 0 as today's
