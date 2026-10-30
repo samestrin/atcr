@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/localdebt"
@@ -54,8 +55,8 @@ type nextStep struct {
 	// any other flag renders as --flag <flag>.
 	Carry []string
 	// StoreFrom names an allowlisted repo-root flag of the current invocation
-	// from which to derive --store=<root>/.atcr/debt, for a debt command that
-	// should read the store that root's findings persisted to.
+	// from which to derive --store=<absolute root>/.atcr/debt, for a debt
+	// command that should read the store that root's findings persisted to.
 	StoreFrom string
 	// PendingOnly offers the step only when the review is still pending.
 	PendingOnly bool
@@ -159,8 +160,12 @@ func renderSuggestions(key suggestionKey, inv invocation) []string {
 func (s nextStep) render(inv invocation) string {
 	parts := append([]string{"atcr", s.Command}, s.Args...)
 	// A blank root asserts nothing (reconcile normalizes it to the CWD), so it
-	// derives no store.
-	if v, ok := inv.Flags[s.StoreFrom]; ok && carryAllowlist[s.StoreFrom] && strings.TrimSpace(v) != "" {
+	// derives no store. A relative root is made absolute, as persistence does:
+	// debt list refuses a --store containing "..".
+	if v, ok := inv.Flags[s.StoreFrom]; ok && strings.TrimSpace(v) != "" {
+		if abs, err := filepath.Abs(v); err == nil {
+			v = abs
+		}
 		parts = append(parts, "--store="+carryValue(localdebt.DefaultDir(v)))
 	}
 	for _, name := range s.Carry {
