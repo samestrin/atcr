@@ -52,6 +52,10 @@ type nextStep struct {
 	// when the user set them. Allowlisted flags carry their sanitized value;
 	// any other flag renders as --flag <flag>.
 	Carry []string
+	// StoreFrom names an allowlisted repo-root flag of the current invocation
+	// from which to derive --store=<root>/.atcr/debt, for a debt command that
+	// should read the store that root's findings persisted to.
+	StoreFrom string
 	// PendingOnly offers the step only when the review is still pending.
 	PendingOnly bool
 }
