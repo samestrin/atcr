@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
 			"atcr verify <id>",
 		},
 		suggestReconcile: {
-			"atcr debt list",
+			"atcr debt list --store=/src/app/.atcr/debt",
 			"atcr verify <id> --repo-root=/src/app",
 		},
 		suggestVerify: {"atcr report <id>"},
@@ -47,6 +48,9 @@ func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
 		got := renderSuggestions(key, inv)
 		assert.Equal(t, steps, got, "key %s", key)
 		for _, line := range got {
+			// The store path is derived from the carried root, not guessed, so
+			// it is the one token allowed to extend /src/app/.
+			line = strings.Replace(line, " --store=/src/app/.atcr/debt", "", 1)
 			assert.NotContains(t, line, "/src/app/", "no guessed value leaks into %q", line)
 		}
 	}
@@ -57,6 +61,33 @@ func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
 func TestSuggestions_UnusedFlagIsOmitted(t *testing.T) {
 	got := renderSuggestions(suggestReconcile, invocation{})
 	assert.Equal(t, []string{"atcr debt list", "atcr verify <id>"}, got)
+}
+
+// TestSuggestions_ReconcileDebtListCarriesStore (Epic 88 T1): reconcile
+// --repo-root X persists findings to X/.atcr/debt, so the suggested `debt list`
+// names that store; without it, debt list would read the CWD's store instead.
+// The derived path is sanitized and quoted like any carried value, and a blank
+// --repo-root (which asserts no root) leaves the suggestion bare.
+//
+// A relative root is made absolute first: debt list refuses a --store
+// containing "..", and persistence resolves the root to an absolute path too.
+func TestSuggestions_ReconcileDebtListCarriesStore(t *testing.T) {
+	other, err := filepath.Abs("../other")
+	require.NoError(t, err)
+	cases := map[string]string{
+		"/src/app": "atcr debt list --store=" + carryValue(filepath.Join("/src/app", ".atcr", "debt")),
+		"../other": "atcr debt list --store=" + carryValue(filepath.Join(other, ".atcr", "debt")),
+		"/a b":     "atcr debt list --store=" + carryValue(filepath.Join("/a b", ".atcr", "debt")),
+		"":         "atcr debt list",
+		"  ":       "atcr debt list",
+	}
+	for root, want := range cases {
+		got := renderSuggestions(suggestReconcile, invocation{Flags: map[string]string{"repo-root": root}})
+		require.NotEmpty(t, got)
+		assert.Equal(t, want, got[0], "--repo-root %q", root)
+	}
+	assert.Equal(t, "atcr debt list --store='/a b/.atcr/debt'",
+		renderSuggestions(suggestReconcile, invocation{Flags: map[string]string{"repo-root": "/a b"}})[0])
 }
 
 // TestSuggestions_PendingOnlyStepDroppedWhenNotPending: the status entry offers
@@ -113,6 +144,9 @@ func TestSuggestions_RegistryCarriesOnlyAllowlistedFlags(t *testing.T) {
 		for _, s := range steps {
 			for _, f := range s.Carry {
 				assert.True(t, carryAllowlist[f], "%s -> %s carries non-allowlisted --%s", key, s.Command, f)
+			}
+			if s.StoreFrom != "" {
+				assert.True(t, carryAllowlist[s.StoreFrom], "%s -> %s derives --store from non-allowlisted --%s", key, s.Command, s.StoreFrom)
 			}
 			assert.False(t, strings.HasPrefix(s.Command, "atcr"), "%s: Command must omit the binary name", key)
 		}
@@ -206,6 +240,10 @@ func TestSuggestions_RegistryMatchesCommandTree(t *testing.T) {
 				for _, name := range s.Carry {
 					assert.NotNil(t, source.Flags().Lookup(name), "%s carries --%s, which %s does not define", key, name, source.CommandPath())
 					assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried --%s is not a flag there", key, s.Command, name)
+				}
+				if s.StoreFrom != "" {
+					assert.NotNil(t, source.Flags().Lookup(s.StoreFrom), "%s derives --store from --%s, which %s does not define", key, s.StoreFrom, source.CommandPath())
+					assert.NotNil(t, target.Flags().Lookup("store"), "%s -> atcr %s: derived --store is not a flag there", key, s.Command)
 				}
 			}
 		})
