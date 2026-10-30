@@ -294,17 +294,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable -> %s\n",
 		res.FindingsProcessed, res.VerdictCounts.Confirmed, res.VerdictCounts.Refuted,
 		res.VerdictCounts.Unverifiable, filepath.Join(reviewDir, "reconciled"))
-	writeNextLines(cmd, suggestVerify, invocation{Flags: invocationFlags(cmd)})
+	writeNextSteps(cmd.ErrOrStderr(), suggestVerify, invocation{Flags: invocationFlags(cmd)})
 	return nil
-}
-
-// writeNextLines prints key's next-step suggestions (Epic 42.0) as human
-// "Next: <command>" lines on stderr, for the commands with no AXI mode. Stderr,
-// not stdout, so a script parsing the command's result line sees it unchanged.
-func writeNextLines(cmd *cobra.Command, key suggestionKey, inv invocation) {
-	for _, line := range renderSuggestions(key, inv) {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Next: "+line)
-	}
 }
 
 // verifyMinSeverity reads and validates the --min-severity flag, returning the

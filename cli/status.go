@@ -54,14 +54,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	// stdout is the JSON document alone, so the next steps go to stderr for a
 	// human or an agent reading both streams (Epic 42.0, AC1).
-	next := renderSuggestions(suggestStatus, invocation{
+	writeNextSteps(cmd.ErrOrStderr(), suggestStatus, invocation{
 		Flags:   invocationFlags(cmd),
 		Pending: st.AgentsPending > 0,
 	})
-	for _, line := range next {
-		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Next: "+line); err != nil {
-			return fmt.Errorf("writing next steps: %w", err)
-		}
-	}
 	return nil
 }

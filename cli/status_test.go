@@ -274,6 +274,24 @@ func TestStatusCmd_NextLinesPendingOffersResume(t *testing.T) {
 	assert.Equal(t, "Next: atcr report <id>\nNext: atcr review --resume <id>\n", errOut)
 }
 
+// TestStatusCmd_BrokenStderrStillSucceeds: the Next: lines are advisory, so a
+// failing stderr write does not fail a status whose JSON already reached stdout
+// (the same contract as every other writeNextSteps caller).
+func TestStatusCmd_BrokenStderrStillSucceeds(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-06-10_x"
+	writeStatusFixture(t, root, id)
+	t.Chdir(root)
+	cmd := newStatusCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(failWriter{})
+	cmd.SetArgs([]string{id})
+	require.NoError(t, cmd.Execute())
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &doc), "stdout is exactly one JSON document")
+}
+
 // TestStatusCmd_NoNextLinesOnError: a failed lookup prints no Next: lines.
 func TestStatusCmd_NoNextLinesOnError(t *testing.T) {
 	root := t.TempDir()
