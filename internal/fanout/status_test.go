@@ -1,7 +1,9 @@
 package fanout
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1212,4 +1215,113 @@ func TestReadReviewStatus_SlightlyFutureActivityCountsAsNow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, RunStale, st.Status)
 	assert.Empty(t, st.Agents[0].LastActivityAt, "an unbelievable write is not reported as activity")
+}
+
+// --- Epic 90 T4: the stale window survives an unreadable chunks.json ---
+
+// writeChunkedStatus writes a finished chunked persona's status.json, which
+// records its bin count.
+func writeChunkedStatus(t *testing.T, raw, agent string, chunks int) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(raw, agent), 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(raw, agent, statusFile), &AgentStatus{Agent: agent, Status: StatusOK, ChunkCount: chunks}))
+}
+
+// A finished chunked persona whose chunks.json is missing, oversize or corrupt
+// takes its bin count from status.json's chunk_count, so its row does not
+// shrink to one chunk; a valid chunks.json still wins.
+func TestReadReviewStatus_StatusChunkCountIsChunksTotalFallback(t *testing.T) {
+	dir, raw := liveReview(t, "missing", "oversize", "corrupt", "valid")
+	writeChunkedStatus(t, raw, "missing", 4)
+	writeChunkedStatus(t, raw, "oversize", 4)
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "oversize", chunksFile), make([]byte, maxChunksBytes+1), 0o644))
+	writeChunkedStatus(t, raw, "corrupt", 4)
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "corrupt", chunksFile), []byte("[[["), 0o644))
+	writeChunkedStatus(t, raw, "valid", 4)
+	writeAgentChunks(t, raw, "valid", StatusOK, StatusOK, chunkOutcomePending)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	for _, name := range []string{"missing", "oversize", "corrupt"} {
+		row := agentRow(t, st, name)
+		assert.Equal(t, AgentDone, row.State, name)
+		assert.Equal(t, 4, row.ChunksTotal, "%s: status.json's chunk_count is the fallback", name)
+		assert.Equal(t, 4, row.ChunksDone, "%s: a finished persona resolved every bin", name)
+	}
+	row := agentRow(t, st, "valid")
+	assert.Equal(t, 3, row.ChunksTotal, "a valid chunks.json wins over status.json")
+	assert.Equal(t, 2, row.ChunksDone)
+}
+
+// The fallback keeps the stale window wide: a quiet gap past the single-bin
+// window but inside the window scaled by status.json's chunk_count is live.
+func TestReadReviewStatus_CorruptChunksJSONKeepsScaledStaleWindow(t *testing.T) {
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	last := start.Add(time.Hour)
+	withNow(t, last.Add(singleBinWindow()+time.Second))
+	dir, raw := staleRun(t, start, "chunky")
+	writeChunkedStatus(t, raw, "chunky", 3)
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "chunky", chunksFile), []byte("{not json"), 0o644))
+	touchAt(t, filepath.Join(raw, "chunky", statusFile), last)
+
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "the window is scaled by the 3 bins status.json records")
+}
+
+// probeClock runs probe on every backoff wait before the fake clock serves it.
+type probeClock struct {
+	*fakeUnitClock
+	probe func(d time.Duration)
+}
+
+func (c probeClock) After(d time.Duration) <-chan time.Time {
+	c.probe(d)
+	return c.fakeUnitClock.After(d)
+}
+
+// circuitOpenOnce fails its first call fast on an open breaker, then reviews.
+type circuitOpenOnce struct{ calls atomic.Int32 }
+
+func (c *circuitOpenOnce) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	if c.calls.Add(1) == 1 {
+		return "", &llmclient.CircuitOpenError{Provider: "p"}
+	}
+	return baselineChunkFindingCompleter{}.Complete(ctx, inv)
+}
+
+// The stale window adds one maxUnitRequeueWait because a requeued unit writes
+// chunks.json before it waits. An open breaker's requeue does too: while the
+// unit waits out the breaker, chunks.json already holds its bin pending with
+// the lease counted, so the wait starts from a fresh write.
+func TestReadReviewStatus_OpenBreakerRequeueFlushedChunksJSON(t *testing.T) {
+	slots := sixteenBaselineSlots(t)
+	poolDir := t.TempDir()
+	ledger := newChunkLedger(slog.New(slog.DiscardHandler), poolDir, slots)
+	require.NotNil(t, ledger)
+	ledger.writePlan()
+	agent := slots[0].Primary.Name
+
+	var waits []time.Duration
+	var seen []chunkRecordBin
+	clock := probeClock{fakeUnitClock: newFakeUnitClock(), probe: func(d time.Duration) {
+		if d <= 0 {
+			return
+		}
+		waits = append(waits, d)
+		seen = append(seen, readChunkRecord(t, poolDir, agent).Bins[0])
+	}}
+	c := &circuitOpenOnce{}
+	// Only the first bin runs, so no other bin's write can carry its state to
+	// disk: what the wait sees is the requeue's own flush.
+	results := NewEngine(c, WithMaxParallel(1), WithSlotStart(ledger.slotStart), WithSlotDone(ledger.slotDone),
+		WithUnitRetry(ledger.retryable, ledger.slotRequeue), withUnitClock(clock)).
+		Run(context.Background(), slots[:1])
+
+	require.Len(t, results, 1)
+	assert.Equal(t, StatusOK, results[0].Status)
+	assert.Equal(t, 1, results[0].Requeues)
+	require.Equal(t, []time.Duration{circuitOpenBackoff}, waits, "one wait, for the breaker")
+	assert.Equal(t, chunkOutcomePending, seen[0].Outcome, "the requeue flushed the bin back to pending before the wait")
+	assert.Equal(t, 1, seen[0].Attempts, "the flushed record counts the fail-fast lease")
 }
