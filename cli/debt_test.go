@@ -1223,9 +1223,12 @@ func TestRenderDebtTable_TruncatedProblemKeepsDiscountMarker(t *testing.T) {
 	require.NoError(t, renderDebtTable(&b, []localdebt.Record{rec}))
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	require.Len(t, lines, 2)
-	assert.Contains(t, lines[1], "…", "the problem text is still truncated")
-	assert.Contains(t, lines[1], "(confidence discounted: panel-wide instruction",
-		"the discount marker survives Problem truncation")
+	// The exact cell: Problem cut to 60 runes, then the whole marker with the
+	// 76-rune PanelWideReason uncut. The two leading spaces are the tabwriter
+	// padding, so the suffix pins the cell boundary too.
+	want := truncate(rec.Problem, 60) + localdebt.DiscountMarker(reconcile.PanelWideReason)
+	assert.True(t, strings.HasSuffix(lines[1], "  "+want),
+		"the discount marker survives Problem truncation, got %q", lines[1])
 }
 
 // An undiscounted row renders exactly as before the marker existed: Problem
