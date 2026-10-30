@@ -1,0 +1,1 @@
+- `atcr webhook` with `webhook.linear` set and no GitHub token (`webhook.github_token_env` unset, or naming an unset variable) now prints a startup warning that Linear review findings will only be logged, not posted to the pull request. (technical debt, epic 87)
