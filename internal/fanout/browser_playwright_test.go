@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -263,7 +264,9 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 	}
 	got := fake.runAt(t, 0)
 
-	npx := []string{"npx", "playwright", "test", "e2e/home.spec.ts", "--reporter=json", "--output=" + playwrightOutputDir}
+	// The spec travels as an anchored, escaped, flag-less Playwright regex
+	// literal, so it selects that one file (TestPlaywrightBackend_SpecFilterSelectsOnlyItself).
+	npx := []string{"npx", "playwright", "test", `/^/work/e2e/home\.spec\.ts$/`, "--reporter=json", "--output=" + playwrightOutputDir}
 	if !containsRun(got.Command, npx) {
 		t.Fatalf("argv %q does not contain %q", got.Command, npx)
 	}
@@ -448,6 +451,100 @@ func TestPlaywrightBackend_SpecGuardRefusesExistingFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// playwrightSelects reports whether Playwright selects the spec file at abs
+// for the positional test filter arg. It mirrors Playwright 1.62's
+// parseLocationArg, forceRegExp and createFileMatcher: a ":line[:col]" suffix
+// is split off, "/re/flags" is a regex with those flags (g and i only), any
+// other text is a case-insensitive regex, and the regex is tested against the
+// absolute file path.
+func playwrightSelects(t *testing.T, arg, abs string) bool {
+	t.Helper()
+	if m := regexp.MustCompile(`^(.*?):(\d+):?(\d+)?$`).FindStringSubmatch(arg); m != nil {
+		arg = m[1]
+	}
+	pattern := "(?i)" + arg
+	if m := regexp.MustCompile(`^/(.*)/([gi]*)$`).FindStringSubmatch(arg); m != nil {
+		pattern = m[1]
+		if strings.Contains(m[2], "i") {
+			pattern = "(?i)" + pattern
+		}
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("filter %q is not a valid regex, Playwright would reject it: %v", arg, err)
+	}
+	return re.MatchString(abs)
+}
+
+// TestPlaywrightBackend_SpecFilterSelectsOnlyItself checks, for a spec whose
+// path carries regex metacharacters, paths its unescaped filter would also
+// match (as a regex, case-insensitively, as a substring, or as a
+// ":line" location) against the filter handed to Playwright: it selects the
+// spec alone. Only the spec is written, so names that differ only in case do
+// not collide on a case-insensitive file system.
+func TestPlaywrightBackend_SpecFilterSelectsOnlyItself(t *testing.T) {
+	cases := map[string][]string{
+		"e2e/a+b.spec.ts":     {"e2e/aab.spec.ts", "e2e/ab.spec.ts", "e2e/A+B.spec.ts", "e2e/a+b.spec.tsx", "x/e2e/a+b.spec.ts"},
+		"e2e/(x|y).spec.ts":   {"e2e/x.spec.ts", "e2e/y.spec.ts"},
+		"e2e/[ab].spec.ts":    {"e2e/a.spec.ts", "e2e/b.spec.ts"},
+		"e2e/home.spec.ts":    {"e2e/homexspec.ts", "e2e/home.spec.ts.bak.spec.ts", "old/e2e/home.spec.ts"},
+		"e2e/v1.2.spec.ts:12": {"e2e/v1.2.spec.ts", "e2e/v1x2.spec.ts:12"},
+		"e2e/^$*?{2}.spec.ts": {"e2e/.spec.ts", "e2e/^$.spec.ts"},
+	}
+	for spec, others := range cases {
+		t.Run(spec, func(t *testing.T) {
+			files := map[string]string{
+				"playwright.config.ts":                       "export default {}\n",
+				"node_modules/@playwright/test/package.json": `{}`,
+				spec: "// spec\n",
+			}
+			repo := writeTree(t, files)
+			fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(`{"suites":[]}`)}}}
+			if _, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: spec}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			cmd := fake.runAt(t, 0).Command
+			i := slices.Index(cmd, "test")
+			if i < 0 || i+1 >= len(cmd) {
+				t.Fatalf("no test filter after \"test\" in %q", cmd)
+			}
+			filter := cmd[i+1]
+			// The writable copy Playwright runs in is /work (Docker and Linux bwrap).
+			if !playwrightSelects(t, filter, "/work/"+spec) {
+				t.Fatalf("filter %q does not select the spec %q itself", filter, spec)
+			}
+			for _, o := range others {
+				if playwrightSelects(t, filter, "/work/"+o) {
+					t.Errorf("filter %q also selects %q", filter, o)
+				}
+			}
+		})
+	}
+}
+
+func TestPlaywrightBackend_OversizeReportIsTruncationError(t *testing.T) {
+	repo := playwrightRepo(t)
+	// A collected file is cut at the cap, so a report that long was truncated;
+	// its prefix here is valid JSON so far, as a real cut report would be.
+	report := append([]byte(`{"suites":[{"title":"`), bytes.Repeat([]byte("x"), sandbox.CollectMaxFileBytes)...)[:sandbox.CollectMaxFileBytes]
+	fake := &fakeSandbox{result: sandbox.RunResult{ExitCode: 1, Files: map[string][]byte{playwrightReportPath: report}}}
+	_, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts"})
+	if err == nil || !strings.Contains(err.Error(), "report truncated") {
+		t.Fatalf("Run err = %v, want a report truncated error", err)
+	}
+	if strings.Contains(err.Error(), "parse playwright report") {
+		t.Fatalf("Run err = %v, want the truncation named rather than a JSON error", err)
+	}
+
+	t.Run("just under the cap still parses", func(t *testing.T) {
+		under := append([]byte(`{"suites":[]}`), bytes.Repeat([]byte(" "), sandbox.CollectMaxFileBytes-1-len(`{"suites":[]}`))...)
+		fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: under}}}
+		if _, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts"}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	})
 }
 
 func TestPlaywrightBackend_RelativeRepoDirRefused(t *testing.T) {
