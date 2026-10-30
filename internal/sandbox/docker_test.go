@@ -664,3 +664,63 @@ func TestWritableSetup_HostRunTarFailureExits125(t *testing.T) {
 		}
 	}
 }
+
+// chmodTreeWritable restores the owner write bit on every dir under root, so a
+// test tree holding a read-only dir can be removed by t.TempDir's cleanup.
+func chmodTreeWritable(t *testing.T, root string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+			if err == nil && info.IsDir() {
+				_ = os.Chmod(p, info.Mode().Perm()|0o700)
+			}
+			return nil
+		})
+	})
+}
+
+func TestWritableSetup_HostRunCopiesReadOnlyDir(t *testing.T) {
+	// Epic 86 T6: a non-empty snapshot dir its owner cannot write (0555) is
+	// copied. BusyBox tar applies a dir's mode as soon as it extracts the dir
+	// entry, so without a writable skeleton it cannot create the dir's contents
+	// and the seed copy exits 125; GNU tar defers dir modes to the end.
+	for name, dir := range seedCopyTars(t) {
+		for _, mode := range []string{"command", "script"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				src := seedCopyTree(t)
+				work := t.TempDir()
+				chmodTreeWritable(t, src)
+				chmodTreeWritable(t, work)
+				for _, f := range []string{"locked/file.txt", "locked/sub/deep.txt", "pkg/locked/inner.txt"} {
+					p := filepath.Join(src, filepath.FromSlash(f))
+					require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+					require.NoError(t, os.WriteFile(p, []byte(f), 0o644))
+				}
+				for _, d := range []string{"locked/sub", "locked", "pkg/locked"} {
+					require.NoError(t, os.Chmod(filepath.Join(src, filepath.FromSlash(d)), 0o555))
+				}
+				var cmd *exec.Cmd
+				if mode == "command" {
+					cmd = exec.Command("sh", "-c", renderSeedScript(t, writableSetupExec, src, work), "--", "touch", "ran")
+				} else {
+					cmd = exec.Command("sh", "-s")
+					cmd.Stdin = strings.NewReader(renderSeedScript(t, writableSetupPrefix, src, work) + "touch ran\n")
+				}
+				cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+				out, err := cmd.CombinedOutput()
+				require.NoError(t, err, "a read-only snapshot dir must not fail the seed copy: %s", out)
+
+				for _, kept := range []string{"locked/file.txt", "locked/sub/deep.txt", "pkg/locked/inner.txt", "main.go", ".github/workflows/ci.yml"} {
+					got, err := os.ReadFile(filepath.Join(work, filepath.FromSlash(kept)))
+					require.NoError(t, err, "%s must be copied", kept)
+					assert.Equal(t, kept, string(got))
+				}
+				for _, gone := range []string{".git", "node_modules", "vendor", ".terraform", "pkg/node_modules", "pkg/vendor"} {
+					assert.NoFileExists(t, filepath.Join(work, gone), "%s must be excluded from the seed copy", gone)
+					assert.NoDirExists(t, filepath.Join(work, gone), "%s must be excluded from the seed copy", gone)
+				}
+				assert.FileExists(t, filepath.Join(work, "ran"), "the workload must run with /work as its cwd")
+			})
+		}
+	}
+}
