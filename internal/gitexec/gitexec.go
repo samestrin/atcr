@@ -35,6 +35,7 @@ package gitexec
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -60,17 +61,21 @@ var CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
 // Git exports GIT_DIR into a hook's environment, and GIT_DIR beats `git -C`, so a
 // fixture command run under a hook retargets at the surrounding repository (Epic
 // 45.0: moved HEAD, stray commits, flipped core.bare). This constructor pins the
-// command to dir with PinRepo and sets GIT_CEILING_DIRECTORIES to dir's parent so
-// discovery can never walk out of the fixture. The child runs in dir, so relative
+// command to dir with PinRepo and sets GIT_CEILING_DIRECTORIES to dir's parent as
+// a defence for a caller that drops GIT_DIR and relies on cwd discovery; while
+// GIT_DIR is pinned (as here) git does no discovery, so the ceiling is inert. The child runs in dir, so relative
 // paths in arg resolve inside the fixture; a relative dir is resolved against the
-// current directory first.
+// current directory first. It panics if that resolution fails, since a fixture
+// that cannot be located must not silently run against the wrong directory.
 //
 // It calls exec.CommandContext directly rather than CommandContextFn, because
 // tests replace that var with fakes and a fixture must always run real git.
 func FixtureCommandContext(ctx context.Context, dir string, arg ...string) *exec.Cmd {
-	if abs, err := filepath.Abs(dir); err == nil {
-		dir = abs
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		panic(fmt.Sprintf("gitexec: FixtureCommandContext: resolving fixture dir %q: %v", dir, err))
 	}
+	dir = abs
 	cmd := exec.CommandContext(ctx, "git", arg...)
 	cmd.Dir = dir
 	PinRepo(cmd, dir)

@@ -613,6 +613,9 @@ func f(ctx context.Context, gitPath string, argv []string) {
 		name string
 		rel  string
 		want map[int]execVerdict
+		// wantOffender is literal, not derived from want via isOffender(), so a
+		// mutated isOffender() cannot agree with itself.
+		wantOffender map[int]bool
 	}{
 		{
 			// Literal git (9, 12) and indirected (10, 13) are offenders; non-git
@@ -623,6 +626,7 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				9: execLiteralGit, 10: execIndirectUngranted, 11: execClean,
 				12: execLiteralGit, 13: execIndirectUngranted, 14: execClean,
 			},
+			wantOffender: map[int]bool{9: true, 10: true, 11: false, 12: true, 13: true, 14: false},
 		},
 		{
 			// The allowlist excuses only the indirected form: 10 and 13 are granted
@@ -633,6 +637,7 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				9: execLiteralGit, 10: execIndirectGranted, 11: execClean,
 				12: execLiteralGit, 13: execIndirectGranted, 14: execClean,
 			},
+			wantOffender: map[int]bool{9: true, 10: false, 11: false, 12: true, 13: false, 14: false},
 		},
 	}
 	for _, row := range rows {
@@ -645,8 +650,8 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				if got[line] != want {
 					t.Errorf("line %d: verdict %v, want %v", line, got[line], want)
 				}
-				if got[line].isOffender() != want.isOffender() {
-					t.Errorf("line %d: offender=%t, want %t", line, got[line].isOffender(), want.isOffender())
+				if got[line].isOffender() != row.wantOffender[line] {
+					t.Errorf("line %d: offender=%t, want %t", line, got[line].isOffender(), row.wantOffender[line])
 				}
 			}
 		})
