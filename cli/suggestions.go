@@ -217,3 +217,8 @@ func writeNextSteps(w io.Writer, key suggestionKey, inv invocation) {
 		_, _ = fmt.Fprintln(w, "Next: "+line)
 	}
 }
+
+// writeNextLines is writeNextSteps on cmd's stderr.
+func writeNextLines(cmd *cobra.Command, key suggestionKey, inv invocation) {
+	writeNextSteps(cmd.ErrOrStderr(), key, inv)
+}
