@@ -482,22 +482,145 @@ exit 0`)
 	require.NoError(t, err, "pid file must hold a numeric pid, got %q", raw)
 	// If the reap regresses, do not leave the descendant to wake up and write
 	// under the scratch tree after this test has finished.
-	t.Cleanup(func() {
-		if p, findErr := os.FindProcess(pid); findErr == nil {
-			_ = p.Kill()
-		}
-	})
+	watch := newDescendantReapWatch(pid)
+	t.Cleanup(watch.cleanup)
 
-	require.Eventually(t, func() bool {
-		p, findErr := os.FindProcess(pid)
-		if findErr != nil {
-			return true
-		}
-		return errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone)
-	}, 2*time.Second, 20*time.Millisecond,
+	require.Eventually(t, watch.gone, 2*time.Second, 20*time.Millisecond,
 		"descendant (pid %d) left running after a clean exit must be reaped with the process group", pid)
 	assert.NoDirExists(t, seen.ScratchDir,
 		"a descendant left running after a clean exit must be reaped before the scratch tree is removed")
+}
+
+// descendantReapWatch polls whether a recorded descendant pid is gone and
+// kills it at cleanup only if the poll never saw it go. Once the poll has seen
+// ESRCH the pid is free for reuse, so an unconditional cleanup SIGKILL could hit
+// an unrelated process on a busy runner. A zombie also counts as gone: it has
+// been killed, but Signal(0) still succeeds until its new parent reaps it, and
+// an init that reaps slowly would otherwise time the poll out.
+type descendantReapWatch struct {
+	pid      int
+	procRoot string // "/proc"; a missing stat file (darwin) leaves only the signal probe
+	signal   func(pid int, sig syscall.Signal) error
+	sawGone  bool
+}
+
+func newDescendantReapWatch(pid int) *descendantReapWatch {
+	return &descendantReapWatch{pid: pid, procRoot: "/proc", signal: signalPid}
+}
+
+func signalPid(pid int, sig syscall.Signal) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return os.ErrProcessDone
+	}
+	return p.Signal(sig)
+}
+
+func (w *descendantReapWatch) gone() bool {
+	if w.sawGone {
+		return true
+	}
+	err := w.signal(w.pid, syscall.Signal(0))
+	w.sawGone = errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) ||
+		procStatState(w.procRoot, w.pid) == 'Z'
+	return w.sawGone
+}
+
+func (w *descendantReapWatch) cleanup() {
+	if w.sawGone {
+		return
+	}
+	_ = w.signal(w.pid, syscall.SIGKILL)
+}
+
+// procStatState returns the state field of <procRoot>/<pid>/stat, or 0 when it
+// cannot be read. The state follows the LAST ')', since comm may contain one.
+func procStatState(procRoot string, pid int) byte {
+	raw, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0
+	}
+	rest := strings.TrimLeft(string(raw[bytes.LastIndexByte(raw, ')')+1:]), " ")
+	if rest == "" {
+		return 0
+	}
+	return rest[0]
+}
+
+func TestDescendantReapWatch_ZombieCountsAsGone(t *testing.T) {
+	// Signal(0) succeeds on a zombie, so a SIGKILLed orphan its new parent has
+	// not reaped yet looks alive to the signal probe alone.
+	procRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(procRoot, "4242"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(procRoot, "4242", "stat"),
+		[]byte("4242 (sh (x) y) Z 1 4242 4242 0 -1 4194560\n"), 0o644))
+	w := &descendantReapWatch{pid: 4242, procRoot: procRoot,
+		signal: func(int, syscall.Signal) error { return nil }}
+
+	assert.True(t, w.gone(), "a zombie (stat state Z) has been killed and must count as gone")
+}
+
+func TestDescendantReapWatch_LiveProcessIsNotGone(t *testing.T) {
+	procRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(procRoot, "4242"), 0o755))
+	// A ") Z " inside comm must not be read as the state: the state follows
+	// the LAST ')'.
+	require.NoError(t, os.WriteFile(filepath.Join(procRoot, "4242", "stat"),
+		[]byte("4242 (a) Z b) S 1 4242 4242 0 -1 4194560\n"), 0o644))
+	w := &descendantReapWatch{pid: 4242, procRoot: procRoot,
+		signal: func(int, syscall.Signal) error { return nil }}
+
+	assert.False(t, w.gone(), "a sleeping process is alive")
+}
+
+func TestDescendantReapWatch_NoProcFallsBackToTheSignalProbe(t *testing.T) {
+	// darwin has no /proc: a missing stat file must not count as gone.
+	w := &descendantReapWatch{pid: 4242, procRoot: filepath.Join(t.TempDir(), "absent"),
+		signal: func(int, syscall.Signal) error { return nil }}
+	assert.False(t, w.gone())
+
+	w.signal = func(int, syscall.Signal) error { return os.ErrProcessDone }
+	assert.True(t, w.gone())
+}
+
+func TestDescendantReapWatch_CleanupSkipsTheKillOnceThePollSawItGone(t *testing.T) {
+	// Once the poll saw ESRCH the pid is free for reuse, and a cleanup SIGKILL
+	// could hit an unrelated process.
+	for name, probe := range map[string]error{
+		"ErrProcessDone": os.ErrProcessDone,
+		"ESRCH":          syscall.ESRCH,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var kills int
+			w := &descendantReapWatch{pid: 4242, procRoot: filepath.Join(t.TempDir(), "absent"),
+				signal: func(_ int, sig syscall.Signal) error {
+					if sig == syscall.SIGKILL {
+						kills++
+						return nil
+					}
+					return probe
+				}}
+
+			require.True(t, w.gone())
+			w.cleanup()
+			assert.Zero(t, kills, "the cleanup must not SIGKILL a pid the poll already saw gone")
+		})
+	}
+}
+
+func TestDescendantReapWatch_CleanupKillsWhenThePollNeverSawItGone(t *testing.T) {
+	var kills int
+	w := &descendantReapWatch{pid: 4242, procRoot: filepath.Join(t.TempDir(), "absent"),
+		signal: func(_ int, sig syscall.Signal) error {
+			if sig == syscall.SIGKILL {
+				kills++
+			}
+			return nil
+		}}
+
+	require.False(t, w.gone())
+	w.cleanup()
+	assert.Equal(t, 1, kills, "a descendant the reap missed must still be killed at cleanup")
 }
 
 func TestOSLevelBackendRun_WritableSeedsAnEphemeralCopyInsteadOfRefusing(t *testing.T) {
