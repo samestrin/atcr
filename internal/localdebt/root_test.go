@@ -392,7 +392,7 @@ func resolved(t *testing.T, path string) string {
 // — so echoing it verbatim puts an absolute, username-bearing path (/Users/<name>/…)
 // into a sink the MCP path routes to bare os.Stderr, which a calling agent captures.
 // withLock already reduces its lock path to the base name for exactly this reason
-// (lock_unix.go:68, lock_other.go:79); these warnings must do the same.
+// (lock_unix.go:68, lock_windows.go:82, lock_other.go:83); these warnings must do the same.
 func TestResolveStoreRoot_RedactsRecordedPath(t *testing.T) {
 	t.Run("stale recorded root is reduced to its base name", func(t *testing.T) {
 		parent := t.TempDir()

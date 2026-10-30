@@ -1,8 +1,12 @@
-//go:build !unix
+//go:build !unix && !windows
 
-// The legacy mkdir lock, kept for builds without syscall.Flock (Windows). Unix
-// builds use the flock lock in lock_unix.go. This lock keeps its known
-// stale-reclaim race on these platforms.
+// The legacy mkdir lock, kept only as the fallback for builds that are neither
+// unix nor Windows (js/wasm, wasip1, plan9), none of which atcr ships. Unix
+// builds use the flock lock in lock_unix.go and Windows builds the LockFileEx
+// lock in lock_windows.go. This fallback keeps the known faults Epic 38.0
+// removed from those: two waiters can both reclaim a stale lock and run fn at
+// once, a killed holder blocks every caller until lockStale passes, and a
+// late reclaimer can delete its successor's lock.
 
 package localdebt
 

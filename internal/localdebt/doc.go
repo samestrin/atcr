@@ -43,7 +43,7 @@
 // # Concurrency guarantee
 //
 // The guarantee has two layers. Mutual exclusion comes first: Append, appendBatch
-// and Compact run their critical sections under withLock (lock_unix.go; lock.go off unix), a flock-based
+// and Compact run their critical sections under withLock (lock_unix.go; lock_windows.go on Windows), a flock- or LockFileEx-based
 // cross-process lock the kernel releases when its holder dies, so two processes never append to or
 // rewrite the store at the same time. Line integrity comes second: inside that
 // lock, each record is marshaled to one []byte and emitted in exactly one
