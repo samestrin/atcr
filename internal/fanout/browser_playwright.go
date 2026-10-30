@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -47,6 +48,11 @@ const (
 	playwrightOutputDir       = playwrightWorkDir + "/test-results"
 	playwrightReportPath      = playwrightWorkDir + "/report.json"
 	playwrightScreenshotsPath = playwrightWorkDir + "/screenshots.tar"
+	// playwrightRunRoot is the writable copy the run executes in, as Docker and
+	// Linux bwrap mount it. Playwright matches a test filter against absolute
+	// file paths, so the spec filter is anchored here. The darwin OS-level
+	// sandbox, the one backend without /work, is refused by checkSandbox.
+	playwrightRunRoot = "/work/"
 	// playwrightMaxScreenshots bounds the files packed into the screenshots tar.
 	playwrightMaxScreenshots = 64
 )
@@ -153,13 +159,20 @@ func (b *PlaywrightBackend) Run(ctx context.Context, run BrowserRun) (BrowserRes
 	runSpec := sandbox.RunSpec{
 		Command: []string{"/bin/sh", "-c", playwrightRunShell, "atcr-playwright",
 			"env", "ATCR_PREVIEW_URL=" + run.PreviewURL,
-			"npx", "playwright", "test", spec, "--reporter=json", "--output=" + playwrightOutputDir},
+			"npx", "playwright", "test", playwrightSpecFilter(spec), "--reporter=json", "--output=" + playwrightOutputDir},
 		Timeout:     timeout,
 		SnapshotDir: run.RepoDir,
 		Writable:    true,
 		Collect:     []string{playwrightReportPath, playwrightScreenshotsPath},
 	}
 
+	// The sandbox.Backend.Run contract this relies on: Run honours ctx, so when
+	// runCtx is done it kills the workload and returns promptly. Run below
+	// returns the timeout result at runCtx.Done without waiting for the
+	// goroutine; done is buffered, so a backend that honours ctx lets the
+	// goroutine exit, and one that ignores ctx keeps it (and its workload)
+	// alive until its own Run returns. Both real backends, Docker and
+	// OS-level, honour ctx.
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type outcome struct {
@@ -197,6 +210,12 @@ func (b *PlaywrightBackend) Run(ctx context.Context, run BrowserRun) (BrowserRes
 	report, ok := out.res.Files[playwrightReportPath]
 	if !ok || len(report) == 0 {
 		return BrowserResult{}, fmt.Errorf("fanout: playwright: no JSON report (exit %d): %s", out.res.ExitCode, strings.TrimSpace(out.res.Output))
+	}
+	// The sandbox cuts a collected file at CollectMaxFileBytes rather than
+	// dropping it, so a report that long was truncated, and parsing it would
+	// only report a JSON syntax error.
+	if len(report) >= sandbox.CollectMaxFileBytes {
+		return BrowserResult{}, fmt.Errorf("fanout: playwright: report truncated: report.json reached the sandbox's %d-byte collect cap (exit %d)", sandbox.CollectMaxFileBytes, out.res.ExitCode)
 	}
 	res, err := ParsePlaywrightReport(report)
 	if err != nil {
@@ -263,6 +282,16 @@ func playwrightSpecPath(repo, spec string) (string, error) {
 		return "", fmt.Errorf("fanout: playwright: spec %q is not a file in the repo", spec)
 	}
 	return clean, nil
+}
+
+// playwrightSpecFilter turns a cleaned spec path into the test filter
+// Playwright selects exactly that file with. Playwright reads a positional
+// filter as a case-insensitive regex tested against absolute file paths, after
+// splitting off any ":line[:col]" suffix. The filter is therefore the escaped
+// path, anchored at both ends under the run root, in Playwright's "/re/" form
+// so no flags apply; it ends in "/", so no ":line" suffix is read either.
+func playwrightSpecFilter(spec string) string {
+	return "/^" + playwrightRunRoot + regexp.QuoteMeta(spec) + "$/"
 }
 
 // attachScreenshots reads the screenshots tar the run packed and fills the
