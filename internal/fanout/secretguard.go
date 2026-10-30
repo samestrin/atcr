@@ -195,6 +195,12 @@ func insert(m *map[string]*cacheEntry, key string, e *cacheEntry, now time.Time)
 // scannerIdentity names what a scan result depends on besides the text: the
 // gitleaks binary PATH resolves (or none, for the built-in ruleset) and the
 // environment that points gitleaks at a config.
+//
+// guardSecrets resolves it on every call on purpose; do not cache it per
+// process. It keys the scan cache, and PATH and GITLEAKS_CONFIG* can change
+// while a process runs (a long `atcr serve`, tests that swap them), so a
+// cached identity would reuse a scan made by another scanner. The lookup is
+// one PATH walk per guardSecrets call, not per segment.
 func scannerIdentity() string {
 	bin, _ := exec.LookPath("gitleaks")
 	return bin + "\x00" + os.Getenv("GITLEAKS_CONFIG") + "\x00" + os.Getenv("GITLEAKS_CONFIG_TOML")
