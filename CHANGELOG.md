@@ -16,7 +16,7 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 Changes not yet released are in [`changelog.d/`](changelog.d/), one file per change.
 
-## [1.0.0] - 2026-10-28
+## [1.0.0] - 2026-10-30
 
 ### Highlights
 
@@ -25,6 +25,13 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 - `atcr review --preview-url <url>` adds a visual review by the `felix` persona, with console errors and failed requests filed as findings.
 - `sandbox.backend: os-level` and `atcr review --config-dir <dir>` make Docker-less hosts and untrusted-pull-request auto-fix practical.
 - The README quickstart was checked on a clean install, and changelog entries now live in `changelog.d/` fragments.
+- `atcr webhook` runs a daemon that reviews a GitHub pull request from Slack or from a Linear status change, and posts a filtered summary back on the linked pull request.
+- `atcr review --auto-fix --auto-fix-base <branch>` opens the fix pull request against a branch you name.
+- `atcr quickstart --preset local` sets atcr up for local models in one command, with no network call and no API key.
+- An optional `sast` block runs `semgrep` over the changed files before the reviewers and lists its findings in the review prompt.
+- `secret_guard` scans each review prompt for credentials before it is sent to a provider (`off`, `warn`, `redact` or `block`).
+- `atcr status` shows a review's progress while it runs, and `atcr personas list` gains a `ROLE` column plus read-only reporting views.
+- `atcr leaderboard export` prints the public submission document.
 
 ### Added
 
@@ -37,37 +44,6 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 - `docs/stable-surface.md` lists every command, flag, persona, registry/config key and `ATCR_*` environment variable in the v1.0 compatibility surface, generated from the command tree and persona files; `go test ./cli -run TestStableSurfaceInventory` fails when it is stale (regenerate with `-update-stable-surface`). (epic 84.0)
 - The visual review files a MEDIUM `out-of-scope` finding for each distinct console error and failed request the browser run captured, citing the saved `visual/` evidence (epic 36.0.3).
 - `docs/webhook.md` now documents the Linear auto-fix trigger: the `webhook.linear.auto_fix:` block (`statuses`, the `repos` allowlist that must be a subset of `webhook.repos`, the separate `push_token_env` token with `contents: write` and `pull_requests: write`, and `daily_job_cap`), the on-disk claim and daily-cap state, and the refusals (one auto-fix per issue and state ever, a PR comment once the day's cap is used). `docs/auto-fix.md` now states which branch the fix pull request targets: the repository default branch, the `--auto-fix-base` branch when given, or the linked pull request's head branch when the webhook daemon runs the job. Documentation only. (epic 49.2)
-
-### Changed
-
-- The `Changelog` CI check now lets a pull request remove entries from the `## [Unreleased]` section of `CHANGELOG.md` when each removed `- ` bullet appears word for word in a `changelog.d/` fragment the same pull request adds, so entries listed there before fragments existed can be moved into fragments. Adding, rewording or reordering entries under `## [Unreleased]` still fails the check. (epic 85.0)
-- Changelog entries are no longer added to the `## [Unreleased]` list in `CHANGELOG.md`. Each change adds its own file under `changelog.d/` (`<category>-<short-slug>.md`, holding `- ` bullet lines), and cutting a release runs `go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD` before the tag is pushed, which writes the release's section and deletes the fragments. The rules are at the top of `CHANGELOG.md`; the release step is in `docs/release-process.md`. Documentation only. (epic 85.0)
-- Documented the first-run `atcr quickstart` telemetry-notice pitfall in the README quickstart, added the `export LLM_SYNTHETIC_API_KEY` step before `atcr doctor`, and added `docs/clean-install-check.md`, a recorded clean-install walkthrough. (epic 84.0)
-- Three names changed before the v1.0 freeze: `atcr verify --fresh` is now `atcr verify --reverify`, the registry key `executor.fix_timeout` is now `executor.fix_timeout_secs`, and the registry and project key `cache_max_bytes` is now `max_cache_bytes`. Each old name keeps working as a deprecated alias that prints one warning on stderr per run (never on stdout, so `--json` and `--axi` output stay clean); setting both an old and its new name is a load error. `atcr review --fresh` is now hidden in help. See [docs/decisions/2026-10-28-v1-naming-review.md](docs/decisions/2026-10-28-v1-naming-review.md). (epic 84.0)
-- `docs/visual-verification.md` now documents the visual evidence the browser run saves under `.atcr/reviews/<id>/visual/` (sanitized screenshots, `console.txt`, `network.txt`), the MEDIUM `out-of-scope` findings it files per distinct console error and failed request with their `ui-console:` / `ui-network:` evidence tags — findings that are never promoted and never fail the `--fail-on` severity gate — and the SARIF report's one attachment per screenshot. Documentation only. (epic 36.0.3)
-
-### Deprecated
-
-- The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)
-
-### Fixed
-
-- Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)
-
-## [0.5.0] - 2026-10-27
-
-### Highlights
-
-- `atcr webhook` runs a daemon that reviews a GitHub pull request from Slack or from a Linear status change, and posts a filtered summary back on the linked pull request.
-- `atcr review --auto-fix --auto-fix-base <branch>` opens the fix pull request against a branch you name.
-- `atcr quickstart --preset local` sets atcr up for local models in one command, with no network call and no API key.
-- An optional `sast` block runs `semgrep` over the changed files before the reviewers and lists its findings in the review prompt.
-- `secret_guard` scans each review prompt for credentials before it is sent to a provider (`off`, `warn`, `redact` or `block`).
-- `atcr status` shows a review's progress while it runs, and `atcr personas list` gains a `ROLE` column plus read-only reporting views.
-- `atcr leaderboard export` prints the public submission document.
-
-### Added
-
 - The markdown review report (`reconciled/report.md` and `atcr report`) names each reviewer as `name (role)`, for example `greta (algorithmic correctness reviewer)`, with the role read from the persona prompt's H1 as in `atcr personas list`. A reviewer with no persona of its own, such as `host`, keeps its bare name, and the `json`, `sarif`, `checklist`, `axi` and `pipe` formats are unchanged. A review records the roles in a new `reviewer_roles.json` in its review directory; reports on reviews without it show bare names. See [docs/findings-format.md](docs/findings-format.md#reviewer-labels-reviewer_rolesjson). (epic 83.0)
 - `atcr personas list` shows a `ROLE` column after `NAME`, in the plain table and the `--scores` table, and each `--json` row carries a `role` field. The role is the text after the em dash in the persona prompt's H1 (`# {{.AgentName}} — <role>`), for built-in, community and project personas; a persona whose prompt names no role gets an empty cell and `"role": ""`, not an error. (epic 83.0)
 - `atcr review --auto-fix --auto-fix-base <branch>` opens the fix pull request against the named branch instead of the repository default branch; without the flag the base is unchanged. Local HEAD must still be pushed and equal that branch. Setting it without `--auto-fix`, with `--resume`, or with a value that is not a valid branch name is a usage error (exit 2) before any review work. (epic 49.2)
@@ -119,6 +95,16 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 
 ### Changed
 
+- The webhook daemon now remembers a Linear issue and status that started an auto-fix for 30 days instead of forever, so `.atcr/webhook/auto-fix-state.json` stops growing; moving an issue to the same status after 30 days starts a new auto-fix. (epic 87.0)
+- The README's `atcr leaderboard` command description now says the export "prints the public submission document, with the submitter removed" instead of calling it "anonymized", matching what docs/scorecard.md documents: only the submitter is removed; the persona and model stay public. (EST-3308)
+- The README's `atcr quality-report` command description now says "persona digest, model, and counts only" instead of "content-free — persona, model, and counts only". (EST-3350)
+- `docs/webhook.md` now states that a failed Linear auto-fix job keeps its issue+state claim and its daily-cap count, that the daemon cannot tell a failure before the first push from one after it, and that retrying means moving the issue to another auto-fix status. Documentation only; no behavior change. (EST-3392)
+- `atcr webhook` with `webhook.linear` set and no GitHub token (`webhook.github_token_env` unset, or naming an unset variable) now prints a startup warning that Linear review findings will only be logged, not posted to the pull request. (technical debt, epic 87)
+- The `Changelog` CI check now lets a pull request remove entries from the `## [Unreleased]` section of `CHANGELOG.md` when each removed `- ` bullet appears word for word in a `changelog.d/` fragment the same pull request adds, so entries listed there before fragments existed can be moved into fragments. Adding, rewording or reordering entries under `## [Unreleased]` still fails the check. (epic 85.0)
+- Changelog entries are no longer added to the `## [Unreleased]` list in `CHANGELOG.md`. Each change adds its own file under `changelog.d/` (`<category>-<short-slug>.md`, holding `- ` bullet lines), and cutting a release runs `go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD` before the tag is pushed, which writes the release's section and deletes the fragments. The rules are at the top of `CHANGELOG.md`; the release step is in `docs/release-process.md`. Documentation only. (epic 85.0)
+- Documented the first-run `atcr quickstart` telemetry-notice pitfall in the README quickstart, added the `export LLM_SYNTHETIC_API_KEY` step before `atcr doctor`, and added `docs/clean-install-check.md`, a recorded clean-install walkthrough. (epic 84.0)
+- Three names changed before the v1.0 freeze: `atcr verify --fresh` is now `atcr verify --reverify`, the registry key `executor.fix_timeout` is now `executor.fix_timeout_secs`, and the registry and project key `cache_max_bytes` is now `max_cache_bytes`. Each old name keeps working as a deprecated alias that prints one warning on stderr per run (never on stdout, so `--json` and `--axi` output stay clean); setting both an old and its new name is a load error. `atcr review --fresh` is now hidden in help. See [docs/decisions/2026-10-28-v1-naming-review.md](docs/decisions/2026-10-28-v1-naming-review.md). (epic 84.0)
+- `docs/visual-verification.md` now documents the visual evidence the browser run saves under `.atcr/reviews/<id>/visual/` (sanitized screenshots, `console.txt`, `network.txt`), the MEDIUM `out-of-scope` findings it files per distinct console error and failed request with their `ui-console:` / `ui-network:` evidence tags — findings that are never promoted and never fail the `--fail-on` severity gate — and the SARIF report's one attachment per screenshot. Documentation only. (epic 36.0.3)
 - The OS-level sandbox fallback (`sandbox.fallback: os-level`) now enforces `sandbox.memory` and `sandbox.pids_limit` on Linux, defaulting to 512 MiB and 256 processes as the Docker backend does. Each run gets its own cgroup v2 group (`memory.max`, `pids.max`); where the host delegates no writable cgroup, memory is capped per process with `RLIMIT_DATA` and the PID cap is not enforced. macOS enforces neither cap, because it refuses to lower a process's memory limits and its process limit counts all of your processes. Before, both keys were accepted and ignored on every platform. If you set either key and the host cannot enforce it, the fallback's preflight now refuses the run instead of running without the cap; a default the host cannot enforce only logs a warning. `sandbox.cpus` and the non-root user are still not enforced. See [docs/auto-fix.md](docs/auto-fix.md#what-you-give-up-relative-to-docker). (epic 35.24)
 - `atcr benchmark run` on a `repo-state-v1` suite scores a finding that declares `sibling: <file>:<line>` in its `EVIDENCE` at that sibling location rather than at the edited line it is filed on, so a reviewer that names the sibling arm a case plants its defect in can match that expectation. Findings without the marker score exactly as before. See [docs/benchmark.md](docs/benchmark.md#running-a-repo-state-v1-suite). (epic 35.16.15.1)
 - [docs/findings-format.md](docs/findings-format.md) no longer says `CATEGORY` is "not enforced at parse time". The parser now keeps each reviewer's category word as written and also records a canonical form next to it. The canonical form normalizes case, surrounding whitespace and singular/plural, turns a word outside the vocabulary into `other`, and treats `out-of-scope` as that token only when it is written exactly. Nothing reads the canonical form yet, so reports, the CI gate and `out_of_vocabulary_rate` are unchanged. A test keeps the docs from making the old claim again. (epic 51.0)
@@ -154,10 +140,24 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 
 ### Deprecated
 
+- The `threat_mapper` persona key for `--threat-map` is deprecated: the embedded mapper persona is now `nora`. A mapper agent with no `persona:` key uses `nora`; `persona: threat_mapper` (or an agent named `threat_mapper`) still resolves to it and logs one deprecation warning per run. An existing `threat_mapper.md` override is tried first and keeps winning. (epic 83.0)
 - `atcr leaderboard --export` and `--output` are deprecated in favour of `atcr leaderboard export [--output <file>]` and are hidden from `atcr leaderboard --help`. They still work unchanged and will be removed in v0.6.0. (epic 35.22)
 
 ### Fixed
 
+- Auto-fix validation in an `alpine` (BusyBox `tar`) Docker image no longer fails with exit 125 when the repository holds a non-empty directory its owner cannot write (mode `0555`, for example); the copy into `/work` now creates every directory writable before extracting. (technical debt, 2026-10-30)
+- `atcr debt list` and `atcr debt resolve` now show a confidence-discount reason of up to 80 characters in the Problem column, so the panel-wide reason is no longer cut short. (epic 88.0)
+- The Linear webhook's PR comment is now GitHub markdown: the heading is `**bold**`, and a finding title's `&`, `<` and other markdown characters are backslash-escaped instead of shown as Slack's `&amp;` and `&lt;`. The Slack thread reply keeps Slack mrkdwn. (epic 87)
+- `atcr quickstart` and `atcr init` now scaffold a fresh repository even after the one-time telemetry notice has written its record to `.atcr/config.yaml`. Before, quickstart reported `Using existing workspace` and wrote no personas or roster (so `atcr doctor` and `atcr review` stopped with `no agents selected`), and init refused to overwrite the file. A config holding only that record and any `atcr config set` opt-outs is replaced, keeping those settings; the README's `ATCR_TELEMETRY=0` workaround is gone. (epic 84.0)
+- `atcr quickstart` and `atcr init` now finish when the online community catalog holds a persona this atcr version cannot validate, such as one with a role added in a later release. That persona is skipped with a warning naming it, and the rest of the catalog installs; before, the whole install stopped and quickstart wrote no registry. A failed download still undoes the install as before. (epic 84.0)
+- `./install.sh` run from a clone now installs that clone's code (`go install ./cmd/atcr`) instead of the latest published release; a copy of the script outside a clone, or one piped into `bash`, still installs `@latest`. (epic 84.0)
+- `atcr quickstart` now writes Synthetic model ids with the `hf:` prefix Synthetic requires (`hf:zai-org/GLM-5.3`, `hf:moonshotai/Kimi-K3`, `hf:deepseek-ai/DeepSeek-V4.1-Flash`). The old bare names (`MiniMax-M2.5`, `glm-5`, `kimi-k2.5`) were rejected with HTTP 400, so `atcr doctor` failed every agent and a first review never ran. If you already ran quickstart, run `atcr quickstart --force` or change the `model:` lines in `~/.config/atcr/registry.yaml` by hand. (epic 84.0)
+- After `atcr reconcile --repo-root X` (or the deprecated `--repo X`), the suggested next step on stderr is now `Next: atcr debt list --store=X/.atcr/debt` (with X made absolute, since `debt list` refuses a `--store` containing `..`), so it lists the store the findings were written to rather than the store of the directory you run it from. Without `--repo-root` the suggestion is still `Next: atcr debt list`. (epic 88.0)
+- Embedding programs that call `Main` or `MainWithHooks` more than once no longer leak a goroutine and a signal registration per call: each call now stops listening for SIGINT/SIGTERM when it returns. (epic 46.0)
+- `atcr status` no longer exits with an error when it cannot write its `Next:` hints to stderr; the JSON on stdout is the result, and the hints are advisory, as for `atcr verify`, `atcr reconcile` and `atcr debate` (epic 88).
+- A cancelled or timed-out webhook auto-fix job no longer leaves processes behind on Linux and macOS: the `atcr review --auto-fix` child now runs in its own process group, and anything it started that is still running when the SIGTERM grace is over is killed with it. (epic 87.0)
+- On Windows, the local debt store (`atcr debt`, `atcr reconcile`) now uses the same kernel lock as Linux and macOS: two `atcr` processes can no longer write the store at once while reclaiming an old lock, and a killed `atcr` no longer blocks the store for 30 seconds. (technical debt, 2026-10-30)
+- Release builds and GitHub release notes now take the current and previous tag from the app's `v*` tags only. A newer `reconcile/vX.Y.Z` module tag used to be picked up as the current tag, so a snapshot binary reported `atcr version reconcile/v0.12.0` and a release's notes would have started from the wrong previous tag. (technical debt, 2026-10-27)
 - A Linear-triggered review that never ran (the PR was not linked yet, the lookup failed, the repo was not allowlisted, or the job was refused) no longer burns the issue-and-status dedupe key for the hour, so moving the issue out and back into the trigger status after linking the PR reviews it.
 - `atcr review --threat-map` with a mapper agent that sets no `persona:` key now uses the embedded `threat_mapper` persona whatever the agent is called, as documented; before, any mapper not literally named `threat_mapper` failed with `persona "<name>" not found` unless it set `persona: threat_mapper`. A persona file named after the agent still wins. (epic 37.0)
 - A credential quoted in a SAST scanner message or rule no longer reaches `atcr verify`'s Fixer: the findings saved to `sast.json` now pass the `secret_guard` scan under the configured policy before reconcile reads them (`redact` replaces the credential, `block` leaves the finding out, `warn` keeps it and warns). See [docs/registry.md](docs/registry.md#deterministic-sast-pre-filter-sast). (epic 50.0)
@@ -847,8 +847,7 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 - Updated stale `cmd/atcr/...` comment cross-references and the `newRootCmd` symbol name to `cli/...`/`NewRootCmdWithClient` in ~12 non-relocated files, closing out documentation drift left by the Sprint 34.0 CLI relocation.
 
 [Unreleased]: https://github.com/samestrin/atcr/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v1.0.0
-[0.5.0]: https://github.com/samestrin/atcr/compare/v0.4.0...v0.5.0
+[1.0.0]: https://github.com/samestrin/atcr/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/samestrin/atcr/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/samestrin/atcr/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/samestrin/atcr/compare/v0.1.0...v0.2.0

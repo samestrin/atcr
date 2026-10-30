@@ -1,1 +1,0 @@
-- The README's `atcr leaderboard` command description now says the export "prints the public submission document, with the submitter removed" instead of calling it "anonymized", matching what docs/scorecard.md documents: only the submitter is removed; the persona and model stay public. (EST-3308)
