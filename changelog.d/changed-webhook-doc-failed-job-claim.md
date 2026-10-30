@@ -1,0 +1,1 @@
+- `docs/webhook.md` now states that a failed Linear auto-fix job keeps its issue+state claim and its daily-cap count, that the daemon cannot tell a failure before the first push from one after it, and that retrying means moving the issue to another auto-fix status. Documentation only; no behavior change. (EST-3392)
