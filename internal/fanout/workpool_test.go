@@ -1,12 +1,15 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
+	"runtime/pprof"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,10 +23,11 @@ import (
 
 // TestRun_PoolOf6Drains700UnitsWithBoundedWorkers is the T2 gate (Epic 35.16.14):
 // a 700-unit plan through max_parallel=6 never has more than 6 units in flight
-// and never more than ~6 live worker goroutines. Before the pool, Run spawned one
+// and never more than 6 live worker goroutines. Before the pool, Run spawned one
 // goroutine per slot, so the goroutine count tracked the plan size (700) and only
-// the semaphore bounded execution. Not parallel: it samples the process's
-// goroutine count, which another test's goroutines would inflate.
+// the semaphore bounded execution. It counts only goroutines that carry this
+// run's pprof label, which every goroutine Run starts inherits; goroutines from
+// other tests, which once failed main CI here, are not counted.
 func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 	const units, workers = 700, 6
 	slots := make([]Slot, units)
@@ -32,10 +36,13 @@ func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 	}
 	fake := newFake()
 	fake.delay = time.Millisecond
-	baseline := runtime.NumGoroutine()
+	label := pprof.Labels("atcr-test-run", t.Name())
+	noiseUp := startOutsideGoroutines(t, 64)
 	var peakG atomic.Int64
+	var noiseOnce sync.Once
 	fake.onStart = func(string) {
-		n := int64(runtime.NumGoroutine())
+		noiseOnce.Do(func() { <-noiseUp })
+		n := int64(countLabeledGoroutines(t, "atcr-test-run", t.Name()))
 		for {
 			p := peakG.Load()
 			if n <= p || peakG.CompareAndSwap(p, n) {
@@ -44,7 +51,10 @@ func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 		}
 	}
 
-	results := NewEngine(fake, WithMaxParallel(workers)).Run(context.Background(), slots)
+	var results []Result
+	pprof.Do(context.Background(), label, func(ctx context.Context) {
+		results = NewEngine(fake, WithMaxParallel(workers)).Run(ctx, slots)
+	})
 
 	require.Len(t, results, units)
 	for i, r := range results {
@@ -53,10 +63,53 @@ func TestRun_PoolOf6Drains700UnitsWithBoundedWorkers(t *testing.T) {
 	}
 	assert.LessOrEqual(t, atomic.LoadInt32(&fake.peak), int32(workers), "in-flight units never exceed max_parallel")
 	assert.Equal(t, int32(workers), atomic.LoadInt32(&fake.peak), "the pool keeps every worker busy")
-	// Slack of 2 covers runtime helpers that may start while the run is live; the
-	// goroutine-per-slot engine this replaces sat near baseline+700 here.
-	assert.LessOrEqual(t, peakG.Load()-int64(baseline), int64(workers+2),
+	// The +1 is the goroutine calling Run, which holds the label too; the
+	// goroutine-per-slot engine this replaces sat near 700 here.
+	assert.LessOrEqual(t, peakG.Load(), int64(workers+1),
 		"live goroutines follow the worker count, not the unit count")
+	assert.GreaterOrEqual(t, peakG.Load(), int64(workers+1), "the count sees every live worker")
+}
+
+// countLabeledGoroutines counts live goroutines whose pprof labels include
+// key=value, from the debug=1 goroutine profile: each "N @ ..." stack record is
+// followed by a "# labels: {...}" line when its goroutines carry labels.
+func countLabeledGoroutines(t *testing.T, key, value string) int {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, pprof.Lookup("goroutine").WriteTo(&buf, 1))
+	want := fmt.Sprintf("%q:%q", key, value)
+	total, count := 0, 0
+	for line := range strings.Lines(buf.String()) {
+		if n, _, ok := strings.Cut(line, " @ "); ok {
+			count, _ = strconv.Atoi(n)
+			continue
+		}
+		if labels, ok := strings.CutPrefix(line, "# labels: "); ok && strings.Contains(labels, want) {
+			total += count
+		}
+	}
+	return total
+}
+
+// startOutsideGoroutines stands in for another test's goroutines: once the
+// returned channel closes, n goroutines that are not part of any run stay
+// parked until the test ends. They start after the caller's setup, from a
+// goroutine of their own, so nothing the caller started is their parent.
+func startOutsideGoroutines(t *testing.T, n int) <-chan struct{} {
+	t.Helper()
+	stop, up := make(chan struct{}), make(chan struct{})
+	var wg sync.WaitGroup
+	t.Cleanup(func() { close(stop); wg.Wait() })
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wg.Add(n)
+		for range n {
+			go func() { defer wg.Done(); <-stop }()
+		}
+		close(up)
+	}()
+	return up
 }
 
 // TestRun_UnboundedLaneKeepsOneWorkerPerUnit pins maxParallel <= 0 as today's

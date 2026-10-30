@@ -1,1 +1,0 @@
-- The webhook daemon now remembers a Linear issue and status that started an auto-fix for 30 days instead of forever, so `.atcr/webhook/auto-fix-state.json` stops growing; moving an issue to the same status after 30 days starts a new auto-fix. (epic 87.0)

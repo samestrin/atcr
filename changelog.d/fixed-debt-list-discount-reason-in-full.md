@@ -1,1 +1,0 @@
-- `atcr debt list` and `atcr debt resolve` now show a confidence-discount reason of up to 80 characters in the Problem column, so the panel-wide reason is no longer cut short. (epic 88.0)
