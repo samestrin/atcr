@@ -92,6 +92,18 @@ type BackfillResult struct {
 	// was there. It does not claim the file is the record's own, so it does not tell
 	// the operator to leave a file alone either: restoring the record's own review.md
 	// may still help. Exclusive with PolicyUnrepairable, which wins when both hold.
+	//
+	// So a pruned own tree can read 0 under "review tree pruned". When the record's own
+	// review tree is gone and an unrelated run's review holds a refused namesake at
+	// the record's relative path, the record counts here, not in the pruned-tree half.
+	// That is deliberate (TD internal/localdebt/backfill.go:484, epic 88 T4). The pass
+	// finds the record's own review dir only through its reconciled/summary.json, so
+	// it cannot tell this case from an own tree whose summary.json is gone and whose
+	// refused file IS the record's own. Counting only refusals under a proven own dir
+	// would report that second case as a pruned tree, telling the operator the tree
+	// is gone while a refused file sits there. "Not tied to the record" is true of
+	// both cases and does not tell the operator to leave a file alone, so restoring
+	// the record's own review.md is still the remedy it points to.
 	PolicyUnattributed int
 	Ambiguous          int // several surviving candidates disagreed, so none was written
 
