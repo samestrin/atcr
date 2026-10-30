@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -530,4 +531,83 @@ func TestCarryReviewed_KeepsCoverageMarkers(t *testing.T) {
 	st := readAgentStatus(t, poolDir, "greta")
 	assert.Equal(t, 2, st.UnreviewedFiles)
 	assert.Zero(t, st.DeferredFiles)
+}
+
+// Epic 90 T3: a successful merge frees the persona's prior artifacts, and a
+// failed one keeps them, because the Epic 78 T4 retry must rebuild from the
+// prior files as the interrupted run left them, not as the failed write did.
+func TestWriteMergedAgent_FreesPriorsOnlyOnSuccess(t *testing.T) {
+	entries := sixtyFourFiles()
+	for _, tc := range []struct {
+		name      string
+		failWrite bool
+	}{{"success", false}, {"failed write", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := originalRun(t, entries, 4)
+			poolDir := filepath.Join(dir, "sources", "pool")
+			slots := gretaBaselineSlots(t, entries[4:])
+			l := newChunkLedger(log.Discard(), poolDir, slots)
+			require.NotNil(t, l)
+			l.carryReviewed(readPriorChunkRecords(poolDir, slots))
+			carried := l.carriedFiles("greta")
+			require.NotEmpty(t, carried)
+			if tc.failWrite {
+				orig := writeStatusFn
+				t.Cleanup(func() { writeStatusFn = orig })
+				writeStatusFn = func(string, *AgentStatus) error {
+					return fmt.Errorf("simulated status.json write failure")
+				}
+			}
+
+			err := writeMergedAgent(poolDir, "greta", Result{Agent: "greta", Status: StatusOK}, nil, l, carried)
+
+			l.mu.Lock()
+			_, kept := l.priors["greta"]
+			l.mu.Unlock()
+			if tc.failWrite {
+				require.Error(t, err)
+				assert.True(t, kept, "a failed write keeps the priors for the retry")
+			} else {
+				require.NoError(t, err)
+				assert.False(t, kept, "a successful merge frees the priors")
+			}
+		})
+	}
+}
+
+// Epic 90 T3: priorFor reads outside the ledger mutex, so concurrent first
+// calls may all read; the first to store wins and every caller gets that copy.
+// Run under -race.
+func TestPriorFor_ConcurrentFirstReadWins(t *testing.T) {
+	entries := sixtyFourFiles()
+	dir := originalRun(t, entries, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	agentDir := filepath.Join(poolDir, poolRawAgentDir, "greta")
+	l := newChunkLedger(log.Discard(), poolDir, gretaBaselineSlots(t, entries[4:]))
+	require.NotNil(t, l)
+
+	const n = 8
+	got := make([]priorArtifacts, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i], errs[i] = l.priorFor("greta", agentDir, "greta")
+		}(i)
+	}
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		require.NoError(t, errs[i])
+		assert.Equal(t, got[0], got[i])
+	}
+	require.NotEmpty(t, got[0].findings)
+
+	// Once stored, the entry is what every later call returns, even after the
+	// files on disk change (a merge rewrote them).
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, reviewFile), []byte("rewritten"), 0o600))
+	again, err := l.priorFor("greta", agentDir, "greta")
+	require.NoError(t, err)
+	assert.Equal(t, got[0], again)
 }
