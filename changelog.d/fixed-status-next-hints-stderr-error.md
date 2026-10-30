@@ -1,1 +1,0 @@
-- `atcr status` no longer exits with an error when it cannot write its `Next:` hints to stderr; the JSON on stdout is the result, and the hints are advisory, as for `atcr verify`, `atcr reconcile` and `atcr debate` (epic 88).

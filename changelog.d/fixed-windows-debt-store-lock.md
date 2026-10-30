@@ -1,1 +1,0 @@
-- On Windows, the local debt store (`atcr debt`, `atcr reconcile`) now uses the same kernel lock as Linux and macOS: two `atcr` processes can no longer write the store at once while reclaiming an old lock, and a killed `atcr` no longer blocks the store for 30 seconds. (technical debt, 2026-10-30)
