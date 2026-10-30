@@ -1,0 +1,1 @@
+- A cancelled or timed-out webhook auto-fix job no longer leaves processes behind on Linux and macOS: the `atcr review --auto-fix` child now runs in its own process group, and anything it started that is still running when the SIGTERM grace is over is killed with it. (epic 87.0)
