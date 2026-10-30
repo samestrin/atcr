@@ -2,6 +2,7 @@ package atomicfs
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -721,5 +722,56 @@ func TestBackupToDotBak_SupersededCleanupFailureIsNotFatal(t *testing.T) {
 	}
 	if string(data) != "new\n" {
 		t.Errorf("current .bak content = %q, want %q", string(data), "new\n")
+	}
+}
+
+// TestWriteFileAtomicWith_ModeAndSync pins the durable-write option the
+// auto-fix state uses: the file lands with the requested mode, and with Sync
+// set the temp file is fsynced before the rename (a failed sync fails the
+// write and leaves the prior file in place).
+func TestWriteFileAtomicWith_ModeAndSync(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	if err := WriteFileAtomicWith(path, []byte("v1\n"), WriteOptions{Mode: 0o600, Sync: true}); err != nil {
+		t.Fatalf("WriteFileAtomicWith: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("mode = %o, want 600", perm)
+	}
+
+	orig := syncFn
+	t.Cleanup(func() { syncFn = orig })
+	synced := 0
+	syncFn = func(f *os.File) error { synced++; return errors.New("disk gone") }
+	if err := WriteFileAtomicWith(path, []byte("v2\n"), WriteOptions{Mode: 0o600, Sync: true}); err == nil {
+		t.Fatal("failed sync: want error")
+	}
+	if synced == 0 {
+		t.Fatal("Sync option did not fsync the temp file")
+	}
+	if got, _ := os.ReadFile(path); string(got) != "v1\n" {
+		t.Fatalf("after failed sync file = %q, want the prior v1", got)
+	}
+
+	// Without Sync nothing is fsynced, and the zero Mode keeps the 0644 default.
+	synced = 0
+	syncFn = func(f *os.File) error { synced++; return nil }
+	plain := filepath.Join(dir, "plain.json")
+	if err := WriteFileAtomicWith(plain, []byte("x\n"), WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if synced != 0 {
+		t.Fatalf("synced %d times without Sync, want 0", synced)
+	}
+	fi, err = os.Stat(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o644 {
+		t.Fatalf("default mode = %o, want 644", perm)
 	}
 }

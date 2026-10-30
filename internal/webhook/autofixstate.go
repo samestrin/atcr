@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/samestrin/atcr/internal/atomicfs"
 )
 
 var (
@@ -23,11 +25,22 @@ var (
 // version is refused rather than guessed at.
 const autoFixStateVersion = 1
 
+// autoFixReplayHorizon is how long a claimed issue id plus state id pair is
+// remembered. The seen set only has to outlast a replay of the same status
+// change. Linear's retries of a failed delivery span hours, not weeks, and
+// the receiver rejects a delivery whose signed timestamp is more than a minute
+// off (linear.MaxTimestampSkew), so a captured delivery cannot be replayed
+// later either; 30 days is far longer than both. Without a horizon the set, and the file
+// rewritten on every claim, grows forever. Past it, moving an issue back to
+// the same state starts a new auto-fix.
+const autoFixReplayHorizon = 30 * 24 * time.Hour
+
 // autoFixStateFile is the JSON kept on disk.
 type autoFixStateFile struct {
 	Version int `json:"version"`
 	// Seen maps a Linear issue id to the state ids that started an auto-fix
-	// for it, each with the time of the claim.
+	// for it, each with the time of the claim. Claim drops a pair once that
+	// time is autoFixReplayHorizon old.
 	Seen map[string]map[string]time.Time `json:"seen"`
 	// Day is the UTC date (YYYY-MM-DD) Count belongs to.
 	Day string `json:"day,omitempty"`
@@ -86,14 +99,16 @@ func OpenAutoFixState(path string, dailyCap int) (*AutoFixState, error) {
 // now, and counts it against now's UTC day. It returns ErrAutoFixClaimed when
 // the pair was claimed before (checked first, so a repeat never reads as the
 // cap) and ErrAutoFixDailyCap when the day's cap is used. A refused claim, or
-// one whose write to disk fails, records nothing.
+// one whose write to disk fails, records nothing. A pair claimed
+// autoFixReplayHorizon or longer before now counts as unclaimed, and a
+// successful Claim prunes every such pair from the state it writes.
 func (s *AutoFixState) Claim(issueID, stateID string, now time.Time) error {
 	if issueID == "" || stateID == "" {
 		return errors.New("webhook: auto-fix claim needs an issue id and a state id")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data.Seen[issueID][stateID]; ok {
+	if at, ok := s.data.Seen[issueID][stateID]; ok && !replayExpired(at, now) {
 		return fmt.Errorf("%w: issue %s state %s", ErrAutoFixClaimed, issueID, stateID)
 	}
 	day := utcDay(now)
@@ -104,15 +119,21 @@ func (s *AutoFixState) Claim(issueID, stateID string, now time.Time) error {
 
 	next := s.data
 	next.Seen = make(map[string]map[string]time.Time, len(s.data.Seen)+1)
-	for k, v := range s.data.Seen {
-		next.Seen[k] = v
+	for issue, claimed := range s.data.Seen {
+		states := make(map[string]time.Time, len(claimed)+1)
+		for state, at := range claimed {
+			if !replayExpired(at, now) {
+				states[state] = at
+			}
+		}
+		if len(states) > 0 {
+			next.Seen[issue] = states
+		}
 	}
-	states := make(map[string]time.Time, len(s.data.Seen[issueID])+1)
-	for k, v := range s.data.Seen[issueID] {
-		states[k] = v
+	if next.Seen[issueID] == nil {
+		next.Seen[issueID] = map[string]time.Time{}
 	}
-	states[stateID] = now.UTC()
-	next.Seen[issueID] = states
+	next.Seen[issueID][stateID] = now.UTC()
 	next.Day, next.Count = day, count+1
 
 	if err := writeAutoFixState(s.path, next); err != nil {
@@ -138,8 +159,12 @@ func (s *AutoFixState) countOn(day string) int {
 
 func utcDay(t time.Time) string { return t.UTC().Format(time.DateOnly) }
 
-// writeAutoFixState writes data to path through a synced temp file and a
-// rename, so a crash leaves either the old state or the new one. Unlike the
+// replayExpired reports whether a claim made at is past the replay horizon at
+// now. A claim time after now (a clock set back) is kept.
+func replayExpired(at, now time.Time) bool { return now.Sub(at) >= autoFixReplayHorizon }
+
+// writeAutoFixState writes data to path 0600 through atomicfs with Sync set,
+// so a crash leaves either the old state or the new one. Unlike the
 // regenerable review artifacts, this file is not rebuilt from anywhere: losing
 // a claim could open a second fix pull request.
 func writeAutoFixState(path string, data autoFixStateFile) error {
@@ -148,32 +173,11 @@ func writeAutoFixState(path string, data autoFixStateFile) error {
 		return fmt.Errorf("webhook: encode auto-fix state: %w", err)
 	}
 	raw = append(raw, '\n')
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("webhook: create auto-fix state directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
+	if err := atomicfs.WriteFileAtomicWith(path, raw, atomicfs.WriteOptions{Mode: 0o600, Sync: true}); err != nil {
 		return fmt.Errorf("webhook: write auto-fix state: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op after rename
-	_, err = tmp.Write(raw)
-	if err == nil {
-		err = tmp.Sync()
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("webhook: write auto-fix state: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("webhook: write auto-fix state: %w", err)
-	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
 	}
 	return nil
 }

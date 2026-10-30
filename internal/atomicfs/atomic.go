@@ -20,7 +20,8 @@ import (
 // the rename can leave the rename durable while the data is not, yielding a
 // zero-length or truncated file. This is intentional — the artifacts written
 // through here (review/reconcile/verify output) are regenerable, so crash
-// durability is deliberately out of scope and not worth the fsync cost.
+// durability is deliberately out of scope and not worth the fsync cost. State
+// that cannot be rebuilt uses WriteFileAtomicWith with Sync set instead.
 //
 // File mode is fixed at 0644 for every caller (reconcile/verify/payload/debate
 // artifact writers all want that), so mode changes are unsupported: an --auto-fix
@@ -30,6 +31,27 @@ import (
 // internal/autofix/apply.go (FlagsForReview) and internal/security/pathguard.go
 // — not a bug to fix by threading a mode through this shared writer.
 func WriteFileAtomic(path string, data []byte) error {
+	return WriteFileAtomicWith(path, data, WriteOptions{})
+}
+
+// WriteOptions tunes WriteFileAtomicWith for a file that is not regenerable.
+type WriteOptions struct {
+	// Mode is the file's permission bits; zero means WriteFileAtomic's 0644.
+	Mode os.FileMode
+	// Sync fsyncs the temp file before the rename and the parent directory
+	// after it, so a crash leaves either the old file or the new one, never a
+	// truncated one. Use it for state that cannot be rebuilt.
+	Sync bool
+}
+
+// WriteFileAtomicWith is WriteFileAtomic with a chosen mode and optional
+// crash durability (see WriteOptions). The directory fsync after the rename
+// is best-effort: the rename has already happened, so its error is ignored.
+func WriteFileAtomicWith(path string, data []byte, opts WriteOptions) error {
+	mode := opts.Mode
+	if mode == 0 {
+		mode = 0o644
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -41,15 +63,35 @@ func WriteFileAtomic(path string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
-	if err := tmp.Chmod(0o644); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
+	}
+	if opts.Sync {
+		if err := syncFn(tmp); err != nil {
+			_ = tmp.Close()
+			return err
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if opts.Sync {
+		if d, err := os.Open(dir); err == nil {
+			_ = syncFn(d)
+			_ = d.Close()
+		}
+	}
+	return nil
 }
+
+// syncFn is the fsync primitive WriteFileAtomicWith uses, indirected through a
+// package var so a test can see that Sync fsyncs and drive a failed fsync. In
+// production it is (*os.File).Sync.
+var syncFn = (*os.File).Sync
 
 // WriteJSON marshals v as two-space-indented JSON (with a trailing newline, so
 // the artifact matches the reconcile/verify writers and is human-diffable) and
