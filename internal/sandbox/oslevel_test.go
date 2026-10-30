@@ -492,11 +492,16 @@ exit 0`)
 }
 
 // descendantReapWatch polls whether a recorded descendant pid is gone and
-// kills it at cleanup only if the poll never saw it go.
+// kills it at cleanup only if the poll never saw it go. Once the poll has seen
+// ESRCH the pid is free for reuse, so an unconditional cleanup SIGKILL could hit
+// an unrelated process on a busy runner. A zombie also counts as gone: it has
+// been killed, but Signal(0) still succeeds until its new parent reaps it, and
+// an init that reaps slowly would otherwise time the poll out.
 type descendantReapWatch struct {
 	pid      int
-	procRoot string
+	procRoot string // "/proc"; a missing stat file (darwin) leaves only the signal probe
 	signal   func(pid int, sig syscall.Signal) error
+	sawGone  bool
 }
 
 func newDescendantReapWatch(pid int) *descendantReapWatch {
@@ -512,11 +517,34 @@ func signalPid(pid int, sig syscall.Signal) error {
 }
 
 func (w *descendantReapWatch) gone() bool {
-	return errors.Is(w.signal(w.pid, syscall.Signal(0)), os.ErrProcessDone)
+	if w.sawGone {
+		return true
+	}
+	err := w.signal(w.pid, syscall.Signal(0))
+	w.sawGone = errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) ||
+		procStatState(w.procRoot, w.pid) == 'Z'
+	return w.sawGone
 }
 
 func (w *descendantReapWatch) cleanup() {
+	if w.sawGone {
+		return
+	}
 	_ = w.signal(w.pid, syscall.SIGKILL)
+}
+
+// procStatState returns the state field of <procRoot>/<pid>/stat, or 0 when it
+// cannot be read. The state follows the LAST ')', since comm may contain one.
+func procStatState(procRoot string, pid int) byte {
+	raw, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0
+	}
+	rest := strings.TrimLeft(string(raw[bytes.LastIndexByte(raw, ')')+1:]), " ")
+	if rest == "" {
+		return 0
+	}
+	return rest[0]
 }
 
 func TestDescendantReapWatch_ZombieCountsAsGone(t *testing.T) {
