@@ -120,6 +120,7 @@ func startSleeper(t *testing.T) int {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+	require.NoError(t, cmd.Process.Signal(syscall.Signal(0)), "the sleeper must be alive before a reader looks for it")
 	return cmd.Process.Pid
 }
 
@@ -150,6 +151,8 @@ func TestSandboxDescendants_FindsGrandchildrenAndNotTheLeader(t *testing.T) {
 	// must reach it through the intermediate shell.
 	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
 	cmd := exec.Command("sh", "-c", `sleep 30 & echo $! > "$0.tmp" && mv "$0.tmp" "$0"; wait`, pidFile)
+	// Its own group, so the cleanup's kill(-leaderPid) reaches the grandchild.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -166,6 +169,12 @@ func TestSandboxDescendants_FindsGrandchildrenAndNotTheLeader(t *testing.T) {
 		return err == nil
 	}, 10*time.Second, 20*time.Millisecond)
 	t.Cleanup(func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) })
+	// The cleanup's group kill reaches the grandchild only if the leader leads
+	// its own group; without Setpgid it shares the test binary's group and
+	// kill(-leaderPid) hits nothing.
+	pgid, err := syscall.Getpgid(grandchild)
+	require.NoError(t, err)
+	require.Equal(t, cmd.Process.Pid, pgid, "the grandchild must be in the leader's process group")
 
 	got := sandboxDescendants(cmd)
 	assert.Contains(t, got, grandchild)
