@@ -120,6 +120,7 @@ func startSleeper(t *testing.T) int {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	})
+	require.NoError(t, cmd.Process.Signal(syscall.Signal(0)), "the sleeper must be alive before a reader looks for it")
 	return cmd.Process.Pid
 }
 
@@ -150,6 +151,8 @@ func TestSandboxDescendants_FindsGrandchildrenAndNotTheLeader(t *testing.T) {
 	// must reach it through the intermediate shell.
 	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
 	cmd := exec.Command("sh", "-c", `sleep 30 & echo $! > "$0.tmp" && mv "$0.tmp" "$0"; wait`, pidFile)
+	// Its own group, so the cleanup's kill(-leaderPid) reaches the grandchild.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
