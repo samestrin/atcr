@@ -166,6 +166,12 @@ func TestSandboxDescendants_FindsGrandchildrenAndNotTheLeader(t *testing.T) {
 		return err == nil
 	}, 10*time.Second, 20*time.Millisecond)
 	t.Cleanup(func() { _ = syscall.Kill(grandchild, syscall.SIGKILL) })
+	// The cleanup's group kill reaches the grandchild only if the leader leads
+	// its own group; without Setpgid it shares the test binary's group and
+	// kill(-leaderPid) hits nothing.
+	pgid, err := syscall.Getpgid(grandchild)
+	require.NoError(t, err)
+	require.Equal(t, cmd.Process.Pid, pgid, "the grandchild must be in the leader's process group")
 
 	got := sandboxDescendants(cmd)
 	assert.Contains(t, got, grandchild)
