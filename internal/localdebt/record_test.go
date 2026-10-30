@@ -498,3 +498,11 @@ func TestRecord_ModelReviewersFieldOmitempty(t *testing.T) {
 	assert.Equal(t, "model_reviewers,omitempty", f.Tag.Get("json"),
 		`ModelReviewers must be tagged json:"model_reviewers,omitempty"`)
 }
+
+// DiscountMarker is the one spelling of the discount marker: RowProblem and the
+// `debt` listings both build it here, so the two renders cannot drift apart.
+func TestDiscountMarker(t *testing.T) {
+	assert.Equal(t, " (confidence discounted: because)", DiscountMarker("because"))
+	r := Record{Problem: "p", ConfidenceDiscount: "because"}
+	assert.Equal(t, "p"+DiscountMarker("because"), r.RowProblem())
+}
