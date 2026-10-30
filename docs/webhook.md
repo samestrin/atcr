@@ -216,7 +216,8 @@ The checkout, review and cleanup are the same as for a Slack mention.
    severity and up to 10 finding titles, most severe first, with no file path,
    credential or raw model text. A timed-out, cancelled or failed review posts
    a one-line note saying so. Without the token nothing is posted and the
-   daemon only logs the finding count.
+   daemon only logs the finding count; it prints a warning saying so once at
+   startup.
 
 ### Linear setup
 

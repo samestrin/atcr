@@ -604,6 +604,10 @@ func TestPersistForReconcile_StoredIDEqualsStreamID(t *testing.T) {
 		require.Failf(t, "fixture finding not emitted", "%q (%s)", problem, category)
 		return -1
 	}
+	// The suffix-match guard below only bites if the sibling comes first: emitted
+	// after inScope, a suffix match would still return inScope and pass.
+	require.Less(t, find(sibling, "style"), find(inScope, "style"),
+		"the sibling must be emitted before the in-scope finding it ends in")
 	require.Equal(t, inScope, emitted[find(inScope, "style")].Problem,
 		"find must not return the sibling whose problem merely ends in the wanted text")
 	// Refutation is stamped by the verify stage on the very records
