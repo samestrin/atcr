@@ -122,6 +122,30 @@ func TestFixtureCommandContext_RelativeDirIsAbsolutized(t *testing.T) {
 	}
 }
 
+// TestFixtureCommandContext_PanicsWhenDirCannotBeResolved asserts a relative dir
+// that cannot be made absolute (the cwd is gone) panics instead of silently
+// running against the wrong directory.
+func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := t.TempDir()
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.Remove(gone); err != nil {
+		t.Skipf("cannot remove the cwd on this platform: %v", err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("FixtureCommandContext did not panic on an unresolvable relative dir")
+		}
+	}()
+	FixtureCommandContext(context.Background(), "relative", "status")
+}
+
 // TestFixtureCommandContext_DropsInheritedRepoVars asserts the other repo-locating
 // vars git exports into a hook (pre-push unsets the same list) are not inherited:
 // an inherited GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY would send the fixture's
