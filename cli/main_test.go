@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -524,11 +525,21 @@ func TestHandleSignals_ClosedChannelReturnsQuietly(t *testing.T) {
 // goroutine parked on <-sigCh, so the count climbs by one per run and never
 // settles.
 //
-// One warm-up run precedes the baseline because the first signal.Notify in the
-// process starts the runtime's signal-watching goroutine, which lives for the
-// life of the binary and is not a per-run leak. The comparison is <= rather
-// than == so a goroutine from an earlier test that exits during this one
-// cannot fail it; a per-run leak still overshoots by the run count.
+// The first signal.Notify in the process starts the runtime's signal-watching
+// goroutine, which lives for the life of the binary and is not a per-run leak,
+// so a bare Notify/Stop pair starts it before the baseline. It is deliberately
+// not a warm-up Main run: runMain closes sigCh but does not wait for the
+// handler goroutine to see the close, so a baseline read right after a run
+// counted that goroutine or not depending on scheduling, and the gate failed
+// whenever it had already gone.
+//
+// Every count is read on this goroutine. assert.Eventually runs its condition
+// on a goroutine of its own, which a count taken inside it includes, so it
+// reads one above the true count on every poll.
+//
+// The comparison is <= rather than == so a goroutine from an earlier test that
+// exits during this one cannot fail it; a per-run leak still overshoots by the
+// run count.
 func TestMain_RepeatedRunsDoNotLeakGoroutines(t *testing.T) {
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
@@ -545,7 +556,9 @@ func TestMain_RepeatedRunsDoNotLeakGoroutines(t *testing.T) {
 		require.Equal(t, 0, code, "--version must succeed; stderr: %s", errOut.String())
 	}
 
-	run(false)
+	primeCh := make(chan os.Signal, 1)
+	signal.Notify(primeCh, syscall.SIGINT)
+	signal.Stop(primeCh)
 	baseline := runtime.NumGoroutine()
 
 	const runs = 20
@@ -553,15 +566,15 @@ func TestMain_RepeatedRunsDoNotLeakGoroutines(t *testing.T) {
 		run(i%2 == 1)
 	}
 
-	// Eventually's message is formatted before it polls, so the settled count
-	// is reported by the LessOrEqual below rather than in that message.
-	var last int
-	settled := assert.Eventually(t, func() bool {
+	// Each run's handler goroutine returns shortly after runMain does, so poll
+	// until the count is back down.
+	last := runtime.NumGoroutine()
+	for deadline := time.Now().Add(2 * time.Second); last > baseline && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
 		last = runtime.NumGoroutine()
-		return last <= baseline
-	}, 2*time.Second, 10*time.Millisecond)
+	}
 	require.LessOrEqual(t, last, baseline,
-		"goroutines must return to baseline after %d runs (settled=%v)", runs, settled)
+		"goroutines must return to baseline after %d runs", runs)
 }
 
 // TestCommandTree_QualityReportDistinctFromReport covers AC 04-04: the new
