@@ -38,13 +38,16 @@ const secretQueryLabel = "similarity query"
 // logged, so a config-free run is the run built before the tier existed. A
 // client the config cannot build fails open with a warning and a retriever that
 // fails every query with class semanticDegradeConfig, so the manifest records
-// why the tier produced nothing.
+// the reason when a query is attempted (a diff with no queryable symbol never
+// calls the retriever, so it records none). Only the class is kept: the
+// construction error can echo a configured URL, which must not reach the
+// manifest or the logs.
 func semanticRetrieverOption(ctx context.Context, cfg *ReviewConfig, repo string) payload.RangeOption {
 	sp := cfg.Settings.ResolvedSemanticPrefetch()
 	if !sp.Enabled {
 		return nil
 	}
-	root, err := filepath.Abs(repo)
+	root, err := absRepoPath(repo)
 	if err == nil {
 		var c *semindex.Client
 		c, err = semindex.New(semindex.Config{
@@ -59,9 +62,15 @@ func semanticRetrieverOption(ctx context.Context, cfg *ReviewConfig, repo string
 			return payload.WithSemanticRetriever(&guardedRetriever{policy: secretGuardPolicy(cfg), inner: c}, sp.TopK)
 		}
 	}
-	log.FromContext(ctx).Warn("semantic retrieval not configured; continuing without similarity snippets", "error", err.Error())
-	return payload.WithSemanticRetriever(failingRetriever{err: err}, sp.TopK)
+	log.FromContext(ctx).Warn("semantic retrieval client could not be built; continuing without similarity snippets", "class", string(semanticDegradeConfig))
+	return payload.WithSemanticRetriever(failingRetriever{err: errSemanticClientNotBuilt}, sp.TopK)
 }
+
+// absRepoPath is filepath.Abs, a variable so a test can force its failure.
+var absRepoPath = filepath.Abs
+
+// errSemanticClientNotBuilt is the class-only error failingRetriever stores.
+var errSemanticClientNotBuilt = errors.New("the similarity client could not be built from the configuration")
 
 // failingRetriever stands in for a client that could not be built. Every
 // Retrieve fails with a *semindex.Error of class semanticDegradeConfig.

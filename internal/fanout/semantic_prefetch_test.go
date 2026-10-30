@@ -416,8 +416,51 @@ func TestSemanticRetrieverOption_UnbuildableClientFailsOpen(t *testing.T) {
 	require.True(t, cfg.Settings.ResolvedSemanticPrefetch().Enabled, "PRECONDITION: the block is enabled")
 
 	assert.NotNil(t, semanticRetrieverOption(ctx, cfg, t.TempDir()), "the failing retriever rides an option")
-	assert.Contains(t, buf.String(), "semantic retrieval not configured")
-	assert.Contains(t, buf.String(), "collection is required")
+	assert.Contains(t, buf.String(), "semantic retrieval client could not be built")
+	assert.Contains(t, buf.String(), string(semanticDegradeConfig))
+}
+
+// A filepath.Abs failure takes the same fail-open path: the review completes,
+// the manifest records the config class, and the warning names the build failure.
+func TestSemanticPrefetch_AbsFailureDegradesConfigInvalid(t *testing.T) {
+	orig := absRepoPath
+	absRepoPath = func(string) (string, error) { return "", errors.New("getwd: boom") }
+	t.Cleanup(func() { absRepoPath = orig })
+
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	repo, base, head := semanticFanoutRepo(t)
+	cfg := twoAgentConfig(mockProvider(t).URL)
+	enableSemantic(cfg, "http://127.0.0.1:1")
+
+	res, err := RunReview(ctx, llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	_, m := readSemanticManifest(t, res.Dir)
+	require.NotNil(t, m.Prefetch)
+	assert.Equal(t, string(semanticDegradeConfig), m.Prefetch.DegradeReason)
+	assert.Contains(t, buf.String(), "client could not be built")
+}
+
+// The stored construction error is class-only: a configured URL (here one
+// semindex.New rejects with a parse error that quotes it) reaches neither the manifest nor
+// the log.
+func TestSemanticPrefetch_ConstructionErrorLeaksNoURL(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	repo, base, head := semanticFanoutRepo(t)
+	cfg := twoAgentConfig(mockProvider(t).URL)
+	enableSemantic(cfg, "http://qdrant.example.invalid:badport")
+
+	res, err := RunReview(ctx, llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	raw, m := readSemanticManifest(t, res.Dir)
+	require.NotNil(t, m.Prefetch)
+	assert.Equal(t, string(semanticDegradeConfig), m.Prefetch.DegradeReason, "PRECONDITION: the config path ran")
+	for _, out := range []string{string(raw), buf.String()} {
+		assert.NotContains(t, out, "qdrant.example.invalid")
+	}
 }
 
 func TestFailingRetriever_ReturnsConfigClassError(t *testing.T) {
