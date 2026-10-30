@@ -68,10 +68,15 @@ func TestSuggestions_UnusedFlagIsOmitted(t *testing.T) {
 // names that store; without it, debt list would read the CWD's store instead.
 // The derived path is sanitized and quoted like any carried value, and a blank
 // --repo-root (which asserts no root) leaves the suggestion bare.
+//
+// A relative root is made absolute first: debt list refuses a --store
+// containing "..", and persistence resolves the root to an absolute path too.
 func TestSuggestions_ReconcileDebtListCarriesStore(t *testing.T) {
+	other, err := filepath.Abs("../other")
+	require.NoError(t, err)
 	cases := map[string]string{
 		"/src/app": "atcr debt list --store=" + carryValue(filepath.Join("/src/app", ".atcr", "debt")),
-		"../other": "atcr debt list --store=" + carryValue(filepath.Join("../other", ".atcr", "debt")),
+		"../other": "atcr debt list --store=" + carryValue(filepath.Join(other, ".atcr", "debt")),
 		"/a b":     "atcr debt list --store=" + carryValue(filepath.Join("/a b", ".atcr", "debt")),
 		"":         "atcr debt list",
 		"  ":       "atcr debt list",

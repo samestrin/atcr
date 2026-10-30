@@ -137,6 +137,24 @@ func TestReconcileCmd_NextLinesCarryRepoRoot(t *testing.T) {
 	assert.Contains(t, stderr, "Next: atcr debt list --store='"+filepath.Join(root, ".atcr", "debt")+"'\nNext: atcr verify <id> --repo-root='"+root+"'\n")
 }
 
+// TestReconcileCmd_NextDebtListRunsForRelativeRoot: a relative --repo-root with
+// a ".." segment is legal on reconcile, and the suggested `debt list --store`
+// must run as shown; debt list refuses a raw ".." store path (exit 2).
+func TestReconcileCmd_NextDebtListRunsForRelativeRoot(t *testing.T) {
+	isolate(t)
+	nextStepsReviewFixture(t)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll("other", 0o755))
+	rel := filepath.Join("..", filepath.Base(cwd), "other")
+	code, _, stderr := execCmdSplit(t, "reconcile", "--no-scorecard", "--no-local-debt", "--repo-root", rel, "r")
+	require.Equal(t, 0, code)
+	store := filepath.Join(cwd, "other", ".atcr", "debt")
+	require.Contains(t, stderr, "Next: atcr debt list --store="+carryValue(store)+"\n")
+	code, out := execCmdCapture(t, "debt", "list", "--store="+store)
+	assert.Equal(t, 0, code, "the suggested debt list runs: %s", out)
+}
+
 // TestReconcileCmd_NextLinesCarryDeprecatedRepoAlias: a value typed under the
 // deprecated --repo alias carries forward under its canonical name.
 func TestReconcileCmd_NextLinesCarryDeprecatedRepoAlias(t *testing.T) {
