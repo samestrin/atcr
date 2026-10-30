@@ -203,3 +203,52 @@ func TestAutoFixStateConcurrentClaimsOneWins(t *testing.T) {
 		t.Fatalf("concurrent claims won = %d, want 1", wins)
 	}
 }
+
+func TestAutoFixStateClaimPrunesPastReplayHorizon(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-autoFixReplayHorizon - time.Hour)
+	recent := now.Add(-24 * time.Hour)
+
+	s := openState(t, path, 5)
+	if err := s.Claim("ISS-OLD", "st", old); err != nil {
+		t.Fatalf("old claim: %v", err)
+	}
+	if err := s.Claim("ISS-NEW", "st", recent); err != nil {
+		t.Fatalf("recent claim: %v", err)
+	}
+	if err := s.Claim("ISS-3", "st", now); err != nil {
+		t.Fatalf("claim that prunes: %v", err)
+	}
+
+	// The pruned state is what reaches disk: only the old pair is gone.
+	reopened := openState(t, path, 5)
+	if _, ok := reopened.data.Seen["ISS-OLD"]; ok {
+		t.Errorf("claim older than %v still in the seen set", autoFixReplayHorizon)
+	}
+	for _, id := range []string{"ISS-NEW", "ISS-3"} {
+		if _, ok := reopened.data.Seen[id]["st"]; !ok {
+			t.Errorf("%s pruned, want kept", id)
+		}
+	}
+	if err := reopened.Claim("ISS-NEW", "st", now); !errors.Is(err, ErrAutoFixClaimed) {
+		t.Fatalf("repeat inside the horizon: got %v, want ErrAutoFixClaimed", err)
+	}
+}
+
+func TestAutoFixStateClaimAllowedAgainPastReplayHorizon(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	first := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	s := openState(t, path, 5)
+	if err := s.Claim("ISS-1", "st", first); err != nil {
+		t.Fatal(err)
+	}
+	// Just inside the horizon the pair is still remembered.
+	if err := s.Claim("ISS-1", "st", first.Add(autoFixReplayHorizon-time.Minute)); !errors.Is(err, ErrAutoFixClaimed) {
+		t.Fatalf("repeat inside the horizon: got %v, want ErrAutoFixClaimed", err)
+	}
+	// Past it, the remembered claim has expired, even before any prune ran.
+	if err := s.Claim("ISS-1", "st", first.Add(autoFixReplayHorizon+time.Minute)); err != nil {
+		t.Fatalf("repeat past the horizon: %v", err)
+	}
+}
