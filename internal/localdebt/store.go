@@ -43,7 +43,7 @@ const MaxRecordBytes = maxLineBytes
 //
 // The contract binds RAW PATH STRINGS too, not only *os.PathError: a diagnostic that
 // formats a path it holds as a plain string reduces it to its base name explicitly
-// (withLock's lock path, lock_unix.go:68 and lock_other.go:79; the root-resolution warnings that render a
+// (withLock's lock path, lock_unix.go:68, lock_windows.go:82 and lock_other.go:83; the root-resolution warnings that render a
 // manifest-recorded root, root.go).
 //
 // The "paths are repo-relative today" assumption this note used to rest on NO LONGER
