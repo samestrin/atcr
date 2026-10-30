@@ -438,7 +438,15 @@ func (r Record) RowProblem() string {
 	if r.ConfidenceDiscount == "" {
 		return r.Problem
 	}
-	return r.Problem + " (confidence discounted: " + r.ConfidenceDiscount + ")"
+	return r.Problem + DiscountMarker(r.ConfidenceDiscount)
+}
+
+// DiscountMarker is the text appended to a discounted record's Problem,
+// " (confidence discounted: <reason>)". It is the one spelling of the marker:
+// RowProblem builds the TD table cell with it and the `debt` listings build
+// their truncated cell with it, so the two renders cannot drift apart.
+func DiscountMarker(reason string) string {
+	return " (confidence discounted: " + reason + ")"
 }
 
 // EffectiveOrigin reports the record's provenance, resolving a v1/v2 record's
