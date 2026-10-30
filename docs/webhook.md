@@ -303,6 +303,14 @@ webhook:
   busy with another job, uses neither the claim nor the daily count. One job
   per pull request runs at a time, as with reviews, and `webhook.job_timeout`
   bounds the whole run.
+- **A failed job keeps its claim.** The issue+state claim and the day's count
+  are written before the job runs, so a job that fails afterwards — whether it
+  never pushed a fix branch or failed after the first push — keeps both: the
+  daemon cannot tell a failure before the first push from one after it, and it
+  does not roll the claim back. Moving the issue to the same status again
+  within 30 days starts nothing. To retry, move the issue to **another**
+  status listed in `auto_fix.statuses`: the claim is per issue+state pair, so
+  a different state is a new claim (which still spends one of the day's jobs).
 
 The claims and the day's count live in `.atcr/webhook/auto-fix-state.json`
 under the project the daemon runs in, written before each job starts, so they
