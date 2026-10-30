@@ -635,3 +635,35 @@ func TestWebhookCmd_MissingPushTokenNamesTheVariable(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), whPushTokenEnv)
 }
+
+// Epic 87 T5: with webhook.linear set and no resolvable GitHub token the
+// Linear job can only log its findings, so startup says so once; with a token
+// it posts them and there is no warning.
+func TestWebhookCmd_LinearWithoutGitHubTokenWarnsOnce(t *testing.T) {
+	const warning = "findings will only be logged"
+	for _, tc := range []struct {
+		name     string
+		tokenEnv string // the github_token_env line, if any
+		token    string
+		warns    bool
+	}{
+		{name: "github_token_env unset", warns: true},
+		{name: "token variable empty", tokenEnv: "  github_token_env: " + whGitHubTokenEnv + "\n", warns: true},
+		{name: "token set", tokenEnv: "  github_token_env: " + whGitHubTokenEnv + "\n", token: "ghp_testtokentesttokentesttoken12"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolate(t)
+			writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig("/nonexistent/checkout")+tc.tokenEnv)
+			t.Setenv(whLinearSecretEnv, whLinearSecret)
+			t.Setenv(whLinearKeyEnv, whLinearKey)
+			t.Setenv(whGitHubTokenEnv, tc.token)
+			_, stderr, stop := startWebhook(t)
+			require.NoError(t, stop())
+			if tc.warns {
+				assert.Equal(t, 1, strings.Count(stderr.String(), warning), stderr.String())
+			} else {
+				assert.NotContains(t, stderr.String(), warning)
+			}
+		})
+	}
+}
