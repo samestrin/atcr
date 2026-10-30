@@ -1,0 +1,1 @@
+- The README's `atcr quality-report` command description now says "persona digest, model, and counts only" instead of "content-free — persona, model, and counts only". (EST-3350)
