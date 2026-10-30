@@ -141,7 +141,7 @@ func ResolveStoreRoot(opts RootOpts) (string, bool) {
 					// the caller just typed, this path was written into an artifact file
 					// (possibly on another machine) and can embed a username; on the MCP
 					// path this sink is bare os.Stderr, which a calling agent captures.
-					// Same reduction withLock applies to the lock path (lock_unix.go:68, lock_other.go:79).
+					// Same reduction withLock applies to the lock path (lock_unix.go:68, lock_windows.go:82, lock_other.go:83).
 					_, _ = fmt.Fprintf(diag, "localdebt: manifest repo root %q is no longer a valid repository root (copied or stale artifacts?); skipping local debt persistence\n", filepath.Base(recorded))
 					return "", false
 				}

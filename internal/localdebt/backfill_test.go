@@ -862,7 +862,7 @@ func TestBackfillJustifications_ReportsShardNamesEvenWhenNothingNeedsRewrite(t *
 // documented on the field but was pinned by no test — a future edit could start
 // surfacing ENOENT as a hard error on an empty backlog and no test would notice.
 // (The store directory itself existing after the call is withLock's own
-// ensureStoreDir precondition — lock_unix.go, lock_other.go — not this pass's behavior, so it is not
+// ensureStoreDir precondition — lock_unix.go, lock_windows.go, lock_other.go — not this pass's behavior, so it is not
 // asserted here.)
 func TestBackfillJustifications_MissingStoreDirIsTheNoBacklogState(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
