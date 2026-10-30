@@ -2025,3 +2025,68 @@ func TestBackfillJustifications_CountsAnUnattributedPolicyRefusalApart(t *testin
 		})
 	}
 }
+
+// TD internal/localdebt/backfill.go:484 (epic 88 T4) pins the decision to KEEP the
+// PolicyUnattributed definition. The record's own review tree is absent, and an
+// unrelated run's review holds a policy-refused namesake at the record's relative
+// path. The record counts under PolicyUnattributed, so the "review tree pruned"
+// figure reads 0 for a record whose tree really was pruned. The pass finds the own
+// review dir only through its reconciled/summary.json, so it cannot tell this case
+// from an own tree whose summary.json is gone and whose refused file IS the record's
+// own; the unattributed clause is the honest reading of both. The control subtest
+// shows the namesake alone moves the record: without it the same store and the same
+// absent tree read as pruned.
+func TestBackfillJustifications_AbsentOwnTreeWithUnrelatedRefusedNamesakeIsUnattributed(t *testing.T) {
+	const runID = "2026-08-01T00:00:00Z-multi-agent"
+	rec := `{"schema_version":3,"id":"eeee0002","run_id":"` + runID + `","ts":"2026-08-01T00:00:00Z",` +
+		`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+		`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+		`"justification":"- **internal/thing.go:42** a stale excerpt nothing can replay.",` +
+		`"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":3}}`
+
+	for _, tc := range []struct {
+		name                string
+		namesake            bool
+		pruned, unattribute int
+	}{
+		{"an unrelated refused namesake reads as unattributed, not pruned", true, 0, 1},
+		{"control: without the namesake the absent tree reads as pruned", false, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "debt")
+			reviewRoot := filepath.Join(root, "reviews")
+			require.NoError(t, os.MkdirAll(store, 0o750))
+			require.NoError(t, os.MkdirAll(reviewRoot, 0o750))
+
+			if tc.namesake {
+				// Another run's review, which provably owns that run and not this
+				// record, holds a symlinked review.md (a file-level policy refusal)
+				// at the record's relative source_report path.
+				other := filepath.Join(reviewRoot, "sprint-b", "multi-agent")
+				writeReconciledSummary(t, other, "2026-08-09T00:00:00Z")
+				target := filepath.Join(root, "elsewhere", "review.md")
+				require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o750))
+				require.NoError(t, os.WriteFile(target,
+					[]byte("# review\n\n- **internal/thing.go:42** an unrelated run's narrative.\n"), 0o600))
+				rd := filepath.Join(other, "sources", "pool", "raw", "agent", "dax")
+				require.NoError(t, os.MkdirAll(rd, 0o750))
+				require.NoError(t, os.Symlink(target, filepath.Join(rd, "review.md")))
+			}
+			writeShard(t, store, "2026-08", rec)
+
+			own := filepath.Join(reviewRoot, "sprint-a", "multi-agent")
+			_, statErr := os.Stat(own)
+			require.ErrorIs(t, statErr, fs.ErrNotExist, "premise: the record's own review tree is absent")
+
+			res, err := BackfillJustifications(store, reviewRoot, true)
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, res.Unresolved, "premise: nothing yielded an excerpt")
+			assert.Equal(t, 0, res.PolicyUnrepairable, "no refusal sits in a dir that owns the record")
+			assert.Equal(t, tc.unattribute, res.PolicyUnattributed)
+			assert.Equal(t, tc.pruned, res.Unresolved-res.PolicyUnrepairable-res.PolicyUnattributed,
+				"the pruned-tree figure the CLI prints")
+		})
+	}
+}
