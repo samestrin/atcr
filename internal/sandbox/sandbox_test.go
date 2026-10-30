@@ -264,7 +264,7 @@ func TestDockerRunArgs_CommandModeWritableWrapsInShell(t *testing.T) {
 	idx := imageIndex(t, args, cfg.Image)
 	want := []string{
 		cfg.Image,
-		"/bin/sh", "-c", `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work && exec "$@"`, "--",
+		"/bin/sh", "-c", `( cd /src && find . \( -name .git -o -name node_modules -o -name vendor -o -name .terraform \) -prune -o -type d -exec sh -c 'cd /work && mkdir -p -- "$@"' sh {} + ) || exit 125; _atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work --no-same-permissions -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work && exec "$@"`, "--",
 		"npm", "test",
 	}
 	require.Equal(t, want, args[idx:],
@@ -294,7 +294,7 @@ func TestDockerRunArgs_CommandModeWritable_NoShellInjection(t *testing.T) {
 	// unexecuted argv elements — the -c text is a FIXED literal with no payload
 	// concatenated into it. Proves the outer wrapping shell cannot re-tokenize input.
 	cfg := DefaultDockerConfig()
-	const lit = `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work && exec "$@"`
+	const lit = `( cd /src && find . \( -name .git -o -name node_modules -o -name vendor -o -name .terraform \) -prune -o -type d -exec sh -c 'cd /work && mkdir -p -- "$@"' sh {} + ) || exit 125; _atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work --no-same-permissions -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work && exec "$@"`
 	cases := [][]string{
 		{"echo", "hi; rm -rf /"},
 		{"echo", "$(cat /etc/passwd)"},

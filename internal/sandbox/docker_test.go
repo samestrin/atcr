@@ -79,7 +79,7 @@ func TestDockerBackend_Run_ScriptModeWritablePrependsCopyStep(t *testing.T) {
 		Writable:    true,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work`+"\necho hi\nexit 3\n", res.Output,
+	assert.Equal(t, `( cd /src && find . \( -name .git -o -name node_modules -o -name vendor -o -name .terraform \) -prune -o -type d -exec sh -c 'cd /work && mkdir -p -- "$@"' sh {} + ) || exit 125; _atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work --no-same-permissions -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed; cd /work`+"\necho hi\nexit 3\n", res.Output,
 		"Writable:true Script mode must prepend the copy step to the stdin script body")
 }
 
