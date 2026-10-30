@@ -372,3 +372,56 @@ func TestBuildSlots_ZeroBudgetArmFileCountExcludesSyntheticEntries(t *testing.T)
 	require.Contains(t, p.Prompt, "Reviewing 0 changed file(s)",
 		"an agent handed only a synthetic section reviewed NO changed file; reporting 1 sends it hunting for content it never received")
 }
+
+// scopedPrefetchRepo is prefetchFanoutRepo plus an unrelated added file, so a
+// mapper can keep one changed file and drop the other.
+func scopedPrefetchRepo(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir, base, _ = prefetchFanoutRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "other.go"), []byte("package p\n\nfunc Other() {}\n"), 0o644))
+	fanoutGit(t, dir, "add", "-A")
+	fanoutGit(t, dir, "commit", "-q", "-m", "add other")
+	head = fanoutGit(t, dir, "rev-parse", "HEAD")
+	return dir, base, head
+}
+
+func hasPrefetchEntry(mp modePayload) bool {
+	for _, e := range mp.Entries {
+		if e.Path == payload.PrefetchContextPath {
+			return true
+		}
+	}
+	return false
+}
+
+// A mapper that drops store.go must take the context retrieved for store.go's
+// symbols with it; a mapper that fails open must leave pre-fetching on.
+func TestBuildScopedPayloads_ThreatMapStripsPrefetchContext(t *testing.T) {
+	dir, base, head := scopedPrefetchRepo(t)
+	cfg := sizingRosterConfig()
+
+	unscoped, _, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false, threatScope{})
+	require.NoError(t, err)
+	carries := false
+	for _, mp := range unscoped {
+		carries = carries || hasPrefetchEntry(mp)
+	}
+	require.True(t, carries, "PRECONDITION: the fixture must pre-fetch context without a threat map")
+
+	scoped, _, rec, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{keep: []string{"other.go"}}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"store.go"}, rec.Dropped)
+	for mode, mp := range scoped {
+		assert.Falsef(t, hasPrefetchEntry(mp), "mode %s: a mapper-dropped file's context must not reach a prompt", mode)
+	}
+
+	failed, _, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{err: assert.AnError}})
+	require.NoError(t, err)
+	carries = false
+	for _, mp := range failed {
+		carries = carries || hasPrefetchEntry(mp)
+	}
+	assert.True(t, carries, "a fail-open mapper keeps prefetch on")
+}

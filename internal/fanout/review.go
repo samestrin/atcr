@@ -1789,6 +1789,13 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 			record.Dropped = append(record.Dropped, p)
 		}
 		sort.Strings(record.Dropped)
+		// The Context Definitions block was retrieved for the whole diff and is
+		// shed-exempt, so TrimToPaths kept it; with the mapper's drops gone its
+		// spans can ground a dropped file's symbols. Strip it only when the
+		// mapper actually scoped the run: a fail-open mapper leaves keep nil.
+		for mode, entries := range built {
+			built[mode] = withoutPrefetchContext(entries)
+		}
 		log.FromContext(ctx).Info("threat map scoped the review", "kept", record.Keep, "dropped", record.Dropped)
 	}
 	out := map[string]modePayload{}
@@ -4899,4 +4906,15 @@ func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
 	}
 	s := rb.PrefetchStatus()
 	return &s
+}
+
+// withoutPrefetchContext returns entries minus the Context Definitions block.
+func withoutPrefetchContext(entries []payload.FileEntry) []payload.FileEntry {
+	out := make([]payload.FileEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Path != payload.PrefetchContextPath {
+			out = append(out, e)
+		}
+	}
+	return out
 }

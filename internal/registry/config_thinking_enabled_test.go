@@ -31,7 +31,7 @@ func TestThinkingEnabled(t *testing.T) {
 	}
 }
 
-// The cache key's style gate, ThinkingDeclared (internal/fanout/review.go:3477):
+// The cache key's style gate, ThinkingDeclared (internal/fanout/review.go:3484):
 // "declared" is not "enabled". thinking:
 // off is declared (it sends a wire field) but not on; a thinking_style alone is
 // neither, because a style with no thinking or level sends nothing. The cache

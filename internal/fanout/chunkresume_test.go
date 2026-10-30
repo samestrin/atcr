@@ -584,3 +584,14 @@ func TestReadResumeRecord_ReviewedFollowsTheBinPredicate(t *testing.T) {
 		"served.go": {"h-s": true},
 	}, rr.reviewed, "each reviewed file keeps every hash a bin reviewed it at")
 }
+
+// An empty recorded bin yields no chunk, and no recorded bins yield none at all.
+func TestRecordedChunks_DropsEmptyBins(t *testing.T) {
+	entries := []payload.FileEntry{baselineEntry("a.go", 100)}
+	chunks, err := recordedChunks(entries, [][]string{{}, {"gone.go"}}, 1000)
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+	chunks, err = recordedChunks(entries, nil, 1000)
+	require.NoError(t, err)
+	assert.Empty(t, chunks)
+}

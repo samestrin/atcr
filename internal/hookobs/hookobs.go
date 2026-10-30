@@ -129,7 +129,7 @@ type Invocation struct {
 // or, with an empty Path, the engine-rendered prefix that belongs to no single
 // file (see Path).
 //
-// This is the type the engine actually POPULATES (codeContextFor, internal/fanout/review.go:3518);
+// This is the type the engine actually POPULATES (codeContextFor, internal/fanout/review.go:3525);
 // cli.CodeRef is the export DTO adapted from it (cli/hooks.go:341). The Path
 // contract below is stated on both deliberately — a consumer redacting by Path may
 // hold either one, and the hazard it describes belongs wherever the value does.
@@ -473,7 +473,7 @@ func (o *observingClient) base(ctx context.Context, inv llmclient.Invocation, st
 	c := CallFrom(ctx)
 	// A style alone sends no thinking field, so it is not echoed (doctor's
 	// rule; the cache key gates its ts= clause the same way, ThinkingDeclared
-	// (internal/fanout/review.go:3477)). Every site that sets the
+	// (internal/fanout/review.go:3484)). Every site that sets the
 	// style, and the cli.ModelInvocation copy, inherits this one gate.
 	style := inv.ThinkingStyle
 	if !registry.ThinkingDeclared(inv.Thinking, inv.ThinkingLevel) {
