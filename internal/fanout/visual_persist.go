@@ -66,10 +66,6 @@ func persistVisualEvidence(policy, reviewDir string, res BrowserResult) (VisualA
 		return VisualArtifacts{}, err
 	}
 
-	if len(shots) == 0 && guarded[0] == "" && guarded[1] == "" {
-		return VisualArtifacts{}, nil
-	}
-
 	dir := filepath.Join(reviewDir, visualEvidenceDir)
 	var (
 		out     VisualArtifacts
