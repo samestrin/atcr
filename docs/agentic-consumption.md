@@ -171,8 +171,10 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   It prints them whenever the reconcile itself ran, including a run whose
   `--fail-on` gate exits 1. When `--repo-root` (or the deprecated `--repo`) was
   set, the `verify` line carries it forward, shell-quoted when needed:
-  `Next: atcr verify <id> --repo-root='/path/with space'`. No other flag is
-  carried.
+  `Next: atcr verify <id> --repo-root='/path/with space'`, and the `debt list`
+  line names the store that root's findings were written to:
+  `Next: atcr debt list --store='/path/with space/.atcr/debt'`. No other flag
+  is carried.
 
 ## Exit codes
 

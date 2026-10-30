@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -84,8 +85,10 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 		{Command: "debt list"},
 		{Command: "verify", Args: []string{idPlaceholder}},
 	},
+	// reconcile --repo-root X persists to X/.atcr/debt, which a bare debt list
+	// run from another directory would not read.
 	suggestReconcile: {
-		{Command: "debt list"},
+		{Command: "debt list", StoreFrom: "repo-root"},
 		{Command: "verify", Args: []string{idPlaceholder}, Carry: []string{"repo-root"}},
 	},
 	suggestVerify: {
@@ -151,10 +154,15 @@ func renderSuggestions(key suggestionKey, inv invocation) []string {
 	return out
 }
 
-// render builds one command line: binary, command, fixed args, then each Carry
-// flag the invocation set, in Carry order.
+// render builds one command line: binary, command, fixed args, the derived
+// --store, then each Carry flag the invocation set, in Carry order.
 func (s nextStep) render(inv invocation) string {
 	parts := append([]string{"atcr", s.Command}, s.Args...)
+	// A blank root asserts nothing (reconcile normalizes it to the CWD), so it
+	// derives no store.
+	if v, ok := inv.Flags[s.StoreFrom]; ok && carryAllowlist[s.StoreFrom] && strings.TrimSpace(v) != "" {
+		parts = append(parts, "--store="+carryValue(localdebt.DefaultDir(v)))
+	}
 	for _, name := range s.Carry {
 		v, ok := inv.Flags[name]
 		if !ok {
