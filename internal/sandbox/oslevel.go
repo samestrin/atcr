@@ -682,7 +682,7 @@ var (
 //
 // The copy is performed host-side, in Go, before the spawn — NOT with a `tar`
 // pipe injected into the workload the way DockerBackend does it
-// (writableSetupExec/writableSetupPrefix, docker.go:124-130). Docker has no
+// (see writableSetupExec and writableSetupPrefix in docker.go). Docker has no
 // other way to reach inside a container; this backend spawns a child process on
 // the same filesystem, so no shell needs to enter the picture and RunSpec's
 // injection-safety guarantee (sandbox.go:51-56) is left intact rather than
