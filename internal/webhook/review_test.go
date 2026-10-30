@@ -320,7 +320,7 @@ func TestSummarize_CapsTitlesAndScrubs(t *testing.T) {
 		reconcile.Finding{Severity: "LOW", Problem: strings.Repeat("long ", 100)},
 		reconcile.Finding{Severity: "LOW", Problem: "uses <!channel> & `C:\\Users\\me\\x.go` and https://evil.example/a?t=1 and ghp_abcdefghijklmnopqrstuvwxyz0123456789"},
 	)
-	text := summarize("acme/widget#7", fs, nil)
+	text := summarize("acme/widget#7", fs, nil, slackFormat)
 
 	assert.Contains(t, text, fmt.Sprintf("%d findings", len(fs)))
 	assert.Contains(t, text, fmt.Sprintf("%d MEDIUM", maxReplyTitles+3))
@@ -337,6 +337,14 @@ func TestSummarize_CapsTitlesAndScrubs(t *testing.T) {
 	for _, l := range lines {
 		assert.LessOrEqual(t, len([]rune(l)), maxTitleRunes+20, "line too long: %q", l)
 	}
+}
+
+// The Slack reply keeps mrkdwn: a *bold* heading and &, < escaped as entities.
+func TestSummarize_SlackKeepsMrkdwn(t *testing.T) {
+	text := summarize("acme/widget#7", []reconcile.Finding{{Severity: "HIGH", Problem: "Compare a & b < c"}}, nil, slackFormat)
+	assert.True(t, strings.HasPrefix(text, "*ATCR review of acme/widget#7*:"), "heading is Slack bold: %q", text)
+	assert.NotContains(t, text, "**")
+	assert.Contains(t, text, "Compare a &amp; b &lt; c")
 }
 
 func TestFindingTitle(t *testing.T) {
@@ -365,7 +373,7 @@ func TestFindingTitle(t *testing.T) {
 }
 
 func TestFailureText_SaysCancelledOnShutdown(t *testing.T) {
-	text := failureText("acme/widget#7", fmt.Errorf("wrapped: %w", context.Canceled))
+	text := failureText("acme/widget#7", fmt.Errorf("wrapped: %w", context.Canceled), slackFormat)
 	assert.Contains(t, text, "was cancelled")
 }
 

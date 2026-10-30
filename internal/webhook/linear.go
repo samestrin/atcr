@@ -166,9 +166,9 @@ func (r *LinearRunner) run(ctx context.Context, issue, repo string, pr linear.PR
 	}
 	var text string
 	if err != nil {
-		text = failureText(label, err)
+		text = failureText(label, err, githubFormat)
 	} else {
-		text = summarize(label, findings, newScrubber(dir, r.Secrets))
+		text = summarize(label, findings, newScrubber(dir, r.Secrets), githubFormat)
 	}
 	if perr := r.Commenter.PostIssueComment(context.WithoutCancel(ctx), pr.Owner, pr.Repo, pr.Number, text); perr != nil {
 		err = errors.Join(err, fmt.Errorf("webhook: PR comment for %s: %w", label, perr))

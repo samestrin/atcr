@@ -403,6 +403,43 @@ func TestLinearRunner_CommentsOnThePR(t *testing.T) {
 	assertNothingLeft(t, f)
 }
 
+// The PR comment is GitHub markdown: the heading is **bold**, and a title's
+// markdown characters are backslash-escaped (GitHub renders them as
+// themselves) rather than turned into Slack's &amp; and &lt; entities.
+func TestLinearRunner_CommentIsGitHubMarkdown(t *testing.T) {
+	f := newPRFixture(t)
+	c := &fakeCommenter{}
+	r := &LinearRunner{
+		Repos: f.repos(), Teams: []string{"est"}, Statuses: []string{"in review"},
+		Lookup:  &fakeLookup{prs: map[string]linear.PR{"iss-1": {Owner: "acme", Repo: "widget", Number: 7}}},
+		Scratch: f.scratch, Commenter: c,
+		Review: func(context.Context, string) ([]reconcile.Finding, error) {
+			return []reconcile.Finding{{Severity: "HIGH", Problem: "Compare a & b < c with *x*"}}, nil
+		},
+	}
+	body := linearBody("iss-1", "EST", "st-review", "In Review", time.Now(), "stateId")
+	ev, err := linear.Verify(linearTestSecret, signedHeader(t, body), []byte(body), time.Now())
+	require.NoError(t, err)
+	job, ok := r.Dispatch(ev)
+	require.True(t, ok)
+	_, err = job.Resolve(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, job.Run(context.Background()))
+
+	require.Len(t, c.bodies, 1)
+	got := c.bodies[0]
+	assert.True(t, strings.HasPrefix(got, "**ATCR review of acme/widget#7**"), "heading is GitHub bold: %q", got)
+	assert.NotContains(t, got, "&amp;")
+	assert.NotContains(t, got, "&lt;")
+	assert.Contains(t, got, `Compare a \& b \< c with \*x\*`)
+}
+
+// A failed review's PR comment uses GitHub bold too.
+func TestFailureText_GitHubBold(t *testing.T) {
+	text := failureText("acme/widget#7", context.Canceled, githubFormat)
+	assert.Equal(t, "**ATCR review of acme/widget#7** was cancelled.", text)
+}
+
 // Through the real GitHub client and a fake GitHub server, the posted comment
 // carries severity counts and titles and no checkout path or secret.
 func TestLinearRunner_PostsThroughGitHubClient(t *testing.T) {
