@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -52,6 +54,10 @@ type nextStep struct {
 	// when the user set them. Allowlisted flags carry their sanitized value;
 	// any other flag renders as --flag <flag>.
 	Carry []string
+	// StoreFrom names an allowlisted repo-root flag of the current invocation
+	// from which to derive --store=<absolute root>/.atcr/debt, for a debt
+	// command that should read the store that root's findings persisted to.
+	StoreFrom string
 	// PendingOnly offers the step only when the review is still pending.
 	PendingOnly bool
 }
@@ -80,8 +86,10 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 		{Command: "debt list"},
 		{Command: "verify", Args: []string{idPlaceholder}},
 	},
+	// reconcile --repo-root X persists to X/.atcr/debt, which a bare debt list
+	// run from another directory would not read.
 	suggestReconcile: {
-		{Command: "debt list"},
+		{Command: "debt list", StoreFrom: "repo-root"},
 		{Command: "verify", Args: []string{idPlaceholder}, Carry: []string{"repo-root"}},
 	},
 	suggestVerify: {
@@ -147,10 +155,19 @@ func renderSuggestions(key suggestionKey, inv invocation) []string {
 	return out
 }
 
-// render builds one command line: binary, command, fixed args, then each Carry
-// flag the invocation set, in Carry order.
+// render builds one command line: binary, command, fixed args, the derived
+// --store, then each Carry flag the invocation set, in Carry order.
 func (s nextStep) render(inv invocation) string {
 	parts := append([]string{"atcr", s.Command}, s.Args...)
+	// A blank root asserts nothing (reconcile normalizes it to the CWD), so it
+	// derives no store. A relative root is made absolute, as persistence does:
+	// debt list refuses a --store containing "..".
+	if v, ok := inv.Flags[s.StoreFrom]; ok && strings.TrimSpace(v) != "" {
+		if abs, err := filepath.Abs(v); err == nil {
+			v = abs
+		}
+		parts = append(parts, "--store="+carryValue(localdebt.DefaultDir(v)))
+	}
 	for _, name := range s.Carry {
 		v, ok := inv.Flags[name]
 		if !ok {
