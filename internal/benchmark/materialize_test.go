@@ -220,16 +220,21 @@ func TestMaterializeCase_ProducesAReviewableRange(t *testing.T) {
 // repository (Epic 45.0: the suite run from pre-push moved HEAD this way).
 func TestMaterializeCase_InheritedGitDirLeavesTheOuterRepoUntouched(t *testing.T) {
 	outer := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outer, "staged.txt"), []byte("x\n"), 0o644))
 	for _, args := range [][]string{
 		{"init", "-q"},
 		{"-c", "user.name=o", "-c", "user.email=o@o.invalid", "commit", "-q", "--allow-empty", "-m", "outer"},
+		// An empty commit writes no index file; stage a file so there is an index
+		// whose bytes a leaked GIT_INDEX_FILE write would change.
+		{"add", "staged.txt"},
 	} {
 		out, err := gitexec.FixtureCommandContext(context.Background(), outer, args...).CombinedOutput()
 		require.NoError(t, err, "outer git %v: %s", args, out)
 	}
 	before := gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)")
 	index := filepath.Join(outer, ".git", "index")
-	indexBefore, _ := os.ReadFile(index)
+	indexBefore, err := os.ReadFile(index)
+	require.NoError(t, err, "the outer repository needs an index for the check to mean anything")
 
 	c := materializableCase(t)
 	t.Setenv("GIT_DIR", filepath.Join(outer, ".git"))
@@ -240,7 +245,8 @@ func TestMaterializeCase_InheritedGitDirLeavesTheOuterRepoUntouched(t *testing.T
 	assert.Equal(t, before, gitOut(t, outer, "for-each-ref", "--format=%(refname) %(objectname)"),
 		"the inherited GIT_DIR's refs moved")
 	assert.Equal(t, "false\n", gitOut(t, outer, "config", "core.bare"))
-	indexAfter, _ := os.ReadFile(index)
+	indexAfter, err := os.ReadFile(index)
+	require.NoError(t, err)
 	assert.Equal(t, indexBefore, indexAfter, "the inherited GIT_INDEX_FILE was written")
 	assert.Equal(t, mc.HeadSHA, strings.TrimSpace(gitOut(t, mc.Root, "rev-parse", "HEAD")),
 		"the case repository holds its own commits")
