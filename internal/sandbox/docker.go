@@ -128,11 +128,23 @@ func (b *DockerBackend) Image() string { return b.cfg.Image }
 // Both BusyBox tar (alpine) and GNU tar (golang) match an unanchored --exclude
 // against every path component.
 //
+// BusyBox tar applies a dir's mode as soon as it extracts the dir entry, so a
+// non-empty dir its owner cannot write (0555) would refuse its own contents.
+// The copy therefore first creates every dir it will extract, writable, with a
+// find pass that prunes the same four names (-type d skips a symlink to a dir,
+// which tar extracts as a symlink), and extracts with --no-same-permissions.
+// Both halves are needed: BusyBox creates a new dir with its archived mode
+// whatever the flag says, and run as uid 0 (DockerConfig.User) it also chmods
+// an existing dir to that mode unless the flag is given, which --cap-drop ALL
+// leaves root unable to write. GNU tar defers dir modes and copies such a dir
+// either way.
+//
 // The copy stays fail-closed (exit 125) without pipefail, which is not portable
-// across those images: the producer's exit status is written to fd 3, which is
-// the command substitution's capture, and a failing extractor appends "x", so
-// _atcr_seed is exactly "0" only when both sides of the pipe succeeded.
-const writableSeedCopy = `_atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed`
+// across those images: a failing find pass exits 125 before tar runs, the
+// producer's exit status is written to fd 3, which is the command substitution's
+// capture, and a failing extractor appends "x", so _atcr_seed is exactly "0"
+// only when both sides of the pipe succeeded.
+const writableSeedCopy = `( cd /src && find . \( -name .git -o -name node_modules -o -name vendor -o -name .terraform \) -prune -o -type d -exec sh -c 'cd /work && mkdir -p -- "$@"' sh {} + ) || exit 125; _atcr_seed=$( { { tar -C /src -cf - --exclude=.git --exclude=node_modules --exclude=vendor --exclude=.terraform .; echo $? >&3; } | tar -C /work --no-same-permissions -xf - >&2 || echo x; } 3>&1 ); [ "$_atcr_seed" = 0 ] || exit 125; unset _atcr_seed`
 
 // writableSetupExec is the fixed `sh -c` script text for the Writable:true
 // Command-mode wrap. It seeds the writable /work tmpfs from the read-only /src

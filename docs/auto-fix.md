@@ -91,17 +91,17 @@ reverted.
 > before validation starts. Build outputs such as `target/`, `dist/` and `build/`
 > are copied. A `validate_command` that runs `git`, or that needs installed
 > `node_modules` or a vendored dependency tree, does not find them in `/work`.
-> The `os-level` backend copies the whole tree, `.git` included. With BusyBox
-> `tar` (`alpine` images), a non-empty directory that its owner cannot write
-> (mode `0555`, for example) fails the copy with exit 125; GNU `tar` (`golang`
-> images) copies it.
+> The `os-level` backend copies the whole tree, `.git` included. A directory
+> that its owner cannot write (mode `0555`, for example) is copied with both
+> BusyBox `tar` (`alpine` images) and GNU `tar` (`golang` images).
 >
 > **Image requirement.** The ephemeral-copy overlay runs your `validate_command`
-> inside `/bin/sh -c '<copy /src to /work with tar>; cd /work && exec "$@"'`, and
-> a failed copy exits 125 before your command runs. So
-> the validation image must provide **`/bin/sh` and a `tar` that supports
-> `--exclude`** (GNU `tar` and Alpine's BusyBox `tar` both do; a BusyBox built
-> without it, such as Ubuntu's, makes the copy exit 125) — true for `alpine`- and
+> inside `/bin/sh -c '<copy /src to /work with find and tar>; cd /work && exec "$@"'`,
+> and a failed copy exits 125 before your command runs. So
+> the validation image must provide **`/bin/sh`, `find`, `mkdir` and a `tar`
+> that supports `--exclude` and `--no-same-permissions`** (GNU `tar` and
+> Alpine's BusyBox `tar` both do; a BusyBox built without `--exclude`, such as
+> Ubuntu's, makes the copy exit 125) — true for `alpine`- and
 > `golang`-family images, but **not** for `distroless`/`scratch` images, which
 > ship neither. If your image has no shell, base it on one that does. The `/work`
 > tmpfs is sized by an internal default and, like every tmpfs, counts against the

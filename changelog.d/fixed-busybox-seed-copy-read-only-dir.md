@@ -1,0 +1,1 @@
+- Auto-fix validation in an `alpine` (BusyBox `tar`) Docker image no longer fails with exit 125 when the repository holds a non-empty directory its owner cannot write (mode `0555`, for example); the copy into `/work` now creates every directory writable before extracting. (technical debt, 2026-10-30)

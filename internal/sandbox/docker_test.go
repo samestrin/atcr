@@ -545,7 +545,10 @@ func seedCopyTars(t *testing.T) map[string]string {
 	help, _ := exec.Command(bb, "tar", "--help").CombinedOutput()
 	if strings.Contains(string(help), "--exclude") {
 		dir := t.TempDir()
-		require.NoError(t, os.Symlink(bb, filepath.Join(dir, "tar")))
+		// The skeleton pass's find, mkdir and sh are BusyBox applets on alpine too.
+		for _, applet := range []string{"tar", "find", "mkdir", "sh"} {
+			require.NoError(t, os.Symlink(bb, filepath.Join(dir, applet)))
+		}
 		tars["busybox"] = dir
 	} else {
 		t.Logf("%s tar has no --exclude: BusyBox tar not covered in this run", bb)
@@ -723,4 +726,48 @@ func TestWritableSetup_HostRunCopiesReadOnlyDir(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestWritableSetup_HostRunSkeletonFailureExits125(t *testing.T) {
+	// Epic 86 T6: the find pass that pre-creates the writable dir skeleton is
+	// part of the seed copy, so its failure exits 125 before tar runs and the
+	// workload never runs.
+	for name, dir := range seedCopyTars(t) {
+		for _, mode := range []string{"command", "script"} {
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				src := seedCopyTree(t)
+				work := t.TempDir()
+				marker := filepath.Join(t.TempDir(), "ran")
+				failing := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(failing, "find"), []byte("#!/bin/sh\nexit 2\n"), 0o755))
+				var cmd *exec.Cmd
+				if mode == "command" {
+					cmd = exec.Command("sh", "-c", renderSeedScript(t, writableSetupExec, src, work), "--", "touch", marker)
+				} else {
+					cmd = exec.Command("sh", "-s")
+					cmd.Stdin = strings.NewReader(renderSeedScript(t, writableSetupPrefix, src, work) + "touch '" + marker + "'\n")
+				}
+				cmd.Env = append(os.Environ(), "PATH="+failing+string(os.PathListSeparator)+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+				out, err := cmd.CombinedOutput()
+				var exitErr *exec.ExitError
+				require.ErrorAs(t, err, &exitErr, "a failing find pass must fail the setup: %s", out)
+				assert.Equal(t, 125, exitErr.ExitCode(), "a failing find pass must exit 125: %s", out)
+				assert.NoFileExists(t, marker, "the workload must not run after a failed seed copy")
+				entries, err := os.ReadDir(work)
+				require.NoError(t, err)
+				assert.Empty(t, entries, "tar must not run after a failed find pass")
+			})
+		}
+	}
+}
+
+func TestWritableSeedCopy_ExtractsWithoutRestoringPerms(t *testing.T) {
+	// Epic 86 T6: run as uid 0, BusyBox tar chmods each pre-created skeleton dir
+	// to its archived mode unless --no-same-permissions is given, and under
+	// --cap-drop ALL root then cannot write a 0555 dir's contents. The host test
+	// runs as the invoking user, for whom BusyBox never restores modes, so it
+	// cannot show this; the extracting tar's flag is pinned here instead.
+	assert.Contains(t, writableSeedCopy, "tar -C /work --no-same-permissions -xf -")
+	assert.Less(t, strings.Index(writableSeedCopy, "find . "), strings.Index(writableSeedCopy, "tar -C /src -cf -"),
+		"the writable dir skeleton must exist before tar extracts")
 }
