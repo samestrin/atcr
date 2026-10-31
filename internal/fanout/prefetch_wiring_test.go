@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -436,6 +437,34 @@ func TestBuildScopedPayloads_ThreatMapStripsPrefetchContext(t *testing.T) {
 		carries = carries || hasPrefetchEntry(mp)
 	}
 	assert.True(t, carries, "a fail-open mapper keeps prefetch on")
+}
+
+// withoutPrefetchContext drops the Context Definitions entry and nothing else,
+// keeping the order of what is left.
+func TestWithoutPrefetchContext(t *testing.T) {
+	ctxEntry := payload.FileEntry{Path: payload.PrefetchContextPath, Body: "context"}
+	ledger := payload.FileEntry{Path: payload.ClaimLedgerPath, Body: "claims"}
+	a := payload.FileEntry{Path: "a.go", Body: "a"}
+	b := payload.FileEntry{Path: "b.go", Body: "b"}
+	cases := []struct {
+		name    string
+		entries []payload.FileEntry
+		want    []payload.FileEntry
+	}{
+		{"nil entries", nil, []payload.FileEntry{}},
+		{"empty entries", []payload.FileEntry{}, []payload.FileEntry{}},
+		{"no match", []payload.FileEntry{ledger, a, b}, []payload.FileEntry{ledger, a, b}},
+		{"only the prefetch entry", []payload.FileEntry{ctxEntry}, []payload.FileEntry{}},
+		{"prefetch among files", []payload.FileEntry{ledger, ctxEntry, a, b}, []payload.FileEntry{ledger, a, b}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := slices.Clone(tc.entries)
+			got := withoutPrefetchContext(tc.entries)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, in, tc.entries, "the input must not be modified")
+		})
+	}
 }
 
 // claimLedgerBody returns the claim-ledger body a mode payload carries, or ""
