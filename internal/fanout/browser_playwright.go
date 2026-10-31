@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/sandbox"
 )
@@ -212,7 +213,7 @@ func (b *PlaywrightBackend) Run(ctx context.Context, run BrowserRun) (BrowserRes
 	}
 	report, ok := out.res.Files[playwrightReportPath]
 	if !ok || len(report) == 0 {
-		return BrowserResult{}, fmt.Errorf("fanout: playwright: no JSON report (exit %d): %s", out.res.ExitCode, strings.TrimSpace(out.res.Output))
+		return BrowserResult{}, fmt.Errorf("fanout: playwright: no JSON report (exit %d): %s", out.res.ExitCode, capPlaywrightText(out.res.Output))
 	}
 	// The sandbox cuts a collected file at CollectMaxFileBytes rather than
 	// dropping it, so a report that long was truncated, and parsing it would
@@ -220,9 +221,15 @@ func (b *PlaywrightBackend) Run(ctx context.Context, run BrowserRun) (BrowserRes
 	if len(report) >= sandbox.CollectMaxFileBytes {
 		return BrowserResult{}, fmt.Errorf("fanout: playwright: report truncated: report.json reached the sandbox's %d-byte collect cap (exit %d)", sandbox.CollectMaxFileBytes, out.res.ExitCode)
 	}
-	res, err := ParsePlaywrightReport(report)
+	res, tests, err := parsePlaywrightReport(report)
 	if err != nil {
 		return BrowserResult{}, err
+	}
+	// The run always requests one spec, so a report in which no test ran means
+	// the filter selected nothing (a run root other than playwrightRunRoot, say),
+	// not a clean run.
+	if tests == 0 {
+		return BrowserResult{}, fmt.Errorf("fanout: playwright: no tests ran for spec %q (exit %d): the filter selected no test", spec, out.res.ExitCode)
 	}
 	res.Backend = b.Name()
 	res.ExitCode = out.res.ExitCode
@@ -295,6 +302,20 @@ func playwrightSpecPath(repo, spec string) (string, error) {
 // so no flags apply; it ends in "/", so no ":line" suffix is read either.
 func playwrightSpecFilter(spec string) string {
 	return "/^" + playwrightRunRoot + regexp.QuoteMeta(spec) + "$/"
+}
+
+// capPlaywrightText trims s and cuts it to playwrightMaxErrorText bytes on a
+// UTF-8 boundary, marking the cut.
+func capPlaywrightText(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= playwrightMaxErrorText {
+		return s
+	}
+	keep := playwrightMaxErrorText
+	for keep > 0 && !utf8.RuneStart(s[keep]) {
+		keep--
+	}
+	return fmt.Sprintf("%s [...truncated %d bytes]", s[:keep], len(s)-keep)
 }
 
 // attachScreenshots reads the screenshots tar the run packed and fills the
