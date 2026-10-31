@@ -114,6 +114,41 @@ func TestPullRequest(t *testing.T) {
 	}
 }
 
+// Epic 100 T7: with two linked PRs, PullRequest picks the newest attachment
+// whatever order the API lists them in, not just the first one parsed.
+func TestPullRequestPicksNewestOfSeveral(t *testing.T) {
+	older := `{"url":"https://github.com/o/r/pull/7","createdAt":"2026-01-01T00:00:00.000Z"}`
+	newer := `{"url":"https://github.com/o/r/pull/9","createdAt":"2026-02-01T00:00:00.000Z"}`
+	other := `{"url":"https://slack.com/x","createdAt":"2026-03-01T00:00:00.000Z"}`
+	for name, nodes := range map[string]string{
+		"oldest first": older + "," + newer + "," + other,
+		"newest first": other + "," + newer + "," + older,
+	} {
+		c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+			write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+nodes+`]}}}}`))
+		})
+		pr, err := c.PullRequest(context.Background(), "i1")
+		if err != nil || pr != (PR{"o", "r", 9}) {
+			t.Errorf("%s: got %+v %v, want the newest PR #9", name, pr, err)
+		}
+	}
+}
+
+// Epic 100 T7: the query asks for createdAt, or the newest pick has no data.
+func TestPullRequestQueriesCreatedAt(t *testing.T) {
+	var body []byte
+	c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[{"url":"https://github.com/o/r/pull/1"}]}}}}`))
+	})
+	if _, err := c.PullRequest(context.Background(), "i1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "createdAt") {
+		t.Errorf("query does not request createdAt: %s", body)
+	}
+}
+
 func write(t *testing.T, w http.ResponseWriter, b []byte) {
 	t.Helper()
 	if _, err := w.Write(b); err != nil {

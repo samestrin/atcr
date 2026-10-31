@@ -158,6 +158,24 @@ func TestMessage_PartsMarshalAsContentArray(t *testing.T) {
 		`{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}`, string(b))
 }
 
+// Epic 100 T7: an empty but non-nil Parts slice is unset, so the message
+// marshals as the plain message rather than sending "content":[].
+func TestMessage_EmptyPartsMarshalAsPlainMessage(t *testing.T) {
+	s := "hi"
+	for name, msg := range map[string]Message{
+		"content":    {Role: "user", Content: &s, Parts: []ContentPart{}},
+		"no content": {Role: "user", Parts: []ContentPart{}},
+	} {
+		got, err := json.Marshal(msg)
+		require.NoError(t, err, name)
+		plain := msg
+		plain.Parts = nil
+		want, err := json.Marshal(plain)
+		require.NoError(t, err, name)
+		assert.Equal(t, string(want), string(got), name)
+	}
+}
+
 // Epic 36.0 T1: marshaling a message with both Content and Parts set fails
 // outside Chat too, rather than silently picking one.
 func TestMessage_ContentAndPartsMarshalErrors(t *testing.T) {
