@@ -154,7 +154,9 @@ const (
 
 // AgentProgress is one roster persona's row in ReviewStatus.Agents. ChunksTotal
 // and ChunksDone come from the persona's chunks.json; a persona without a
-// trusted one reads as a single chunk, done once its status.json is. A bin
+// trusted one takes both from its status.json's chunk_count once that is
+// written (every bin resolved), and otherwise reads as a single chunk, done
+// once its status.json is. A bin
 // counts as done once it resolved (ok, failed or timeout). LastActivityAt is the
 // newest write time of the persona's status.json or chunks.json (RFC 3339, UTC),
 // absent while neither exists.
@@ -337,7 +339,16 @@ func postFanoutStage(reviewDir string, stages []string) string {
 // retryably writes chunks.json at the requeue and then waits a backoff before
 // its next lease starts a fresh unit deadline, so the longest such wait
 // (maxUnitRequeueWait) is added too: a provider-wide rate limit can quiet every
-// lane at once, leaving no other write to move the anchor.
+// lane at once, leaving no other write to move the anchor. An open breaker's
+// requeue flushes chunks.json the same way (slotRequeue) before it waits.
+//
+// The roster-wide max is intended: lastActivity is one anchor for the whole
+// roster, so the window must cover the slowest persona's unit, and
+// chunkTimeoutCeilingFactor bounds it at 8x the base timeout. A chunked persona's count comes from
+// its chunks.json, or from its status.json's chunk_count when chunks.json is
+// missing, oversize or corrupt; a running chunked persona with no status.json
+// yet still contributes 1 on an unreadable chunks.json, so another persona's
+// count or the base timeout sets the window.
 func staleByDeadline(m payload.Manifest, rows []AgentProgress, lastActivity time.Time) bool {
 	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
 		return false
@@ -403,7 +414,10 @@ func maxUnitRequeueWait(p unitRetryPolicy) time.Duration {
 // must stay inside the review tree once symlinks resolve (pathWithin, the guard
 // resume applies), so a symlinked file, persona dir or raw/agent dir that
 // leaves it is refused; an escaping, unreadable, oversized or corrupt file is
-// skipped and its persona reads as if the file were absent.
+// skipped and its persona reads as if the file were absent. A valid
+// status.json's chunk_count (above 1) is the bin count when chunks.json is not
+// trusted, so an unreadable chunks.json does not shrink a finished chunked
+// persona to one chunk; a trusted chunks.json wins.
 func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []string, time.Time) {
 	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
 	rows := make([]AgentProgress, 0, len(roster))
@@ -429,6 +443,10 @@ func readAgentProgress(reviewDir string, roster []string) ([]AgentProgress, []st
 				if state, known := agentStateFor(s.Status); known {
 					row.State = state
 					row.ChunksDone = 1
+					if s.ChunkCount > 1 {
+						row.ChunksTotal = s.ChunkCount
+						row.ChunksDone = s.ChunkCount
+					}
 					completed = append(completed, name)
 					last = mod
 				}
