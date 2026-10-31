@@ -363,7 +363,7 @@ func TestScopeRuleForPayload_SingleEscalatedFile(t *testing.T) {
 	require.Contains(t, rule, "applies only to `b.go`,")
 
 	// A header on the payload's first line, with no trailing newline, is found too.
-	require.Contains(t, ScopeRuleForPayload(ModeBlocks, "=== FILE: e.go ==="), "applies only to `e.go`,")
+	require.Contains(t, ScopeRuleForPayload(ModeBlocks, "=== FILE: e.go ===\ndiff --git a/a.go b/a.go\n"), "applies only to `e.go`,")
 }
 
 func TestScopeRuleForPayload_PlainDiffKeepsTheNarrowRule(t *testing.T) {
@@ -737,4 +737,38 @@ func TestParseAllHunkRanges_IncludesPureDeletionsAsEmptyRanges(t *testing.T) {
 	require.Equal(t, lineRange{start: 18, end: 19}, got[1])
 	// parseHeadRanges, used for grounding, still drops the deletion.
 	require.Len(t, parseHeadRanges(chunk), 1)
+}
+
+// A path containing a backtick would break the scope rule's code quoting, so it
+// is left unnamed; the header reference still covers the file.
+func TestMixedScopeSentence_SkipsBacktickPaths(t *testing.T) {
+	s := mixedScopeSentence([]string{"ok.go", "bad`name.go", "also.go"})
+	require.Contains(t, s, "applies only to `ok.go`, `also.go`, the files rendered in full")
+	require.NotContains(t, s, "bad")
+}
+
+// The named list is capped so the rule does not grow with the escalated count.
+func TestMixedScopeSentence_CapsNamedFiles(t *testing.T) {
+	var paths []string
+	for i := 0; i < maxNamedScopeFiles+3; i++ {
+		paths = append(paths, fmt.Sprintf("f%02d.go", i))
+	}
+	s := mixedScopeSentence(paths)
+	require.Contains(t, s, fmt.Sprintf("`f%02d.go`, and 3 more, the files rendered in full", maxNamedScopeFiles-1))
+	require.NotContains(t, s, fmt.Sprintf("f%02d.go", maxNamedScopeFiles))
+
+	exact := mixedScopeSentence(paths[:maxNamedScopeFiles])
+	require.NotContains(t, exact, "more")
+}
+
+// When every file in a diff or blocks payload escalated, nothing is left on the
+// narrow rule, so the payload is a files-mode payload.
+func TestScopeRuleForPayload_AllEscalatedIsFilesMode(t *testing.T) {
+	all := "claim ledger preamble\n=== FILE: a.go ===\npackage p\n=== FILE: b.go ===\npackage p\n"
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(mode, all), "mode %q", mode)
+		require.NotContains(t, ScopeRuleForPayload(mode, all), "mixes modes")
+	}
+	mixed := all + "diff --git a/c.go b/c.go\n@@ -1 +1 @@\n-x\n+y\n"
+	require.Contains(t, ScopeRuleForPayload(ModeDiff, mixed), "mixes modes")
 }

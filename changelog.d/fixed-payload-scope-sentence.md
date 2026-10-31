@@ -1,0 +1,1 @@
+- When a review payload mixes diff and full-file sections, the scope rule now names at most ten full files ("and N more" after that) and skips paths containing a backtick; a payload where every file was sent in full now gets the plain files-mode rule instead of the "mixes modes" wording. (epic 100.1)
