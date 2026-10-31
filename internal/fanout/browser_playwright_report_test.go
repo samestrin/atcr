@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -107,6 +108,24 @@ func TestParsePlaywrightReportTopLevelErrors(t *testing.T) {
 		}
 		if len(res.FailedTests) != 1 || res.FailedTests[0].Error != "expect failed" {
 			t.Fatalf("failed tests = %+v, want the test's own error", res.FailedTests)
+		}
+		if got := fmt.Sprintf("%+v", res); strings.Contains(got, "global teardown failed") {
+			t.Fatalf("result = %s, want the top-level error kept out of it", got)
+		}
+	})
+
+	t.Run("joined messages are capped", func(t *testing.T) {
+		long := strings.Repeat("x", 4*playwrightMaxErrorText)
+		data := []byte(`{"suites":[],"errors":[{"message":"` + long + `"},{"message":"` + long + `"}]}`)
+		_, err := ParsePlaywrightReport(data)
+		if err == nil {
+			t.Fatal("want an error for a report with only top-level errors")
+		}
+		if len(err.Error()) > playwrightMaxErrorText+200 {
+			t.Fatalf("error is %d bytes, want the joined messages capped near %d", len(err.Error()), playwrightMaxErrorText)
+		}
+		if !strings.Contains(err.Error(), "reported 2 error(s)") || !strings.Contains(err.Error(), "truncated") {
+			t.Fatalf("err = %.300s..., want the count and a truncation marker", err)
 		}
 	})
 }
