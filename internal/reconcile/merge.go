@@ -26,7 +26,9 @@ import (
 // per-source name). The location is the first member's file/line; EVIDENCE is the
 // distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
 // reviewer count, discounted to MEDIUM with ConfidenceDiscount set when the union
-// is in the panel-wide-instruction class (panelWideMembers, discountedConfidence). Verification is combined by mergeVerification (verdict
+// of the members' quotes is in the panel-wide-instruction class (memberQuotes,
+// discountedConfidence), and SourceQuotes carries that union so a later union
+// tests it too. Verification is combined by mergeVerification (verdict
 // precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
 // the Epic 5.0 path-validation fields carry the first member's — the members are
 // co-located, so their path status is identical. ID is the first member's, not a
@@ -60,7 +62,11 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
 	category := reclib.ModalCategory(sf)
-	confidence, discount := discountedConfidence(len(reviewers), category, !IsPanelWide(panelWideMembers(group)))
+	var quotes []reclib.SourceQuote
+	for _, f := range group {
+		quotes = append(quotes, memberQuotes(f)...)
+	}
+	confidence, discount := discountedConfidence(len(reviewers), category, quotes)
 	merged := JSONFinding{
 		ID:           group[0].ID,
 		Severity:     maxSev,
@@ -77,60 +83,10 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 		Verification: mergeVerification(group),
 
 		ConfidenceDiscount: discount,
+		SourceQuotes:       quotes,
 	}
 	merged.PathValid, merged.PathWarning, merged.PathSuggestion = mergePathFields(group)
 	return merged
-}
-
-// panelWideMembers restates a cluster-merge group as the per-reviewer findings
-// reclib.IsPanelWide tests (Epic 35.16.17): one entry per member per reviewer, with
-// the member's file, category and evidence. A member that reconcile already
-// discounted is one finding quoted near-identically by each of its reviewers, so
-// its reviewer-prefixed concatenation ("[a] q / [b] q") stands for every reviewer
-// as its first quote, q. Any other member keeps its evidence whole; for a
-// multi-reviewer member that is the prefixed concatenation, which rarely matches
-// a quote, so the union reads as independent and keeps its reviewer-count
-// confidence: the same accepted false negative IsPanelWide documents. A member
-// with no reviewers (a hand-built or old findings.json record) still yields one
-// entry with an empty Reviewer: it adds no voice to the distinct-reviewer count,
-// but its file and evidence are tested, so it cannot drop out of the test.
-func panelWideMembers(group []JSONFinding) []Finding {
-	var out []Finding
-	for _, f := range group {
-		evidence := f.Evidence
-		if f.ConfidenceDiscount != "" && len(f.Reviewers) >= 2 {
-			evidence = firstQuote(evidence, f.Reviewers)
-		}
-		reviewers := f.Reviewers
-		if len(reviewers) == 0 {
-			reviewers = []string{""}
-		}
-		for _, r := range reviewers {
-			out = append(out, Finding{Reviewer: r, File: f.File, Category: f.Category, Evidence: evidence})
-		}
-	}
-	return out
-}
-
-// firstQuote returns the first reviewer's quote from reclib.Merge's
-// reviewer-prefixed evidence: the leading "[reviewer] " prefix is dropped and the
-// text is cut at the next " / [reviewer] " boundary. Matching the boundary on a
-// known reviewer name, not on the bare separator, keeps a quote that itself holds
-// " / " (a division, a path) whole.
-func firstQuote(evidence string, reviewers []string) string {
-	for _, r := range reviewers {
-		if rest, ok := strings.CutPrefix(evidence, "["+r+"] "); ok {
-			evidence = rest
-			break
-		}
-	}
-	end := len(evidence)
-	for _, r := range reviewers {
-		if i := strings.Index(evidence, ClusterEvidenceSep+"["+r+"] "); i >= 0 && i < end {
-			end = i
-		}
-	}
-	return evidence[:end]
 }
 
 // widestDisagreement extends a scalar-severity disagreement with each member's

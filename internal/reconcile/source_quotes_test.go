@@ -19,21 +19,26 @@ import (
 // merge and the fallback recompute alike.
 
 // The check behind row lib.go:114: no non-test file infers the reason by
-// comparing a confidence to ConfidenceFor, and only the library's one source
-// assigns PanelWideReason. A second discount class would be mislabeled by
-// either.
+// comparing a confidence to ConfidenceFor, and none but the library's one
+// source names PanelWideReason in code (the re-export in lib.go and comments
+// aside). A second discount class would be mislabeled by either.
 func TestDiscountReason_HasOneSource(t *testing.T) {
 	library := filepath.Join("..", "..", "reconcile", "merge.go")
 	compare := regexp.MustCompile(`[!=]= *(reclib\.)?ConfidenceFor\(`)
-	assign := regexp.MustCompile(`= *(reclib\.)?PanelWideReason\b`)
 	for _, path := range []string{"lib.go", "merge.go", "fallback.go", library} {
 		src, err := os.ReadFile(path)
 		require.NoError(t, err)
 		if loc := compare.FindIndex(src); loc != nil {
 			t.Errorf("%s infers the discount by comparing to ConfidenceFor: %q", path, src[loc[0]:loc[1]])
 		}
-		if path != library {
-			assert.False(t, assign.Match(src), "%s assigns PanelWideReason itself; take it from DiscountedConfidence", path)
+		if path == library {
+			continue
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			code, _, _ := strings.Cut(line, "//")
+			if strings.Contains(code, "PanelWideReason") && code != "const PanelWideReason = reclib.PanelWideReason" {
+				t.Errorf("%s:%d names PanelWideReason; take the reason from DiscountedConfidence: %s", path, i+1, strings.TrimSpace(code))
+			}
 		}
 	}
 }

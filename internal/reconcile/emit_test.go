@@ -406,6 +406,7 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 		},
 		SourceCategories:   []SourceCategory{{Reviewer: "r", Category: "c"}},
 		ConfidenceDiscount: PanelWideReason,
+		SourceQuotes:       []reclib.SourceQuote{{Reviewer: "r", File: "a.go", Category: "c", Evidence: "e"}, {Reviewer: "s", File: "a.go", Category: "c", Evidence: "e"}},
 	}
 	got := Result{Findings: []Merged{m}}.JSONFindings()
 	require.Len(t, got, 1)

@@ -303,6 +303,17 @@ type EvidenceExec struct {
 	BackendName string `json:"backend_name,omitempty"`
 }
 
+// recordQuotes is the JSONFinding.SourceQuotes value for a merged finding's
+// quotes: nil for a one-finding record, whose EVIDENCE is its only quote
+// (memberQuotes restates it exactly), so its findings.json is unchanged. Shared,
+// not copied: nothing mutates the provenance after Merge.
+func recordQuotes(quotes []reclib.SourceQuote) []reclib.SourceQuote {
+	if len(quotes) < 2 {
+		return nil
+	}
+	return quotes
+}
+
 // JSONFindings converts the merged findings to their JSON schema records.
 //
 // Path-validation fields (PathValid/PathWarning/PathSuggestion) are NOT carried
@@ -342,6 +353,7 @@ func (r Result) JSONFindings() []JSONFinding {
 			// Merge is the only place that can decide the discount (it reads each
 			// member's file and evidence), so the reason is carried, not recomputed.
 			ConfidenceDiscount: m.ConfidenceDiscount,
+			SourceQuotes:       recordQuotes(m.SourceQuotes),
 			// FixWarning and FixReview intentionally not copied: both are set by the
 			// verify fix phase (executor.go generateFixes) after reconcile, so the
 			// reconcile path owns only the pre-fix merged state.
