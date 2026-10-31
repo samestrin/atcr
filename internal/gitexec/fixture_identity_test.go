@@ -70,6 +70,12 @@ func TestFixtureCommandContextAllowsAForeignGoModule(t *testing.T) {
 // such as t@t.t belongs to a real GitHub account and showed it as a contributor.
 var identityLiteral = regexp.MustCompile(`(?:user\.email[=", ]+|_EMAIL=)([^"\s,)]+)`)
 
+// reservedExceptions are identities that are not fixtures: the persona submit test
+// asserts the argv a faked git receives for a user's own fork and commits nothing.
+var reservedExceptions = map[string]string{
+	"internal/personas/submit_test.go": "octocat@users.noreply.github.com",
+}
+
 func TestEveryGitIdentityInTheRepoIsReserved(t *testing.T) {
 	root := moduleRoot(t)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -91,8 +97,9 @@ func TestEveryGitIdentityInTheRepoIsReserved(t *testing.T) {
 		}
 		for _, m := range identityLiteral.FindAllStringSubmatch(string(src), -1) {
 			email := m[1]
-			if strings.Contains(email, "@") && !strings.HasSuffix(email, ".invalid") {
-				rel, _ := filepath.Rel(root, path)
+			rel, _ := filepath.Rel(root, path)
+			if strings.Contains(email, "@") && !strings.HasSuffix(email, ".invalid") &&
+				reservedExceptions[filepath.ToSlash(rel)] != email {
 				t.Errorf("%s: git identity %q is not under .invalid; use gitexec.FixtureEmail", rel, email)
 			}
 		}

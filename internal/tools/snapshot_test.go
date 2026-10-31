@@ -35,7 +35,7 @@ func setupGitRepo(t *testing.T) string {
 
 func gitCommitEmpty(t *testing.T, repo, msg string) {
 	t.Helper()
-	gitCmd(t, repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", msg)
+	gitCmd(t, repo, "-c", "user.email=test@example.invalid", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", msg)
 }
 
 func gitHead(t *testing.T, repo string) string {

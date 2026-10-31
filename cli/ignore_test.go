@@ -228,7 +228,7 @@ func ignoreRoundTrip(t *testing.T, targetFile string) {
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
 	git("init", "-q")
-	git("config", "user.email", "t@t.t")
+	git("config", "user.email", "test@example.invalid")
 	git("config", "user.name", "t")
 	files := map[string]string{
 		targetFile:             "package mem\n\nfunc Get() { _ = unsafe.Pointer(nil) }\n",
