@@ -83,7 +83,7 @@ runs. **Use the Docker backend or run on Linux** — Linux's OS-level sandbox
 gives each run its own private loopback.
 
 Loopback is no longer the whole reason. The darwin sandbox-exec profile can now
-open a single loopback port for a run (TCP only, on `localhost`, nothing else),
+open a single loopback port for a run (TCP only, on this machine only, nothing else),
 but a browser run still needs three things macOS does not give it:
 
 - **The dev server's port.** The repo's own `webServer` config picks it, and

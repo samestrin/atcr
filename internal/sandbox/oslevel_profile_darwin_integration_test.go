@@ -797,9 +797,11 @@ func TestIntegration_OSLevelDarwin_LoopbackGrantIsPortAndAddressScoped(t *testin
 	//
 	//   - the grant works: the workload binds the granted port on loopback,
 	//     accepts, and connects to itself (the dev-server-plus-browser flow);
-	//   - nothing else opens: a different loopback port, the same port on a
-	//     non-loopback address, UDP on the same port, and a wildcard bind on
-	//     the same port all stay denied.
+	//   - nothing else opens: a different loopback port, an off-host address
+	//     on a granted port, UDP on the same port, and a wildcard bind on the
+	//     same port all stay denied;
+	//   - the one thing the profile cannot exclude, a host service on the
+	//     host's own LAN address at the granted port, makes Run refuse.
 	//
 	// Every negative runs its probe unsandboxed first as a control, for the
 	// reason TestIntegration_OSLevelDarwin_NetworkEgressIsBlocked gives: a
@@ -859,7 +861,12 @@ kill $srv 2>/dev/null; exit 1`)
 		denied(t, "a connect to loopback port "+fmt.Sprint(other), "exec nc -z -w 2 127.0.0.1 "+fmt.Sprint(other))
 	})
 
-	t.Run("the granted port on a non-loopback address stays denied", func(t *testing.T) {
+	t.Run("a host listener on the host's own LAN address refuses the run", func(t *testing.T) {
+		// Measured on this job (PR #753, first run): the grant's "localhost"
+		// also covers the host's own interface addresses, because macOS
+		// routes that traffic over lo0. The workload connected to a listener
+		// on the runner's LAN address at the granted port. The profile cannot
+		// exclude it, so Run must see the listener and refuse before spawning.
 		ip := nonLoopbackIPv4(t)
 		ln, err := net.Listen("tcp", net.JoinHostPort(ip, p))
 		require.NoError(t, err)
@@ -873,7 +880,37 @@ kill $srv 2>/dev/null; exit 1`)
 				_ = c.Close()
 			}
 		}()
-		denied(t, "a connect to "+ip+":"+p, "exec nc -z -w 2 "+ip+" "+p)
+		res, err := b.Run(context.Background(), RunSpec{
+			Command:       []string{"/bin/sh", "-c", "exec nc -z -w 2 " + ip + " " + p},
+			SnapshotDir:   t.TempDir(),
+			Timeout:       15 * time.Second,
+			LoopbackPorts: []int{port},
+		})
+		require.Error(t, err, "Run went ahead although a host service held %s:%s; output: %s", ip, p, res.Output)
+		assert.True(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "got %v", err)
+	})
+
+	t.Run("an off-host address on a granted port stays denied", func(t *testing.T) {
+		// The grant names a port, so the question is whether it reaches only
+		// this host on that port or any host. The probe grants 443 and dials a
+		// public resolver on 443; the unsandboxed control proves the runner
+		// has the route, so a sandboxed failure is the profile's doing.
+		const offHost = "1.1.1.1"
+		probe := "exec nc -z -w 3 " + offHost + " 443"
+		if control := runUnsandboxed(t, probe); control.exitCode != 0 {
+			skipOrFail(t, "unsandboxed control could not reach %s:443 (exit %d, %q)", offHost, control.exitCode, strings.TrimSpace(control.output))
+			return
+		}
+		res, err := b.Run(context.Background(), RunSpec{
+			Command:       []string{"/bin/sh", "-c", "command -v nc >/dev/null 2>&1 || exit 97; " + probe},
+			SnapshotDir:   t.TempDir(),
+			Timeout:       15 * time.Second,
+			LoopbackPorts: []int{443},
+		})
+		require.NoError(t, err, "output: %s", res.Output)
+		require.NotEqual(t, probeMissingCode, res.ExitCode, "nc was unreachable inside the sandbox; output: %s", res.Output)
+		assert.NotEqual(t, 0, res.ExitCode,
+			"a connect to %s:443 succeeded under a loopback grant on 443 — the grant reaches off the host; output: %s", offHost, res.Output)
 	})
 
 	t.Run("UDP on the granted port stays denied", func(t *testing.T) {

@@ -92,16 +92,20 @@ const (
 // language allows:
 //
 //   - port-scoped: each names one port, never "*";
-//   - address-scoped: "localhost" is the only host the filter accepts, so a
-//     bind on a LAN interface and a connect off the host stay denied;
+//   - host-scoped: "localhost" is the only host the filter accepts besides
+//     "*", so a wildcard bind and a connect off the host stay denied. It is
+//     NOT limited to 127.0.0.1/::1: measured on the macOS CI runner, it also
+//     covers the host's own interface addresses, whose traffic macOS routes
+//     over lo0;
 //   - TCP only: `tcp`, not `ip`, so UDP stays denied on the same port, and unix
 //     sockets (a `path` filter, not a `tcp` one) stay denied too;
 //   - both directions on purpose: the server half binds and accepts, the
 //     browser half connects, and both run inside the same sandboxed run.
 //
 // What the rules cannot express is "only to a socket this run bound". A host
-// process already listening on a granted port would be reachable, so Run
-// checks for that and refuses (ErrOSLevelLoopbackPortHeld). The window between
+// process already listening on a granted port, at loopback or at any of the
+// host's own addresses, would be reachable, so Run checks every one of them
+// and refuses (ErrOSLevelLoopbackPortHeld). The window between
 // that check and the workload's bind is open; the grant is opt-in per run for
 // that reason, and no caller sets it by default.
 func loopbackRules(ports []int) []string {

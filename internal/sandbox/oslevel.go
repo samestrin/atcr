@@ -492,12 +492,46 @@ var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopb
 const loopbackDialTimeout = 500 * time.Millisecond
 
 // checkLoopbackPortsFree returns ErrOSLevelLoopbackPortHeld when anything on
-// the host accepts a TCP connect on a port in ports, on either loopback
-// address: the profile's "localhost" covers both, and a service listening on
-// only one of them is still reachable through the grant.
+// the host accepts a TCP connect on a port in ports, at any of the host's own
+// addresses: 127.0.0.1 and ::1, plus every interface address.
+//
+// The interface addresses are not belt-and-braces. Measured on the macOS CI
+// runner (PR #753): under a grant on port P the workload connected to a host
+// listener on the runner's own LAN address at port P. macOS routes traffic to
+// its own addresses over lo0, and sandbox-exec's "localhost" covers that
+// traffic, so a host service bound only to a LAN address is as reachable
+// through the grant as one on 127.0.0.1.
 func checkLoopbackPortsFree(ports []int) error {
+	if len(ports) == 0 {
+		return nil
+	}
+	hosts := []string{"127.0.0.1", "::1"}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		// Without the address list the check cannot cover what the grant
+		// reaches, so it fails closed rather than checking loopback alone.
+		return fmt.Errorf("%w: cannot list the host's addresses to check: %v", ErrOSLevelLoopbackPortHeld, err)
+	}
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			return fmt.Errorf("%w: cannot list the addresses of %s to check: %v", ErrOSLevelLoopbackPortHeld, ifc.Name, err)
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP.IsLoopback() {
+				continue
+			}
+			host := ipn.IP.String()
+			if ipn.IP.To4() == nil && ipn.IP.IsLinkLocalUnicast() {
+				// An IPv6 link-local address is only dialable with its zone.
+				host += "%" + ifc.Name
+			}
+			hosts = append(hosts, host)
+		}
+	}
 	for _, p := range ports {
-		for _, host := range []string{"127.0.0.1", "::1"} {
+		for _, host := range hosts {
 			conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(p)), loopbackDialTimeout)
 			if err == nil {
 				_ = conn.Close()
