@@ -346,7 +346,7 @@ func (l *chunkLedger) priorFor(dir, agentDir, agent string) (priorArtifacts, err
 	if ok {
 		return p, nil
 	}
-	p, err := readPriorArtifacts(agentDir, agent)
+	p, err := readPriorArtifactsFn(agentDir, agent)
 	if err != nil {
 		return priorArtifacts{}, err
 	}
@@ -370,6 +370,10 @@ func (l *chunkLedger) dropPrior(dir string) {
 	defer l.mu.Unlock()
 	delete(l.priors, dir)
 }
+
+// readPriorArtifactsFn is a seam so a test can hold one priorFor call inside
+// its read while another stores.
+var readPriorArtifactsFn = readPriorArtifacts
 
 // readPriorArtifacts reads one persona's findings and review.md from agentDir.
 func readPriorArtifacts(agentDir, agent string) (priorArtifacts, error) {

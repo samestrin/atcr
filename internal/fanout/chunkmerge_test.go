@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -575,10 +574,55 @@ func TestWriteMergedAgent_FreesPriorsOnlyOnSuccess(t *testing.T) {
 	}
 }
 
-// Epic 90 T3: priorFor reads outside the ledger mutex, so concurrent first
-// calls may all read; the first to store wins and every caller gets that copy.
-// Run under -race.
+// Epic 90 T3: priorFor reads outside the ledger mutex, so two first calls may
+// both read. The first to store wins: a call whose read finishes after another
+// call stored returns the stored copy and leaves it in place. The first call is
+// held inside its read (readPriorArtifactsFn) while the second reads a
+// different copy and stores it; without the store guard the first would return
+// and store its own copy. Run under -race.
 func TestPriorFor_ConcurrentFirstReadWins(t *testing.T) {
+	l := &chunkLedger{}
+	orig := readPriorArtifactsFn
+	t.Cleanup(func() { readPriorArtifactsFn = orig })
+	entered, release := make(chan struct{}), make(chan struct{})
+	readPriorArtifactsFn = func(agentDir, _ string) (priorArtifacts, error) {
+		if agentDir == "slow" {
+			close(entered)
+			<-release
+		}
+		return priorArtifacts{review: agentDir}, nil
+	}
+
+	var slow priorArtifacts
+	var slowErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		slow, slowErr = l.priorFor("greta", "slow", "greta")
+	}()
+	<-entered
+	fast, err := l.priorFor("greta", "fast", "greta")
+	require.NoError(t, err)
+	assert.Equal(t, "fast", fast.review)
+	close(release)
+	<-done
+
+	require.NoError(t, slowErr)
+	assert.Equal(t, "fast", slow.review, "the later store returns the stored copy")
+	l.mu.Lock()
+	stored := l.priors["greta"]
+	l.mu.Unlock()
+	assert.Equal(t, "fast", stored.review, "the stored copy is not overwritten")
+
+	// Once stored, later calls never read again.
+	again, err := l.priorFor("greta", "other", "greta")
+	require.NoError(t, err)
+	assert.Equal(t, "fast", again.review)
+}
+
+// priorFor reads the persona's real files on its first call and returns the
+// stored copy afterwards, even once a merge has rewritten them on disk.
+func TestPriorFor_ReadsOnceFromDisk(t *testing.T) {
 	entries := sixtyFourFiles()
 	dir := originalRun(t, entries, 4)
 	poolDir := filepath.Join(dir, "sources", "pool")
@@ -586,28 +630,11 @@ func TestPriorFor_ConcurrentFirstReadWins(t *testing.T) {
 	l := newChunkLedger(log.Discard(), poolDir, gretaBaselineSlots(t, entries[4:]))
 	require.NotNil(t, l)
 
-	const n = 8
-	got := make([]priorArtifacts, n)
-	errs := make([]error, n)
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			got[i], errs[i] = l.priorFor("greta", agentDir, "greta")
-		}(i)
-	}
-	wg.Wait()
-	for i := 0; i < n; i++ {
-		require.NoError(t, errs[i])
-		assert.Equal(t, got[0], got[i])
-	}
-	require.NotEmpty(t, got[0].findings)
-
-	// Once stored, the entry is what every later call returns, even after the
-	// files on disk change (a merge rewrote them).
+	first, err := l.priorFor("greta", agentDir, "greta")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.findings)
 	require.NoError(t, os.WriteFile(filepath.Join(agentDir, reviewFile), []byte("rewritten"), 0o600))
 	again, err := l.priorFor("greta", agentDir, "greta")
 	require.NoError(t, err)
-	assert.Equal(t, got[0], again)
+	assert.Equal(t, first, again)
 }
