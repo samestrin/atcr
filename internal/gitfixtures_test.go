@@ -120,12 +120,49 @@ type gitCall struct {
 // is the literal "git" or is not a literal at all (indirect), or a call to
 // gitexec.CommandFn / gitexec.CommandContextFn, unqualified when file is package
 // gitexec itself or dot-imports it. Import aliases are honoured for both packages.
+// A call through a local name bound to a constructor (`orig := CommandFn` then
+// `orig("status")`, the swap shape) is flagged too; the bare binding is not.
+// Names are matched per file, not per scope, so a shadowing name is over-flagged.
 // A program of os.Args[0] is the test binary re-executing itself, never git.
 func unfixturedGitCalls(fset *token.FileSet, file *ast.File) []gitCall {
 	execPkg := importLocalNames(file, "os/exec", "exec")
 	gitexecPkg := importLocalNames(file, gitexecImportPath, "gitexec")
 	unqualified := file.Name.Name == "gitexec" || gitexecPkg["."]
 	isConstructor := func(name string) bool { return name == "CommandFn" || name == "CommandContextFn" }
+	isConstructorRef := func(expr ast.Expr) bool {
+		switch e := expr.(type) {
+		case *ast.Ident:
+			return unqualified && isConstructor(e.Name)
+		case *ast.SelectorExpr:
+			pkg, ok := e.X.(*ast.Ident)
+			return ok && gitexecPkg[pkg.Name] && isConstructor(e.Sel.Name)
+		}
+		return false
+	}
+	aliases := map[string]bool{}
+	bind := func(names []ast.Expr, values []ast.Expr) {
+		if len(names) != len(values) {
+			return
+		}
+		for i, v := range values {
+			if id, ok := names[i].(*ast.Ident); ok && isConstructorRef(v) {
+				aliases[id.Name] = true
+			}
+		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.AssignStmt:
+			bind(s.Lhs, s.Rhs)
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(s.Names))
+			for i, id := range s.Names {
+				names[i] = id
+			}
+			bind(names, s.Values)
+		}
+		return true
+	})
 	var calls []gitCall
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -135,7 +172,7 @@ func unfixturedGitCalls(fset *token.FileSet, file *ast.File) []gitCall {
 		bad, indirect := false, false
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			bad = unqualified && isConstructor(fn.Name)
+			bad = (unqualified && isConstructor(fn.Name)) || aliases[fn.Name]
 		case *ast.SelectorExpr:
 			pkg, ok := fn.X.(*ast.Ident)
 			if !ok {
