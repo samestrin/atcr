@@ -2246,15 +2246,11 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 	// byteOvershoots collects the chunk byte-overshoot warnings so an identical one
 	// prints once: every agent of one window chunks the diff the same way against
 	// the same budget, so a 13-agent roster repeated each line 13 times. Keyed on
-	// what the line reports (chunk, bytes, budget) and flushed when buildSlots
-	// returns, naming every agent the line applies to.
+	// what the line reports (chunk, bytes, budget) and flushed once every slot is
+	// built, naming every agent the line applies to. A failed preparation
+	// dispatches nothing, so it prints none of them.
 	var overshootOrder []byteOvershoot
 	overshootAgents := map[byteOvershoot][]string{}
-	defer func() {
-		for _, k := range overshootOrder {
-			k.warn(overshootAgents[k])
-		}
-	}()
 
 	add := func(name string, serial bool) error {
 		ac, ok := cfg.Registry.Agents[name]
@@ -3283,6 +3279,9 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			return nil, nil, err
 		}
 	}
+	for _, k := range overshootOrder {
+		k.warn(overshootAgents[k])
+	}
 	return slots, perAgentMode, nil
 }
 
@@ -3294,18 +3293,28 @@ type byteOvershoot struct {
 	budget                   int64
 }
 
-// chunkPrefixBytes is the byte length of the first prefixLines lines of chunk,
-// the engine-rendered preamble diffPrefixLines counted.
+// chunkPrefixBytes is the byte length of the first prefixLines lines of
+// chunk, the engine-rendered preamble diffPrefixLines counted. prefixLines is
+// clamped to the lines chunk has, so a count past its last line cannot slice out
+// of range.
 func chunkPrefixBytes(chunk string, prefixLines int) int {
+	if prefixLines <= 0 {
+		return 0
+	}
+	parts := strings.SplitAfterN(chunk, "\n", prefixLines+1)
 	n := 0
-	for _, ln := range strings.SplitAfterN(chunk, "\n", prefixLines+1)[:prefixLines] {
+	for _, ln := range parts[:min(prefixLines, len(parts))] {
 		n += len(ln)
 	}
 	return n
 }
 
-// warn prints the warning once for every agent in agents.
+// warn prints the warning once for every agent in agents. It prints nothing
+// when agents is empty: there is no agent to name.
 func (o byteOvershoot) warn(agents []string) {
+	if len(agents) == 0 {
+		return
+	}
 	who := fmt.Sprintf("agent %q", agents[0])
 	if len(agents) > 1 {
 		quoted := make([]string, len(agents))
