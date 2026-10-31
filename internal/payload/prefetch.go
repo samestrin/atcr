@@ -1679,7 +1679,7 @@ const PrefetchContextPath = "<context>"
 // file count.) The per-agent
 // re-derivations in internal/fanout's buildSlots now apply the same rule — the
 // zero-budget keepSmallestEntry arm was the last holdout — so every reader of
-// FileCount agrees. See ReviewableCount (internal/fanout/review.go:3131).
+// FileCount agrees. See ReviewableCount (internal/fanout/review.go:3135).
 func newPrefetchEntry(section string) FileEntry {
 	// exemptRank 0 is BELOW the claim ledger's 1, stated explicitly rather than
 	// left to the zero value: when a budget cannot fund both synthetic sections,
@@ -1722,6 +1722,15 @@ type PrefetchStatus struct {
 	// make impossible. The ordinary shape is false, so omitempty keeps an
 	// unrevoked manifest byte-identical to earlier versions'.
 	GroundingRevoked bool `json:"grounding_revoked,omitempty"`
+	// DroppedByThreatMap reports that the section was retrieved but stripped
+	// from every agent on purpose, because the threat map dropped a file and
+	// the section's spans could ground that file's symbols (internal/fanout's
+	// buildScopedPayloads). Present is then false, since no agent received it,
+	// and Snippets still counts what retrieval produced. It is separate from
+	// GroundingRevoked, which means the section WAS delivered: a deliberate
+	// strip and a budget shed are different causes with different fixes.
+	// omitempty keeps an unmapped manifest byte-identical to earlier versions'.
+	DroppedByThreatMap bool `json:"dropped_by_threat_map,omitempty"`
 	// DegradeReason names why a CONFIGURED similarity retriever failed (Epic
 	// 35.16.12.1): the *semindex.Error class, or semanticDegradeUnclassified
 	// for any other error. The stage then fails open to zero similarity
