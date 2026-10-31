@@ -373,6 +373,9 @@ func toAmbiguousWire(clusters []AmbiguousCluster) []ambiguousWire {
 			// Inline the library Finding -> stream.Finding field map — permanently
 			// inline per Epic 8.0 Clarification Q8 (2026-06-23): this is a distinct
 			// direction/purpose from adapter.ToJSONFinding, not a pending collapse.
+			// CanonicalCategory is intentionally left empty on findings rebuilt after
+			// reconcile: it is populated only at the parse boundary and no non-test
+			// consumer reads it yet, so it stays empty until one migrates.
 			fs[j] = stream.Finding{
 				Severity:   f.Severity,
 				File:       f.File,
@@ -495,6 +498,9 @@ func RenderText(w io.Writer, r Result) error {
 	records := r.JSONFindings()
 	findings := make([]stream.Finding, 0, len(records))
 	for _, rec := range records {
+		// CanonicalCategory is intentionally left empty on findings rebuilt after
+		// reconcile: it is populated only at the parse boundary and no non-test
+		// consumer reads it yet, so it stays empty until one migrates.
 		f := stream.Finding{
 			Severity:   rec.Severity,
 			File:       rec.File,
