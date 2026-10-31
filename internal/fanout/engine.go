@@ -1365,6 +1365,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	primary5xx := false
+	// The truncated reply the truncation retry replaced, kept so its usage is
+	// still counted once the retry's reply has been judged.
+	var discarded Result
 	for i, a := range chain {
 		// Stop descending the chain once the context is done — further attempts
 		// would only fail the same way and waste the remaining budget. Preserve a
@@ -1377,9 +1380,6 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			break
 		}
 		r := e.invokeAgent(ctx, a)
-		if i == 0 && r.Status != StatusOK && classifyUnitFailure(r.Err) == failureServer {
-			primary5xx = true
-		}
 		var co *llmclient.CircuitOpenError
 		if !errors.As(r.Err, &co) {
 			madeCall = true
@@ -1427,8 +1427,14 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				// internal/fanout/engine.go:1143). The line above records the attempt.
 				a = a.withRetryMaxTokens(retryMax)
 				primaryMaxTokens = retryMax
+				discarded = r
 				r = e.invokeAgent(ctx, a)
 			}
+		}
+		// Tested after the retry, so the reply it reads is the primary's last: a
+		// 5xx on the retry is the primary's lane answering 5xx too.
+		if i == 0 && r.Status != StatusOK && classifyUnitFailure(r.Err) == failureServer {
+			primary5xx = true
 		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
 		// finish_reason=length with zero pre-grounding parsed findings
@@ -1597,6 +1603,17 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 						thinkOnlyAttempts++
 					}
 				}
+			}
+		}
+		// The reply the truncation retry discarded was a real call: fold its tokens
+		// and call records into the primary's attempt so the run's cost and API-call
+		// metrics count it. Folded only here, after every per-attempt check above:
+		// the silent-lane predicate reads one attempt's tokens, never a sum.
+		if i == 0 {
+			r.TokensIn += discarded.TokensIn
+			r.TokensOut += discarded.TokensOut
+			if len(discarded.CallRecords) > 0 {
+				r.CallRecords = append(discarded.CallRecords, r.CallRecords...)
 			}
 		}
 		if r.Status == StatusOK {

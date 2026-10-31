@@ -1352,8 +1352,8 @@ func TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage(t *testing.T) {
 // entry repeats once the script runs out) and records the max_tokens every call
 // asked for, so a test can see the primary asked twice and at what caps.
 type sequenceMetaCompleter struct {
-	mu        sync.Mutex
-	byModel   map[string][]llmclient.Completion
+	mu      sync.Mutex
+	byModel map[string][]llmclient.Completion
 	// errs scripts an error beside the same call's completion; nil or short
 	// means the call succeeds.
 	errs      map[string][]error
