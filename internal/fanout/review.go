@@ -4090,7 +4090,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		fbReserved = fbMaxTokens
 	}
 	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
-	// render (review.go:3180) and for the same reason: fbBudget is sized with
+	// render (review.go:3175) and for the same reason: fbBudget is sized with
 	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
 	// closed a zero budget — the one record where it is the CAUSE of the
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that

@@ -129,7 +129,7 @@ func TestBuildSlots_ChunkedDiffSlotCarriesNoEntries(t *testing.T) {
 	}
 }
 
-// TD (review.go:1862): both nil-Kept production builders apply a GLOBAL byte-budget
+// TD (review.go:1864): both nil-Kept production builders apply a GLOBAL byte-budget
 // pass, so on the arms where bulkEntries survives initialization (the AllDropped
 // whole-payload dispatch) a nil Kept makes the carried set the PRE-budget mp.Entries
 // — naming files the rendered prompt does not contain. Populating Kept at the two
@@ -202,7 +202,7 @@ func TestPrepareReviewFromRepo_BaselineSlotEntriesSubsetOfPrompt(t *testing.T) {
 }
 
 // TD (slot_entries_test.go:41, clarified): the Kept-preference at
-// review.go:1905-1907 (bulkEntries := mp.Kept, falling back to mp.Entries) is
+// review.go:1907-1909 (bulkEntries := mp.Kept, falling back to mp.Entries) is
 // only observable on the arms where bulkEntries survives initialization — the
 // normal per-agent shed overwrites it from mp.Entries unconditionally. This
 // case forces the AllDropped arm (a positive-but-tiny agent budget drops every
