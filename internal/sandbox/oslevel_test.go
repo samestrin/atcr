@@ -502,10 +502,24 @@ type descendantReapWatch struct {
 	procRoot string // "/proc"; a missing stat file (darwin) leaves only the signal probe
 	signal   func(pid int, sig syscall.Signal) error
 	sawGone  bool
+	// startTime is /proc/<pid>/stat field 22 as first seen; "" when unreadable.
+	startTime string
 }
 
 func newDescendantReapWatch(pid int) *descendantReapWatch {
-	return &descendantReapWatch{pid: pid, procRoot: "/proc", signal: signalPid}
+	w := &descendantReapWatch{pid: pid, procRoot: "/proc", signal: signalPid}
+	w.observe()
+	return w
+}
+
+// observe records the descendant's start_time at first sighting. A reused pid
+// belongs to a process with a different start_time, which is how the cleanup
+// tells "the descendant the poll missed" from "an unrelated process that took
+// its pid" when the poll never latched sawGone.
+func (w *descendantReapWatch) observe() {
+	if w.startTime == "" {
+		w.startTime = procStatStartTime(w.procRoot, w.pid)
+	}
 }
 
 func signalPid(pid int, sig syscall.Signal) error {
@@ -530,6 +544,9 @@ func (w *descendantReapWatch) cleanup() {
 	if w.sawGone {
 		return
 	}
+	if w.startTime != "" && procStatStartTime(w.procRoot, w.pid) != w.startTime {
+		return
+	}
 	_ = w.signal(w.pid, syscall.SIGKILL)
 }
 
@@ -545,6 +562,21 @@ func procStatState(procRoot string, pid int) byte {
 		return 0
 	}
 	return rest[0]
+}
+
+// procStatStartTime returns field 22 (start_time) of <procRoot>/<pid>/stat, or
+// "" when it cannot be read. Like procStatState it parses after the LAST ')'.
+func procStatStartTime(procRoot string, pid int) string {
+	raw, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return ""
+	}
+	// Fields after comm start at field 3 (state), so start_time is index 19.
+	fields := strings.Fields(string(raw[bytes.LastIndexByte(raw, ')')+1:]))
+	if len(fields) < 20 {
+		return ""
+	}
+	return fields[19]
 }
 
 func TestDescendantReapWatch_ZombieCountsAsGone(t *testing.T) {
@@ -621,6 +653,101 @@ func TestDescendantReapWatch_CleanupKillsWhenThePollNeverSawItGone(t *testing.T)
 	require.False(t, w.gone())
 	w.cleanup()
 	assert.Equal(t, 1, kills, "a descendant the reap missed must still be killed at cleanup")
+}
+
+func TestDescendantReapWatch_GoneStaysTrueOnceSeen(t *testing.T) {
+	// The sawGone memo: the signal probe reports ESRCH once and then succeeds,
+	// as it would if the pid were reused by an unrelated live process. A second
+	// gone() must not un-latch, and cleanup() must not SIGKILL the reused pid.
+	var probes, kills int
+	w := &descendantReapWatch{pid: 4242, procRoot: filepath.Join(t.TempDir(), "absent"),
+		signal: func(_ int, sig syscall.Signal) error {
+			if sig == syscall.SIGKILL {
+				kills++
+				return nil
+			}
+			probes++
+			if probes == 1 {
+				return syscall.ESRCH
+			}
+			return nil
+		}}
+
+	require.True(t, w.gone())
+	assert.True(t, w.gone(), "gone() must stay true once the poll saw the descendant go")
+	assert.Equal(t, 1, probes, "a latched gone() must not probe the pid again")
+	w.cleanup()
+	assert.Zero(t, kills, "the cleanup must not SIGKILL a pid that was seen gone")
+}
+
+func TestProcStatState_TruncatedStatFileReturnsZero(t *testing.T) {
+	// A stat file that ends at the comm's closing ')' has no state field; an
+	// empty file has no ')' at all. Both must read as "unknown", not panic.
+	for name, content := range map[string]string{
+		"EndsAtParen": "4242 (sh)",
+		"Empty":       "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			procRoot := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(procRoot, "4242"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(procRoot, "4242", "stat"), []byte(content), 0o644))
+			assert.Zero(t, procStatState(procRoot, 4242))
+		})
+	}
+}
+
+// writeFakeStat writes a /proc-style stat file for pid with the given state and
+// start_time (field 22).
+func writeFakeStat(t *testing.T, procRoot string, pid int, state string, startTime string) {
+	t.Helper()
+	dir := filepath.Join(procRoot, strconv.Itoa(pid))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Fields after comm: state(3) ppid(4) pgrp(5) session(6) tty(7) tpgid(8)
+	// flags(9) minflt(10) cminflt(11) majflt(12) cmajflt(13) utime(14) stime(15)
+	// cutime(16) cstime(17) priority(18) nice(19) threads(20) itrealvalue(21)
+	// starttime(22).
+	stat := strconv.Itoa(pid) + " (sh) " + state + " 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 " + startTime + " 0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644))
+}
+
+func TestDescendantReapWatch_CleanupSkipsTheKillWhenThePidWasReused(t *testing.T) {
+	// The descendant dies and its pid is reused before the first poll sees it
+	// gone, so sawGone never latches. The reused process has a different
+	// start_time, which the cleanup must notice before it SIGKILLs.
+	procRoot := t.TempDir()
+	writeFakeStat(t, procRoot, 4242, "S", "1000")
+	var kills int
+	w := &descendantReapWatch{pid: 4242, procRoot: procRoot,
+		signal: func(_ int, sig syscall.Signal) error {
+			if sig == syscall.SIGKILL {
+				kills++
+			}
+			return nil
+		}}
+	w.observe()
+
+	writeFakeStat(t, procRoot, 4242, "S", "2000")
+	require.False(t, w.gone(), "a live pid with a new start_time still probes as alive")
+	w.cleanup()
+	assert.Zero(t, kills, "a pid whose start_time changed is a different process and must not be killed")
+}
+
+func TestDescendantReapWatch_CleanupKillsWhenTheStartTimeIsUnchanged(t *testing.T) {
+	procRoot := t.TempDir()
+	writeFakeStat(t, procRoot, 4242, "S", "1000")
+	var kills int
+	w := &descendantReapWatch{pid: 4242, procRoot: procRoot,
+		signal: func(_ int, sig syscall.Signal) error {
+			if sig == syscall.SIGKILL {
+				kills++
+			}
+			return nil
+		}}
+	w.observe()
+
+	require.False(t, w.gone())
+	w.cleanup()
+	assert.Equal(t, 1, kills, "the same process (same start_time) that outlived the poll must still be killed")
 }
 
 func TestOSLevelBackendRun_WritableSeedsAnEphemeralCopyInsteadOfRefusing(t *testing.T) {
