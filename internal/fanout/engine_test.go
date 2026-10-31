@@ -1354,6 +1354,9 @@ func TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage(t *testing.T) {
 type sequenceMetaCompleter struct {
 	mu        sync.Mutex
 	byModel   map[string][]llmclient.Completion
+	// errs scripts an error beside the same call's completion; nil or short
+	// means the call succeeds.
+	errs      map[string][]error
 	calls     map[string]int
 	maxTokens map[string][]int
 }
@@ -1377,14 +1380,18 @@ func (c *sequenceMetaCompleter) CompleteWithMeta(_ context.Context, inv llmclien
 		mt = *inv.MaxTokens
 	}
 	c.maxTokens[inv.Model] = append(c.maxTokens[inv.Model], mt)
+	var err error
+	if errs := c.errs[inv.Model]; n < len(errs) {
+		err = errs[n]
+	}
 	script := c.byModel[inv.Model]
 	if len(script) == 0 {
-		return llmclient.Completion{}, nil
+		return llmclient.Completion{}, err
 	}
 	if n >= len(script) {
 		n = len(script) - 1
 	}
-	return script[n], nil
+	return script[n], err
 }
 
 // sizedPrimary is a primary sized the way buildSlots sizes one: a resolved
@@ -1678,4 +1685,126 @@ func TestInvokeSlot_TruncationRetry_ToolLoopClampIsTheWindowAlone(t *testing.T) 
 	require.Equal(t, StatusOK, r.Status, "the retried loop answered")
 	assert.Equal(t, []int{8192, 16384}, sc.seen, "retry at min(2×cap, window), the summed TokensIn not subtracted")
 	assert.Equal(t, 16384, r.ResolvedMaxTokens)
+}
+
+// A 5xx on the truncation retry is the primary's lane answering 5xx, so the walk
+// is marked for the throttle's streak exactly as a 5xx on the first call is,
+// whether a fallback then serves the slot or the chain ends there.
+func TestInvokeSlot_TruncationRetry_ServerErrorMarksThePrimary(t *testing.T) {
+	primary := func() *sequenceMetaCompleter {
+		return &sequenceMetaCompleter{
+			byModel: map[string][]llmclient.Completion{
+				"primary":  {{Content: retryRamble, Truncated: true}, {}},
+				"fallback": {{Content: retryFinding}},
+			},
+			errs: map[string][]error{"primary": {nil, &llmclient.HTTPStatusError{Status: 503}}},
+		}
+	}
+	t.Run("fallback served", func(t *testing.T) {
+		c := primary()
+		slot := Slot{
+			Primary:   sizedPrimary(8192, 131072),
+			Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+		}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), slot)
+		require.Equal(t, StatusOK, r.Status)
+		require.True(t, r.FallbackUsed)
+		assert.Equal(t, 2, c.calls["primary"], "the retry ran")
+		assert.True(t, r.primaryServerErr, "the retry's 5xx counts toward the primary's lane")
+	})
+	t.Run("chain failed", func(t *testing.T) {
+		c := primary()
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: sizedPrimary(8192, 131072)})
+		require.Equal(t, StatusFailed, r.Status)
+		assert.Equal(t, 2, c.calls["primary"], "the retry ran")
+		assert.True(t, r.primaryServerErr, "the retry's 5xx counts toward the primary's lane")
+	})
+}
+
+// The reply the truncation retry discards was a real, billed call: its tokens and
+// call records stay in the totals the walk returns, beside the retry's own, so
+// the run's cost and API-call metrics count both calls. The silent-lane check
+// still reads the one attempt's tokens, not the sum.
+func TestInvokeSlot_TruncationRetry_DiscardedReplyIsCounted(t *testing.T) {
+	discarded := llmclient.Completion{
+		Content: retryRamble, Truncated: true,
+		Usage:       llmclient.UsageData{PromptTokens: 20000, CompletionTokens: 8192},
+		CallRecords: []llmclient.CallRecord{{ReachedWire: true, Duration: time.Second}},
+	}
+	retryRec := llmclient.CallRecord{ReachedWire: true, Duration: 2 * time.Second}
+
+	t.Run("retry served", func(t *testing.T) {
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary": {discarded, {
+				Content:     retryFinding,
+				Usage:       llmclient.UsageData{PromptTokens: 20000, CompletionTokens: 300},
+				CallRecords: []llmclient.CallRecord{retryRec},
+			}},
+		}}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: sizedPrimary(8192, 131072)})
+		require.Equal(t, StatusOK, r.Status)
+		assert.Equal(t, 40000, r.TokensIn)
+		assert.Equal(t, 8492, r.TokensOut)
+		assert.Equal(t, []llmclient.CallRecord{discarded.CallRecords[0], retryRec}, r.CallRecords)
+	})
+	t.Run("retry also truncated and the chain failed", func(t *testing.T) {
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary": {discarded, {
+				Content: retryRamble, Truncated: true,
+				Usage:       llmclient.UsageData{PromptTokens: 20000, CompletionTokens: 16384},
+				CallRecords: []llmclient.CallRecord{retryRec},
+			}},
+		}}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: sizedPrimary(8192, 131072)})
+		require.Equal(t, StatusFailed, r.Status)
+		assert.Equal(t, 40000, r.TokensIn)
+		assert.Equal(t, 24576, r.TokensOut)
+		assert.Equal(t, []llmclient.CallRecord{discarded.CallRecords[0], retryRec}, r.CallRecords)
+	})
+	t.Run("silent lane reads the retry's own tokens", func(t *testing.T) {
+		p := sizedPrimary(8192, 131072)
+		p.Invocation.Thinking = registry.ThinkingOn
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary": {discarded, {Content: "NO FINDINGS", Usage: llmclient.UsageData{PromptTokens: 20000, CompletionTokens: 10}}},
+		}}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: p})
+		require.Equal(t, StatusOK, r.Status)
+		assert.Equal(t, 1, r.SilentChunks, "the discarded reply's 8192 output tokens must not hide a silent retry")
+		assert.Equal(t, 8202, r.TokensOut)
+	})
+}
+
+// truncationRetryMaxTokens, directly: the doubled cap, each clamp, and each
+// reason there is nothing larger to ask for.
+func TestTruncationRetryMaxTokens(t *testing.T) {
+	agent := func(maxTokens, window int) Agent {
+		return Agent{ResolvedMaxTokens: maxTokens, ResolvedWindow: window}
+	}
+	cases := []struct {
+		name   string
+		agent  Agent
+		reply  Result
+		want   int
+		wantOK bool
+	}{
+		{"doubled", agent(8192, 131072), Result{}, 16384, true},
+		{"unsized: no cap", agent(0, 131072), Result{}, 0, false},
+		{"unsized: no window", agent(8192, 0), Result{}, 0, false},
+		{"MaxTokensCap clamps", agent(600000, 2000000), Result{}, registry.MaxTokensCap, true},
+		{"window clamps", agent(8192, 12000), Result{}, 12000, true},
+		{"TokensIn clamps a single call", agent(8192, 32768), Result{TokensIn: 20000}, 12768, true},
+		{"tool loop: the window alone", agent(8192, 131072), Result{Tools: true, TokensIn: 120000}, 16384, true},
+		{"degraded tool loop is a single call", agent(8192, 131072), Result{Tools: true, ToolsDegraded: true, TokensIn: 120000}, 11072, true},
+		{"clamp equal to the cap", agent(8192, 32768), Result{TokensIn: 32768 - 8192}, 0, false},
+		{"clamp one above the cap", agent(8192, 32768), Result{TokensIn: 32768 - 8193}, 8193, true},
+		{"clamp below the cap", agent(8192, 32768), Result{TokensIn: 30000}, 0, false},
+		{"already at MaxTokensCap", agent(registry.MaxTokensCap, 2000000), Result{}, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := truncationRetryMaxTokens(tc.agent, tc.reply)
+			assert.Equal(t, tc.wantOK, ok)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
