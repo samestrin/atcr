@@ -3547,10 +3547,10 @@ func entryPaths(entries []payload.FileEntry) []string {
 	return paths
 }
 
-// replayReasoningOff reports whether ac opted out of replaying reasoning
+// isReplayReasoningOff reports whether ac opted out of replaying reasoning
 // (Epic 35.16.11.2.2.9). It reads only ac's own replay_reasoning, so a fallback
 // never inherits its primary's value.
-func replayReasoningOff(ac registry.AgentConfig) bool {
+func isReplayReasoningOff(ac registry.AgentConfig) bool {
 	return ac.ReplayReasoning == registry.ReplayReasoningOff
 }
 
@@ -3676,7 +3676,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		Tools:            ac.Tools,
 		SupportsFC:       ac.SupportsFC,
 		// Epic 35.16.11.2.2.9: the agent's own replay_reasoning opt-out.
-		ReplayReasoningOff: replayReasoningOff(ac),
+		ReplayReasoningOff: isReplayReasoningOff(ac),
 		MaxTurns:           derefMaxTurns(ac.MaxTurns),
 		ToolBudgetBytes:    derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:        ac.MinSeverity,
@@ -4333,7 +4333,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// replay_reasoning is per-agent too (Epic 35.16.11.2.2.9): whether an
 		// endpoint tolerates a replayed reasoning member is a property of the
 		// fallback's OWN provider, so it sends its own value, not the primary's.
-		ReplayReasoningOff: replayReasoningOff(ac),
+		ReplayReasoningOff: isReplayReasoningOff(ac),
 		// Review constraints follow the slot, not the substitute model (Epic 2.2):
 		// a fallback answers in the primary's place, so the primary's min_severity
 		// and max_findings still govern the output.
