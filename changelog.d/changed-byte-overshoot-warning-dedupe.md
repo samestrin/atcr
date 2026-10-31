@@ -1,0 +1,1 @@
+- The chunk byte-budget warning now prints once per chunk and budget, naming every agent it applies to, instead of once per agent, and it counts the engine-rendered preamble bytes apart from the diff's own. (epic 89.0)
