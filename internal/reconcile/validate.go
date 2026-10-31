@@ -1,8 +1,11 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/astgroup"
@@ -85,6 +88,25 @@ func AnchoredPathWarning(warning string) string {
 	return warning
 }
 
+// siblingLineInFile reports whether line falls within file's length. The parser
+// accepts any positive line, so the bound lives here with the rest of the
+// sibling trust check. A file that cannot be read is given the benefit of the
+// doubt: path validation already ruled on existence.
+func siblingLineInFile(root, file string, line int) bool {
+	if root == "" {
+		root = "."
+	}
+	data, err := os.ReadFile(filepath.Join(root, file))
+	if err != nil {
+		return true
+	}
+	n := bytes.Count(data, []byte{'\n'})
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		n++
+	}
+	return line <= n
+}
+
 // validateSiblingLocation runs a marked finding's sibling file through the same
 // stream.ValidatePath check File gets (root containment, case, existence), so no
 // consumer trusts an unchecked sibling path (Epic 35.16.15 T4, Q4). A sibling
@@ -96,12 +118,14 @@ func validateSiblingLocation(run *stream.PathRun, f *JSONFinding, root string, i
 		return
 	}
 	file := f.SiblingLocation
+	line := 0
 	if i := strings.LastIndex(file, ":"); i >= 0 {
+		line, _ = strconv.Atoi(file[i+1:])
 		file = file[:i]
 	}
 	sf := stream.Finding{File: file}
 	stream.ValidatePathIn(run, &sf, root, idx)
-	if sf.PathValid {
+	if sf.PathValid && siblingLineInFile(root, file, line) {
 		return
 	}
 	warning := siblingNotFoundWarning(f.SiblingLocation)
