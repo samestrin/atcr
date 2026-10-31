@@ -1,0 +1,1 @@
+- When a reviewer reply is cut off and retried on the same agent at a larger `max_tokens`, the discarded reply's tokens and API calls now count toward the agent's `tokens_in`, `tokens_out` and call metrics, and an HTTP 5xx on the retry now counts toward that model's 5xx streak, as a 5xx on the first call already did (epic 98)

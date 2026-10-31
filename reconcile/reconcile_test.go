@@ -206,3 +206,24 @@ func TestReconcile_MergedCarriesSourceCategories(t *testing.T) {
 	}
 	deepEq(t, got, map[string]string{"greta": "security", "host": "performance"}, "each lens keeps its own word")
 }
+
+// TestOptions_IgnoreRootIsCarriedNeverRead pins Options.IgnoreRoot (atcr epic 99
+// T1): the directory an embedder loads its .atcr/ignore.yaml suppressions from,
+// distinct from Root so `atcr review --config-dir` can keep a reviewed pull
+// request from suppressing findings against itself. Like Root, the core
+// pipeline never reads it, so setting it must not move a finding, a sidecar
+// entry or the summary.
+func TestOptions_IgnoreRootIsCarriedNeverRead(t *testing.T) {
+	sources := []Source{
+		{Name: "a", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 10, "possible nil deref on this path", "correctness", "a"),
+		}},
+		{Name: "b", Findings: []Finding{
+			cf("MEDIUM", "foo.go", 11, "possible nil deref on this path", "correctness", "b"),
+		}},
+	}
+	at := time.Unix(1700000000, 0).UTC()
+	baseline := Reconcile(sources, Options{ReconciledAt: at, Root: "reviewed"})
+	with := Reconcile(sources, Options{ReconciledAt: at, Root: "reviewed", IgnoreRoot: "operator"})
+	deepEq(t, with, baseline, "IgnoreRoot is carried for the embedder and changes no output")
+}

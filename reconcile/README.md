@@ -122,6 +122,7 @@ type Options struct {
 	Partial      bool           // true when some expected source was missing/unreadable
 	Merges       map[string]bool // ambiguous cluster ids a host adjudicated as duplicates
 	Root         string         // base dir for embedder-layered path validation (core ignores it)
+	IgnoreRoot   string         // dir an embedder loads ignore rules from; empty = Root (core ignores it)
 }
 
 // Result is a completed reconciliation.

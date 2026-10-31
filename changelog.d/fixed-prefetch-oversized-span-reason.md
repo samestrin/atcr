@@ -1,0 +1,1 @@
+- The pre-fetch drop ledger now names a similarity span longer than the snippet line cap as "span longer than the snippet line cap" instead of reusing the analyze-size-ceiling reason. (epic 100.2)

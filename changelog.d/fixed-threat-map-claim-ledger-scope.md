@@ -1,0 +1,1 @@
+- When `--threat-map` drops a file, the claim ledger now keeps only the claims of commits that changed a kept file, so reviewers are no longer asked to rule on claims about files they were never sent. The manifest's `claim_ledger.claims` counts the claims delivered and `claim_ledger.threat_map_dropped` counts the claims removed. (epic 98.0)

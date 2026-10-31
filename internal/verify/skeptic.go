@@ -47,6 +47,11 @@ func buildSkepticPromptWithSentinel(finding reconcile.JSONFinding, entries []pay
 	closeTag := "</" + sentinel + ">"
 
 	b.WriteString(openTag + "\n")
+	// Problem and Evidence are embedded verbatim on purpose: sanitizeInterAgentText
+	// is not reused for them. They are reviewer-authored evidence, carried inside
+	// the untrusted-data sentinel block the Instructions below tell the skeptic to
+	// treat as data only, and the sanitizer drops whole code fences and command
+	// lines (sanitize.go), which would strip the quoted code the skeptic must check.
 	writeField(&b, "Problem", finding.Problem)
 	// Fix is executor-authored; sanitize the embedded copy only, finding.Fix stays intact.
 	writeField(&b, "Fix", sanitizeInterAgentText(finding.Fix))

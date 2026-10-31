@@ -63,11 +63,13 @@ var CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
 // fixture command run under a hook retargets at the surrounding repository (Epic
 // 45.0: moved HEAD, stray commits, flipped core.bare). This constructor pins the
 // command to dir with PinRepo and sets GIT_CEILING_DIRECTORIES to dir's parent as
-// a defence for a caller that drops GIT_DIR and relies on cwd discovery; while
-// GIT_DIR is pinned (as here) git does no discovery, so the ceiling is inert. The child runs in dir, so relative
-// paths in arg resolve inside the fixture; a relative dir is resolved against the
-// current directory first. It panics if that resolution fails, since a fixture
-// that cannot be located must not silently run against the wrong directory.
+// a defence for a caller that drops GIT_DIR and relies on cwd discovery. While
+// GIT_DIR is pinned (as here) git does no discovery, so the ceiling is inert.
+//
+// The child runs in dir, so relative paths in arg resolve inside the fixture; a
+// relative dir is resolved against the current directory first. It panics if
+// that resolution fails, since a fixture that cannot be located must not
+// silently run against the wrong directory.
 //
 // It calls exec.CommandContext directly rather than CommandContextFn, because
 // tests replace that var with fakes and a fixture must always run real git.
@@ -127,6 +129,14 @@ func atcrCheckout(dir string) (string, bool) {
 // for any git command on a repository ATCR itself creates, where `-C dir` alone
 // loses to an inherited GIT_DIR. A relative dir is resolved against the current
 // directory first.
+//
+// If that resolution fails, dir is kept relative and the error is dropped, where
+// FixtureCommandContext panics. That is acceptable: filepath.Abs fails only when
+// os.Getwd does, i.e. the process cwd is gone, and both production callers pass
+// an absolute dir (internal/webhook's WithPRCheckout refuses a relative checkout
+// before its first git call; internal/benchmark's gitCmd roots at the per-run
+// temp directory). A relative GIT_DIR left behind is resolved by the child against
+// that same missing cwd, so git fails rather than reaching another repository.
 func PinRepo(cmd *exec.Cmd, dir string) *exec.Cmd {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs

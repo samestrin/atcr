@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -478,6 +479,68 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 // (osLevelContainmentArgs), so on a supported platform this now marks a
 // regression rather than the expected state.
 var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containment yet")
+
+// ErrOSLevelLoopbackPortHeld is returned by a darwin Run when a host process
+// already listens on one of RunSpec.LoopbackPorts. sandbox-exec has no network
+// namespace, so the profile's grant on that port would let the workload connect
+// to the host's service (a local database, the LLM proxy) rather than to the
+// server it starts itself. The run is refused before anything spawns.
+var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopback port is already in use on the host")
+
+// loopbackDialTimeout bounds each held-port probe. A loopback connect is
+// answered or refused at once; the bound only covers a firewalled stack.
+const loopbackDialTimeout = 500 * time.Millisecond
+
+// checkLoopbackPortsFree returns ErrOSLevelLoopbackPortHeld when anything on
+// the host accepts a TCP connect on a port in ports, at any of the host's own
+// addresses: 127.0.0.1 and ::1, plus every interface address.
+//
+// The interface addresses are not belt-and-braces. Measured on the macOS CI
+// runner (PR #753): under a grant on port P the workload connected to a host
+// listener on the runner's own LAN address at port P. macOS routes traffic to
+// its own addresses over lo0, and sandbox-exec's "localhost" covers that
+// traffic, so a host service bound only to a LAN address is as reachable
+// through the grant as one on 127.0.0.1.
+func checkLoopbackPortsFree(ports []int) error {
+	if len(ports) == 0 {
+		return nil
+	}
+	hosts := []string{"127.0.0.1", "::1"}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		// Without the address list the check cannot cover what the grant
+		// reaches, so it fails closed rather than checking loopback alone.
+		return fmt.Errorf("%w: cannot list the host's addresses to check: %v", ErrOSLevelLoopbackPortHeld, err)
+	}
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			return fmt.Errorf("%w: cannot list the addresses of %s to check: %v", ErrOSLevelLoopbackPortHeld, ifc.Name, err)
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP.IsLoopback() {
+				continue
+			}
+			host := ipn.IP.String()
+			if ipn.IP.To4() == nil && ipn.IP.IsLinkLocalUnicast() {
+				// An IPv6 link-local address is only dialable with its zone.
+				host += "%" + ifc.Name
+			}
+			hosts = append(hosts, host)
+		}
+	}
+	for _, p := range ports {
+		for _, host := range hosts {
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(p)), loopbackDialTimeout)
+			if err == nil {
+				_ = conn.Close()
+				return fmt.Errorf("%w: port %d on %s", ErrOSLevelLoopbackPortHeld, p, host)
+			}
+		}
+	}
+	return nil
+}
 
 // ErrOSLevelCapUnenforceable is returned by Preflight when a resource cap the
 // operator set (sandbox.memory or sandbox.pids_limit) cannot be enforced on
@@ -1304,6 +1367,14 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 			// /work, so cmd.Dir stays the host snapshot for the bwrap process
 			// itself and the remap happens inside the mount namespace.
 			workDir = copyDir
+		}
+	}
+
+	// Checked as late as possible, right before the spawn, to keep the window
+	// between the check and the workload's own bind short.
+	if b.platform() == "darwin" {
+		if err := checkLoopbackPortsFree(spec.LoopbackPorts); err != nil {
+			return RunResult{Command: cmdStr}, err
 		}
 	}
 

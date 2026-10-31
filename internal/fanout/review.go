@@ -1797,10 +1797,12 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 		// shed-exempt, so TrimToPaths kept it; with the mapper's drops gone its
 		// spans can ground a dropped file's symbols. Strip it only when the
 		// mapper actually dropped a file: a fail-open mapper leaves keep nil and a
-		// keep-all map drops nothing, and both leave the block valid.
+		// keep-all map drops nothing, and both leave the block valid. The claim
+		// ledger is shed-exempt too, so it is scoped under the same condition to
+		// the claims of commits that touched a kept file.
 		if threatMapStripsPrefetch(record) {
 			for mode, entries := range built {
-				built[mode] = withoutPrefetchContext(entries)
+				built[mode] = rb.ScopeClaimLedger(withoutPrefetchContext(entries), keep)
 			}
 		}
 		log.FromContext(ctx).Info("threat map scoped the review", "kept", record.Keep, "dropped", record.Dropped)
@@ -2244,15 +2246,11 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 	// byteOvershoots collects the chunk byte-overshoot warnings so an identical one
 	// prints once: every agent of one window chunks the diff the same way against
 	// the same budget, so a 13-agent roster repeated each line 13 times. Keyed on
-	// what the line reports (chunk, bytes, budget) and flushed when buildSlots
-	// returns, naming every agent the line applies to.
+	// what the line reports (chunk, bytes, budget) and flushed once every slot is
+	// built, naming every agent the line applies to. A failed preparation
+	// dispatches nothing, so it prints none of them.
 	var overshootOrder []byteOvershoot
 	overshootAgents := map[byteOvershoot][]string{}
-	defer func() {
-		for _, k := range overshootOrder {
-			k.warn(overshootAgents[k])
-		}
-	}()
 
 	add := func(name string, serial bool) error {
 		ac, ok := cfg.Registry.Agents[name]
@@ -2790,10 +2788,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					// below, the gate runs on the delivered total and the message names
 					// the preamble's bytes apart from the diff's own.
 					if payload.ChunkExceedsByteBudget(len(ct), chunkClampBudget) {
-						prefixBytes := 0
-						for _, ln := range strings.SplitAfterN(ct, "\n", prefixLines+1)[:prefixLines] {
-							prefixBytes += len(ln)
-						}
+						prefixBytes := chunkPrefixBytes(ct, prefixLines)
 						k := byteOvershoot{chunk: ci + 1, chunks: len(chunks), diffBytes: len(ct) - prefixBytes, preambleBytes: prefixBytes, budget: chunkClampBudget}
 						seen := overshootAgents[k]
 						if len(seen) == 0 {
@@ -3284,6 +3279,9 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			return nil, nil, err
 		}
 	}
+	for _, k := range overshootOrder {
+		k.warn(overshootAgents[k])
+	}
 	return slots, perAgentMode, nil
 }
 
@@ -3295,8 +3293,28 @@ type byteOvershoot struct {
 	budget                   int64
 }
 
-// warn prints the warning once for every agent in agents.
+// chunkPrefixBytes is the byte length of the first prefixLines lines of
+// chunk, the engine-rendered preamble diffPrefixLines counted. prefixLines is
+// clamped to the lines chunk has, so a count past its last line cannot slice out
+// of range.
+func chunkPrefixBytes(chunk string, prefixLines int) int {
+	if prefixLines <= 0 {
+		return 0
+	}
+	parts := strings.SplitAfterN(chunk, "\n", prefixLines+1)
+	n := 0
+	for _, ln := range parts[:min(prefixLines, len(parts))] {
+		n += len(ln)
+	}
+	return n
+}
+
+// warn prints the warning once for every agent in agents. It prints nothing
+// when agents is empty: there is no agent to name.
 func (o byteOvershoot) warn(agents []string) {
+	if len(agents) == 0 {
+		return
+	}
 	who := fmt.Sprintf("agent %q", agents[0])
 	if len(agents) > 1 {
 		quoted := make([]string, len(agents))
@@ -4072,7 +4090,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		fbReserved = fbMaxTokens
 	}
 	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
-	// render (review.go:3180) and for the same reason: fbBudget is sized with
+	// render (review.go:3175) and for the same reason: fbBudget is sized with
 	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
 	// closed a zero budget — the one record where it is the CAUSE of the
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that

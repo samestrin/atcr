@@ -94,8 +94,9 @@ type Message struct {
 
 	// Parts is multimodal content (text and images). It has no key of its own:
 	// when set, it is sent as the content array in place of Content, so a
-	// message sets one or the other, never both. A message without Parts
-	// marshals exactly as it did before Parts existed.
+	// message sets one or the other, never both. An empty Parts slice counts
+	// as unset, and a message without Parts marshals exactly as it did before
+	// Parts existed.
 	Parts []ContentPart `json:"-"`
 }
 
@@ -108,10 +109,10 @@ var ErrContentAndParts = errors.New("message sets both content and parts")
 var ErrVisionNotDeclared = errors.New("message carries an image but the model is not declared supports_vision")
 
 // MarshalJSON sends Parts as the content array when set, and the message
-// unchanged otherwise.
+// unchanged otherwise. An empty Parts slice is unset, never "content":[].
 func (m Message) MarshalJSON() ([]byte, error) {
 	type alias Message
-	if m.Parts == nil {
+	if len(m.Parts) == 0 {
 		return json.Marshal(alias(m))
 	}
 	if m.Content != nil {
@@ -354,7 +355,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return nil, err
 	}
 	for i, m := range messages {
-		if m.Content != nil && m.Parts != nil {
+		if m.Content != nil && len(m.Parts) > 0 {
 			return nil, fmt.Errorf("message %d: %w", i, ErrContentAndParts)
 		}
 	}
