@@ -259,6 +259,115 @@ func TestBuildSlots_ChunkByteOvershoot_BoundariesUnchanged(t *testing.T) {
 		"the chunker still splits on lines alone")
 }
 
+// The engine-rendered preamble (on a range payload, the claim ledger that
+// splitDiffFiles glues onto chunk 1) is dispatched, so its bytes count toward
+// the budget gate, but they are not the diff's own: the warning names them
+// apart, as the line warning names its preamble lines, instead of charging them
+// to lines that "are longer than the chunk sizing assumes".
+func TestBuildSlots_ChunkByteOvershoot_NamesPreambleBytesApart(t *testing.T) {
+	cfg, budget := overshootRoster(t)
+	preamble := strings.Repeat("ledger line\n", 30)
+	w1 := wideLineSeg("w1.go", 600, 200)
+	payloads := map[string]modePayload{"blocks": {Text: preamble + w1, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 1, strings.Count(out, overshootMarker), out)
+	assert.Contains(t, out, fmt.Sprintf("atcr: warning: agent %q: chunk 1 of 1 is %d bytes plus %d engine-rendered preamble byte(s), over its %d-byte chunk budget;",
+		"greta", len(w1), len(preamble), budget), out)
+	assert.NotContains(t, out, fmt.Sprintf("is %d bytes", len(preamble)+len(w1)),
+		"the delivered total is not the diff's own byte count")
+}
+
+// The preamble alone never makes the diff's lines look wide: a chunk whose own
+// diff fits the budget still warns when the preamble pushes the delivered total
+// over it (the gate runs on what is dispatched), and says which part is which.
+func TestBuildSlots_ChunkByteOvershoot_PreamblePushesTotalOver(t *testing.T) {
+	cfg, budget := overshootRoster(t)
+	w1 := wideLineSeg("w1.go", 300, 200)
+	require.LessOrEqual(t, int64(len(w1)), budget, "precondition: the diff's own bytes fit")
+	preamble := strings.Repeat(strings.Repeat("l", 99)+"\n", 200)
+	require.Greater(t, int64(len(preamble)+len(w1)), budget, "precondition: the delivered total does not")
+	payloads := map[string]modePayload{"blocks": {Text: preamble + w1, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	assert.Contains(t, out, fmt.Sprintf("chunk 1 of 1 is %d bytes plus %d engine-rendered preamble byte(s), over its %d-byte chunk budget", len(w1), len(preamble), budget), out)
+}
+
+// overshootFleet is overshootRoster with greta cloned into n agents of one
+// model and window, so every agent derives the same chunks and the same budget.
+func overshootFleet(t *testing.T, n int) (*ReviewConfig, int64, []string) {
+	t.Helper()
+	cfg, budget := overshootRoster(t)
+	names := []string{"greta"}
+	for i := 2; i <= n; i++ {
+		name := "greta" + itoa(i)
+		ac := cfg.Registry.Agents["greta"]
+		ac.Persona = name // an explicit ref must resolve to a file; the agent's own name falls back to the base
+		cfg.Registry.Agents[name] = ac
+		names = append(names, name)
+	}
+	cfg.Project = &registry.ProjectConfig{Agents: names}
+	return cfg, budget, names
+}
+
+// Every agent of one budget chunks the diff identically, so per-agent warnings
+// were the same line N times. A 13-agent roster prints each over-budget chunk
+// once, naming every agent it applies to.
+func TestBuildSlots_ChunkByteOvershoot_DedupedAcrossAgents(t *testing.T) {
+	cfg, budget, names := overshootFleet(t, 13)
+	w1, w2 := wideLineSeg("w1.go", 600, 200), wideLineSeg("w2.go", 600, 200)
+	payloads := map[string]modePayload{"blocks": {Text: w1 + w2, FileCount: 2}}
+
+	var slots []Slot
+	out := captureStderr(t, func() {
+		var err error
+		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	require.Len(t, slots, 26, "precondition: 13 agents x 2 chunks")
+
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	agents := "agents " + strings.Join(quoted, ", ")
+	assert.Equal(t, 2, strings.Count(out, overshootMarker), "one line per distinct (chunk, bytes, budget), not per agent:\n%s", out)
+	assert.Contains(t, out, fmt.Sprintf("atcr: warning: %s: chunk 1 of 2 is %d bytes, over its %d-byte chunk budget;", agents, len(w1), budget), out)
+	assert.Contains(t, out, fmt.Sprintf("atcr: warning: %s: chunk 2 of 2 is %d bytes, over its %d-byte chunk budget;", agents, len(w2), budget), out)
+}
+
+// The dedupe key includes the budget: agents whose windows differ get their own
+// line, so one line per distinct budget, not one line overall.
+func TestBuildSlots_ChunkByteOvershoot_DistinctBudgetsWarnSeparately(t *testing.T) {
+	cfg, budget, _ := overshootFleet(t, 3)
+	n := 16384
+	other := cfg.Registry.Agents["greta"]
+	other.ContextWindowTokens = &n
+	other.Persona = "narrow"
+	cfg.Registry.Agents["narrow"] = other
+	cfg.Project.Agents = append(cfg.Project.Agents, "narrow")
+	otherBudget := payload.EffectiveByteBudget("unlisted-small-model", &n, defaultMaxTokens)
+	require.NotEqual(t, budget, otherBudget, "precondition: the two windows derive different budgets")
+
+	w1 := wideLineSeg("w1.go", 600, 200)
+	require.Greater(t, int64(len(w1)), otherBudget, "precondition: the chunk is over both budgets")
+	payloads := map[string]modePayload{"blocks": {Text: w1, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 2, strings.Count(out, overshootMarker), out)
+	assert.Contains(t, out, fmt.Sprintf(`atcr: warning: agents "greta", "greta2", "greta3": chunk 1 of 1 is %d bytes, over its %d-byte chunk budget;`, len(w1), budget), out)
+	assert.Contains(t, out, overshootLine("narrow", 1, 1, len(w1), otherBudget), out)
+}
+
 func TestChunkExceedsByteBudget(t *testing.T) {
 	assert.True(t, payload.ChunkExceedsByteBudget(101, 100))
 	assert.False(t, payload.ChunkExceedsByteBudget(100, 100), "a chunk exactly at its budget fits")
