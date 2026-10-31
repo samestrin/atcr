@@ -283,8 +283,8 @@ const ReasoningReplayReserveCaps = 2
 // differently — review previously named only the unreserved cap, which made the
 // window-vs-cap arithmetic on screen look like it fit. Both of review's zero-budget
 // warnings now call it: the chunking one, ReasoningReserveClause
-// (internal/fanout/review.go:2753), and the smallest-file one, ReasoningReserveClause
-// (internal/fanout/review.go:3115).
+// (internal/fanout/review.go:2766), and the smallest-file one, ReasoningReserveClause
+// (internal/fanout/review.go:3140).
 func ReasoningReserveClause(toolLoop bool, outputTokens int) string {
 	if !toolLoop {
 		return ""
