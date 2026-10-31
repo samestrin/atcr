@@ -86,18 +86,23 @@ func TestVisualVerificationDocScopesHardErrorToPreviewURL(t *testing.T) {
 }
 
 // TestVisualVerificationDocStatesDarwinReason pins why the darwin OS-level
-// backend is refused (its sandbox profile denies loopback) and the alternative
-// the operator is told to use, not just that it is refused.
+// backend is refused and the alternative the operator is told to use, not just
+// that it is refused. Since epic 100 T4b the profile can open a loopback port,
+// so the reason is what the browser run still lacks there: the dev server's
+// port, the /src and /work paths, and a readable browser install.
 func TestVisualVerificationDocStatesDarwinReason(t *testing.T) {
 	doc := visualVerificationDoc(t)
 	section, ok := markdownSection(doc, regexp.MustCompile(`(?i)darwin`))
 	if !ok {
 		t.Fatal("docs/visual-verification.md has no section on the darwin OS-level refusal")
 	}
-	for _, want := range []string{"loopback", "Docker", "Linux"} {
+	for _, want := range []string{"loopback", "webServer", "/work", "browsers", "Docker", "Linux"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the darwin section must name %q", want)
 		}
+	}
+	if strings.Contains(section, "denies all network, loopback included") {
+		t.Error("the darwin section still says the profile cannot allow loopback; since epic 100 T4b it can, per port")
 	}
 }
 
