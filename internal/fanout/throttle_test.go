@@ -3,6 +3,7 @@ package fanout
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -458,4 +459,152 @@ func TestThrottle_OffWithoutUnitRetry(t *testing.T) {
 		assert.Equal(t, StatusFailed, r.Status)
 	}
 	assert.NotContains(t, buf.String(), "lease cap")
+}
+
+func serverError() Result {
+	return Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 500}}
+}
+
+// Two consecutive 5xx from one lane halve that lane's cap for 2x outageBackoff;
+// a sibling lane keeps its cap and the cap returns when the window passes.
+func TestThrottle_ServerStreakHalvesTheLaneCap(t *testing.T) {
+	t.Parallel()
+	clock := newFakeUnitClock()
+	a := leaseKey{provider: "litellm", model: "a"}
+	b := leaseKey{provider: "litellm", model: "b"}
+	keys := []leaseKey{a, b}
+	th := newProviderThrottle(6, clock, slog.New(slog.DiscardHandler),
+		func(i int) leaseKey { return keys[i] }, (&breakerStates{}).state)
+
+	th.acquire(0)
+	th.done(0, serverError())
+	got, throttled := th.capFor(a)
+	assert.Equal(t, 6, got, "one 5xx throttles nothing")
+	assert.False(t, throttled)
+
+	th.acquire(0)
+	th.done(0, serverError())
+	got, throttled = th.capFor(a)
+	assert.Equal(t, 3, got)
+	assert.True(t, throttled)
+	got, throttled = th.capFor(b)
+	assert.Equal(t, 6, got, "sibling lane keeps its cap")
+	assert.False(t, throttled)
+
+	clock.After(2*outageBackoff - time.Second)
+	got, _ = th.capFor(a)
+	assert.Equal(t, 3, got, "still inside the window")
+	clock.After(time.Second)
+	got, throttled = th.capFor(a)
+	assert.Equal(t, 6, got)
+	assert.False(t, throttled)
+}
+
+// A primary success between two 5xx resets the streak; a ceiling of 1 stays 1.
+func TestThrottle_SuccessResetsServerStreak(t *testing.T) {
+	t.Parallel()
+	th := newProviderThrottle(4, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), (&breakerStates{}).state)
+	for _, r := range []Result{serverError(), {Status: StatusOK}, serverError()} {
+		th.acquire(0)
+		th.done(0, r)
+	}
+	got, throttled := th.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 4, got)
+	assert.False(t, throttled)
+
+	one := newProviderThrottle(1, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), (&breakerStates{}).state)
+	for range 2 {
+		one.acquire(0)
+		one.done(0, serverError())
+	}
+	got, _ = one.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 1, got)
+}
+
+// An open breaker still clamps a 5xx-throttled lane to one lease.
+func TestThrottle_ServerStreakUnderOpenBreaker(t *testing.T) {
+	t.Parallel()
+	breakers := &breakerStates{}
+	th := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), breakers.state)
+	for range 2 {
+		th.acquire(0)
+		th.done(0, serverError())
+	}
+	breakers.set("alpha", circuitbreaker.StateOpen)
+	got, throttled := th.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 1, got)
+	assert.True(t, throttled)
+}
+
+// The streak halves the lane's current cap, so it compounds with a 429-lowered
+// cap: 6 -> 3 on a 429, then 3 -> 1 on a 5xx streak.
+func TestThrottle_ServerStreakHalvesTheCurrentCap(t *testing.T) {
+	t.Parallel()
+	th := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), (&breakerStates{}).state)
+	th.acquire(0)
+	th.done(0, rateLimited())
+	for range 2 {
+		th.acquire(0)
+		th.done(0, serverError())
+	}
+	got, throttled := th.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 1, got)
+	assert.True(t, throttled)
+}
+
+// A primary's 5xx counts even when a fallback then served or failed the unit:
+// that is the common review configuration.
+func TestThrottle_ServerStreakCountsPrimaryBehindAFallback(t *testing.T) {
+	t.Parallel()
+	th := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), (&breakerStates{}).state)
+	served := Result{Status: StatusOK, FallbackUsed: true, primaryServerErr: true}
+	failed := Result{Status: StatusFailed, Err: errors.New("chain failed"), FallbackUsed: true, primaryServerErr: true}
+	for _, r := range []Result{served, failed} {
+		th.acquire(0)
+		th.done(0, r)
+	}
+	got, _ := th.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 3, got)
+
+	// A fallback-served unit whose primary did not 5xx says nothing.
+	other := newProviderThrottle(6, newFakeUnitClock(), slog.New(slog.DiscardHandler),
+		onLane("alpha", "m"), (&breakerStates{}).state)
+	for range 2 {
+		other.acquire(0)
+		other.done(0, Result{Status: StatusOK, FallbackUsed: true})
+	}
+	got, throttled := other.capFor(leaseKey{provider: "alpha", model: "m"})
+	assert.Equal(t, 6, got)
+	assert.False(t, throttled)
+}
+
+// invokeSlotWithRetry marks a walk whose primary answered 5xx, whoever served.
+func TestInvokeSlot_MarksPrimaryServerError(t *testing.T) {
+	f := newFake()
+	f.failFor["primary"] = &llmclient.HTTPStatusError{Status: 500}
+	e := NewEngine(f)
+	slot := Slot{
+		Primary:   Agent{Name: "primary", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "fb", Invocation: llmclient.Invocation{Model: "fb"}}},
+	}
+	r := e.invokeSlot(context.Background(), slot)
+	require.Equal(t, StatusOK, r.Status)
+	assert.True(t, r.FallbackUsed)
+	assert.True(t, r.primaryServerErr, "fallback served")
+
+	f.failFor["fb"] = errors.New("boom")
+	r = e.invokeSlot(context.Background(), slot)
+	require.Equal(t, StatusFailed, r.Status)
+	assert.True(t, r.primaryServerErr, "chain failed")
+
+	delete(f.failFor, "primary")
+	delete(f.failFor, "fb")
+	f.failFor["primary"] = errors.New("boom")
+	r = e.invokeSlot(context.Background(), slot)
+	assert.False(t, r.primaryServerErr, "a non-5xx primary failure is not marked")
 }
