@@ -456,7 +456,7 @@ func TestPrepareReview_ThreatMapStripIsRecordedNotReportedAsAShed(t *testing.T) 
 		require.True(t, ok, "a git-range review must record prefetch in its manifest")
 		return pf
 	}
-	prepare := func(t *testing.T, mapper ThreatMapper) (*PreparedReview, string, ReviewRequest) {
+	prepareWith := func(t *testing.T, cfg *ReviewConfig, mapper ThreatMapper) (*PreparedReview, string, ReviewRequest) {
 		t.Helper()
 		repo, base, head := scopedPrefetchRepo(t)
 		req := reviewReq(repo, repo, base, head)
@@ -465,9 +465,13 @@ func TestPrepareReview_ThreatMapStripIsRecordedNotReportedAsAShed(t *testing.T) 
 		var logBuf bytes.Buffer
 		ctx := atcrlog.NewContext(context.Background(),
 			slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		prep, err := PrepareReview(ctx, twoAgentConfig("http://unused"), req)
+		prep, err := PrepareReview(ctx, cfg, req)
 		require.NoError(t, err)
 		return prep, logBuf.String(), req
+	}
+	prepare := func(t *testing.T, mapper ThreatMapper) (*PreparedReview, string, ReviewRequest) {
+		t.Helper()
+		return prepareWith(t, twoAgentConfig("http://unused"), mapper)
 	}
 	prefetchOnly := func(c payload.ChangedLines) int {
 		n := 0
@@ -504,6 +508,23 @@ func TestPrepareReview_ThreatMapStripIsRecordedNotReportedAsAShed(t *testing.T) 
 		assert.False(t, rprep.prefetch.GroundingRevoked)
 		assert.NotContains(t, logBuf.String(), "prefetch grounding revoked")
 		assert.Zero(t, prefetchOnly(rprep.Changed))
+	})
+
+	t.Run("a mapper drop with no block retrieved records no strip", func(t *testing.T) {
+		// max_prefetch_bytes: 0 means no block ever existed, so there was nothing
+		// for the threat map to strip. Recording a strip here would be the same
+		// false claim this test exists to prevent, in the other direction.
+		cfg := twoAgentConfig("http://unused")
+		off := int64(0)
+		cfg.Settings.MaxPrefetchBytes = &off
+		prep, logs, _ := prepareWith(t, cfg, &fakeMapper{keep: []string{"other.go"}})
+		require.Equal(t, []string{"store.go"}, prep.threatMapDropped, "PRECONDITION: the mapper must drop a file, or the strip condition never holds")
+
+		pf := readPrefetch(t, prep.Dir)
+		assert.Equal(t, false, pf["present"])
+		assert.Equal(t, true, pf["disabled"], "PRECONDITION: pre-fetching must be off, so no block was built")
+		assert.Nil(t, pf["dropped_by_threat_map"], "no block existed, so the threat map stripped nothing")
+		assert.NotContains(t, logs, "prefetch context stripped by the threat map")
 	})
 
 	t.Run("a keep-all map leaves the record unchanged", func(t *testing.T) {
