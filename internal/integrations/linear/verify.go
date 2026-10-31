@@ -138,6 +138,9 @@ type Client struct {
 	URL     string        // defaults to DefaultAPIURL
 	Timeout time.Duration // defaults to DefaultTimeout
 	HTTP    *http.Client  // defaults to a fresh client
+	// Logf receives one line per linked PR that PullRequest passes over, so
+	// a later-linked PR never hides the real one without a trace. May be nil.
+	Logf func(format string, args ...any)
 }
 
 const attachmentsQuery = `query($id: String!) { issue(id: $id) { attachments { nodes { url createdAt } } } }`
