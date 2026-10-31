@@ -1596,3 +1596,23 @@ func TestInvokeSlot_TruncationRetry_IsNotCachedUnderThePrimaryKey(t *testing.T) 
 	assert.Equal(t, 2, c.calls["primary"])
 	assert.Empty(t, cache.m, "the doubled-cap reply must not be cached under the resolved-cap key")
 }
+
+// A one-agent slot whose truncated reply and retry are both think-only must not
+// claim a fallback chain was exhausted: no chain was walked. The discarded reply
+// is recorded by the retry line, not by the think-only walk total.
+func TestInvokeSlot_TruncationRetry_ThinkOnlyRetryDoesNotClaimAChainWalk(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary": {
+			{Content: "<think>still going", Truncated: true},
+			{Content: "<think>checked every file</think>\n"},
+		},
+	}}
+	ctx, buf := failoverLogCapture()
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, Slot{Primary: sizedPrimary(8192, 131072)})
+
+	assert.Equal(t, 2, c.calls["primary"])
+	assert.True(t, r.ThinkSuppressed)
+	assert.Equal(t, 1, r.ThinkOnlyAttempts)
+	assert.NotContains(t, buf.String(), "exhausted the fallback chain")
+	assert.Contains(t, buf.String(), "the reply was a think-only run")
+}
