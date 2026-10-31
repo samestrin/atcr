@@ -44,7 +44,9 @@ import (
 // citation this test cannot read is one it cannot guard.
 //
 // The check: line N of the cited file (the FIRST line of a range) must hold IDENT
-// as a whole word. The first line, not anywhere in the range: a one-line
+// as a whole word, and must not be a comment line: a doc comment above a
+// declaration names it too, so a citation shifted onto the comment would pass a
+// word match alone. The first line, not anywhere in the range: a one-line
 // insertion above a function shifts it to N+1, which is still inside N-M, and an
 // anywhere-in-range check would wave that drift through.
 func TestCitationDrift_CitedLineHoldsTheNamedIdentifier(t *testing.T) {
@@ -202,6 +204,11 @@ func checkCitations(repoRoot, citing, src string, targets []string) (int, []stri
 			case n < 1 || end < n || end > len(tl):
 				problems = append(problems, fmt.Sprintf(
 					"%s: citation %s names %s, but %s has %d lines, so the range is invalid", site, cite, ident, target, len(tl)))
+			case isCommentLine(tl[n-1]):
+				problems = append(problems, fmt.Sprintf(
+					"%s: citation %s names %s, but %s:%d is a comment line, not the declaration:\n\t%s\n"+
+						"Re-pin the line number to the line that declares %s; a doc comment above it mentions the name but is not what the citation points at.",
+					site, cite, ident, target, n, strings.TrimSpace(tl[n-1]), ident))
 			case !regexp.MustCompile(`\b` + regexp.QuoteMeta(ident) + `\b`).MatchString(tl[n-1]):
 				problems = append(problems, fmt.Sprintf(
 					"%s: citation %s names %s, but %s:%d does not hold it:\n\t%s\n"+
@@ -237,4 +244,52 @@ func looksLikeCode(word string) bool {
 	}
 	return strings.ContainsAny(word[1:], "ABCDEFGHIJKLMNOPQRSTUVWXYZ") &&
 		strings.ContainsAny(word, "abcdefghijklmnopqrstuvwxyz")
+}
+
+// isCommentLine reports whether a Go source line is only a comment (a // line,
+// or a /* ... */ opener or continuation).
+func isCommentLine(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "//") || strings.HasPrefix(t, "/*") || strings.HasPrefix(t, "*")
+}
+
+// TestCitationDrift_RejectsCitationShiftedOntoDocComment is the failing case for
+// a citation that drifted one line up onto the doc comment of its declaration:
+// the comment names the identifier, so a whole-word match alone passes it.
+func TestCitationDrift_RejectsCitationShiftedOntoDocComment(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "fanout"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "// keepSmallestEntry keeps the smallest entry.\nfunc keepSmallestEntry() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "internal", "fanout", "review.go"), []byte(target), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name     string
+		line     int
+		wantProb string
+	}{
+		{"declaration line passes", 2, ""},
+		{"doc comment line fails", 1, "is a comment line"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := fmt.Sprintf("// keepSmallestEntry (review.go:%d) is cited here.\n", c.line)
+			n, problems := checkCitations(root, "internal/fanout/chunker.go", src, []string{"review.go"})
+			if n != 1 {
+				t.Fatalf("found %d citations, want 1", n)
+			}
+			if c.wantProb == "" {
+				if len(problems) != 0 {
+					t.Fatalf("unexpected problems: %v", problems)
+				}
+				return
+			}
+			if len(problems) != 1 || !strings.Contains(problems[0], c.wantProb) {
+				t.Fatalf("problems = %v, want one containing %q", problems, c.wantProb)
+			}
+		})
+	}
 }
