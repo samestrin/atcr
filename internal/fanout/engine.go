@@ -217,7 +217,7 @@ type Agent struct {
 	// unfunded one. Separate from ReservedOutputTokens because that field's value is
 	// the resolved output cap and is pinned as such; the two are read together to
 	// recover the reservation the payload was actually sized against
-	// (TD internal/fanout/review.go:3103).
+	// (TD internal/fanout/review.go:3113).
 	ReasoningReserveTokens int
 	DegradationAction      string
 
