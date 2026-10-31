@@ -3,6 +3,7 @@ package fanout
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1342,4 +1344,255 @@ func TestInvokeSlot_TruncationFailoverLine_NamesTheSalvage(t *testing.T) {
 		assert.Zero(t, c.calls["fallback"], "the backup must never be called")
 		assert.Empty(t, buf.String(), "no failover, so no failover line")
 	})
+}
+
+// --- Epic 89 T5: retry a zero-finding truncation once on the primary ---------
+
+// sequenceMetaCompleter scripts each model's replies in call order (the last
+// entry repeats once the script runs out) and records the max_tokens every call
+// asked for, so a test can see the primary asked twice and at what caps.
+type sequenceMetaCompleter struct {
+	mu        sync.Mutex
+	byModel   map[string][]llmclient.Completion
+	calls     map[string]int
+	maxTokens map[string][]int
+}
+
+func (c *sequenceMetaCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	comp, err := c.CompleteWithMeta(ctx, inv)
+	return comp.Content, err
+}
+
+func (c *sequenceMetaCompleter) CompleteWithMeta(_ context.Context, inv llmclient.Invocation) (llmclient.Completion, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.calls == nil {
+		c.calls = map[string]int{}
+		c.maxTokens = map[string][]int{}
+	}
+	n := c.calls[inv.Model]
+	c.calls[inv.Model]++
+	mt := 0
+	if inv.MaxTokens != nil {
+		mt = *inv.MaxTokens
+	}
+	c.maxTokens[inv.Model] = append(c.maxTokens[inv.Model], mt)
+	script := c.byModel[inv.Model]
+	if len(script) == 0 {
+		return llmclient.Completion{}, nil
+	}
+	if n >= len(script) {
+		n = len(script) - 1
+	}
+	return script[n], nil
+}
+
+// sizedPrimary is a primary sized the way buildSlots sizes one: a resolved
+// output cap, the same cap on the wire, and a resolved context window.
+func sizedPrimary(maxTokens, window int) Agent {
+	mt := maxTokens
+	return Agent{
+		Name:              "bruce",
+		Invocation:        llmclient.Invocation{Model: "primary", MaxTokens: &mt},
+		ResolvedMaxTokens: maxTokens,
+		ResolvedWindow:    window,
+	}
+}
+
+const (
+	retryRamble  = "I was thinking hard but never emitted a finding"
+	retryFinding = "HIGH|a.go:1|bug|fix|correctness|5|ev|bruce"
+)
+
+// The first reply truncates with zero findings; the retry on the primary, at
+// twice the resolved cap, answers. The backup is never called, and status.json
+// records the doubled cap the serving attempt actually ran under.
+func TestInvokeSlot_TruncatedZeroFindings_RetriesThePrimaryAtTwiceTheCap(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary":  {{Content: retryRamble, Truncated: true}, {Content: retryFinding}},
+		"fallback": {{Content: retryFinding}},
+	}}
+	slot := Slot{
+		Primary:   sizedPrimary(8192, 131072),
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	ctx, buf := failoverLogCapture()
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+	require.Equal(t, StatusOK, r.Status, "the retry rescued the slot on the primary")
+	assert.NoError(t, r.Err)
+	assert.False(t, r.FallbackUsed, "a retry that answers must not walk the chain")
+	assert.Zero(t, c.calls["fallback"], "the backup must never be called")
+	assert.Equal(t, []int{8192, 16384}, c.maxTokens["primary"], "retried once, at twice ResolvedMaxTokens")
+	assert.Equal(t, 1, r.ParsedFindingCount())
+	assert.Equal(t, 16384, r.ResolvedMaxTokens)
+	assert.Equal(t, 8192, *slot.Primary.Invocation.MaxTokens,
+		"the retry must not mutate the slot's primary: a requeue starts again at the resolved cap")
+
+	st := statusFor(r, findingsFor(r, nil))
+	assert.Equal(t, 16384, st.ResolvedMaxTokens)
+	raw, err := json.Marshal(st)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"resolved_max_tokens":16384`, "status.json shows the doubled cap")
+
+	assert.Equal(t,
+		`level=WARN msg="reviewer response truncated with zero findings; retrying on the primary at a larger output cap" `+
+			`agent=bruce model=primary max_tokens=8192 retry_max_tokens=16384`+"\n",
+		buf.String())
+}
+
+// Both the first reply and the retry truncate with zero findings: the second
+// truncation falls through to today's failover unchanged, so the chain is walked
+// and the backup serves the slot. The retry happens once, never twice.
+func TestInvokeSlot_TruncatedZeroFindings_RetryAlsoTruncates_WalksTheChain(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary":  {{Content: retryRamble, Truncated: true}},
+		"fallback": {{Content: retryFinding}},
+	}}
+	slot := Slot{
+		Primary:   sizedPrimary(8192, 131072),
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	ctx, buf := failoverLogCapture()
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, slot)
+
+	require.Equal(t, StatusOK, r.Status, "the backup rescued the slot")
+	assert.True(t, r.FallbackUsed, "the second truncation must walk the chain")
+	assert.Equal(t, []int{8192, 16384}, c.maxTokens["primary"], "exactly one retry on the primary")
+	assert.Equal(t, 1, c.calls["fallback"])
+	assert.Equal(t,
+		`level=WARN msg="reviewer response truncated with zero findings; retrying on the primary at a larger output cap" `+
+			`agent=bruce model=primary max_tokens=8192 retry_max_tokens=16384`+"\n"+
+			`level=WARN msg="reviewer response truncated with zero findings; failing over" agent=bruce model=primary`+"\n",
+		buf.String(), "the failover line after the retry is today's line, unchanged")
+}
+
+// Every member truncates: the slot fails with errTruncatedZeroFindings exactly as
+// before, and the failed slot records the doubled cap its primary last ran at.
+func TestInvokeSlot_TruncatedZeroFindings_AllTruncate_FailsWithTheDoubledCap(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary":  {{Content: retryRamble, Truncated: true}},
+		"fallback": {{Content: "ramble two", Truncated: true}},
+	}}
+	slot := Slot{
+		Primary:   sizedPrimary(8192, 131072),
+		Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+	}
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.ErrorIs(t, r.Err, errTruncatedZeroFindings)
+	assert.Equal(t, 2, c.calls["primary"])
+	assert.Equal(t, 1, c.calls["fallback"], "a fallback's truncation is not retried")
+	assert.Equal(t, 16384, r.ResolvedMaxTokens)
+	assert.Equal(t, 16384, statusFor(r, findingsFor(r, nil)).ResolvedMaxTokens)
+}
+
+// A salvaged truncation (the answer channel was empty and the cut-off reasoning
+// was promoted) is retried too: it is the same reasoning model running out of
+// output tokens.
+func TestInvokeSlot_SalvagedTruncation_IsRetriedOnThePrimary(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary": {
+			{Content: "HIGH|a.go:1|draft from abandoned reasoning|f|correctness|5|e", Salvaged: true, SalvagedTruncated: true, Truncated: true},
+			{Content: retryFinding},
+		},
+	}}
+	ctx, buf := failoverLogCapture()
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(ctx, Slot{Primary: sizedPrimary(8192, 131072)})
+
+	require.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, []int{8192, 16384}, c.maxTokens["primary"])
+	assert.False(t, r.Salvaged, "the served reply is the retry's, not the salvage")
+	assert.Equal(t,
+		`level=WARN msg="reviewer response truncated with zero findings; retrying on the primary at a larger output cap" `+
+			`agent=bruce model=primary max_tokens=8192 retry_max_tokens=16384 `+
+			`salvaged=true reason="truncated reply was a promoted reasoning draft"`+"\n",
+		buf.String())
+}
+
+// The doubled cap is clamped: by registry.MaxTokensCap, and by the context
+// window less the prompt tokens the first single-shot call reported (input and
+// output share the window). When the clamp leaves no room above the current cap
+// there is nothing larger to ask for, so the slot fails over at once.
+func TestInvokeSlot_TruncationRetry_CapIsClamped(t *testing.T) {
+	cases := []struct {
+		name      string
+		maxTokens int
+		window    int
+		tokensIn  int
+		want      []int
+	}{
+		{"window caps the doubled cap", 8192, 12000, 0, []int{8192, 12000}},
+		{"window less the reported prompt tokens", 8192, 32768, 20000, []int{8192, 12768}},
+		{"MaxTokensCap caps the doubled cap", 600000, 2000000, 0, []int{600000, registry.MaxTokensCap}},
+		{"no room above the cap: no retry", 8192, 32768, 26000, []int{8192}},
+		{"already at MaxTokensCap: no retry", registry.MaxTokensCap, 2000000, 0, []int{registry.MaxTokensCap}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+				"primary":  {{Content: retryRamble, Truncated: true, Usage: llmclient.UsageData{PromptTokens: tc.tokensIn}}},
+				"fallback": {{Content: retryFinding}},
+			}}
+			slot := Slot{
+				Primary:   sizedPrimary(tc.maxTokens, tc.window),
+				Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+			}
+			r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), slot)
+
+			assert.Equal(t, tc.want, c.maxTokens["primary"])
+			assert.True(t, r.FallbackUsed, "a truncating retry, or no retry, walks the chain")
+		})
+	}
+}
+
+// No retry where there is nothing to double, or no gate to retry in: an unsized
+// agent (no resolved cap or window), and an engine without truncation failover.
+func TestInvokeSlot_TruncationRetry_NotAttempted(t *testing.T) {
+	t.Run("unsized primary", func(t *testing.T) {
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary":  {{Content: retryRamble, Truncated: true}},
+			"fallback": {{Content: retryFinding}},
+		}}
+		slot := Slot{
+			Primary:   Agent{Name: "bruce", Invocation: llmclient.Invocation{Model: "primary"}},
+			Fallbacks: []Agent{{Name: "bruce-fb", Invocation: llmclient.Invocation{Model: "fallback"}}},
+		}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), slot)
+		assert.Equal(t, 1, c.calls["primary"])
+		assert.True(t, r.FallbackUsed)
+	})
+	t.Run("truncation failover off", func(t *testing.T) {
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary": {{Content: retryRamble, Truncated: true}},
+		}}
+		r := NewEngine(c).invokeSlot(context.Background(), Slot{Primary: sizedPrimary(8192, 131072)})
+		assert.Equal(t, 1, c.calls["primary"])
+		assert.Equal(t, StatusOK, r.Status)
+	})
+	t.Run("truncated reply with findings", func(t *testing.T) {
+		c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+			"primary": {{Content: retryFinding, Truncated: true}},
+		}}
+		r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: sizedPrimary(8192, 131072)})
+		assert.Equal(t, 1, c.calls["primary"], "a truncated reply that parsed findings stays StatusOK and is not retried")
+		assert.Equal(t, StatusOK, r.Status)
+	})
+}
+
+// The retry asks a different max_tokens than the primary's cache key was derived
+// from (cacheKeyInputs.MaxTokens), so its reply is never stored under that key.
+func TestInvokeSlot_TruncationRetry_IsNotCachedUnderThePrimaryKey(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary": {{Content: retryRamble, Truncated: true}, {Content: retryFinding}},
+	}}
+	cache := &memCache{m: map[string]string{}}
+	p := sizedPrimary(8192, 131072)
+	p.CacheKey = "primary-key"
+	r := NewEngine(c, WithTruncationFailover(), WithCache(cache, false)).invokeSlot(context.Background(), Slot{Primary: p})
+
+	require.Equal(t, StatusOK, r.Status)
+	assert.Equal(t, 2, c.calls["primary"])
+	assert.Empty(t, cache.m, "the doubled-cap reply must not be cached under the resolved-cap key")
 }
