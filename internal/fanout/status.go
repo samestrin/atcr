@@ -864,7 +864,7 @@ type AgentStatus struct {
 	// reserved_output_tokens — which stays the resolved output cap. Read the two
 	// together to recover what the payload was really sized against: the cap alone
 	// made resolved_window minus the reservation look like a budget the run never had
-	// (TD internal/fanout/review.go:3103). Absent for a single-shot agent, which
+	// (TD internal/fanout/review.go:3113). Absent for a single-shot agent, which
 	// replays nothing.
 	ReasoningReserveTokens int `json:"reasoning_reserve_tokens,omitempty"`
 	// ResolvedMaxTokens is the output cap this agent RESOLVED to, present on every

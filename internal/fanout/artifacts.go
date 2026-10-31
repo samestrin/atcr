@@ -498,7 +498,9 @@ func warnSalvaged(ctx context.Context, count int, agents []string, classes salva
 	}
 }
 
-// SalvagedRemedy is the operator action for an ABANDONED salvaged reply: one that was
+// SalvagedRemedy is the operator action for an ABANDONED salvaged reply: parseFindings
+// refuses a salvage only when it is also response-truncated (unchunked) or the bin
+// has no stop reason (chunked); a salvage on a stop reason is parsed. It covers one that was
 // cut off or had no stop reason recorded (an unknown or legacy reason included),
 // which parseFindings refuses. One constant, so the fresh and resumed paths cannot
 // state different fixes for the same condition. It is EXPORTED so the

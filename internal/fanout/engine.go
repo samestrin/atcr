@@ -217,7 +217,7 @@ type Agent struct {
 	// unfunded one. Separate from ReservedOutputTokens because that field's value is
 	// the resolved output cap and is pinned as such; the two are read together to
 	// recover the reservation the payload was actually sized against
-	// (TD internal/fanout/review.go:3103).
+	// (TD internal/fanout/review.go:3113).
 	ReasoningReserveTokens int
 	DegradationAction      string
 
@@ -533,7 +533,9 @@ type Result struct {
 	// consumers that trust Content as a statement or verdict (debate seats,
 	// the skeptic) must read it (TD internal/llmclient/client.go:394). So does
 	// this package's own findings parser: parseFindings refuses a salvaged
-	// reply outright (T6, sprint 35.16.11.2.2.4).
+	// reply only when it is also response-truncated (Salvaged AND
+	// ResponseTruncated); a salvage on a stop reason is a finished answer and is
+	// parsed. Per chunk the test is the bin's own SalvagedOnStop instead.
 	Salvaged bool
 
 	// SalvagedOnStop is WHY a single reply salvaged: the provider stopped on a

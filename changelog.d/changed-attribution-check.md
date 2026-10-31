@@ -1,0 +1,1 @@
+- A pull request now fails the `Attribution check` CI job if any of its commits has an author or committer other than the maintainer (or a listed release bot), or if a commit, the PR title or the PR body has a `Co-authored-by`, `Claude-Session` or `Generated with` line; test fixtures commit as `test@example.invalid` and refuse to run inside an atcr checkout. (EST-3564)

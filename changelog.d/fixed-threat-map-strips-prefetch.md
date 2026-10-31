@@ -1,0 +1,1 @@
+- `--threat-map` now strips the `<context>` prefetch block once the mapper trims the payload, so a mapper-dropped file's retrieved context no longer reaches a prompt; a fail-open mapper keeps prefetch on. (epic 89.0)

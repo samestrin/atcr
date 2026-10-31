@@ -122,6 +122,30 @@ func TestFixtureCommandContext_RelativeDirIsAbsolutized(t *testing.T) {
 	}
 }
 
+// TestFixtureCommandContext_PanicsWhenDirCannotBeResolved asserts a relative dir
+// that cannot be made absolute (the cwd is gone) panics instead of silently
+// running against the wrong directory.
+func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := t.TempDir()
+	if err := os.Chdir(gone); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	if err := os.Remove(gone); err != nil {
+		t.Skipf("cannot remove the cwd on this platform: %v", err)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("FixtureCommandContext did not panic on an unresolvable relative dir")
+		}
+	}()
+	FixtureCommandContext(context.Background(), "relative", "status")
+}
+
 // TestFixtureCommandContext_DropsInheritedRepoVars asserts the other repo-locating
 // vars git exports into a hook (pre-push unsets the same list) are not inherited:
 // an inherited GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY would send the fixture's
@@ -613,6 +637,9 @@ func f(ctx context.Context, gitPath string, argv []string) {
 		name string
 		rel  string
 		want map[int]execVerdict
+		// wantOffender is literal, not derived from want via isOffender(), so a
+		// mutated isOffender() cannot agree with itself.
+		wantOffender map[int]bool
 	}{
 		{
 			// Literal git (9, 12) and indirected (10, 13) are offenders; non-git
@@ -623,6 +650,7 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				9: execLiteralGit, 10: execIndirectUngranted, 11: execClean,
 				12: execLiteralGit, 13: execIndirectUngranted, 14: execClean,
 			},
+			wantOffender: map[int]bool{9: true, 10: true, 11: false, 12: true, 13: true, 14: false},
 		},
 		{
 			// The allowlist excuses only the indirected form: 10 and 13 are granted
@@ -633,6 +661,7 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				9: execLiteralGit, 10: execIndirectGranted, 11: execClean,
 				12: execLiteralGit, 13: execIndirectGranted, 14: execClean,
 			},
+			wantOffender: map[int]bool{9: true, 10: false, 11: false, 12: true, 13: false, 14: false},
 		},
 	}
 	for _, row := range rows {
@@ -645,8 +674,8 @@ func f(ctx context.Context, gitPath string, argv []string) {
 				if got[line] != want {
 					t.Errorf("line %d: verdict %v, want %v", line, got[line], want)
 				}
-				if got[line].isOffender() != want.isOffender() {
-					t.Errorf("line %d: offender=%t, want %t", line, got[line].isOffender(), want.isOffender())
+				if got[line].isOffender() != row.wantOffender[line] {
+					t.Errorf("line %d: offender=%t, want %t", line, got[line].isOffender(), row.wantOffender[line])
 				}
 			}
 		})
