@@ -117,7 +117,27 @@ type RunSpec struct {
 	// EXIT trap, so a script that installs its own EXIT trap disables it. No
 	// extra mount is added.
 	Collect []string
+	// LoopbackPorts lists the TCP ports the workload may bind, accept on and
+	// connect to on loopback, for a run that starts its own server and talks to
+	// it (a dev server and a browser). Empty, the default, means no network of
+	// any kind. Each port must be 1-65535, listed once, at most
+	// maxLoopbackPorts in all.
+	//
+	// DockerBackend (--network none) and the Linux OS-level backend
+	// (--unshare-net) already give every run its own private loopback, so the
+	// field changes nothing there. The darwin OS-level backend has no network
+	// namespace: its loopback IS the host's, so the field opens exactly these
+	// ports on it (oslevel_profile.go's loopbackRules) and Run refuses with
+	// ErrOSLevelLoopbackPortHeld when a host process already listens on one.
+	// UDP, unix sockets, every other port and every non-loopback address stay
+	// denied.
+	LoopbackPorts []int
 }
+
+// maxLoopbackPorts bounds RunSpec.LoopbackPorts. A Playwright config starts one
+// web server per entry, and each grant is a hole in the darwin host's loopback,
+// so the list is kept short.
+const maxLoopbackPorts = 8
 
 func (s RunSpec) validate() error {
 	hasCmd := len(s.Command) > 0
@@ -139,6 +159,21 @@ func (s RunSpec) validate() error {
 	}
 	if strings.ContainsRune(s.SnapshotDir, ':') {
 		return fmt.Errorf("sandbox: RunSpec.SnapshotDir must not contain ':' (mount-spec injection), got %q", s.SnapshotDir)
+	}
+	if len(s.LoopbackPorts) > maxLoopbackPorts {
+		return fmt.Errorf("sandbox: RunSpec.LoopbackPorts lists %d ports, at most %d are allowed", len(s.LoopbackPorts), maxLoopbackPorts)
+	}
+	seen := make(map[int]bool, len(s.LoopbackPorts))
+	for _, p := range s.LoopbackPorts {
+		// Port 0 is refused too: it asks for an ephemeral port, which a profile
+		// rule cannot name in advance without a wildcard.
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("sandbox: RunSpec.LoopbackPorts entry %d is not a port in 1-65535", p)
+		}
+		if seen[p] {
+			return fmt.Errorf("sandbox: RunSpec.LoopbackPorts lists port %d twice", p)
+		}
+		seen[p] = true
 	}
 	return nil
 }

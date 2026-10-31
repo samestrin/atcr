@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -478,6 +479,34 @@ func (b *OSLevelBackend) Preflight(ctx context.Context) error {
 // (osLevelContainmentArgs), so on a supported platform this now marks a
 // regression rather than the expected state.
 var ErrOSLevelNoContainment = errors.New("os-level sandbox provides no containment yet")
+
+// ErrOSLevelLoopbackPortHeld is returned by a darwin Run when a host process
+// already listens on one of RunSpec.LoopbackPorts. sandbox-exec has no network
+// namespace, so the profile's grant on that port would let the workload connect
+// to the host's service (a local database, the LLM proxy) rather than to the
+// server it starts itself. The run is refused before anything spawns.
+var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopback port is already in use on the host")
+
+// loopbackDialTimeout bounds each held-port probe. A loopback connect is
+// answered or refused at once; the bound only covers a firewalled stack.
+const loopbackDialTimeout = 500 * time.Millisecond
+
+// checkLoopbackPortsFree returns ErrOSLevelLoopbackPortHeld when anything on
+// the host accepts a TCP connect on a port in ports, on either loopback
+// address: the profile's "localhost" covers both, and a service listening on
+// only one of them is still reachable through the grant.
+func checkLoopbackPortsFree(ports []int) error {
+	for _, p := range ports {
+		for _, host := range []string{"127.0.0.1", "::1"} {
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(p)), loopbackDialTimeout)
+			if err == nil {
+				_ = conn.Close()
+				return fmt.Errorf("%w: port %d on %s", ErrOSLevelLoopbackPortHeld, p, host)
+			}
+		}
+	}
+	return nil
+}
 
 // ErrOSLevelCapUnenforceable is returned by Preflight when a resource cap the
 // operator set (sandbox.memory or sandbox.pids_limit) cannot be enforced on
@@ -1304,6 +1333,14 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 			// /work, so cmd.Dir stays the host snapshot for the bwrap process
 			// itself and the remap happens inside the mount namespace.
 			workDir = copyDir
+		}
+	}
+
+	// Checked as late as possible, right before the spawn, to keep the window
+	// between the check and the workload's own bind short.
+	if b.platform() == "darwin" {
+		if err := checkLoopbackPortsFree(spec.LoopbackPorts); err != nil {
+			return RunResult{Command: cmdStr}, err
 		}
 	}
 

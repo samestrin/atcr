@@ -764,3 +764,139 @@ func TestIntegration_OSLevelDarwin_MemoryRlimitMeasurement(t *testing.T) {
 			"neither RLIMIT_AS nor RLIMIT_DATA stops an over-allocation on this host, but sandboxMemoryLimitFor(darwin) claims a memory cap is enforced")
 	}
 }
+
+// nonLoopbackIPv4 returns an IPv4 address of an up, non-loopback interface on
+// this host, so a listener there is local (nothing leaves the machine) yet is
+// NOT loopback in the profile's eyes.
+func nonLoopbackIPv4(t *testing.T) string {
+	t.Helper()
+	ifaces, err := net.Interfaces()
+	require.NoError(t, err)
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+				return ipn.IP.String()
+			}
+		}
+	}
+	skipOrFail(t, "this host has no up non-loopback IPv4 interface to probe")
+	return ""
+}
+
+func TestIntegration_OSLevelDarwin_LoopbackGrantIsPortAndAddressScoped(t *testing.T) {
+	// Epic 100 T4b. RunSpec.LoopbackPorts opens one TCP port on the HOST's
+	// loopback (sandbox-exec has no network namespace). This proves both
+	// halves of the containment claim against the real kernel:
+	//
+	//   - the grant works: the workload binds the granted port on loopback,
+	//     accepts, and connects to itself (the dev-server-plus-browser flow);
+	//   - nothing else opens: a different loopback port, the same port on a
+	//     non-loopback address, UDP on the same port, and a wildcard bind on
+	//     the same port all stay denied.
+	//
+	// Every negative runs its probe unsandboxed first as a control, for the
+	// reason TestIntegration_OSLevelDarwin_NetworkEgressIsBlocked gives: a
+	// failed dial is not evidence of containment on a host where the target
+	// is unreachable anyway.
+	b := darwinIntegrationBackend(t)
+	const probeMissingCode = 97
+	port := freeLoopbackPort(t)
+	p := fmt.Sprint(port)
+
+	run := func(t *testing.T, script string) RunResult {
+		t.Helper()
+		res, err := b.Run(context.Background(), RunSpec{
+			Command:       []string{"/bin/sh", "-c", "command -v nc >/dev/null 2>&1 || exit 97; " + script},
+			SnapshotDir:   t.TempDir(),
+			Timeout:       15 * time.Second,
+			LoopbackPorts: []int{port},
+		})
+		require.NoError(t, err, "output: %s", res.Output)
+		require.NotEqual(t, probeMissingCode, res.ExitCode,
+			"nc was unreachable inside the sandbox, so this run proves nothing; output: %s", res.Output)
+		return res
+	}
+	denied := func(t *testing.T, label, probe string) {
+		t.Helper()
+		if control := runUnsandboxed(t, probe); control.exitCode != 0 {
+			skipOrFail(t, "unsandboxed control for %s failed (exit %d, %q); cannot tell a sandbox denial from host policy",
+				label, control.exitCode, strings.TrimSpace(control.output))
+			return
+		}
+		res := run(t, probe)
+		assert.NotEqual(t, 0, res.ExitCode, "%s was NOT blocked under a grant on port %d — containment breach; output: %s",
+			label, port, res.Output)
+		after := runUnsandboxed(t, probe)
+		require.Equal(t, 0, after.exitCode,
+			"the %s target stopped answering during the test, so the sandboxed failure proves nothing; output: %s",
+			label, after.output)
+	}
+
+	t.Run("granted port binds, accepts and connects", func(t *testing.T) {
+		// The server half and the client half, both inside one run. Exit 0 only
+		// when the in-sandbox client reached the in-sandbox listener.
+		res := run(t, `nc -l 127.0.0.1 `+p+` >/dev/null 2>&1 & srv=$!
+i=0
+while [ $i -lt 25 ]; do
+  if nc -z -w 1 127.0.0.1 `+p+`; then kill $srv 2>/dev/null; exit 0; fi
+  i=$((i+1)); sleep 0.2
+done
+kill $srv 2>/dev/null; exit 1`)
+		assert.Equal(t, 0, res.ExitCode,
+			"the loopback grant did not let the workload reach its own server on port %d; output: %s", port, res.Output)
+		assert.NotContains(t, res.Output, "Operation not permitted", "output: %s", res.Output)
+	})
+
+	t.Run("another loopback port stays denied", func(t *testing.T) {
+		other := heldLoopbackPort(t)
+		denied(t, "a connect to loopback port "+fmt.Sprint(other), "exec nc -z -w 2 127.0.0.1 "+fmt.Sprint(other))
+	})
+
+	t.Run("the granted port on a non-loopback address stays denied", func(t *testing.T) {
+		ip := nonLoopbackIPv4(t)
+		ln, err := net.Listen("tcp", net.JoinHostPort(ip, p))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				_ = c.Close()
+			}
+		}()
+		denied(t, "a connect to "+ip+":"+p, "exec nc -z -w 2 "+ip+" "+p)
+	})
+
+	t.Run("UDP on the granted port stays denied", func(t *testing.T) {
+		udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = udp.Close() })
+		denied(t, "UDP to 127.0.0.1:"+p, "exec nc -u -z -w 2 127.0.0.1 "+p)
+	})
+
+	t.Run("a wildcard bind on the granted port stays denied", func(t *testing.T) {
+		// Binding 0.0.0.0 would put the workload's server on every interface,
+		// the LAN included. Exit 0 means the listener was still up after a
+		// second, i.e. the bind succeeded.
+		probe := `nc -l 0.0.0.0 ` + p + ` & srv=$!
+sleep 1
+if kill -0 $srv 2>/dev/null; then kill $srv; exit 0; fi
+exit 1`
+		if control := runUnsandboxed(t, probe); control.exitCode != 0 {
+			skipOrFail(t, "unsandboxed wildcard bind control failed (exit %d, %q)", control.exitCode, strings.TrimSpace(control.output))
+			return
+		}
+		res := run(t, probe)
+		assert.NotEqual(t, 0, res.ExitCode, "a wildcard bind on port %d succeeded — the server is reachable off loopback; output: %s",
+			port, res.Output)
+	})
+}
