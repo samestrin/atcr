@@ -45,7 +45,17 @@ func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	gitCmd(t, dir, "init", "-q", "-b", "main")
+	// A background `git gc --auto` still writing into .git races TempDir's
+	// RemoveAll ("unlinkat .git: directory not empty"). Fixture repos never need it.
+	gitCmd(t, dir, "config", "gc.auto", "0")
+	gitCmd(t, dir, "config", "maintenance.auto", "false")
 	return dir
+}
+
+func TestInitRepo_DisablesAutoGC(t *testing.T) {
+	dir := initRepo(t)
+	require.Equal(t, "0", gitCmd(t, dir, "config", "gc.auto"))
+	require.Equal(t, "false", gitCmd(t, dir, "config", "maintenance.auto"))
 }
 
 const goFileV1 = `package p

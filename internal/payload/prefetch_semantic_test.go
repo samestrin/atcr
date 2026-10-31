@@ -470,7 +470,7 @@ func TestSimilaritySnippets_SpanOverMaxSnippetLinesIsDropped(t *testing.T) {
 	out, dropped, reason := g.similaritySnippets(head, symbols, nil, nil)
 
 	require.Empty(t, reason)
-	require.Equal(t, []PrefetchDrop{{Path: "big.go", Symbol: "Big", Tier: PrefetchTierSimilarity, Reason: dropReasonOversized}}, dropped,
+	require.Equal(t, []PrefetchDrop{{Path: "big.go", Symbol: "Big", Tier: PrefetchTierSimilarity, Reason: dropReasonOversizedSpan}}, dropped,
 		"a span over maxSnippetLines is dropped as oversized, even though its Content matches HEAD")
 	require.Len(t, out, 1, "a span of exactly maxSnippetLines is kept")
 	require.Equal(t, "Fits", out[0].Symbol)

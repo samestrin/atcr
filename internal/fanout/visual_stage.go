@@ -122,7 +122,9 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	vr.Artifacts = artifacts
 	// Under the block policy the secret text already aborted persistVisualEvidence
 	// and RunVisualReview above, before any vision reply existed, so this call
-	// only ever redacts; it cannot block after a reply has been produced.
+	// only ever redacts; it cannot block after a reply has been produced. When
+	// ReviewDir is empty persistVisualEvidence returns before scanning, so that
+	// abort comes from RunVisualReview's own guard alone.
 	if vr.Browser, err = guardBrowserText(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), shots); err != nil {
 		return VisualReviewResult{}, err
 	}

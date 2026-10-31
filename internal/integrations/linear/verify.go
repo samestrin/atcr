@@ -140,14 +140,15 @@ type Client struct {
 	HTTP    *http.Client  // defaults to a fresh client
 }
 
-const attachmentsQuery = `query($id: String!) { issue(id: $id) { attachments { nodes { url } } } }`
+const attachmentsQuery = `query($id: String!) { issue(id: $id) { attachments { nodes { url createdAt } } } }`
 
 type gqlResponse struct {
 	Data struct {
 		Issue *struct {
 			Attachments struct {
 				Nodes []struct {
-					URL string `json:"url"`
+					URL       string `json:"url"`
+					CreatedAt string `json:"createdAt"`
 				} `json:"nodes"`
 			} `json:"attachments"`
 		} `json:"issue"`
@@ -155,8 +156,9 @@ type gqlResponse struct {
 	Errors []json.RawMessage `json:"errors"`
 }
 
-// PullRequest returns the first GitHub PR attached to the issue. The API key
-// is never included in returned errors.
+// PullRequest returns the GitHub PR attached to the issue. When several are
+// attached it picks the newest by the attachment's createdAt, whatever order
+// the API lists them in. The API key is never included in returned errors.
 func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 	if c.APIKey == "" {
 		return PR{}, ErrNoAPIKey
@@ -215,10 +217,25 @@ func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 	if out.Data.Issue == nil {
 		return PR{}, ErrNoPR
 	}
+	var (
+		pr     PR
+		newest time.Time
+		found  bool
+	)
 	for _, n := range out.Data.Issue.Attachments.Nodes {
-		if owner, repo, num, perr := slack.ParsePRURL(n.URL); perr == nil {
-			return PR{Owner: owner, Repo: repo, Number: num}, nil
+		owner, repo, num, perr := slack.ParsePRURL(n.URL)
+		if perr != nil {
+			continue
+		}
+		// A missing or unparseable createdAt is the zero time, so it loses to
+		// any dated attachment and ties keep the first listed.
+		at, _ := time.Parse(time.RFC3339Nano, n.CreatedAt)
+		if !found || at.After(newest) {
+			pr, newest, found = PR{Owner: owner, Repo: repo, Number: num}, at, true
 		}
 	}
-	return PR{}, ErrNoPR
+	if !found {
+		return PR{}, ErrNoPR
+	}
+	return pr, nil
 }

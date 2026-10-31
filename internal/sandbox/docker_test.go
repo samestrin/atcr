@@ -3,6 +3,9 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -525,7 +528,10 @@ exit 0`)
 // covered; BusyBox is covered when a `busybox` binary on PATH was built with
 // --exclude support. Alpine's is (CONFIG_FEATURE_TAR_FROM=y); Ubuntu's is not,
 // and against it the seed copy fails closed with 125, so it is no stand-in for
-// the alpine image.
+// the alpine image. BusyBox tar coverage is therefore local-only: the CI runners
+// are Ubuntu, and `apt install busybox` there installs a busybox without
+// --exclude, so it would be skipped just the same. CI coverage needs an
+// Alpine-built busybox in the Go Test job.
 func seedCopyTars(t *testing.T) map[string]string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -554,6 +560,25 @@ func seedCopyTars(t *testing.T) map[string]string {
 		t.Logf("%s tar has no --exclude: BusyBox tar not covered in this run", bb)
 	}
 	return tars
+}
+
+// TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage pins the seedCopyTars doc
+// comment: BusyBox tar coverage is local-only, and CI cannot pick it up with
+// `apt install busybox` because Ubuntu's busybox has no --exclude.
+func TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "docker_test.go", nil, parser.ParseComments)
+	require.NoError(t, err)
+	var doc string
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "seedCopyTars" {
+			doc = fn.Doc.Text()
+		}
+	}
+	require.NotEmpty(t, doc, "seedCopyTars must keep its doc comment")
+	for _, want := range []string{"local-only", "apt install busybox", "--exclude"} {
+		assert.Contains(t, doc, want, "the doc comment must say BusyBox tar coverage is local-only and why CI cannot get it from apt")
+	}
 }
 
 // renderSeedScript points the fixed /src and /work paths of a setup script at

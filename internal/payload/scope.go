@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/samestrin/atcr/reconcile"
@@ -203,6 +204,11 @@ func ScopeRuleForPayload(mode PayloadMode, text string) string {
 	if !found {
 		return ScopeRule(mode)
 	}
+	if !hasNonFilesEntry(text) {
+		// Every file escalated: nothing is left on the narrow rule, so this is
+		// a files-mode payload rather than a mix.
+		return scopeFilesFull
+	}
 	return scopeChangedOnlyBase + " " + mixedScopeSentence(paths) + " " + categoryVocabularyRule
 }
 
@@ -213,12 +219,21 @@ func ScopeRuleForPayload(mode PayloadMode, text string) string {
 // header reference, which is why the sentence is never dropped for want of a
 // name.
 func mixedScopeSentence(paths []string) string {
-	named := ""
-	if len(paths) > 0 {
-		quoted := make([]string, len(paths))
-		for i, p := range paths {
-			quoted[i] = "`" + p + "`"
+	// A path with a backtick would break the code quoting; it goes unnamed and
+	// stays covered by the header reference. At most maxNamedScopeFiles are
+	// named so the rule does not grow with the number of escalated files.
+	var quoted []string
+	for _, p := range paths {
+		if !strings.Contains(p, "`") {
+			quoted = append(quoted, "`"+p+"`")
 		}
+	}
+	if len(quoted) > maxNamedScopeFiles {
+		more := len(quoted) - maxNamedScopeFiles
+		quoted = append(quoted[:maxNamedScopeFiles:maxNamedScopeFiles], fmt.Sprintf("and %d more", more))
+	}
+	named := ""
+	if len(quoted) > 0 {
 		named = strings.Join(quoted, ", ") + ", "
 	}
 	return "This payload mixes modes. The wider files-mode rule applies only to " + named +
@@ -258,4 +273,18 @@ func filesModePaths(text string) ([]string, bool) {
 		off = i + end
 	}
 	return paths, found
+}
+
+// maxNamedScopeFiles caps how many escalated files mixedScopeSentence names.
+const maxNamedScopeFiles = 10
+
+// hasNonFilesEntry reports whether text holds a per-file body that is not a
+// files-mode one (a diff, deleted or binary marker) at the start of a line.
+func hasNonFilesEntry(text string) bool {
+	for _, m := range []string{gitDiffMarker, combinedHeaderCC, combinedHeader, deletedMarkerPfx, binaryMarkerPrefix} {
+		if strings.HasPrefix(text, m) || strings.Contains(text, "\n"+m) {
+			return true
+		}
+	}
+	return false
 }

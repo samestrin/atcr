@@ -1290,13 +1290,14 @@ type PrefetchDrop struct {
 // parse" from "this file lost a coin toss against the byte cap" — two facts
 // with opposite implications for whether the missing context mattered.
 const (
-	dropReasonByteCap     = "over the pre-fetch byte cap"
-	dropReasonFileCap     = "over the candidate-file cap"
-	dropReasonUnreadable  = "candidate unreadable at head"
-	dropReasonOversized   = "candidate over the analyze-size ceiling"
-	dropReasonNotDeclared = "cue-derived symbol is not declared here"
-	dropReasonOverlap     = "region already shown by an earlier snippet"
-	dropReasonOutOfRange  = "span out of range in the retrieved file"
+	dropReasonByteCap       = "over the pre-fetch byte cap"
+	dropReasonFileCap       = "over the candidate-file cap"
+	dropReasonUnreadable    = "candidate unreadable at head"
+	dropReasonOversized     = "candidate over the analyze-size ceiling"
+	dropReasonOversizedSpan = "span longer than the snippet line cap"
+	dropReasonNotDeclared   = "cue-derived symbol is not declared here"
+	dropReasonOverlap       = "region already shown by an earlier snippet"
+	dropReasonOutOfRange    = "span out of range in the retrieved file"
 
 	// The similarity stage's own reasons. The index is a foreign artifact built
 	// at some earlier revision, so each of these is a hit the index named that
@@ -2127,7 +2128,7 @@ func (g *gitRunner) similaritySnippets(head string, symbols []changedSymbol, cha
 		// against the whole indexed chunk, which a clamped body could never
 		// match. Checked before the slice so an oversized span builds no body.
 		if h.EndLine-h.StartLine+1 > maxSnippetLines {
-			drop(dropReasonOversized)
+			drop(dropReasonOversizedSpan)
 			continue
 		}
 		body := strings.Join(f.lines[h.StartLine-1:h.EndLine], "\n")
