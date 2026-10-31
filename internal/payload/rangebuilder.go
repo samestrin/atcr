@@ -3,6 +3,7 @@ package payload
 import (
 	"context"
 	"reflect"
+	"sort"
 	"sync/atomic"
 
 	"github.com/samestrin/atcr/internal/semindex"
@@ -42,6 +43,14 @@ type RangeBuilder struct {
 	// LOST its ledger stays distinguishable from a branch that asserted nothing.
 	// Populated by claimLedger alongside claims, under the same memo.
 	claimStatus ClaimLedgerStatus
+	// claimMsgs and claimTrunc are the read the ledger was rendered from, kept
+	// so ScopeClaimLedger can re-render it from a subset of the commits.
+	claimMsgs  []commitMessage
+	claimTrunc claimsTruncation
+	// scopedClaims is the memoized ScopeClaimLedger result, so every mode gets
+	// the same scoped ledger from one git read.
+	scopedClaims     string
+	scopedClaimsDone bool
 	// Memoized pre-fetched context for the range (Epic 35.16.8), computed once and
 	// reused across every mode. This is what makes the Context Definitions section
 	// byte-identical for every agent in a fan-out (AC3), by the same argument the
@@ -76,6 +85,9 @@ type RangeBuilder struct {
 //   - Truncated: were claims shed at a cap, so the ledger is incomplete?
 //   - Failed: did the read ERROR (as opposed to finding nothing)?
 //   - Disabled: did the operator turn the feature off via max_claim_bytes: 0?
+//   - ThreatMapDropped: how many claims did ScopeClaimLedger remove because
+//     their commits touched only files the threat map dropped? Claims then
+//     counts what was delivered, not what was read.
 //
 // Failed and Disabled are separate on purpose: "we could not read it" and "you
 // told us not to" are opposite operational signals, and collapsing them into
@@ -86,6 +98,8 @@ type ClaimLedgerStatus struct {
 	Truncated bool `json:"truncated,omitempty"`
 	Failed    bool `json:"failed,omitempty"`
 	Disabled  bool `json:"disabled,omitempty"`
+	// ThreatMapDropped is set by ScopeClaimLedger; zero when nothing was scoped.
+	ThreatMapDropped int `json:"threat_map_dropped,omitempty"`
 }
 
 // ClaimLedgerStatus returns the range's claim-ledger outcome. Call it after a
@@ -403,6 +417,7 @@ func (b *RangeBuilder) claimLedger() string {
 		b.claimStatus = ClaimLedgerStatus{Failed: true}
 		return b.claims
 	}
+	b.claimMsgs, b.claimTrunc = msgs, truncated
 	claims, fenceSuppressed := splitClaims(msgs)
 	b.claims = claimLedgerSection(claims, truncated, fenceSuppressed)
 	b.claimStatus = ClaimLedgerStatus{
@@ -418,6 +433,78 @@ func (b *RangeBuilder) claimLedger() string {
 		Truncated: truncated != claimsComplete || fenceSuppressed,
 	}
 	return b.claims
+}
+
+// ScopeClaimLedger narrows the claim ledger in entries to the claims of commits
+// that touched a path in keep, the set a threat map scoped the review to. Call
+// it on every mode's entries after TrimToPaths dropped a file.
+//
+// TrimToPaths keeps the ledger whole because it is shed-exempt, but a claim
+// whose commit touched only dropped files is about a file no reviewer is sent,
+// and every reviewer would rule it UNSUPPORTED. Filtering the commits before
+// the split keeps the duplicate collapse honest: a claim a dropped commit and a
+// kept commit both made stays, under the kept commit. A commit is matched on
+// the paths it changed, so a file renamed later in the range keeps only the
+// claims of commits made under its final name.
+//
+// The scope is computed once and reused, so every mode carries the same
+// ledger. A scope with no surviving claim removes the entry, since zero claims
+// render nothing. An empty keep means no scope and a builder with no ledger
+// has nothing to scope; both return entries unchanged without running git. A
+// failed read is logged and leaves the ledger whole: the ledger is an
+// additional input, and dropping all of it would cost more than the
+// out-of-scope claims it carries.
+func (b *RangeBuilder) ScopeClaimLedger(entries []FileEntry, keep map[string]bool) []FileEntry {
+	at := -1
+	for i, e := range entries {
+		if e.shedExempt && e.Path == ClaimLedgerPath {
+			at = i
+			break
+		}
+	}
+	if len(keep) == 0 || at < 0 {
+		return entries
+	}
+	if !b.scopedClaimsDone {
+		b.scopedClaimsDone = true
+		b.scopedClaims = b.scopeClaims(keep)
+	}
+	out := make([]FileEntry, 0, len(entries))
+	out = append(out, entries[:at]...)
+	if b.scopedClaims != "" {
+		out = append(out, newClaimLedgerEntry(b.scopedClaims))
+	}
+	return append(out, entries[at+1:]...)
+}
+
+// scopeClaims renders the ledger from the commits that touched a kept path and
+// records the scoped outcome on the status. It returns the unscoped ledger when
+// the commit-to-path read fails.
+func (b *RangeBuilder) scopeClaims(keep map[string]bool) string {
+	paths := make([]string, 0, len(keep))
+	for p := range keep {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	touching, err := b.g.commitsTouching(b.base, b.head, paths)
+	if err != nil {
+		b.g.log().Warn("payload: commits behind the kept files unreadable; the claim ledger is not scoped to the threat map",
+			"base", b.base, "head", b.head, "error", err)
+		return b.claims
+	}
+	var msgs []commitMessage
+	for _, m := range b.claimMsgs {
+		if touching[m.SHA] {
+			msgs = append(msgs, m)
+		}
+	}
+	claims, fenceSuppressed := splitClaims(msgs)
+	section := claimLedgerSection(claims, b.claimTrunc, fenceSuppressed)
+	b.claimStatus.Present = section != ""
+	b.claimStatus.ThreatMapDropped = b.claimStatus.Claims - len(claims)
+	b.claimStatus.Claims = len(claims)
+	b.claimStatus.Truncated = b.claimTrunc != claimsComplete || fenceSuppressed
+	return section
 }
 
 // BuildChangedLines returns the grounding changed-lines map for the range,

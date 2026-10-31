@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -713,4 +714,123 @@ func TestReviewableCount_ExcludesTheLedgerAndOnlyTheLedger(t *testing.T) {
 	impostor := FileEntry{Path: ClaimLedgerPath, Size: 12, Body: "package p\n"}
 	assert.Equal(t, 1, ReviewableCount([]FileEntry{impostor}),
 		"a repo file at the sentinel path is reviewable; the exemption keys on shedExempt, never on Path")
+}
+
+// --- ScopeClaimLedger: the threat-map scope --------------------------------
+
+// scopedLedgerRepo builds a range of two commits, each touching one file:
+// a.go with a claim, then bName with bMsg.
+func scopedLedgerRepo(t *testing.T, bName, bMsg string) (dir, base, head string) {
+	t.Helper()
+	dir = initRepo(t)
+	write(t, dir, "seed.go", goFileV1)
+	base = commitAll(t, dir, "seed")
+	write(t, dir, "a.go", goFileV1)
+	commitAll(t, dir, "add a\n\n- A() now exists\n")
+	write(t, dir, bName, goFileV2)
+	head = commitAll(t, dir, bMsg)
+	return dir, base, head
+}
+
+func ledgerOf(entries []FileEntry) (string, bool) {
+	for _, e := range entries {
+		if e.shedExempt && e.Path == ClaimLedgerPath {
+			return e.Body, true
+		}
+	}
+	return "", false
+}
+
+// A claim survives the scope only when its commit touched a kept file, and
+// every mode gets the same scoped ledger from one git read.
+func TestScopeClaimLedger_KeepsOnlyClaimsOfCommitsThatTouchedAKeptFile(t *testing.T) {
+	dir, base, head := scopedLedgerRepo(t, "b.go", "add b\n\n- B() now exists\n")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	diff, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	files, err := rb.BuildEntries(ModeFiles)
+	require.NoError(t, err)
+	whole := rb.ClaimLedgerStatus()
+	require.Equal(t, 4, whole.Claims, "PRECONDITION: two subjects and two bullets")
+
+	keep := map[string]bool{"b.go": true}
+	scopedDiff := rb.ScopeClaimLedger(diff, keep)
+	before := rb.g.execCount
+	scopedFiles := rb.ScopeClaimLedger(files, keep)
+	assert.Equal(t, before, rb.g.execCount, "the scope is memoized: every mode reuses one read")
+
+	body, ok := ledgerOf(scopedDiff)
+	require.True(t, ok)
+	assert.Contains(t, body, "B() now exists")
+	assert.NotContains(t, body, "A() now exists")
+	filesBody, _ := ledgerOf(scopedFiles)
+	assert.Equal(t, body, filesBody, "every mode must carry the same scoped ledger")
+	assert.Equal(t, ClaimLedgerPath, scopedDiff[0].Path, "the scoped ledger still leads the payload")
+	assert.Len(t, scopedDiff, len(diff), "scoping swaps the ledger; it never adds or drops a file entry")
+
+	st := rb.ClaimLedgerStatus()
+	assert.Equal(t, ClaimLedgerStatus{Present: true, Claims: 2, ThreatMapDropped: 2}, st)
+}
+
+// A scope that leaves no claim must remove the entry, not render a bare
+// header: zero claims render nothing at all (claimLedgerSection).
+func TestScopeClaimLedger_NoSurvivingClaimRemovesTheEntry(t *testing.T) {
+	dir, base, head := scopedLedgerRepo(t, "b.go", "wip")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	_, ok := ledgerOf(entries)
+	require.True(t, ok, "PRECONDITION: a.go's commit renders a ledger")
+
+	scoped := rb.ScopeClaimLedger(entries, map[string]bool{"b.go": true})
+	_, ok = ledgerOf(scoped)
+	assert.False(t, ok, "no kept commit made a claim, so no ledger reaches a reviewer")
+	assert.Len(t, scoped, len(entries)-1)
+	assert.Equal(t, ClaimLedgerStatus{Present: false, Claims: 0, ThreatMapDropped: 2}, rb.ClaimLedgerStatus())
+}
+
+// keep holds repository paths, not pathspecs: a file named "[ab].go" must not
+// glob-match a.go and keep its commit's claims.
+func TestScopeClaimLedger_KeepPathsAreLiteral(t *testing.T) {
+	dir, base, head := scopedLedgerRepo(t, "[ab].go", "add the bracket file\n\n- Bracket() now exists\n")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+
+	body, ok := ledgerOf(rb.ScopeClaimLedger(entries, map[string]bool{"[ab].go": true}))
+	require.True(t, ok)
+	assert.Contains(t, body, "Bracket() now exists")
+	assert.NotContains(t, body, "A() now exists", "a keep path read as a glob would match a.go")
+}
+
+// No scope, or no ledger, leaves entries exactly as they are.
+func TestScopeClaimLedger_NoScopeOrNoLedgerIsANoOp(t *testing.T) {
+	dir, base, head := scopedLedgerRepo(t, "b.go", "add b\n\n- B() now exists\n")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	whole := rb.ClaimLedgerStatus()
+
+	before := rb.g.execCount
+	assert.Equal(t, entries, rb.ScopeClaimLedger(entries, nil), "an empty keep means no scope, as in TrimToPaths")
+	assert.Equal(t, before, rb.g.execCount, "no scope must not run git")
+	assert.Equal(t, whole, rb.ClaimLedgerStatus())
+
+	files := reviewableEntries(t, entries)
+	assert.Equal(t, files, rb.ScopeClaimLedger(files, map[string]bool{"b.go": true}), "no ledger entry, nothing to scope")
+}
+
+// A failed commit-to-file read leaves the ledger whole and logs why: the
+// ledger is an additional input, and losing all of it to a git hiccup would
+// cost more than the out-of-scope claims it carries.
+func TestScopeClaimLedger_UnreadableCommitFilesLeaveTheLedgerWhole(t *testing.T) {
+	dir, base, head := scopedLedgerRepo(t, "b.go", "add b\n\n- B() now exists\n")
+	rb := NewRangeBuilder(context.Background(), dir, base, head)
+	entries, err := rb.BuildEntries(ModeDiff)
+	require.NoError(t, err)
+	whole := rb.ClaimLedgerStatus()
+
+	rb.g.dir = filepath.Join(t.TempDir(), "gone")
+	assert.Equal(t, entries, rb.ScopeClaimLedger(entries, map[string]bool{"b.go": true}))
+	assert.Equal(t, whole, rb.ClaimLedgerStatus())
 }
