@@ -55,6 +55,9 @@ const (
 	playwrightRunRoot = "/work/"
 	// playwrightMaxScreenshots bounds the files packed into the screenshots tar.
 	playwrightMaxScreenshots = 64
+	// playwrightMaxErrorText bounds the run text (sandbox output, Playwright's
+	// report-level error messages) an error quotes.
+	playwrightMaxErrorText = 2048
 )
 
 // playwrightConfigNames are the config file names Playwright looks for.

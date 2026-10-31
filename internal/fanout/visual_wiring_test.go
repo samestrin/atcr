@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -59,6 +60,7 @@ func (a *orderAuthor) Complete(_ context.Context, prompt string) (string, error)
 type orderBrowser struct {
 	log *callLog
 	run BrowserRun
+	err error // when set, Run fails with it
 }
 
 func (b *orderBrowser) Name() string                    { return "fake-browser" }
@@ -66,6 +68,9 @@ func (b *orderBrowser) Preflight(context.Context) error { return nil }
 func (b *orderBrowser) Run(_ context.Context, run BrowserRun) (BrowserResult, error) {
 	b.log.add("browser")
 	b.run = run
+	if b.err != nil {
+		return BrowserResult{}, b.err
+	}
 	return BrowserResult{Backend: b.Name(), Screenshots: []BrowserScreenshot{{Name: "home", Path: "home.png", Data: []byte("\x89PNG\r\n\x1a\nfake")}}}, nil
 }
 
@@ -140,6 +145,46 @@ func TestVisualStage_StopsAtTheFirstFailingStep(t *testing.T) {
 	_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: repo, RunID: "r1"})
 	require.ErrorIs(t, err, ErrSpecExists)
 	assert.Empty(t, l.get(), "neither the browser nor the review runs after call 1 fails")
+}
+
+// A browser error quotes text the run produced (sandbox output, Playwright's
+// report-level errors), so it passes the stage's secret_guard before it is
+// returned: block replaces it with the guard's error, redact masks the secret,
+// and either way the backend's own error stays matchable with errors.Is.
+func TestVisualStage_GuardsTheBrowserError(t *testing.T) {
+	browserErr := fmt.Errorf("%w: no JSON report (exit 1): token=%s", ErrNoPlaywrightProject, guardAWSKey)
+	cases := []struct {
+		policy  string
+		wantIs  error
+		wantHas string
+	}{
+		{secretGuardBlock, ErrSecretGuardBlocked, "browser error"},
+		{secretGuardRedact, ErrNoPlaywrightProject, payload.SecretPlaceholder},
+	}
+	for _, tc := range cases {
+		t.Run(tc.policy, func(t *testing.T) {
+			stage, l, _, browser, _ := newOrderStage(t)
+			stage.Settings.SecretGuard = tc.policy
+			browser.err = browserErr
+
+			_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
+			require.Error(t, err)
+			require.ErrorIs(t, err, tc.wantIs)
+			assert.NotContains(t, err.Error(), guardAWSKey)
+			assert.Contains(t, err.Error(), tc.wantHas)
+			assert.Contains(t, err.Error(), "visual review: browser fake-browser")
+			assert.Equal(t, []string{"author", "browser"}, l.get(), "the review call does not run after the browser fails")
+		})
+	}
+
+	t.Run(secretGuardOff, func(t *testing.T) {
+		stage, _, _, browser, _ := newOrderStage(t)
+		stage.Settings.SecretGuard = secretGuardOff
+		browser.err = browserErr
+		_, err := stage.RunVisual(context.Background(), VisualStageInput{RepoDir: t.TempDir(), RunID: "r1"})
+		require.ErrorIs(t, err, ErrNoPlaywrightProject)
+		assert.Contains(t, err.Error(), guardAWSKey, "off leaves the text unchanged")
+	})
 }
 
 func TestVisualSpecRunID_MapsAReviewIDToTheSpecNamePattern(t *testing.T) {
