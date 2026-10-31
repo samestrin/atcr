@@ -300,3 +300,22 @@ func TestValidatePath_NilIndexNoSuggestion(t *testing.T) {
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 	assert.Empty(t, f.PathSuggestion)
 }
+
+// TestValidatePathIn_RootUnresolvedCountedOnceAndNeverWithIndeterminate: two
+// calls sharing a PathRun against one unresolvable root count the root fault
+// once, and the run never also increments the indeterminate counter.
+func TestValidatePathIn_RootUnresolvedCountedOnceAndNeverWithIndeterminate(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	var run PathRun
+	a := Finding{File: "child.go", Line: 3}
+	b := Finding{File: "notadir/child.go"}
+	ValidatePathIn(&run, &a, root, nil)
+	ValidatePathIn(&run, &b, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value())
+}
