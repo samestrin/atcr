@@ -46,8 +46,9 @@ type VisualArtifacts struct {
 // and returns ErrSecretGuardBlocked, and redact writes the redacted text.
 // Screenshot pixels are not scanned. File names come from the runner's
 // attachment names through visualEvidenceName, so none can leave visual/.
-// Nothing is written, and no visual/ is created, when reviewDir is empty or
-// res holds no screenshot bytes.
+// Console and failed-request text is persisted even when res holds no
+// screenshot bytes. Nothing is written, and no visual/ is created, when
+// reviewDir is empty or res holds no screenshot bytes and no captured text.
 func persistVisualEvidence(policy, reviewDir string, res BrowserResult) (VisualArtifacts, error) {
 	var shots []BrowserScreenshot
 	for _, sc := range res.Screenshots {
@@ -55,7 +56,7 @@ func persistVisualEvidence(policy, reviewDir string, res BrowserResult) (VisualA
 			shots = append(shots, sc)
 		}
 	}
-	if reviewDir == "" || len(shots) == 0 {
+	if reviewDir == "" || (len(shots) == 0 && len(res.Console) == 0 && len(res.NetworkFailures) == 0) {
 		return VisualArtifacts{}, nil
 	}
 	guarded, err := guardSecrets(policy, VisualPersonaName,

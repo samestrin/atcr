@@ -344,7 +344,9 @@ func neutraliseChunkBoundary(content string) string {
 type chunkBin struct {
 	content  string
 	salvaged bool
-	onStop   bool
+	// onStop mirrors Result.SalvagedOnStop for this bin: the salvage finished on a
+	// stop reason, not a length cutoff.
+	onStop bool
 }
 
 // mergeResultGroup folds N chunk results for one persona into a single result.
