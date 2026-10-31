@@ -71,7 +71,7 @@ func TestBuildSlots_ChunkedZeroBudgetHonorsOnOverflowFallback(t *testing.T) {
 // The `len(mp.Entries) > 0` half of the policy gate, pinned. The comment above it
 // claims the chunked and bulk arms "must agree on WHEN the policy fires, not only on
 // what it does once it fires" — the bulk arm gates its whole zero-budget block on a
-// non-empty entry list (review.go:1966), so a chunked payload carrying no entries must
+// non-empty entry list (review.go:1969), so a chunked payload carrying no entries must
 // likewise pass through untouched. Without this the guard survives replacement with a
 // literal `true` against the whole package, and an entry-less chunked payload
 // hard-fails the run under on_overflow fail/fallback — the exact divergence from the

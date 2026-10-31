@@ -1679,7 +1679,7 @@ const PrefetchContextPath = "<context>"
 // file count.) The per-agent
 // re-derivations in internal/fanout's buildSlots now apply the same rule — the
 // zero-budget keepSmallestEntry arm was the last holdout — so every reader of
-// FileCount agrees. See ReviewableCount (internal/fanout/review.go:3096-3103).
+// FileCount agrees. See ReviewableCount (internal/fanout/review.go:3099-3106).
 func newPrefetchEntry(section string) FileEntry {
 	// exemptRank 0 is BELOW the claim ledger's 1, stated explicitly rather than
 	// left to the zero value: when a budget cannot fund both synthetic sections,

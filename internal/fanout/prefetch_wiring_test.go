@@ -416,6 +416,15 @@ func TestBuildScopedPayloads_ThreatMapStripsPrefetchContext(t *testing.T) {
 		assert.Falsef(t, hasPrefetchEntry(mp), "mode %s: a mapper-dropped file's context must not reach a prompt", mode)
 	}
 
+	all, _, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{keep: []string{"store.go", "other.go"}}})
+	require.NoError(t, err)
+	carries = false
+	for _, mp := range all {
+		carries = carries || hasPrefetchEntry(mp)
+	}
+	assert.True(t, carries, "a keep-all map drops nothing, so the context stays")
+
 	failed, _, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
 		threatScope{mapper: &fakeMapper{err: assert.AnError}})
 	require.NoError(t, err)

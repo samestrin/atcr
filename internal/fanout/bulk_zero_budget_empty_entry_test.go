@@ -27,7 +27,7 @@ func zeroBudgetPayloadWithEmptyFile() map[string]modePayload {
 // The zero-budget BULK arm must never ship a 0-byte payload.
 //
 // Epic 35.16.5.4 fixed this on the fallback re-fit path (keepSmallestEntry skips
-// empty bodies), but the unchanged bulk arm at review.go:1940 still called
+// empty bodies), but the unchanged bulk arm at review.go:1943 still called
 // smallestEntry, which picks purely by len(Body) and therefore selects a 0-byte
 // file whenever the payload holds one. That dispatches an empty prompt, which
 // comes back as a false-clean "no findings" review — the identical failure one

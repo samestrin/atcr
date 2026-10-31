@@ -527,7 +527,7 @@ func zeroBudgetVerdict(model string, window, maxTokens, probeMaxTokens int, stat
 	// its cap, so the hint names it: the window the operator sees can hold the
 	// cap alone, and "no input budget" would otherwise read as a wrong sum.
 	// One wording for both lanes: review's zero-budget warnings print the same
-	// clause from the same helper (`ReasoningReserveClause`, internal/fanout/review.go:2750),
+	// clause from the same helper (`ReasoningReserveClause`, internal/fanout/review.go:2753),
 	// so doctor cannot describe a reservation review states differently.
 	reserveClause := payload.ReasoningReserveClause(toolLoop, maxTokens)
 	lead := "endpoint is healthy, but"

@@ -636,7 +636,7 @@ func TestClaimLedger_RefitBelowTheFilesCombinedBytesDropsIt(t *testing.T) {
 
 	for _, fb := range s.Fallbacks {
 		// fb.rePacked, NOT fb.Truncation.Truncated: fbTrunc is initialized from the
-		// PRIMARY's truncation (internal/fanout/review.go:3140), so Truncated is
+		// PRIMARY's truncation (internal/fanout/review.go:3143), so Truncated is
 		// already true whenever the primary shed a file and no re-fit ran at all.
 		// Only rePacked is set by the re-fit arm itself, so only rePacked can carry
 		// the precondition this message states.
@@ -647,7 +647,7 @@ func TestClaimLedger_RefitBelowTheFilesCombinedBytesDropsIt(t *testing.T) {
 		// that this reviewer adjudicated no claims, and neither band test asserted
 		// either — so the third exception was proven to HAPPEN and not proven to be
 		// REPORTED. rp.fits holds in both bands, so the action is truncate rather
-		// than overflow (review.go:3499-3501).
+		// than overflow (review.go:3502-3504).
 		assert.True(t, fb.Truncation.Truncated,
 			"a re-fit that shed reviewable content must say so in the published shed record")
 		assert.Equal(t, degradationTruncate, fb.DegradationAction,
