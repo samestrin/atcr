@@ -115,6 +115,20 @@ func TestMap_OddPathsAreOneJSONStringPerLine(t *testing.T) {
 		fc.prompts, "each path is exactly one line of the payload")
 }
 
+// A model may read U+2028 or U+2029 as a line break, so a path holding one is
+// quoted too, with the separator escaped.
+func TestMap_LineSeparatorPathsAreQuoted(t *testing.T) {
+	paths := []string{"a.go", "line\u2028sep.go", "para\u2029sep.go"}
+	fc := &fakeCompleter{persona: testPersona, reply: `{"keep": ["line\u2028sep.go", "para\u2029sep.go"]}`}
+
+	keep, err := Map(context.Background(), fc, paths)
+
+	require.NoError(t, err)
+	require.Equal(t, paths[1:], keep)
+	require.Equal(t, []string{"map these 3 files for nora:\na.go\n" +
+		`"line\u2028sep.go"` + "\n" + `"para\u2029sep.go"` + "\n"}, fc.prompts)
+}
+
 // Every failure returns an error and no paths: the caller reads an error as
 // "keep every file", so none of these may trim anything.
 func TestMap_FailuresReturnAnError(t *testing.T) {
@@ -144,6 +158,10 @@ func TestMap_FailuresReturnAnError(t *testing.T) {
 		{"unclosed object", &fakeCompleter{reply: `{"keep": ["auth.go"]`}},
 		{"unclosed fence", &fakeCompleter{reply: "```json\n{\"keep\": [\"auth.go\"]}\n"}},
 		{"fence label with punctuation", &fakeCompleter{reply: "```json{\n\"keep\": [\"auth.go\"]}\n```"}},
+		// The body is a well-formed reply, so only the fence label rejects these.
+		{"punctuation label around a good reply", &fakeCompleter{reply: "```json{\n{\"keep\": [\"auth.go\"]}\n```"}},
+		{"two-word label around a good reply", &fakeCompleter{reply: "```json reply\n{\"keep\": [\"auth.go\"]}\n```"}},
+		{"hyphenated label around a good reply", &fakeCompleter{reply: "```js-on\n{\"keep\": [\"auth.go\"]}\n```"}},
 		{"empty keep", &fakeCompleter{reply: `{"keep": []}`}},
 		{"only unknown paths", &fakeCompleter{reply: `{"keep": ["evil.go", "../auth.go", "./auth.go"]}`}},
 	}
