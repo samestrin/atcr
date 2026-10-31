@@ -96,7 +96,7 @@ func payloadLines(paths []string) string {
 // needsQuoting reports the runes encoding/json escapes inside a string, other
 // than the HTML ones it escapes only for safe embedding in a page.
 func needsQuoting(r rune) bool {
-	return r < 0x20 || r == '"' || r == '\\' || r == ' ' || r == ' '
+	return r < 0x20 || r == '"' || r == '\\' || r == '\u2028' || r == '\u2029'
 }
 
 // parseReply strictly decodes the mapper reply: one JSON object, bare or in a
@@ -104,7 +104,6 @@ func needsQuoting(r rune) bool {
 // no duplicate), holding a list of strings, and nothing after it. It returns
 // the named paths as a set.
 func parseReply(text string) (map[string]bool, error) {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
 	body, err := unfence(strings.TrimSpace(text))
 	if err != nil {
 		return nil, err
@@ -152,7 +151,8 @@ func parseReply(text string) (map[string]bool, error) {
 // unfence strips one surrounding ``` fence whose info string, if any, is one
 // alphanumeric word (```json, ```JSON, ``` json). Text that opens a fence
 // without closing it is malformed; text with no fence is returned unchanged.
-// The caller has already turned CRLF line ends into LF.
+// CRLF line ends need no rewrite: the trims on the opening line and the body
+// drop each CR, and the JSON decoder reads a CR between tokens as space.
 func unfence(text string) (string, error) {
 	if !strings.HasPrefix(text, "```") {
 		return text, nil
