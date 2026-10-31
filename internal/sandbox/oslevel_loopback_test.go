@@ -189,3 +189,48 @@ func TestOSLevelBackendRun_LoopbackPortHeldByTheHost(t *testing.T) {
 		})
 	}
 }
+
+// localNonLoopbackIPv4 returns an address of this host that is not loopback,
+// or "" when it has none.
+func localNonLoopbackIPv4(t *testing.T) string {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	require.NoError(t, err)
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLoopback() && !ipn.IP.IsLinkLocalUnicast() {
+			return ipn.IP.String()
+		}
+	}
+	return ""
+}
+
+func TestCheckLoopbackPortsFree_CoversTheHostsOwnAddresses(t *testing.T) {
+	// Measured on the macOS CI runner (PR #753, first run): under a grant on
+	// port P, the workload connected to a host listener on the runner's own
+	// LAN address at port P. sandbox-exec's "localhost" covers traffic macOS
+	// routes over lo0, which includes the host's own interface addresses. So a
+	// host service bound only to a LAN address is reachable through the grant,
+	// and the held-port check has to look there too, not just at 127.0.0.1.
+	ip := localNonLoopbackIPv4(t)
+	if ip == "" {
+		t.Skip("this host has no non-loopback IPv4 address")
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(ip, "0"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	err = checkLoopbackPortsFree([]int{port})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "got %v", err)
+	assert.Contains(t, err.Error(), ip, "the refusal must name the address that answered")
+}
