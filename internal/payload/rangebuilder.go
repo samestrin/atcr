@@ -76,6 +76,9 @@ type RangeBuilder struct {
 //   - Truncated: were claims shed at a cap, so the ledger is incomplete?
 //   - Failed: did the read ERROR (as opposed to finding nothing)?
 //   - Disabled: did the operator turn the feature off via max_claim_bytes: 0?
+//   - ThreatMapDropped: how many claims did ScopeClaimLedger remove because
+//     their commits touched only files the threat map dropped? Claims then
+//     counts what was delivered, not what was read.
 //
 // Failed and Disabled are separate on purpose: "we could not read it" and "you
 // told us not to" are opposite operational signals, and collapsing them into
@@ -86,6 +89,8 @@ type ClaimLedgerStatus struct {
 	Truncated bool `json:"truncated,omitempty"`
 	Failed    bool `json:"failed,omitempty"`
 	Disabled  bool `json:"disabled,omitempty"`
+	// ThreatMapDropped is set by ScopeClaimLedger; zero when nothing was scoped.
+	ThreatMapDropped int `json:"threat_map_dropped,omitempty"`
 }
 
 // ClaimLedgerStatus returns the range's claim-ledger outcome. Call it after a

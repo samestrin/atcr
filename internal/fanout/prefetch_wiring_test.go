@@ -438,6 +438,75 @@ func TestBuildScopedPayloads_ThreatMapStripsPrefetchContext(t *testing.T) {
 	assert.True(t, carries, "a fail-open mapper keeps prefetch on")
 }
 
+// claimLedgerBody returns the claim-ledger body a mode payload carries, or ""
+// when it carries none.
+func claimLedgerBody(mp modePayload) string {
+	for _, e := range mp.Entries {
+		if e.Path == payload.ClaimLedgerPath {
+			return e.Body
+		}
+	}
+	return ""
+}
+
+// The claim ledger is shed-exempt, so TrimToPaths keeps it whole. A mapper
+// that drops store.go must take the claims of the commit that only touched
+// store.go with it: no reviewer is sent that file, so every one of them would
+// rule those claims UNSUPPORTED. The claims of a commit that touched a kept
+// file stay, and a keep-all map or a fail-open mapper leaves the ledger whole.
+func TestBuildScopedPayloads_ThreatMapScopesTheClaimLedger(t *testing.T) {
+	dir, base, head := scopedPrefetchRepo(t)
+	cfg := sizingRosterConfig()
+	const storeClaim, otherClaim = "ReadStore() now returns a string", "add other"
+
+	assertLedger := func(t *testing.T, payloads map[string]modePayload, want, notWant []string) {
+		t.Helper()
+		require.NotEmpty(t, payloads)
+		for mode, mp := range payloads {
+			body := claimLedgerBody(mp)
+			for _, c := range want {
+				assert.Containsf(t, body, c, "mode %s: the ledger must keep %q", mode, c)
+			}
+			for _, c := range notWant {
+				assert.NotContainsf(t, body, c, "mode %s: the ledger must drop %q", mode, c)
+			}
+		}
+	}
+
+	unscoped, rb, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false, threatScope{})
+	require.NoError(t, err)
+	assertLedger(t, unscoped, []string{storeClaim, otherClaim}, nil)
+	whole := rb.ClaimLedgerStatus()
+	require.True(t, whole.Present, "PRECONDITION: the fixture must carry a claim ledger")
+
+	scoped, rb, rec, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{keep: []string{"other.go"}}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"store.go"}, rec.Dropped)
+	assertLedger(t, scoped, []string{otherClaim}, []string{storeClaim, "change the store return shape"})
+	st := rb.ClaimLedgerStatus()
+	assert.True(t, st.Present)
+	assert.Less(t, st.Claims, whole.Claims, "the manifest must count the claims delivered, not the claims read")
+	assert.Equal(t, whole.Claims-st.Claims, st.ThreatMapDropped, "the manifest must say how many claims the threat map removed")
+
+	keepStore, _, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{keep: []string{"store.go"}}})
+	require.NoError(t, err)
+	assertLedger(t, keepStore, []string{storeClaim}, []string{otherClaim})
+
+	all, rb, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{keep: []string{"store.go", "other.go"}}})
+	require.NoError(t, err)
+	assertLedger(t, all, []string{storeClaim, otherClaim}, nil)
+	assert.Equal(t, whole, rb.ClaimLedgerStatus(), "a keep-all map drops nothing, so the ledger stays whole")
+
+	failed, rb, _, err := buildScopedPayloads(context.Background(), cfg, dir, base, head, false,
+		threatScope{mapper: &fakeMapper{err: assert.AnError}})
+	require.NoError(t, err)
+	assertLedger(t, failed, []string{storeClaim, otherClaim}, nil)
+	assert.Equal(t, whole, rb.ClaimLedgerStatus(), "a fail-open mapper leaves the ledger whole")
+}
+
 // When the threat map drops a file, buildScopedPayloads strips the Context
 // Definitions block from every mode on purpose. The manifest must then stop
 // claiming a delivered block, name the threat map as the cause, and the run
