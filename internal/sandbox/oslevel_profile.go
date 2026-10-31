@@ -79,6 +79,48 @@ const (
 	profileAllowRootRead = `(allow file-read* (literal "/"))`
 )
 
+// loopbackRules is the whole of the network a darwin run may use: for each of
+// RunSpec.LoopbackPorts, binding and accepting on that loopback port and
+// connecting to it. Nothing else is granted, so with no ports the profile stays
+// deny-all.
+//
+// The containment judgement (epic 100 T4b): sandbox-exec has no network
+// namespace, so the run's loopback is the HOST's, where the operator's local
+// database, the LLM proxy that holds API keys and dev tooling also listen. A
+// blanket `(allow network* (local ip "localhost:*"))` would hand all of them to
+// model-authored code. The rules are therefore as narrow as the profile
+// language allows:
+//
+//   - port-scoped: each names one port, never "*";
+//   - host-scoped: "localhost" is the only host the filter accepts besides
+//     "*", so a wildcard bind and a connect off the host stay denied. It is
+//     NOT limited to 127.0.0.1/::1: measured on the macOS CI runner, it also
+//     covers the host's own interface addresses, whose traffic macOS routes
+//     over lo0;
+//   - TCP only: `tcp`, not `ip`, so UDP stays denied on the same port, and unix
+//     sockets (a `path` filter, not a `tcp` one) stay denied too;
+//   - both directions on purpose: the server half binds and accepts, the
+//     browser half connects, and both run inside the same sandboxed run.
+//
+// What the rules cannot express is "only to a socket this run bound". A host
+// process already listening on a granted port, at loopback or at any of the
+// host's own addresses, would be reachable, so Run checks every one of them
+// and refuses (ErrOSLevelLoopbackPortHeld). The window between
+// that check and the workload's bind is open; the grant is opt-in per run for
+// that reason, and no caller sets it by default.
+func loopbackRules(ports []int) []string {
+	rules := make([]string, 0, 3*len(ports))
+	for _, p := range ports {
+		addr := fmt.Sprintf(`"localhost:%d"`, p)
+		rules = append(rules,
+			"(allow network-bind (local tcp "+addr+"))",
+			"(allow network-inbound (local tcp "+addr+"))",
+			"(allow network-outbound (remote tcp "+addr+"))",
+		)
+	}
+	return rules
+}
+
 // profileRuntimeAllows are the runtime rules that do not depend on the run. The
 // exec and map-executable rules do (they name the run's snapshot and scratch
 // trees), so sandboxExecProfile emits them from execRule/mapExecutableRule.
@@ -343,7 +385,8 @@ func darwinSourceProtectedDirs() []string {
 }
 
 // sandboxExecProfile builds the macOS sandbox-exec profile for spec: deny by
-// default, an explicit network denial, a read-only view of the snapshot and of
+// default, an explicit network denial (narrowed only by RunSpec.LoopbackPorts,
+// see loopbackRules), a read-only view of the snapshot and of
 // the system/toolchain tier, and write access confined to cfg.ScratchDir and
 // /tmp.
 //
@@ -453,6 +496,9 @@ func sandboxExecProfile(cfg OSLevelConfig, spec RunSpec) (string, error) {
 	b.WriteString(profileVersion + "\n")
 	b.WriteString(profileDenyDefault + "\n")
 	b.WriteString(profileDenyNetwork + "\n")
+	for _, rule := range loopbackRules(spec.LoopbackPorts) {
+		b.WriteString(rule + "\n")
+	}
 	b.WriteString(execRule(snapshot, scratch) + "\n")
 	for _, rule := range profileRuntimeAllows {
 		b.WriteString(rule + "\n")
