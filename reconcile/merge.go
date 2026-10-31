@@ -46,14 +46,31 @@ const CategoryOutOfScope = "out-of-scope"
 // ConfidenceDiscount is the reason Merge lowered Confidence below what
 // ConfidenceFor gives the reviewer count, and is empty when it did not: today
 // only PanelWideReason, set when the group is in the panel-wide-instruction
-// class (IsPanelWide, ConfidenceForCategory). Only Merge can decide it, because
-// the test reads each member's file and evidence and the merged record keeps
-// neither, so an embedder that wants to record the discount copies it from here.
-// Like SourceCategories it is in-process and never serialized.
+// class (IsPanelWideQuotes, DiscountedConfidence). An embedder that wants to
+// record the discount copies it from here.
+//
+// SourceQuotes is the provenance the independence test reads: each source
+// finding's reviewer, file, category and evidence, in group order. The merged
+// Evidence joins the quotes into one string, which cannot be split back
+// reliably, so an embedder that re-tests independence after a later merge (a
+// union of reconciled records) unions these and calls IsPanelWideQuotes, the
+// predicate Merge itself used. Like SourceCategories, both fields are
+// in-process and never serialized.
 type Merged struct {
 	Finding
 	SourceCategories   []SourceCategory `json:"-"`
 	ConfidenceDiscount string           `json:"-"`
+	SourceQuotes       []SourceQuote    `json:"-"`
+}
+
+// SourceQuote is one source finding as the panel-wide independence test sees
+// it. Reviewer and Category are normalized exactly as in SourceCategory; File
+// and Evidence are the finding's own, unmodified.
+type SourceQuote struct {
+	Reviewer string `json:"reviewer"`
+	File     string `json:"file"`
+	Category string `json:"category"`
+	Evidence string `json:"evidence"`
 }
 
 // SourceCategory is one source finding's own category in a merged cluster.
@@ -70,13 +87,13 @@ type SourceCategory struct {
 // the merge rules: REVIEWERS comma-joined+deduped+sorted; SEVERITY = max with a
 // "<lo> vs <hi>" disagreement when lower severities are present; PROBLEM/FIX =
 // longest; CATEGORY = modal (alpha tiebreak); EST_MINUTES = max; EVIDENCE =
-// reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count,
-// discounted to MEDIUM when the group is in the panel-wide-instruction class
-// (ConfidenceForCategory, IsPanelWide), in which case ConfidenceDiscount
-// records PanelWideReason.
+// reviewer-prefixed concatenation; CONFIDENCE and ConfidenceDiscount from
+// DiscountedConfidence over the distinct-reviewer count, discounted to MEDIUM
+// with PanelWideReason when the group is in the panel-wide-instruction class
+// (IsPanelWideQuotes).
 // The location is the first finding's file/line (the group is co-located within
-// the cluster window). SourceCategories records each finding's own category in
-// group order.
+// the cluster window). SourceCategories and SourceQuotes record each finding's
+// own category and quote in group order.
 //
 // Input Verification blocks are intentionally NOT propagated: Verification is
 // stamped post-reconcile by the caller after the verify stage resolves verdicts.
@@ -88,11 +105,8 @@ func Merge(group []Finding) Merged {
 	maxSev, disagreement := MergeSeverity(group)
 
 	category := ModalCategory(group)
-	confidence := ConfidenceForCategory(len(reviewers), category, !IsPanelWide(group))
-	discount := ""
-	if confidence != ConfidenceFor(len(reviewers)) {
-		discount = PanelWideReason
-	}
+	quotes := sourceQuotes(group)
+	confidence, discount := DiscountedConfidence(len(reviewers), category, !IsPanelWideQuotes(quotes))
 
 	m := Finding{
 		Severity:     maxSev,
@@ -107,7 +121,22 @@ func Merge(group []Finding) Merged {
 		Confidence:   confidence,
 		Disagreement: disagreement,
 	}
-	return Merged{Finding: m, SourceCategories: sourceCategories(group), ConfidenceDiscount: discount}
+	return Merged{Finding: m, SourceCategories: sourceCategories(group), ConfidenceDiscount: discount, SourceQuotes: quotes}
+}
+
+// sourceQuotes returns each finding's quote, in group order, normalized as
+// SourceQuote documents.
+func sourceQuotes(group []Finding) []SourceQuote {
+	out := make([]SourceQuote, 0, len(group))
+	for _, f := range group {
+		out = append(out, SourceQuote{
+			Reviewer: strings.ReplaceAll(f.Reviewer, ",", ""),
+			File:     f.File,
+			Category: strings.ToLower(strings.TrimSpace(f.Category)),
+			Evidence: f.Evidence,
+		})
+	}
+	return out
 }
 
 // sourceCategories returns each finding's own category, in group order, with
@@ -285,22 +314,35 @@ func ConfidenceFor(reviewerCount int) string {
 	return ConfMedium
 }
 
-// ConfidenceForCategory is ConfidenceFor with the panel-wide-instruction
-// discount (epic 35.16.17): agreement among 2+ reviewers on a CategoryInvariant
-// finding counts as corroboration only when it is independent. When it is not
-// (independent is false; Merge passes !IsPanelWide(group)) the reviewers were all
-// told to look there, so the finding is MEDIUM instead of HIGH. It is discounted,
-// never dropped. Any other category, and any independent agreement, gets exactly
-// ConfidenceFor(reviewerCount). The category is matched the way ModalCategory
-// canonicalizes it.
+// DiscountedConfidence is ConfidenceFor with the panel-wide-instruction
+// discount (epic 35.16.17), returning the confidence together with the reason
+// it was discounted, or an empty reason when it was not. It is the one place a
+// discount and its reason are decided, so every caller that records a reason
+// (Merge, and an embedder's own merge or recompute) takes it from here rather
+// than inferring it by comparing the result to ConfidenceFor: a second discount
+// class gets its own reason here instead of being mislabeled.
+//
+// Agreement among 2+ reviewers on a CategoryInvariant finding counts as
+// corroboration only when it is independent. When it is not (independent is
+// false; Merge passes !IsPanelWideQuotes of its quotes) the reviewers were all
+// told to look there, so the finding is MEDIUM instead of HIGH, with
+// PanelWideReason. It is discounted, never dropped. Any other category, and any
+// independent agreement, gets exactly ConfidenceFor(reviewerCount) and no
+// reason. The category is matched the way ModalCategory canonicalizes it.
 //
 // A singleton is never discounted, so a single-reviewer finding in the class that
 // promoteByAuthority lifts to HIGH stays HIGH: its reviewer's run authority was
 // earned by agreeing with other models elsewhere in the run, which is independent
 // signal, not the panel-wide instruction.
-func ConfidenceForCategory(reviewerCount int, category string, independent bool) string {
+func DiscountedConfidence(reviewerCount int, category string, independent bool) (confidence, reason string) {
 	if reviewerCount >= 2 && !independent && strings.ToLower(strings.TrimSpace(category)) == CategoryInvariant {
-		return ConfMedium
+		return ConfMedium, PanelWideReason
 	}
-	return ConfidenceFor(reviewerCount)
+	return ConfidenceFor(reviewerCount), ""
+}
+
+// ConfidenceForCategory is DiscountedConfidence without the reason.
+func ConfidenceForCategory(reviewerCount int, category string, independent bool) string {
+	confidence, _ := DiscountedConfidence(reviewerCount, category, independent)
+	return confidence
 }
