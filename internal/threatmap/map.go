@@ -47,7 +47,7 @@ func Map(ctx context.Context, completer Completer, paths []string) ([]string, er
 	prompt, err := payload.RenderPrompt(persona, payload.PayloadContext{
 		AgentName: personas.ThreatMapperName,
 		FileCount: len(paths),
-		Payload:   strings.Join(paths, "\n"),
+		Payload:   payloadLines(paths),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("threatmap: render mapper persona: %w", err)
@@ -75,15 +75,36 @@ func Map(ctx context.Context, completer Completer, paths []string) ([]string, er
 	return keep, nil
 }
 
-// reply is the one shape the mapper persona asks for: {"keep": [...]}.
-type reply struct {
-	Keep *[]string `json:"keep"`
+// payloadLines lists one path per line. A path a model could not copy back
+// from a bare line (one holding a quote, a backslash or a control character
+// such as a newline, or with surrounding space) is written as a JSON string
+// instead, so it still takes exactly one line and the reply's JSON decodes it
+// back to the same path. A bare line never starts with a quote, so the two
+// forms cannot be confused.
+func payloadLines(paths []string) string {
+	lines := make([]string, len(paths))
+	for i, p := range paths {
+		lines[i] = p
+		if p == "" || p != strings.TrimSpace(p) || strings.ContainsFunc(p, needsQuoting) {
+			q, _ := json.Marshal(p) // a string always marshals
+			lines[i] = string(q)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// needsQuoting reports the runes encoding/json escapes inside a string, other
+// than the HTML ones it escapes only for safe embedding in a page.
+func needsQuoting(r rune) bool {
+	return r < 0x20 || r == '"' || r == '\\' || r == ' ' || r == ' '
 }
 
 // parseReply strictly decodes the mapper reply: one JSON object, bare or in a
-// single ``` fence, with only the "keep" key holding a list of strings, and
-// nothing after it. It returns the named paths as a set.
+// single ``` fence, with exactly one key, the literal "keep" (no case variant,
+// no duplicate), holding a list of strings, and nothing after it. It returns
+// the named paths as a set.
 func parseReply(text string) (map[string]bool, error) {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	body, err := unfence(strings.TrimSpace(text))
 	if err != nil {
 		return nil, err
@@ -91,36 +112,66 @@ func parseReply(text string) (map[string]bool, error) {
 	if body == "" {
 		return nil, errors.New("empty reply")
 	}
+	// encoding/json matches struct keys case-insensitively and keeps the last
+	// of two equal keys, so the object is walked key by key instead.
 	dec := json.NewDecoder(strings.NewReader(body))
-	dec.DisallowUnknownFields()
-	var r reply
-	if err := dec.Decode(&r); err != nil {
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, errors.New(`not a {"keep": [...]} object`)
+	}
+	var keep *[]string
+	seen := false
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("not a {\"keep\": [...]} object: %w", err)
+		}
+		if key, _ := tok.(string); key != "keep" || seen {
+			return nil, fmt.Errorf(`unexpected key %q: the only key is one "keep"`, tok)
+		}
+		seen = true
+		if err := dec.Decode(&keep); err != nil {
+			return nil, fmt.Errorf("not a {\"keep\": [...]} object: %w", err)
+		}
+	}
+	if _, err := dec.Token(); err != nil {
 		return nil, fmt.Errorf("not a {\"keep\": [...]} object: %w", err)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("unexpected data after the JSON object")
 	}
-	if r.Keep == nil {
+	if keep == nil {
 		return nil, errors.New(`missing "keep" list`)
 	}
-	named := make(map[string]bool, len(*r.Keep))
-	for _, p := range *r.Keep {
+	named := make(map[string]bool, len(*keep))
+	for _, p := range *keep {
 		named[p] = true
 	}
 	return named, nil
 }
 
-// unfence strips one surrounding ``` or ```json fence. Text that opens a fence
+// unfence strips one surrounding ``` fence whose info string, if any, is one
+// alphanumeric word (```json, ```JSON, ``` json). Text that opens a fence
 // without closing it is malformed; text with no fence is returned unchanged.
+// The caller has already turned CRLF line ends into LF.
 func unfence(text string) (string, error) {
 	if !strings.HasPrefix(text, "```") {
 		return text, nil
 	}
 	open, rest, found := strings.Cut(text, "\n")
-	if !found || (open != "```" && open != "```json") || !strings.HasSuffix(rest, "```") {
+	if !found || !isFenceInfo(strings.TrimSpace(strings.TrimPrefix(open, "```"))) || !strings.HasSuffix(rest, "```") {
 		return "", errors.New("malformed code fence")
 	}
 	return strings.TrimSpace(strings.TrimSuffix(rest, "```")), nil
+}
+
+// isFenceInfo reports whether info is empty or ASCII letters and digits only.
+func isFenceInfo(info string) bool {
+	for _, r := range info {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // LLM is the provider call an Agent makes. *llmclient.Client satisfies it.

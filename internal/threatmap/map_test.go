@@ -140,6 +140,8 @@ func TestMap_FailuresReturnAnError(t *testing.T) {
 		{"mixed-case key", &fakeCompleter{reply: `{"Keep": ["auth.go"]}`}},
 		{"duplicate keep", &fakeCompleter{reply: `{"keep": ["style.css"], "keep": ["auth.go"]}`}},
 		{"keep and a case variant", &fakeCompleter{reply: `{"keep": ["auth.go"], "KEEP": ["style.css"]}`}},
+		{"missing comma", &fakeCompleter{reply: `{"keep": ["auth.go"] "x": 1}`}},
+		{"unclosed object", &fakeCompleter{reply: `{"keep": ["auth.go"]`}},
 		{"unclosed fence", &fakeCompleter{reply: "```json\n{\"keep\": [\"auth.go\"]}\n"}},
 		{"fence label with punctuation", &fakeCompleter{reply: "```json{\n\"keep\": [\"auth.go\"]}\n```"}},
 		{"empty keep", &fakeCompleter{reply: `{"keep": []}`}},
