@@ -62,6 +62,13 @@ func (b *lockedBuffer) String() string {
 // webhook.repos points at. It returns the checkout's absolute path.
 func whPRFixture(t *testing.T) string {
 	t.Helper()
+	return whPRFixtureWith(t, nil)
+}
+
+// whPRFixtureWith is whPRFixture with extra files (relative path to content)
+// committed on the PR head alongside a.txt.
+func whPRFixtureWith(t *testing.T, prFiles map[string]string) string {
+	t.Helper()
 	root := t.TempDir()
 	upstream := filepath.Join(root, "upstream")
 	require.NoError(t, os.MkdirAll(upstream, 0o755))
@@ -71,6 +78,11 @@ func whPRFixture(t *testing.T) string {
 	runFixtureGit(t, upstream, "commit", "-q", "-m", "main")
 	runFixtureGit(t, upstream, "checkout", "-q", "-b", "pr")
 	require.NoError(t, os.WriteFile(filepath.Join(upstream, "a.txt"), []byte("pr head\n"), 0o644))
+	for name, content := range prFiles {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(upstream, name)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(upstream, name), []byte(content), 0o644))
+		runFixtureGit(t, upstream, "add", name)
+	}
 	runFixtureGit(t, upstream, "commit", "-q", "-am", "pr")
 	out, err := fixtureGit(upstream, "rev-parse", "HEAD").Output()
 	require.NoError(t, err)
@@ -319,6 +331,54 @@ func TestWebhookCmd_ReviewRunsInPRWorktreeWithOperatorConfig(t *testing.T) {
 	assert.Equal(t, project, gotRoot)
 	assert.Equal(t, "pr head\n", gotContent, "the review runs on the PR head")
 	assert.Contains(t, p.Text, "1 HIGH")
+}
+
+// whUncheckedCallIgnoreRule suppresses the one finding liveMockProvider raises.
+const whUncheckedCallIgnoreRule = "rules:\n" +
+	"  - file: a.txt\n" +
+	"    category: security\n" +
+	"    match: Unchecked call\n" +
+	"    reason: the pull request says so\n"
+
+// runWebhookIgnoreReview runs the real webhook review of acme/widget#7 against
+// liveMockProvider and returns the Slack reply. prFiles are committed on the PR
+// head; operatorIgnore, when set, is the daemon's own .atcr/ignore.yaml.
+func runWebhookIgnoreReview(t *testing.T, prFiles map[string]string, operatorIgnore string) string {
+	t.Helper()
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	checkout := whPRFixtureWith(t, prFiles)
+	provider := liveMockProvider(t)
+	liveReviewConfig(t, provider.URL, "bruce")
+	writeWebhookConfig(t, whConfig(checkout))
+	if operatorIgnore != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(".atcr", "ignore.yaml"), []byte(operatorIgnore), 0o644))
+	}
+	slackSrv, posts := fakeSlack(t)
+	setWebhookEnv(t, slackSrv.URL)
+
+	base, stderr, stop := startWebhook(t)
+	postSignedMention(t, base, "Ev3", "<@B1> review <https://github.com/acme/widget/pull/7>")
+	p := waitPost(t, posts, stderr)
+	require.NoError(t, stop())
+	return p.Text
+}
+
+// TestWebhookCmd_PRHeadIgnoreRulesDoNotApply (epic 99 F1): the reviewed tree
+// is an untrusted pull request head, so an .atcr/ignore.yaml it ships must not
+// hide its own finding.
+func TestWebhookCmd_PRHeadIgnoreRulesDoNotApply(t *testing.T) {
+	text := runWebhookIgnoreReview(t, map[string]string{".atcr/ignore.yaml": whUncheckedCallIgnoreRule}, "")
+	assert.Contains(t, text, "1 CRITICAL", "the PR head's ignore rule must not suppress the finding")
+	assert.Contains(t, text, "Unchecked call")
+}
+
+// TestWebhookCmd_OperatorIgnoreRulesApply (epic 99 F1): the operator root's
+// .atcr/ignore.yaml is the one that applies, so its rule suppresses the finding.
+func TestWebhookCmd_OperatorIgnoreRulesApply(t *testing.T) {
+	text := runWebhookIgnoreReview(t, nil, whUncheckedCallIgnoreRule)
+	assert.Contains(t, text, "no findings.", "the operator's ignore rule suppresses the only finding")
+	assert.NotContains(t, text, "Unchecked call")
 }
 
 func TestWebhookCmd_RefusesWithoutWebhookBlock(t *testing.T) {
