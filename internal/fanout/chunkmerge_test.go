@@ -531,3 +531,110 @@ func TestCarryReviewed_KeepsCoverageMarkers(t *testing.T) {
 	assert.Equal(t, 2, st.UnreviewedFiles)
 	assert.Zero(t, st.DeferredFiles)
 }
+
+// Epic 90 T3: a successful merge frees the persona's prior artifacts, and a
+// failed one keeps them, because the Epic 78 T4 retry must rebuild from the
+// prior files as the interrupted run left them, not as the failed write did.
+func TestWriteMergedAgent_FreesPriorsOnlyOnSuccess(t *testing.T) {
+	entries := sixtyFourFiles()
+	for _, tc := range []struct {
+		name      string
+		failWrite bool
+	}{{"success", false}, {"failed write", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := originalRun(t, entries, 4)
+			poolDir := filepath.Join(dir, "sources", "pool")
+			slots := gretaBaselineSlots(t, entries[4:])
+			l := newChunkLedger(log.Discard(), poolDir, slots)
+			require.NotNil(t, l)
+			l.carryReviewed(readPriorChunkRecords(poolDir, slots))
+			carried := l.carriedFiles("greta")
+			require.NotEmpty(t, carried)
+			if tc.failWrite {
+				orig := writeStatusFn
+				t.Cleanup(func() { writeStatusFn = orig })
+				writeStatusFn = func(string, *AgentStatus) error {
+					return fmt.Errorf("simulated status.json write failure")
+				}
+			}
+
+			err := writeMergedAgent(poolDir, "greta", Result{Agent: "greta", Status: StatusOK}, nil, l, carried)
+
+			l.mu.Lock()
+			_, kept := l.priors["greta"]
+			l.mu.Unlock()
+			if tc.failWrite {
+				require.Error(t, err)
+				assert.True(t, kept, "a failed write keeps the priors for the retry")
+			} else {
+				require.NoError(t, err)
+				assert.False(t, kept, "a successful merge frees the priors")
+			}
+		})
+	}
+}
+
+// Epic 90 T3: priorFor reads outside the ledger mutex, so two first calls may
+// both read. The first to store wins: a call whose read finishes after another
+// call stored returns the stored copy and leaves it in place. The first call is
+// held inside its read (readPriorArtifactsFn) while the second reads a
+// different copy and stores it; without the store guard the first would return
+// and store its own copy. Run under -race.
+func TestPriorFor_ConcurrentFirstReadWins(t *testing.T) {
+	l := &chunkLedger{}
+	orig := readPriorArtifactsFn
+	t.Cleanup(func() { readPriorArtifactsFn = orig })
+	entered, release := make(chan struct{}), make(chan struct{})
+	readPriorArtifactsFn = func(agentDir, _ string) (priorArtifacts, error) {
+		if agentDir == "slow" {
+			close(entered)
+			<-release
+		}
+		return priorArtifacts{review: agentDir}, nil
+	}
+
+	var slow priorArtifacts
+	var slowErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		slow, slowErr = l.priorFor("greta", "slow", "greta")
+	}()
+	<-entered
+	fast, err := l.priorFor("greta", "fast", "greta")
+	require.NoError(t, err)
+	assert.Equal(t, "fast", fast.review)
+	close(release)
+	<-done
+
+	require.NoError(t, slowErr)
+	assert.Equal(t, "fast", slow.review, "the later store returns the stored copy")
+	l.mu.Lock()
+	stored := l.priors["greta"]
+	l.mu.Unlock()
+	assert.Equal(t, "fast", stored.review, "the stored copy is not overwritten")
+
+	// Once stored, later calls never read again.
+	again, err := l.priorFor("greta", "other", "greta")
+	require.NoError(t, err)
+	assert.Equal(t, "fast", again.review)
+}
+
+// priorFor reads the persona's real files on its first call and returns the
+// stored copy afterwards, even once a merge has rewritten them on disk.
+func TestPriorFor_ReadsOnceFromDisk(t *testing.T) {
+	entries := sixtyFourFiles()
+	dir := originalRun(t, entries, 4)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	agentDir := filepath.Join(poolDir, poolRawAgentDir, "greta")
+	l := newChunkLedger(log.Discard(), poolDir, gretaBaselineSlots(t, entries[4:]))
+	require.NotNil(t, l)
+
+	first, err := l.priorFor("greta", agentDir, "greta")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.findings)
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, reviewFile), []byte("rewritten"), 0o600))
+	again, err := l.priorFor("greta", agentDir, "greta")
+	require.NoError(t, err)
+	assert.Equal(t, first, again)
+}
