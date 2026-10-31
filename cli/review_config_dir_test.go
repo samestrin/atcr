@@ -25,8 +25,9 @@ func touchArgv(marker string) string {
 // fixture worktree (the CWD) while --config-dir names a second directory. The
 // config directory gets the live roster plus configDirExtra; the worktree's
 // .atcr/config.yaml is then replaced by worktreeConfig. It returns the exit
-// code, the combined output, and the fake GitHub client.
-func runReviewAutoFixWithConfigDir(t *testing.T, configDirExtra, worktreeConfig string) (int, string, *fakeGitHub) {
+// code, the combined output, and the fake GitHub client. Each setup, when
+// given, runs with the config directory's path once both trees exist.
+func runReviewAutoFixWithConfigDir(t *testing.T, configDirExtra, worktreeConfig string, setup ...func(configDir string)) (int, string, *fakeGitHub) {
 	t.Helper()
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
@@ -42,6 +43,9 @@ func runReviewAutoFixWithConfigDir(t *testing.T, configDirExtra, worktreeConfig 
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".atcr", "config.yaml"),
 		append(roster, []byte("consensus: off\n"+configDirExtra)...), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte(worktreeConfig), 0o644))
+	for _, fn := range setup {
+		fn(configDir)
+	}
 
 	oldResolve := resolveHeadSHAFn
 	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
@@ -84,6 +88,42 @@ func TestReviewCmd_ConfigDirNeverReadsWorktreeConfig(t *testing.T) {
 	require.Equal(t, 0, code, out)
 	require.Equal(t, 1, gh.createPR, out)
 	require.FileExists(t, marker)
+}
+
+// aTxtIgnoreRule suppresses the one finding autoFixDiffProvider raises.
+const aTxtIgnoreRule = "rules:\n" +
+	"  - file: a.txt\n" +
+	"    category: correctness\n" +
+	"    match: wrong word\n" +
+	"    reason: the pull request says so\n"
+
+// TestReviewCmd_ConfigDirIgnoresWorktreeIgnoreRules (epic 99 T1, TD
+// internal/reconcile/gate.go:259): under --config-dir the reviewed tree is an
+// untrusted pull request head, so an .atcr/ignore.yaml it ships must not hide
+// its own finding. The finding still reaches the auto-fix, which opens a PR.
+func TestReviewCmd_ConfigDirIgnoresWorktreeIgnoreRules(t *testing.T) {
+	code, out, gh := runReviewAutoFixWithConfigDir(t,
+		"auto_fix:\n  validate_command: [\"true\"]\n",
+		"agents: [solo]\nconsensus: off\n",
+		func(string) {
+			require.NoError(t, os.WriteFile(filepath.Join(".atcr", "ignore.yaml"), []byte(aTxtIgnoreRule), 0o644))
+		})
+	require.Equal(t, 0, code, out)
+	require.Equal(t, 1, gh.createPR, "the worktree's ignore rule must not suppress the finding: %s", out)
+}
+
+// TestReviewCmd_ConfigDirIgnoreRulesApply: the config directory's
+// .atcr/ignore.yaml is the one that applies, so its rule suppresses the finding
+// and the auto-fix has nothing to open a PR for.
+func TestReviewCmd_ConfigDirIgnoreRulesApply(t *testing.T) {
+	code, out, gh := runReviewAutoFixWithConfigDir(t,
+		"auto_fix:\n  validate_command: [\"true\"]\n",
+		"agents: [solo]\nconsensus: off\n",
+		func(configDir string) {
+			require.NoError(t, os.WriteFile(filepath.Join(configDir, ".atcr", "ignore.yaml"), []byte(aTxtIgnoreRule), 0o644))
+		})
+	require.Equal(t, 0, code, out)
+	require.Equal(t, 0, gh.createPR, "the config directory's ignore rule suppresses the only finding: %s", out)
 }
 
 // TestReviewCmd_ConfigDirMustBeADirectory: a missing or non-directory value is

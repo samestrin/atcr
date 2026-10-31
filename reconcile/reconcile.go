@@ -20,6 +20,14 @@ type Options struct {
 	// the result; the core reconcile pipeline does not read it. Empty disables that
 	// downstream concern.
 	Root string
+	// IgnoreRoot is the directory whose .atcr/ignore.yaml finding suppressions an
+	// embedder loads, when that is not Root. Root stays the reviewed tree for path
+	// validation and grouping; IgnoreRoot exists so a caller reviewing an
+	// untrusted tree (atcr's `review --config-dir`) can take suppressions from its
+	// own config directory, and a reviewed pull request cannot hide findings
+	// from its own review. Empty means the embedder falls back to Root. Like
+	// Root, it is carried, never read: the core pipeline does not suppress.
+	IgnoreRoot string
 	// Grouper, when non-nil, supplies the primary clustering signal (AST
 	// isomorphism): findings whose GroupKey matches cluster together regardless of
 	// line distance, and findings with an empty key fall back to line proximity.

@@ -227,7 +227,7 @@ func allUnverifiableCollapse(verPath string) error {
 	// think_markup_after_answer (invoke.go:204), think_only_reply (invoke.go:234),
 	// and ambiguous_unopened_closer (invoke.go:225). Name the FAMILY, not one member
 	// (TD internal/reconcile/gate.go:224).
-	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE, which no window fault and no truncation explains: a skeptic reply carrying think markup after its answer (think_markup_after_answer), a reply carrying only a think block (think_only_reply), or a reply carrying a bare closer with a verdict envelope on both sides (ambiguous_unopened_closer, since neither envelope is provably the committed one) all collapse to unverifiable. Note that 'atcr doctor' CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer — so doctor can name the markup without naming the ambiguity", len(vf.Findings))
+	return fmt.Errorf("all %d verdict(s) came back unverifiable; the gate counts only VERIFIED findings, so it will pass over every one of them. Run 'atcr doctor': the usual cause is an agent whose declared context_window_tokens cannot fund one tool read, which makes every check it runs unverifiable. A skeptic reply cut off on finish_reason=length (response_truncated) collapses to unverifiable the same way without any window fault, so check for it before blaming the declaration. A third cause is the reply SHAPE, which no window fault and no truncation explains: a skeptic reply carrying think markup after its answer (think_markup_after_answer), a reply carrying only a think block (think_only_reply), or a reply carrying a bare closer that leaves no verdict envelope provably committed (ambiguous_unopened_closer: an envelope on both sides of it, or a refuted one only before it) all collapse to unverifiable. Note that 'atcr doctor' CAN surface inline think markup, but only for agents that declare thinking or thinking_level, and it never sees whether a verdict envelope sat on both sides of the closer — so doctor can name the markup without naming the ambiguity", len(vf.Findings))
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
@@ -256,7 +256,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 
 	// Load the .atcr/ignore.yaml rules (Epic 40.0) before any work is spent, so
 	// a rule file that does not parse fails the run before anything is emitted.
-	ignore, err := loadIgnoreMatcher(opts.Root)
+	// They come from opts.IgnoreRoot when set: under `review --config-dir` the
+	// reviewed tree (opts.Root) is an untrusted pull request head, and a rule it
+	// shipped would hide its own findings from the gate and the auto-fix.
+	ignoreRoot := opts.IgnoreRoot
+	if ignoreRoot == "" {
+		ignoreRoot = opts.Root
+	}
+	ignore, err := loadIgnoreMatcher(ignoreRoot)
 	if err != nil {
 		return Result{}, err
 	}
