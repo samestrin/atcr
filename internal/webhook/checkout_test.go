@@ -21,8 +21,8 @@ func fixtureGit(t *testing.T, dir string, arg ...string) string {
 	t.Helper()
 	cmd := gitexec.FixtureCommandContext(context.Background(), dir, arg...)
 	cmd.Env = append(cmd.Env,
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=test@example.invalid",
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", arg, out)

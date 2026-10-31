@@ -16,9 +16,11 @@ const (
 )
 
 // playwrightReport is the part of Playwright's JSON reporter output the parser
-// reads.
+// reads. Errors is the report-level list: what failed outside any test, such
+// as a config or spec that does not load, or a global setup that throws.
 type playwrightReport struct {
 	Suites []playwrightSuite `json:"suites"`
+	Errors []playwrightError `json:"errors"`
 }
 
 type playwrightSuite struct {
@@ -81,8 +83,10 @@ type playwrightNetworkItem struct {
 // into a BrowserResult: the failed tests, the screenshot attachments, and the
 // console and network data the spec attached with testInfo.attach under the
 // names "console" and "network". Backend, ExitCode and TimedOut are the
-// caller's to fill. Input that is not a Playwright report, or an attachment
-// that is not the documented JSON, is an error rather than an empty result.
+// caller's to fill. Input that is not a Playwright report, an attachment that
+// is not the documented JSON, or a report with no suites and report-level
+// errors (the run failed before any test loaded) is an error rather than an
+// empty result.
 func ParsePlaywrightReport(data []byte) (BrowserResult, error) {
 	var report playwrightReport
 	if err := json.Unmarshal(data, &report); err != nil {
@@ -90,6 +94,13 @@ func ParsePlaywrightReport(data []byte) (BrowserResult, error) {
 	}
 	if report.Suites == nil {
 		return BrowserResult{}, errors.New("fanout: parse playwright report: no \"suites\" key, not a Playwright JSON report")
+	}
+	if len(report.Suites) == 0 && len(report.Errors) > 0 {
+		msgs := make([]string, 0, len(report.Errors))
+		for _, e := range report.Errors {
+			msgs = append(msgs, strings.TrimSpace(e.Message))
+		}
+		return BrowserResult{}, fmt.Errorf("fanout: playwright: no tests ran, Playwright reported %d error(s): %s", len(msgs), strings.Join(msgs, "; "))
 	}
 	var res BrowserResult
 	for _, suite := range report.Suites {

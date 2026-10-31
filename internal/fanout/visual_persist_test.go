@@ -76,7 +76,7 @@ func TestPersistVisualEvidence_NoScreenshotsWritesNothing(t *testing.T) {
 	dir := t.TempDir()
 	for name, res := range map[string]BrowserResult{
 		"empty":   {},
-		"no data": {Screenshots: []BrowserScreenshot{{Name: "home", Path: "home.png"}}, Console: []ConsoleEntry{{Level: "error", Text: "boom"}}},
+		"no data": {Screenshots: []BrowserScreenshot{{Name: "home", Path: "home.png"}}},
 	} {
 		got, err := persistVisualEvidence(secretGuardWarn, dir, res)
 		require.NoError(t, err, name)
@@ -84,6 +84,23 @@ func TestPersistVisualEvidence_NoScreenshotsWritesNothing(t *testing.T) {
 		_, statErr := os.Stat(filepath.Join(dir, visualEvidenceDir))
 		assert.True(t, os.IsNotExist(statErr), "%s: no visual/ directory", name)
 	}
+}
+
+// Console errors and failed requests are evidence even with no screenshot bytes.
+func TestPersistVisualEvidence_TextWithoutScreenshots(t *testing.T) {
+	dir := t.TempDir()
+	res := BrowserResult{
+		Screenshots:     []BrowserScreenshot{{Name: "home", Path: "home.png"}},
+		Console:         []ConsoleEntry{{Level: "error", Text: "boom"}},
+		NetworkFailures: []NetworkFailure{{Method: "GET", URL: "http://localhost/api", Status: 500}},
+	}
+	got, err := persistVisualEvidence(secretGuardWarn, dir, res)
+	require.NoError(t, err)
+	assert.Equal(t, VisualArtifacts{Console: "visual/console.txt", Network: "visual/network.txt"}, got)
+	assert.Equal(t, []string{"visual/console.txt", "visual/network.txt"}, treeFiles(t, dir))
+
+	_, err = persistVisualEvidence(secretGuardBlock, t.TempDir(), BrowserResult{Console: []ConsoleEntry{{Level: "log", Text: "token=" + guardAWSKey}}})
+	require.ErrorIs(t, err, ErrSecretGuardBlocked)
 }
 
 // No review dir (a stage run outside a review) persists nothing.

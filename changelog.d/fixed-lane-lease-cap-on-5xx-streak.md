@@ -1,0 +1,1 @@
+- A review lane whose model answers HTTP 5xx twice in a row now gets half the concurrent calls for 40 seconds, so a local model failing under full-panel load is not hammered; other models of the provider are unaffected (epic 89)

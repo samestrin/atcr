@@ -437,7 +437,7 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 // Sprint 35.16.11.2.2 AC 04-01: each declared thinking key folds into the tuning
 // token as its own NUL-separated clause after rf=, in th/tl/ts order. The
 // unconditional kv=2 version segment trails every clause (the pre-salvage-gate
-// invalidation bump, TD internal/fanout/review.go:2901).
+// invalidation bump, TD internal/fanout/review.go:2911).
 func TestDiffCacheKey_ThinkingTokens(t *testing.T) {
 	hash := cache.HashText("p")
 	cases := []struct {
@@ -569,7 +569,7 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 
 // Sprint 35.16.11.2.2.1 AC 03-04 Scenario 2: preserve_thinking gets its own
 // cache-key clause; unset appends nothing, so an undeclared key is unchanged.
-// TD internal/fanout/review.go:2974: preserve_thinking reaches the wire only
+// TD internal/fanout/review.go:2984: preserve_thinking reaches the wire only
 // when thinking is ENABLED (newThinkingFields sends it only under on), so the
 // pt= clause must be gated the same way — a preserve flag with thinking off or
 // with nothing declared sends nothing and must keep the key that body had.
@@ -704,7 +704,7 @@ func TestBuildAgents_ReplayReasoningKeysPerAgent(t *testing.T) {
 	assert.NotEqual(t, fb0.CacheKey, fb.CacheKey)
 }
 
-// TD internal/fanout/review.go:2948: the pt= clause keys non-tool agents too.
+// TD internal/fanout/review.go:2958: the pt= clause keys non-tool agents too.
 // The flag is inert on a single-shot agent (no tool loop means no reasoning
 // replay), but the declaration still keys apart — a spurious miss, never a
 // collision. TestBuildAgents_PreserveThinkingIsPerAgent pins tool agents only.
@@ -751,7 +751,7 @@ func TestWithThinkingFixtures_AreLoadable(t *testing.T) {
 	}
 }
 
-// TD internal/fanout/review.go:2901: the Salvaged cache gate only stops NEW
+// TD internal/fanout/review.go:2911: the Salvaged cache gate only stops NEW
 // writes, and the pt= clause is absent for agents that never set
 // preserve_thinking — so a salvaged-reasoning entry written by an older binary
 // replays as a clean StatusOK hit. diffCacheKey must carry a key-version
@@ -765,7 +765,7 @@ func TestDiffCacheKey_VersionSegmentInvalidatesPreSalvageGateEntries(t *testing.
 		"a key written before the salvage-gate version bump must never collide with a post-bump key, or a salvaged entry replays as a clean hit")
 }
 
-// TD internal/fanout/review.go:2869: cacheKeyInputs is built with named fields,
+// TD internal/fanout/review.go:2879: cacheKeyInputs is built with named fields,
 // so a future keyed field a production builder forgets to set compiles
 // silently as its zero value — the positional form would have failed to
 // compile. This guard varies every keyed AgentConfig field one at a time

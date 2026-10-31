@@ -319,7 +319,12 @@ func writeMergedAgent(poolDir, dir string, r Result, changed payload.ChangedLine
 	g := l.carriedGapFor(dir)
 	st.UnreviewedFiles += g.unreviewed
 	st.DeferredFiles += g.deferred
-	return writeAgentFiles(poolDir, dir, r.Agent, content, fr.Findings, &st)
+	if err := writeAgentFiles(poolDir, dir, r.Agent, content, fr.Findings, &st); err != nil {
+		// The priors stay: the retry must rebuild from them (Epic 78 T4).
+		return err
+	}
+	l.dropPrior(dir)
+	return nil
 }
 
 // priorArtifacts is one persona's findings and review.md as the interrupted run
@@ -332,13 +337,46 @@ type priorArtifacts struct {
 // priorFor returns dir's prior artifacts, read from agentDir by the first call
 // and kept on the ledger for every later one: by then a merge may already have
 // rewritten the files, and re-reading them would replay that merge's fresh
-// output as prior work.
+// output as prior work. The files are read outside l.mu; when two first calls
+// race, the first to store wins and both return its copy.
 func (l *chunkLedger) priorFor(dir, agentDir, agent string) (priorArtifacts, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	if p, ok := l.priors[dir]; ok {
+	p, ok := l.priors[dir]
+	l.mu.Unlock()
+	if ok {
 		return p, nil
 	}
+	p, err := readPriorArtifactsFn(agentDir, agent)
+	if err != nil {
+		return priorArtifacts{}, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if stored, ok := l.priors[dir]; ok {
+		return stored, nil
+	}
+	if l.priors == nil {
+		l.priors = make(map[string]priorArtifacts)
+	}
+	l.priors[dir] = p
+	return p, nil
+}
+
+// dropPrior frees dir's prior artifacts once its merge is on disk: no later
+// merge of dir follows a successful one (writeResumedAgents skips a persona
+// the early write merged), so nothing reads them again.
+func (l *chunkLedger) dropPrior(dir string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.priors, dir)
+}
+
+// readPriorArtifactsFn is a seam so a test can hold one priorFor call inside
+// its read while another stores.
+var readPriorArtifactsFn = readPriorArtifacts
+
+// readPriorArtifacts reads one persona's findings and review.md from agentDir.
+func readPriorArtifacts(agentDir, agent string) (priorArtifacts, error) {
 	findings, err := readPriorFindings(agentDir)
 	if err != nil {
 		return priorArtifacts{}, fmt.Errorf("replaying reviewed bins for '%s': %w", agent, err)
@@ -349,10 +387,6 @@ func (l *chunkLedger) priorFor(dir, agentDir, agent string) (priorArtifacts, err
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return priorArtifacts{}, fmt.Errorf("replaying review.md for '%s': %w", agent, err)
 	}
-	if l.priors == nil {
-		l.priors = make(map[string]priorArtifacts)
-	}
-	l.priors[dir] = p
 	return p, nil
 }
 

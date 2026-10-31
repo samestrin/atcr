@@ -25,7 +25,7 @@ func gitRepoWithFiles(t *testing.T, relpaths ...string) string {
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
 	run("init", "-q")
-	run("config", "user.email", "t@t.t")
+	run("config", "user.email", "test@example.invalid")
 	run("config", "user.name", "t")
 	for _, rel := range relpaths {
 		abs := filepath.Join(root, filepath.FromSlash(rel))
@@ -96,7 +96,7 @@ func gitRepoWithSources(t *testing.T, files map[string]string) string {
 		require.NoErrorf(t, err, "git %v: %s", args, out)
 	}
 	run("init", "-q")
-	run("config", "user.email", "t@t.t")
+	run("config", "user.email", "test@example.invalid")
 	run("config", "user.name", "t")
 	for rel, src := range files {
 		abs := filepath.Join(root, filepath.FromSlash(rel))

@@ -13,7 +13,7 @@ import (
 // gitexec.FixtureCommandContext so it can never retarget the real checkout.
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"}, args...)
+	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"}, args...)
 	if out, err := gitexec.FixtureCommandContext(context.Background(), dir, full...).CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}

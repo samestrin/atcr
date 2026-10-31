@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -72,9 +73,42 @@ func TestParsePlaywrightReportMalformed(t *testing.T) {
 }
 
 func TestParsePlaywrightReportEmptySuitesIsValid(t *testing.T) {
-	if _, err := ParsePlaywrightReport([]byte(`{"suites":[]}`)); err != nil {
-		t.Fatalf("empty report: %v", err)
+	// Valid only with no top-level errors; with them, see
+	// TestParsePlaywrightReportTopLevelErrors.
+	for _, in := range []string{`{"suites":[]}`, `{"suites":[],"errors":[]}`} {
+		if _, err := ParsePlaywrightReport([]byte(in)); err != nil {
+			t.Fatalf("empty report %s: %v", in, err)
+		}
 	}
+}
+
+// TestParsePlaywrightReportTopLevelErrors covers Playwright's report-level
+// "errors": a run that fails before any test loads (a config or spec that
+// does not compile, a global setup that throws) writes no suites and the
+// cause there. An empty result would read as a clean run, so it is an error
+// that carries the cause.
+func TestParsePlaywrightReportTopLevelErrors(t *testing.T) {
+	data := []byte(`{"suites":[],"errors":[{"message":"Error: Cannot find module './helpers'"},{"message":"SyntaxError: Unexpected token"}]}`)
+	res, err := ParsePlaywrightReport(data)
+	if err == nil {
+		t.Fatalf("want an error for a report with only top-level errors, got %+v", res)
+	}
+	for _, want := range []string{"Cannot find module './helpers'", "SyntaxError: Unexpected token"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to carry %q", err, want)
+		}
+	}
+
+	t.Run("suites present keep their result", func(t *testing.T) {
+		data := []byte(`{"errors":[{"message":"global teardown failed"}],"suites":[{"title":"a.spec.ts","file":"a.spec.ts","specs":[{"title":"t","tests":[{"results":[{"status":"failed","errors":[{"message":"expect failed"}]}]}]}]}]}`)
+		res, err := ParsePlaywrightReport(data)
+		if err != nil {
+			t.Fatalf("ParsePlaywrightReport: %v", err)
+		}
+		if len(res.FailedTests) != 1 || res.FailedTests[0].Error != "expect failed" {
+			t.Fatalf("failed tests = %+v, want the test's own error", res.FailedTests)
+		}
+	})
 }
 
 func TestParsePlaywrightReportInputShapes(t *testing.T) {

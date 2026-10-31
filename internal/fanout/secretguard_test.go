@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -264,6 +266,30 @@ func TestGuardSecrets_ScannerChangeRescans(t *testing.T) {
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 2, calls[text], "a scan under another gitleaks config is not reused")
+}
+
+// The same holds when only PATH changes: a gitleaks binary appearing on PATH
+// mid-process rescans text the built-in ruleset already scanned, while an
+// unchanged PATH keeps reusing the cached scan.
+func TestGuardSecrets_PathChangeRescans(t *testing.T) {
+	calls := countingScanner(t, nil)
+	text := guardPayload()
+	t.Setenv("GITLEAKS_CONFIG", "")
+	t.Setenv("GITLEAKS_CONFIG_TOML", "")
+	t.Setenv("PATH", t.TempDir())
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "gitleaks"), []byte("#!/bin/sh\n"), 0o755))
+	captureStderr(t, func() {
+		_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+		require.NoError(t, err)
+		_, err = guardSecrets(secretGuardWarn, "kai", panelSegments("", text)...)
+		require.NoError(t, err)
+		require.Equal(t, 1, calls[text], "an unchanged PATH reuses the scan")
+		t.Setenv("PATH", bin)
+		_, err = guardSecrets(secretGuardWarn, "mira", panelSegments("", text)...)
+		require.NoError(t, err)
+	})
+	assert.Equal(t, 2, calls[text], "a scan under another gitleaks binary is not reused")
 }
 
 // off never scans, so it never fills the cache either.

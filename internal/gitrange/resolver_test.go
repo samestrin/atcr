@@ -17,8 +17,8 @@ func gitCmd(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
 	cmd.Env = append(cmd.Env,
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=test@example.invalid",
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoErrorf(t, err, "git %s: %s", strings.Join(args, " "), out)
