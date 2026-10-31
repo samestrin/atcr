@@ -135,8 +135,10 @@ Everything the browser run captures is written under the review directory, in
 - **`network.txt`** — the failed network requests, when non-empty.
 
 The text files pass `secret_guard` under the configured policy before they are
-written (the screenshot pixels are not scanned, as above). Nothing is written —
-and no `visual/` directory is created — when the run captured no screenshots.
+written (the screenshot pixels are not scanned, as above). The text files are
+written even when the run captured no screenshots. Nothing is written — and no
+`visual/` directory is created — when the run captured no screenshots and no
+console or network text.
 
 The browser run also **files its own findings**, separate from the vision
 agent's: one MEDIUM `out-of-scope` finding per distinct console error and per
