@@ -1,0 +1,1 @@
+- `atcr webhook` now reads `.atcr/ignore.yaml` from the directory the daemon was started in, not from the pull request head it reviews, so a pull request can no longer ship an ignore rule that hides its own findings from the Slack or Linear reply. (epic 99)

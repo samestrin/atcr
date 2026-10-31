@@ -36,8 +36,9 @@ directory (see [Where reviews are written](#where-reviews-are-written)).
 
 The daemon reads the `webhook:` block of `.atcr/config.yaml` in the directory
 you start it in. That project's review settings (agents, personas, payload
-mode, consensus) are the ones every webhook review uses. A pull request cannot
-change them: its own `.atcr/` is never read.
+mode, consensus) and its `.atcr/ignore.yaml` rules are the ones every webhook
+review uses. A pull request cannot change them: its own `.atcr/` is never read,
+so it cannot ship an ignore rule that hides its own findings.
 
 ```yaml
 agents: [bruce, sasha]

@@ -242,8 +242,8 @@ func requiredEnv(field, name string) (string, error) {
 // newWebhookReviewer returns the reviewer `atcr webhook` runs: the same fan-out
 // and reconcile as `atcr review --fail-on`, over the range from the default
 // branch's merge base to the pull request head checked out in dir. Config,
-// personas and the review directory come from root, the operator's project,
-// so a pull request cannot change how it is reviewed.
+// personas, ignore rules and the review directory come from root, the
+// operator's project, so a pull request cannot change how it is reviewed.
 func newWebhookReviewer(base context.Context, root string) webhook.Reviewer {
 	completer := newCompleter(base)
 	return func(jobCtx context.Context, dir string) ([]reclib.Finding, error) {
@@ -301,6 +301,7 @@ func newWebhookReviewer(base context.Context, root string) webhook.Reviewer {
 			ReconciledAt:      time.Now(),
 			Partial:           result.Summary.Partial,
 			Root:              dir,
+			IgnoreRoot:        root, // ignore.yaml follows the operator's config, so a pull request cannot suppress its own findings
 			TrustPriors:       trustPriors,
 			OpportunityScoped: opportunityScoped,
 			Consensus:         consensus,
