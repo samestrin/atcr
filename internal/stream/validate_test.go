@@ -319,3 +319,28 @@ func TestValidatePathIn_RootUnresolvedCountedOnceAndNeverWithIndeterminate(t *te
 	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
 	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value())
 }
+
+// TestValidatePathIn_IndeterminateSuppressedWhenRootUnresolved: a root whose
+// parent segment is a regular file fails EvalSymlinks with ENOTDIR for both the
+// root (root-unresolved) and the joined path (indeterminate). One validation
+// counts the root fault only; a nil run is tolerated and behaves as a fresh run.
+func TestValidatePathIn_IndeterminateSuppressedWhenRootUnresolved(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	seg := filepath.Join(t.TempDir(), "seg")
+	require.NoError(t, os.WriteFile(seg, []byte("x\n"), 0o644))
+	root := filepath.Join(seg, "x")
+
+	var run PathRun
+	f := Finding{File: "child.go", Line: 1}
+	ValidatePathIn(&run, &f, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value(),
+		"a run that counted an unresolved root must not also count indeterminate")
+
+	metrics.DefaultRegistry.Reset()
+	g := Finding{File: "child.go", Line: 1}
+	ValidatePathIn(nil, &g, root, nil)
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+}
