@@ -1616,3 +1616,66 @@ func TestInvokeSlot_TruncationRetry_ThinkOnlyRetryDoesNotClaimAChainWalk(t *test
 	assert.NotContains(t, buf.String(), "exhausted the fallback chain")
 	assert.Contains(t, buf.String(), "the reply was a think-only run")
 }
+
+// Only the primary is retried. A fallback sized the way buildSlots sizes one
+// (review.go's buildFallbackAgent stamps its own ResolvedMaxTokens and window)
+// that truncates with zero findings is called once, at its own cap, and the
+// slot then fails exactly as it did before the retry existed.
+func TestInvokeSlot_TruncationRetry_SizedFallbackIsNotRetried(t *testing.T) {
+	c := &sequenceMetaCompleter{byModel: map[string][]llmclient.Completion{
+		"primary":  {{Content: retryRamble, Truncated: true}},
+		"fallback": {{Content: "ramble two", Truncated: true}},
+	}}
+	fbMax := 4096
+	slot := Slot{
+		Primary: sizedPrimary(8192, 131072),
+		Fallbacks: []Agent{{
+			Name:              "bruce-fb",
+			Invocation:        llmclient.Invocation{Model: "fallback", MaxTokens: &fbMax},
+			ResolvedMaxTokens: fbMax,
+			ResolvedWindow:    65536,
+		}},
+	}
+	r := NewEngine(c, WithTruncationFailover()).invokeSlot(context.Background(), slot)
+
+	assert.Equal(t, []int{8192, 16384}, c.maxTokens["primary"], "the primary is retried once")
+	assert.Equal(t, []int{4096}, c.maxTokens["fallback"], "a sized fallback is called once, at its own cap, and never retried")
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.ErrorIs(t, r.Err, errTruncatedZeroFindings)
+}
+
+// maxTokensChat records the max_tokens each tool-loop turn asked for and
+// delegates the reply to scriptedChat.
+type maxTokensChat struct {
+	*scriptedChat
+	seen []int
+}
+
+func (m *maxTokensChat) Chat(ctx context.Context, inv llmclient.Invocation, msgs []llmclient.Message, defs []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	mt := 0
+	if inv.MaxTokens != nil {
+		mt = *inv.MaxTokens
+	}
+	m.mu.Lock()
+	m.seen = append(m.seen, mt)
+	m.mu.Unlock()
+	return m.scriptedChat.Chat(ctx, inv, msgs, defs)
+}
+
+// A tool loop's TokensIn sums every turn, so it is no single call's input and
+// must not be taken off the window: the retry cap is min(2×cap, window), not
+// window − TokensIn. Here the summed input (120000) would shrink the retry from
+// 16384 to 11072 if the single-shot clamp were applied.
+func TestInvokeSlot_TruncationRetry_ToolLoopClampIsTheWindowAlone(t *testing.T) {
+	sc := &maxTokensChat{scriptedChat: &scriptedChat{turns: []chatTurn{
+		{content: retryRamble, truncated: true, usage: llmclient.UsageData{PromptTokens: 120000}},
+		{content: retryFinding},
+	}}}
+	p := sizedPrimary(8192, 131072)
+	p.Tools, p.SupportsFC, p.Provider = true, true, "prov"
+	r := NewEngine(sc, WithDispatcher(&fakeDispatcher{}), WithTruncationFailover()).invokeSlot(context.Background(), Slot{Primary: p})
+
+	require.Equal(t, StatusOK, r.Status, "the retried loop answered")
+	assert.Equal(t, []int{8192, 16384}, sc.seen, "retry at min(2×cap, window), the summed TokensIn not subtracted")
+	assert.Equal(t, 16384, r.ResolvedMaxTokens)
+}
