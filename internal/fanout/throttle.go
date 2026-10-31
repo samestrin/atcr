@@ -29,6 +29,10 @@ import (
 //     the same provider keep their own caps.
 //   - A success on the primary once the window has passed raises its lane's cap
 //     by one; back at the ceiling the lane is no longer throttled.
+//   - Two consecutive 5xx answers from a lane's primary (requeued attempts
+//     included) halve that lane's cap for serverWindow, a local model failing
+//     under full-panel load; a success on the primary resets the streak, so one
+//     stray 5xx throttles nothing. Sibling lanes keep their caps.
 //   - A provider whose breaker is open or half-open is held to one lease across
 //     all its models until the breaker closes.
 //   - A provider whose breaker is half-open with none of its units in flight is
@@ -44,6 +48,13 @@ import (
 // successes may raise it again: the rate-limit backoff, the same estimate of how
 // long an upstream's rate-limit window lasts.
 const throttleWindow = rateLimitBackoff
+
+// serverStreak is how many consecutive 5xx answers from a lane's primary lower
+// its cap, and serverWindow is how long the lowered cap holds.
+const (
+	serverStreak = 2
+	serverWindow = 2 * outageBackoff
+)
 
 // leaseKey names the lane a unit is leased on: its primary's provider and model.
 type leaseKey struct{ provider, model string }
@@ -73,6 +84,10 @@ type providerLane struct {
 	limit int
 	// until is when the latest rate-limit window ends.
 	until time.Time
+	// serverRun counts the lane's consecutive primary-answered 5xx; serverUntil
+	// is when the cap those lowered ends.
+	serverRun   int
+	serverUntil time.Time
 }
 
 func newProviderThrottle(ceiling int, clock unitClock, logger *slog.Logger, key func(int) leaseKey, breaker func(string) circuitbreaker.State) *providerThrottle {
@@ -102,6 +117,9 @@ func (t *providerThrottle) capFor(k leaseKey) (int, bool) {
 	limit, throttled := t.ceiling, false
 	if l := t.lane(k); l.limit > 0 {
 		limit, throttled = l.limit, true
+	}
+	if l := t.lane(k); t.clock.Now().Before(l.serverUntil) {
+		limit, throttled = max(1, limit/2), true
 	}
 	if t.breaker(k.provider) != circuitbreaker.StateClosed {
 		limit, throttled = 1, true
@@ -184,12 +202,26 @@ func (t *providerThrottle) done(i int, r Result) {
 	l := t.lane(k)
 	l.inFlight--
 	t.inFlight[k.provider]--
-	if r.FallbackUsed {
+	// A primary that answered 5xx counts even when a fallback then served or
+	// failed the unit; every other fallback-walk outcome says nothing about it.
+	serverFail := r.primaryServerErr ||
+		(!r.FallbackUsed && r.Status != StatusOK && classifyUnitFailure(r.Err) == failureServer)
+	if r.FallbackUsed && !serverFail {
 		return
 	}
 	now := t.clock.Now()
+	if r.Status == StatusOK && !r.FallbackUsed {
+		l.serverRun = 0
+	}
 	switch {
-	case r.Status != StatusOK && classifyUnitFailure(r.Err) == failureRateLimit:
+	case serverFail:
+		l.serverRun++
+		if l.serverRun >= serverStreak {
+			l.serverUntil = now.Add(serverWindow)
+			t.logger.Info("provider answering 5xx; lowering its lease cap",
+				"provider", k.provider, "model", k.model, "window", serverWindow.String())
+		}
+	case !r.FallbackUsed && r.Status != StatusOK && classifyUnitFailure(r.Err) == failureRateLimit:
 		limit := l.limit
 		if limit == 0 {
 			limit = t.ceiling
@@ -198,7 +230,7 @@ func (t *providerThrottle) done(i int, r Result) {
 		l.until = now.Add(t.window)
 		t.logger.Info("provider rate-limited; lowering its lease cap",
 			"provider", k.provider, "model", k.model, "lease_cap", l.limit, "ceiling", t.ceiling, "window", t.window.String())
-	case r.Status == StatusOK && l.limit > 0 && !now.Before(l.until):
+	case !r.FallbackUsed && r.Status == StatusOK && l.limit > 0 && !now.Before(l.until):
 		l.limit++
 		if l.limit >= t.ceiling {
 			l.limit = 0

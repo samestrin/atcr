@@ -460,6 +460,10 @@ type Result struct {
 	// whose primary made a real call and whose fallback then failed fast spent
 	// one. In-process only, read by the outer retry.
 	failedFastOnly bool
+	// primaryServerErr marks a walk whose primary answered HTTP 5xx, whether a
+	// fallback then served it or the whole chain failed: the throttle counts the
+	// primary's lane, not the walk's outcome. In-process only.
+	primaryServerErr bool
 
 	// DiffTruncation is the DIFF-WIDE byte-budget shed (buildPayloads' global
 	// ApplyByteBudgetPreferEscalated pass), carried alongside — never instead of —
@@ -1355,6 +1359,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	madeCall := false
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
+	primary5xx := false
 	for i, a := range chain {
 		// Stop descending the chain once the context is done — further attempts
 		// would only fail the same way and waste the remaining budget. Preserve a
@@ -1367,6 +1372,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			break
 		}
 		r := e.invokeAgent(ctx, a)
+		if i == 0 && r.Status != StatusOK && classifyUnitFailure(r.Err) == failureServer {
+			primary5xx = true
+		}
 		var co *llmclient.CircuitOpenError
 		if !errors.As(r.Err, &co) {
 			madeCall = true
@@ -1629,6 +1637,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 			// (TD internal/fanout/engine.go:429). In-process only: status.json does
 			// not carry it (see the field's doc).
 			r.ThinkOnlyAttempts = thinkOnlyAttempts
+			r.primaryServerErr = primary5xx
 			return r
 		}
 		// Failover reason (Epic 35.16.11.2.2.7 T2): any other failed attempt — a
@@ -1683,6 +1692,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	// WALK, so stamp the local total rather than leaving `last`'s at-most-one
 	// (TD internal/fanout/engine.go:429). In-process only, as above.
 	last.ThinkOnlyAttempts = thinkOnlyAttempts
+	last.primaryServerErr = primary5xx
 	last.failedFastOnly = !madeCall && classifyUnitFailure(last.Err) == failureCircuitOpen
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
