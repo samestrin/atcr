@@ -1,0 +1,1 @@
+- A reviewer reply cut off on `finish_reason=length` with zero findings is now retried once on the same agent at twice its resolved `max_tokens` (clamped by the context window and the `1000000` cap) before the fallback chain is tried; status.json's `resolved_max_tokens` records the doubled cap, and a retry that truncates again fails over as before. (epic 89)
