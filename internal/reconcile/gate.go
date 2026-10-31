@@ -256,7 +256,14 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 
 	// Load the .atcr/ignore.yaml rules (Epic 40.0) before any work is spent, so
 	// a rule file that does not parse fails the run before anything is emitted.
-	ignore, err := loadIgnoreMatcher(opts.Root)
+	// They come from opts.IgnoreRoot when set: under `review --config-dir` the
+	// reviewed tree (opts.Root) is an untrusted pull request head, and a rule it
+	// shipped would hide its own findings from the gate and the auto-fix.
+	ignoreRoot := opts.IgnoreRoot
+	if ignoreRoot == "" {
+		ignoreRoot = opts.Root
+	}
+	ignore, err := loadIgnoreMatcher(ignoreRoot)
 	if err != nil {
 		return Result{}, err
 	}
