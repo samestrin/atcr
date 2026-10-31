@@ -1303,13 +1303,22 @@ func TestReadReviewStatus_OpenBreakerRequeueFlushedChunksJSON(t *testing.T) {
 	agent := slots[0].Primary.Name
 
 	var waits []time.Duration
-	var seen []chunkRecordBin
+	// The probe runs on the engine's worker goroutine, where require/FailNow
+	// must not be called: it only captures, and the test goroutine asserts.
+	var seen []chunkRecord
+	var seenErrs []error
 	clock := probeClock{fakeUnitClock: newFakeUnitClock(), probe: func(d time.Duration) {
 		if d <= 0 {
 			return
 		}
 		waits = append(waits, d)
-		seen = append(seen, readChunkRecord(t, poolDir, agent).Bins[0])
+		var rec chunkRecord
+		data, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, agent, chunksFile))
+		if err == nil {
+			err = json.Unmarshal(data, &rec)
+		}
+		seen = append(seen, rec)
+		seenErrs = append(seenErrs, err)
 	}}
 	c := &circuitOpenOnce{}
 	// Only the first bin runs, so no other bin's write can carry its state to
@@ -1322,6 +1331,9 @@ func TestReadReviewStatus_OpenBreakerRequeueFlushedChunksJSON(t *testing.T) {
 	assert.Equal(t, StatusOK, results[0].Status)
 	assert.Equal(t, 1, results[0].Requeues)
 	require.Equal(t, []time.Duration{circuitOpenBackoff}, waits, "one wait, for the breaker")
-	assert.Equal(t, chunkOutcomePending, seen[0].Outcome, "the requeue flushed the bin back to pending before the wait")
-	assert.Equal(t, 1, seen[0].Attempts, "the flushed record counts the fail-fast lease")
+	require.Len(t, seen, 1)
+	require.NoError(t, seenErrs[0])
+	require.NotEmpty(t, seen[0].Bins, "the flushed record holds the planned bins")
+	assert.Equal(t, chunkOutcomePending, seen[0].Bins[0].Outcome, "the requeue flushed the bin back to pending before the wait")
+	assert.Equal(t, 1, seen[0].Bins[0].Attempts, "the flushed record counts the fail-fast lease")
 }
