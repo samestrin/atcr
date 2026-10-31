@@ -11,7 +11,7 @@ import (
 // This file holds the pure, I/O-free containment generators the OS-level
 // backend feeds to its platform tool: a sandbox-exec profile string on macOS
 // and (task 2.8) a bwrap argument list on Linux. Both mirror dockerRunArgs
-// (docker.go:135) — spec.validate() first, no filesystem access, no spawn — so
+// (its spec.validate() call) — spec.validate() first, no filesystem access, no spawn — so
 // the containment boundary is assertable in a unit test without either binary
 // installed.
 //
@@ -958,7 +958,7 @@ func pathContains(parent, child string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// Sandbox mount points, matching dockerRunArgs (docker.go:172-189) exactly:
+// Sandbox mount points, matching dockerRunArgs (the -v mounts) exactly:
 // the snapshot is the working tree at /work when read-only, and moves to /src
 // with a writable copy at /work when RunSpec.Writable is set. Reusing Docker's
 // mount points is what lets a workload that hardcodes /work behave identically
