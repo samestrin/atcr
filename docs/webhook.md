@@ -179,8 +179,9 @@ default branch.
 
 With a `webhook.linear:` block the daemon also reviews the GitHub pull request
 attached to a Linear issue when the issue moves to one of your trigger
-statuses. Point a Linear webhook for Issue events at your tunnel's
-`/linear/webhook` URL. Either trigger block is enough on its own.
+statuses. If the issue has more than one pull request attached, the newest
+attachment is reviewed. Point a Linear webhook for Issue events at your
+tunnel's `/linear/webhook` URL. Either trigger block is enough on its own.
 
 ```yaml
 webhook:
