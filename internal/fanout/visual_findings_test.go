@@ -65,7 +65,7 @@ func TestGuardBrowserText(t *testing.T) {
 		Console:         []ConsoleEntry{{Level: "error", Text: "token=" + guardAWSKey, Location: "http://x/a.js:1"}},
 		NetworkFailures: []NetworkFailure{{Method: "GET", URL: "http://localhost/?key=" + guardAWSKey, Error: "net::ERR_FAILED"}},
 	}
-	got, err := guardBrowserText(secretGuardRedact, res)
+	got, err := guardBrowserText(context.Background(), secretGuardRedact, res)
 	require.NoError(t, err)
 	for _, l := range visualBrowserFindings("e2e/s.spec.ts", got, VisualArtifacts{}) {
 		assert.NotContains(t, l, guardAWSKey)
@@ -73,7 +73,7 @@ func TestGuardBrowserText(t *testing.T) {
 	}
 	assert.Contains(t, res.Console[0].Text, guardAWSKey, "the input is not modified")
 
-	_, err = guardBrowserText(secretGuardBlock, res)
+	_, err = guardBrowserText(context.Background(), secretGuardBlock, res)
 	require.ErrorIs(t, err, ErrSecretGuardBlocked)
 }
 

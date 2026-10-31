@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestBuildSlots_ChunkedScopeConstraintFitsChunkByteBudget(t *testing.T) {
 	cfg.Settings.ChunkByteBudget = chunkBudget
 	cfg.Settings.MaxSprintPlanBytes = 64 * 1024
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, 64*1024), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, 64*1024), true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the clamped budget must still split this diff into chunks")
 
@@ -110,7 +111,7 @@ func TestBuildSlots_ChunkedScopeReservationBindsUnderInheritedChunkBudget(t *tes
 	require.Less(t, agentBudget, defaultBudget,
 		"precondition: the inherited chunk ceiling must EXCEED this agent's budget, or the regression regime is not reproduced")
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
 
@@ -154,7 +155,7 @@ func TestBuildSlots_ChunkedEffectiveBudgetReservesTheBlockItShips(t *testing.T) 
 	require.Less(t, chunkBudget, agentBudget,
 		"precondition: the chunk ceiling must sit BELOW the agent budget, or the two scope blocks do not diverge")
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
 
@@ -207,7 +208,7 @@ func TestBuildSlots_ChunkClampFloorKeepsTheCeilingWhenTheBlockEatsTheBudget(t *t
 	require.Equal(t, 6328, unclamped,
 		"precondition: the raw model window derives 6328 lines — the value the chunks revert to if the floor is removed")
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must still split into chunks")
 
@@ -253,7 +254,7 @@ func TestBuildSlots_WarnsWhenChunkByteBudgetCannotFundOnePlanByte(t *testing.T) 
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -290,7 +291,7 @@ func TestBuildSlots_DropWarningDoesNotBlameAnUnsetChunkByteBudget(t *testing.T) 
 		"precondition: the agent's OWN budget must be the binding one, inside the 1..7 band that drops the block")
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		_, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -314,7 +315,7 @@ func TestBuildSlots_RunLevelCapDropsTheBlockWhenItCannotFundOnePlanByte(t *testi
 	cfg.Settings.PayloadByteBudget = 4 // positive, so not the "unlimited" sentinel; /8 floors to 0
 	cfg.Settings.MaxSprintPlanBytes = planBytes
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 
@@ -350,7 +351,7 @@ func TestBuildSlots_ChunkDropWarningStaysSilentOnTheSingleChunkFallThrough(t *te
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -393,7 +394,7 @@ func TestBuildSlots_DropWarningDoesNotBlameAChunkBudgetAboveTheAgentBudget(t *te
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -424,7 +425,7 @@ func TestBuildSlots_ChunkDropWarningIsSilentOnTheResumeRebuild(t *testing.T) {
 
 	out := captureStderr(t, func() {
 		// warnOversized=false — the resume rebuild path.
-		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
+		_, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
 		require.NoError(t, err)
 	})
 
@@ -450,7 +451,7 @@ func TestBuildSlots_ChunkDropWarningIsSilentWithoutASprintPlan(t *testing.T) {
 
 	out := captureStderr(t, func() {
 		// Empty scope constraint — no --sprint-plan was passed.
-		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 
@@ -493,7 +494,7 @@ func TestBuildSlots_ChunkedFallbackDeclinesTheRefitSoTheScopeArgumentIsInert(t *
 	cfg.Settings.ChunkByteBudget = chunkBudget
 	cfg.Settings.MaxSprintPlanBytes = planBytes
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the clamped budget must still split this diff into chunks")
 	require.NotEmpty(t, slots[0].Fallbacks, "precondition: greta must resolve a fallback chain")
@@ -529,7 +530,7 @@ func TestBuildSlots_WarnsWhenPayloadByteBudgetCannotFundOnePlanByte(t *testing.T
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -554,7 +555,7 @@ func TestBuildSlots_RunLevelDropWarningIsSilentOnTheResumeRebuild(t *testing.T) 
 	cfg.Settings.MaxSprintPlanBytes = planBytes
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
+		_, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), false)
 		require.NoError(t, err)
 	})
 
@@ -588,7 +589,7 @@ func TestBuildSlots_WarnsWhenTheAgentsOwnBudgetCannotFundOnePlanByte(t *testing.
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -634,7 +635,7 @@ func TestBuildSlots_WarnsWhenAZeroAgentBudgetDropsThePlan(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 
@@ -681,7 +682,7 @@ func TestBuildSlots_WarnsWhenTheBulkPathDropsThePlan(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+		slots, _, err = buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 		require.NoError(t, err)
 	})
 

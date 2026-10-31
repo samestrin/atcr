@@ -73,7 +73,7 @@ func TestBaselineSlots_ChunkPersonaCartesian(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 6, "3 chunks × 2 personas = 6 slots (never 3+2)")
 
@@ -102,7 +102,7 @@ func TestBaselineSlots_SingleChunkDegradesToOnePerPersona(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "one slot per persona when the scan is a single chunk")
 	perPersona := map[string]int{}
@@ -131,7 +131,7 @@ func TestBaselineSlots_FallbackChainPerChunk(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "one persona × three chunks")
 	slots = renderedSlots(t, slots) // prompts as a worker leases them
@@ -163,7 +163,7 @@ func TestBaselineSlots_SerialLanePerChunk(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3)
 	for i, s := range slots {
@@ -182,7 +182,7 @@ func TestBaselineSlots_UnknownAgentFailFast(t *testing.T) {
 	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100)}
 	payloads := baselinePayloads(entries)
 
-	_, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `agent "ghost" not found in registry`)
 }
@@ -205,7 +205,7 @@ func TestBaselineSlots_PlansEveryUnitWithinBudget(t *testing.T) {
 	require.Greater(t, len(want), 64, "the plan is past the old 64-bin ceiling")
 	require.LessOrEqual(t, len(want), registry.DefaultMaxUnits, "and inside the default unit budget")
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, len(want), "one slot per planned unit")
 	dispatched := map[string]bool{}
@@ -233,14 +233,14 @@ func TestBaselineSlots_RefusesPlanAboveUnitBudget(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.ErrorIs(t, err, ErrUnitBudgetExceeded)
 	assert.Nil(t, slots)
 	assert.Contains(t, err.Error(), `agent "greta" needs 9 units, above the budget of 8`)
 	assert.Contains(t, err.Error(), "--max-units 9")
 
 	cfg.Settings.MaxUnits = 9
-	slots, _, err = buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 9, "a budget that holds the plan dispatches every unit")
 }
@@ -403,7 +403,7 @@ func TestBaselineSlots_EndToEnd_EveryChunkDispatched(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 6)
 
@@ -476,7 +476,7 @@ func TestBaselineMerge_FiveChunksCollapseToOneSource(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 5, "one persona × five chunks")
 
@@ -532,7 +532,7 @@ func TestBaselineMerge_OneChunkFailsOthersSucceed(t *testing.T) {
 	}
 	payloads := baselinePayloads(entries)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 5)
 

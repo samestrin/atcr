@@ -52,7 +52,7 @@ func TestBuildSlots_BulkSlotCarriesTheEntriesItShipped(t *testing.T) {
 	cfg.Project.Agents = []string{"greta"}
 	payloads := oversizedBlocksPayload()
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
 
@@ -88,7 +88,7 @@ func TestBuildSlots_BaselineChunkSlotCarriesItsChunkEntries(t *testing.T) {
 	cfg.Project.Agents = []string{"greta"}
 	payloads := oversizedBlocksPayload()
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false, true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1,
 		"precondition: this payload must partition into multiple baseline chunks for greta's window")
@@ -117,7 +117,7 @@ func TestBuildSlots_ChunkedDiffSlotCarriesNoEntries(t *testing.T) {
 		"blocks": {Text: diff, FileCount: 40, Entries: []payload.FileEntry{{Path: "f0.go", Size: int64(len(diff)), Body: diff}}},
 	}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1,
 		"precondition: the diff must bin-pack into multiple chunk slots, or this exercises the bulk path instead")
@@ -230,7 +230,7 @@ func TestBuildSlots_BulkSlotCarriesKeptSubsetOnAllDroppedArm(t *testing.T) {
 		"blocks": {Entries: entries, Kept: kept, Text: full.String(), FileCount: 2},
 	}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
 

@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -197,9 +198,9 @@ func TestBuildSlots_ChunkedReservesForScopeConstraint(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: b.String(), FileCount: 400}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	unscoped, _, err := buildSlots(newCfg(), payloads, rng, "", "", false)
+	unscoped, _, err := buildSlots(context.Background(), newCfg(), payloads, rng, "", "", false)
 	require.NoError(t, err)
-	scoped, _, err := buildSlots(newCfg(), payloads, rng, "", scopeBlock(t, 64*1024), false)
+	scoped, _, err := buildSlots(context.Background(), newCfg(), payloads, rng, "", scopeBlock(t, 64*1024), false)
 	require.NoError(t, err)
 
 	assert.Greater(t, len(scoped), len(unscoped),

@@ -48,7 +48,7 @@ func TestClaimLedger_ReachesEveryAgentsRenderedPrompt(t *testing.T) {
 	require.NoError(t, err)
 
 	rng := ReviewRange{Base: base, Head: head}
-	slots, _, err := buildSlots(cfg, payloads, rng, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, rng, "", "", false)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(slots), 2, "precondition: the roster must fan out to more than one agent")
 
@@ -107,7 +107,7 @@ func TestClaimLedger_SurvivesAByteBudgetThatShedsDiffContent(t *testing.T) {
 	}
 	require.True(t, shed, "precondition: the budget must actually shed a file")
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 
@@ -172,7 +172,7 @@ func TestClaimLedger_SurvivesAFallbackRefit(t *testing.T) {
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
@@ -229,7 +229,7 @@ func TestClaimLedger_ZeroBudgetRefitShipsTheNotInPayloadContract(t *testing.T) {
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
@@ -291,7 +291,7 @@ func TestClaimLedger_AbsentWhenTheBranchAssertsNothing(t *testing.T) {
 	payloads, _, err := buildPayloads(context.Background(), cfg, dir, base, head, false)
 	require.NoError(t, err)
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 	for _, s := range slots {
@@ -612,7 +612,7 @@ func TestClaimLedger_RefitBelowTheFilesCombinedBytesDropsIt(t *testing.T) {
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
@@ -731,7 +731,7 @@ func TestClaimLedger_RefitAboveTheLedgersBytesStillDropsIt(t *testing.T) {
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")
@@ -892,7 +892,7 @@ func TestRefit_CumulativeFundingKeepsTheLedgerAndShedsRetrievedContext(t *testin
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots, "precondition: the roster must produce a slot")

@@ -1,0 +1,1 @@
+- The secret guard now writes its warnings through the run logger instead of straight to stderr, so they follow the log level and routing. (technical debt, 2026-10-31)

@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -48,7 +49,7 @@ func TestBuildFallbackAgent_ReplayReasoningOffIsNotInherited(t *testing.T) {
 			cfg.Registry.Agents["kai"] = kai
 			primary := Agent{Name: "greta", ReplayReasoningOff: tc.primaryOff}
 
-			fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{})
+			fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", false, fallbackRefit{})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, fb.ReplayReasoningOff)
 		})

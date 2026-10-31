@@ -151,7 +151,7 @@ func RunVisualReview(ctx context.Context, client VisionChatter, agent VisionAgen
 	for i, sc := range shots {
 		segs = append(segs, guardSegment{text: screenshotLabel(i, sc), file: visualScreenshotsLabel})
 	}
-	guarded, err := guardSecrets(secretGuardPolicy(cfg), agent.Name, segs...)
+	guarded, err := guardSecrets(ctx, secretGuardPolicy(cfg), agent.Name, segs...)
 	if err != nil {
 		return VisualReviewResult{}, err
 	}

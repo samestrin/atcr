@@ -86,7 +86,7 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	if pc.AgentName == "" {
 		pc.AgentName = VisualPersonaName
 	}
-	guarded, err := guardSecrets(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), VisualPersonaName,
+	guarded, err := guardSecrets(ctx, secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), VisualPersonaName,
 		guardSegment{text: pc.Payload, file: visualPayloadLabel})
 	if err != nil {
 		return VisualReviewResult{}, err
@@ -110,9 +110,9 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	shots, err := s.Browser.Run(ctx, BrowserRun{RepoDir: in.RepoDir, Spec: spec, PreviewURL: s.PreviewURL})
 	if err != nil {
 		return VisualReviewResult{}, fmt.Errorf("visual review: browser %s: %w", s.Browser.Name(),
-			guardBrowserError(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), err))
+			guardBrowserError(ctx, secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), err))
 	}
-	artifacts, err := persistVisualEvidence(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), in.ReviewDir, shots)
+	artifacts, err := persistVisualEvidence(ctx, secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), in.ReviewDir, shots)
 	if err != nil {
 		return VisualReviewResult{}, fmt.Errorf("visual review: %w", err)
 	}
@@ -126,7 +126,7 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	// only ever redacts; it cannot block after a reply has been produced. When
 	// ReviewDir is empty persistVisualEvidence returns before scanning, so that
 	// abort comes from RunVisualReview's own guard alone.
-	if vr.Browser, err = guardBrowserText(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), shots); err != nil {
+	if vr.Browser, err = guardBrowserText(ctx, secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), shots); err != nil {
 		return VisualReviewResult{}, err
 	}
 	vr.Spec = spec
@@ -142,8 +142,8 @@ const visualBrowserErrorLabel = "browser error"
 // Playwright's report-level errors). Under block a secret replaces err with the
 // guard's error; under redact the returned error carries the redacted text and
 // still unwraps to err, so errors.Is keeps matching the backend's sentinels.
-func guardBrowserError(policy string, err error) error {
-	guarded, gerr := guardSecrets(policy, VisualPersonaName, guardSegment{text: err.Error(), file: visualBrowserErrorLabel})
+func guardBrowserError(ctx context.Context, policy string, err error) error {
+	guarded, gerr := guardSecrets(ctx, policy, VisualPersonaName, guardSegment{text: err.Error(), file: visualBrowserErrorLabel})
 	if gerr != nil {
 		return gerr
 	}

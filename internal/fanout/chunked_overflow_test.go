@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -30,7 +31,7 @@ func TestBuildSlots_ChunkedTinyWindowRecordsOverflowNotSilentClamp(t *testing.T)
 	var slots []Slot
 	var err error
 	out := captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: at the 64-line floor this diff must split into chunks")
@@ -69,7 +70,7 @@ func TestBuildSlots_ZeroBudgetWarningNamesTheOutputCapToo(t *testing.T) {
 	var slots []Slot
 	var err error
 	out := captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
@@ -96,7 +97,7 @@ func TestBuildSlots_ChunkedZeroBudgetWarningNamesBothKnobs(t *testing.T) {
 	var slots []Slot
 	var err error
 	out := captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: at the line floor this diff must split into chunks")
@@ -118,7 +119,7 @@ func TestBuildSlots_ChunkedUsableWindowStillRecordsChunk(t *testing.T) {
 	diff := diffOfNFiles(12, 900) // 10800 lines > the 6328-line budget → splits
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 12}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must still split at the declared budget")
 

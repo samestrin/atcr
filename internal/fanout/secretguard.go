@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 )
 
@@ -297,9 +298,10 @@ type guardSegment struct {
 // unchanged for off and warn, with every hit replaced by
 // payload.SecretPlaceholder for redact. block returns an error naming agent,
 // kind and file when anything is found, or when the scan could not be trusted.
-// Neither the warning nor the error ever holds secret material: a SecretHit
+// Warnings go to the context logger (a ctx with none discards them), so they
+// follow the run's log level and routing. Neither the warning nor the error ever holds secret material: a SecretHit
 // carries only a rule name and a span, and only kinds and paths are printed.
-func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) {
+func guardSecrets(ctx context.Context, policy, agent string, segs ...guardSegment) ([]string, error) {
 	out := make([]string, len(segs))
 	for i, s := range segs {
 		out[i] = s.text
@@ -332,10 +334,11 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 	}
 	// Only warnings are deduplicated: a block error is returned to every agent.
 	warn := (len(found) > 0 || scanErr != nil) && firstWarning(agent, policy, scanner, segs)
+	logger := log.FromContext(ctx)
 	if scanErr != nil && warn {
 		// ScanPayloadContext's error names only the failure mode, never scanner
 		// output, so it is safe to print.
-		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: secret scan: %v; using the built-in ruleset\n", agent, scanErr)
+		logger.Warn(fmt.Sprintf("agent %q: secret scan: %v; using the built-in ruleset", agent, scanErr))
 	}
 	switch policy {
 	case secretGuardBlock:
@@ -350,11 +353,11 @@ func guardSecrets(policy, agent string, segs ...guardSegment) ([]string, error) 
 			out[i] = payload.RedactSecrets(out[i], redactHit[i])
 		}
 		if len(found) > 0 && warn {
-			fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: redacted %s from the review prompt (secret_guard: redact)\n", agent, describeFindings(found))
+			logger.Warn(fmt.Sprintf("agent %q: redacted %s from the review prompt (secret_guard: redact)", agent, describeFindings(found)))
 		}
 	default:
 		if len(found) > 0 && warn {
-			fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: the review prompt holds %s and is sent unchanged (secret_guard: warn); set secret_guard: redact or block to stop it\n", agent, describeFindings(found))
+			logger.Warn(fmt.Sprintf("agent %q: the review prompt holds %s and is sent unchanged (secret_guard: warn); set secret_guard: redact or block to stop it", agent, describeFindings(found)))
 		}
 	}
 	return out, nil

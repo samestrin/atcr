@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -86,7 +87,7 @@ func buildRefitSlot(t *testing.T, cfg *ReviewConfig) Slot {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
@@ -194,7 +195,7 @@ func TestBuildFallbackAgent_RefitNeverKeepsAZeroByteFile(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -309,7 +310,7 @@ func TestBuildFallbackAgent_RefitDeclinedWhenEveryEntryIsEmptyZeroBudget(t *test
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -332,7 +333,7 @@ func TestBuildFallbackAgent_RefitDeclinedWhenKeptBodiesAreEmpty(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, emptyBodiedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -367,7 +368,7 @@ func TestBuildFallbackAgent_NoShedEarlyReturnKeepsWarnAndShip(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -402,7 +403,7 @@ func TestBuildFallbackAgent_ZeroByteKeptEntryRoutesToKeepSmallest(t *testing.T) 
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -432,7 +433,7 @@ func TestBuildFallbackAgent_RefitThatStillOverflowsRecordsOverflow(t *testing.T)
 	var slots []Slot
 	var err error
 	out = captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	fb := slots[0].Fallbacks[0]
@@ -476,7 +477,7 @@ func TestBuildFallbackAgent_PositiveBudgetOverflowArmRecordsThatBudget(t *testin
 			var slots []Slot
 			var err error
 			out := captureStderr(t, func() {
-				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+				slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 			})
 			require.NoError(t, err)
 			fb := slots[0].Fallbacks[0]
@@ -528,7 +529,7 @@ func TestBuildFallbackAgent_RefitReservationFollowsRecordedBudget(t *testing.T) 
 			var slots []Slot
 			var err error
 			captureStderr(t, func() {
-				slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", tc.scope, true)
+				slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", tc.scope, true)
 			})
 			require.NoError(t, err)
 			require.Len(t, slots[0].Fallbacks, 1)
@@ -570,7 +571,7 @@ func TestBuildFallbackAgent_RefitRecordsTheAppliedBudgetNotTheRawOne(t *testing.
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -620,7 +621,7 @@ func TestBuildFallbackAgent_RefitReCapsScopeConstraintToItsOwnBudget(t *testing.
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -672,7 +673,7 @@ func TestBuildFallbackAgent_RefitInheritsTheAgentCappedScopeConstraint(t *testin
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -704,7 +705,7 @@ func TestBuildFallbackAgent_RefitDropsScopeConstraintWhenBudgetFundsNoPlanByte(t
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)
@@ -745,7 +746,7 @@ func TestBuildFallbackAgent_RefitRecordsOneChunkAndBulkSizing(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "precondition: greta's budget must partition the payload into two chunk slots")
@@ -805,7 +806,7 @@ func TestBuildFallbackAgent_TruncateWithoutEntriesStillWarnsAndShips(t *testing.
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the diff must bin-pack into multiple chunk slots")
@@ -855,7 +856,7 @@ func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false, true)
+		slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false, true)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -895,7 +896,7 @@ func TestBuildFallbackAgent_RefitBudgetsOnDispatchedBodyBytes(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)

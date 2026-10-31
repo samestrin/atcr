@@ -194,7 +194,7 @@ func TestBuildSlots_ChunkedToolLoopReserveClosingTheBudgetFloorsChunkLines(t *te
 	require.Positive(t, payload.EffectiveByteBudget("unlisted-small-model", nil, capTokens),
 		"precondition: the cap alone still funds a budget")
 
-	slots, _, err := buildSlots(cfg, chunkedDiffPayload(12, 900), ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, chunkedDiffPayload(12, 900), ReviewRange{Base: "a", Head: "b"}, "", "", false)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the diff must split into chunks")
 	for i, s := range slots {
@@ -230,7 +230,7 @@ func TestBuildFallbackAgent_ReplayReserveFollowsTheLane(t *testing.T) {
 			cfg.Registry.Agents["kai"] = kai
 			primary := Agent{Name: "greta", Tools: tc.primaryTools, SupportsFC: true}
 
-			fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: tc.rng})
+			fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", false, fallbackRefit{rng: tc.rng})
 			require.NoError(t, err)
 			want := payload.EffectiveByteBudget("unlisted-backup-model", nil, payload.SizingOutputTokens(tc.wantReserved, defaultMaxTokens))
 			require.NotEqual(t, payload.EffectiveByteBudget("unlisted-backup-model", nil, defaultMaxTokens),

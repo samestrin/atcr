@@ -64,7 +64,9 @@ func TestBuildFallbackAgent_ZeroBudgetRecordStillNamesTheCap(t *testing.T) {
 	require.NoError(t, err)
 
 	var fb Agent
-	_ = captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+	_ = captureStderr(t, func() {
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+	})
 	require.NoError(t, err)
 	require.Zero(t, fb.EffectiveBudget, "premise: a 1-token window funds no input budget")
 	require.Zero(t, fb.ReservedOutputTokens, "premise: nothing was funded")

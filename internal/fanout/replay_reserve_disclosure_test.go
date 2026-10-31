@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -33,7 +34,7 @@ func TestBuildSlots_ZeroBudgetWarningNamesTheReplayReserve(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "leaves no input budget once the", "precondition: the zero-budget warning must fire")
@@ -55,7 +56,7 @@ func TestBuildSlots_SingleShotZeroBudgetWarningNamesNoReserve(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "leaves no input budget once the", "precondition: the zero-budget warning must fire")
@@ -104,7 +105,7 @@ func TestBuildFallbackAgent_RecordsTheReplayReserve(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, primary.Tools, "precondition: the primary requests tools")
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: rng})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", false, fallbackRefit{rng: rng})
 	require.NoError(t, err)
 	require.Positive(t, fb.EffectiveBudget, "precondition: the fallback is funded")
 	assert.Equal(t, fb.ReservedOutputTokens*payload.ReasoningReplayReserveCaps, fb.ReasoningReserveTokens,
@@ -194,7 +195,7 @@ func TestBuildFallbackAgent_ZeroBudgetToolLoopStillStatesItsReserve(t *testing.T
 	require.NoError(t, err)
 	require.True(t, primary.Tools, "precondition: the primary requests tools")
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{rng: rng})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", false, fallbackRefit{rng: rng})
 	require.NoError(t, err)
 	require.Zero(t, fb.EffectiveBudget, "precondition: the zero-budget fallback arm is what fires")
 	assert.Zero(t, fb.ReservedOutputTokens,

@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -30,7 +31,7 @@ func TestBuildSlots_ChunkedWarnsOnLoneOversizedFile(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 1, "a lone oversized file is one slot (cannot be split)")
@@ -65,7 +66,7 @@ func TestBuildSlots_ChunkedWarnsOnCeilingOversizedChunk(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 64, "the slot count is capped at the maxChunksPerAgent ceiling")
@@ -89,7 +90,7 @@ func TestBuildSlots_ChunkedSuppressesOversizeWarning(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 		require.NoError(t, err)
 	})
 	require.NotContains(t, out, "exceeds max_context_lines", "the oversized-file warning must be suppressed on the resume rebuild path")
@@ -123,7 +124,7 @@ func TestBuildSlots_ChunkedFilesModeNoMisleadingWarning(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: b.String(), FileCount: 3}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.NotContains(t, out, "exceeds max_context_lines",
@@ -218,7 +219,7 @@ func TestBuildSlots_ChunkedPreambleIsNotChargedToTheFile(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Contains(t, out, "exceeds max_context_lines",
@@ -252,7 +253,7 @@ func TestBuildSlots_ChunkedWarnsWhenPreamblePushesDeliveredTotalOverBudget(t *te
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Contains(t, out, "exceeds max_context_lines",

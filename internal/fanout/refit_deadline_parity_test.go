@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -40,7 +41,7 @@ func TestBuildFallbackAgent_RefitKeepsDeadlineParityWithAMultiChunkPrimary(t *te
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true, true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1,

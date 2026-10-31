@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -55,7 +56,7 @@ func TestChunkMaxLines_ClampedByGlobalByteBudget(t *testing.T) {
 	unclamped := payload.ChunkMaxLines("unlisted-small-model", ptrInt(declared), defaultMaxTokens)
 	require.Equal(t, 6328, unclamped, "precondition: the declaration alone derives 6328 lines")
 
-	slots, _, err := buildSlots(clampRoster(t, declared, globalBudget), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), clampRoster(t, declared, globalBudget), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the clamped budget must still split this diff")
 	assert.Equal(t, wantLines, slots[0].Primary.chunkMaxLines,
@@ -66,7 +67,7 @@ func TestChunkMaxLines_UnclampedWhenNoGlobalBudget(t *testing.T) {
 	// payload_byte_budget: 0 means "no global cap configured" everywhere else in
 	// the settings tier; the clamp must not invent one.
 	const declared = 128000
-	slots, _, err := buildSlots(clampRoster(t, declared, 0), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), clampRoster(t, declared, 0), clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1)
 	assert.Equal(t, 6328, slots[0].Primary.chunkMaxLines,
@@ -83,7 +84,7 @@ func TestChunkMaxLines_ExplicitOverrideBeatsTheClamp(t *testing.T) {
 	g.MaxContextLines = &lines
 	cfg.Registry.Agents["greta"] = g
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1)
 	assert.Equal(t, explicit, slots[0].Primary.chunkMaxLines,

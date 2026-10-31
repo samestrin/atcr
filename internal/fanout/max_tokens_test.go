@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -68,7 +69,7 @@ func TestBuildSlots_ResolvedMaxTokensReachesTheInvocation(t *testing.T) {
 	ac.MaxTokens = &declared
 	cfg.Registry.Agents["greta"] = ac
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 	require.NotNil(t, slots[0].Primary.Invocation.MaxTokens)
@@ -88,7 +89,7 @@ func TestBuildSlots_ResolvedMaxTokensIsAlsoWhatSizingReserves(t *testing.T) {
 	ac.MaxTokens = &declared
 	cfg.Registry.Agents["greta"] = ac
 
-	slots, _, err := buildSlots(cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, clampPayloads(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 	assert.Equal(t, declared, slots[0].Primary.ReservedOutputTokens,
@@ -117,7 +118,7 @@ func TestBuildSlots_ChunkedLineBudgetDerivesFromTheResolvedMaxTokens(t *testing.
 		ac.MaxTokens = maxTokens
 		cfg.Registry.Agents["greta"] = ac
 
-		slots, _, err := buildSlots(cfg, map[string]modePayload{
+		slots, _, err := buildSlots(context.Background(), cfg, map[string]modePayload{
 			"blocks": {Text: diffOfNFiles(12, 900), FileCount: 12},
 		}, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
@@ -161,7 +162,7 @@ func TestBuildFallbackAgent_ResolvedMaxTokensReachesSizingAndInvocation(t *testi
 		require.NoError(t, err)
 		require.Equal(t, primaryCap, primary.ReservedOutputTokens, "precondition: the primary carries its own cap")
 
-		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 
 		require.NotNil(t, fb.Invocation.MaxTokens)
@@ -185,7 +186,7 @@ func TestBuildFallbackAgent_ResolvedMaxTokensReachesSizingAndInvocation(t *testi
 		primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
 
-		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 
 		require.NotNil(t, fb.Invocation.MaxTokens)

@@ -72,7 +72,7 @@ func TestBaselineUnits_ResidentPromptBytesTrackMaxParallel(t *testing.T) {
 	for i := range entries {
 		entries[i] = baselineEntry(fmt.Sprintf("f%02d.go", i), 100)
 	}
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, units, "one persona x 40 bins")
 
@@ -119,7 +119,7 @@ func TestBaselineUnits_LeaseRenderMatchesThePlan(t *testing.T) {
 	for i := range entries {
 		entries[i] = baselineEntry(fmt.Sprintf("f%02d.go", i), 100)
 	}
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 12, "two personas x six bins")
 
@@ -179,7 +179,7 @@ func TestBaselineUnits_LeaseRenderPrintsNoWarnings(t *testing.T) {
 	var slots []Slot
 	var err error
 	prepared := captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload partitions into several bins")

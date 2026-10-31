@@ -43,7 +43,7 @@ func overWindowEntries() []payload.FileEntry {
 
 func overWindowSlots(t *testing.T) []Slot {
 	t.Helper()
-	slots, _, err := buildSlots(overWindowConfig(), baselinePayloads(overWindowEntries()), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), overWindowConfig(), baselinePayloads(overWindowEntries()), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2)
 	return slots
@@ -80,7 +80,7 @@ func TestBaselineSlots_OverPayloadCapInsideWindowIsNotOverWindow(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
 	entries := []payload.FileEntry{baselineEntry("big.go", 500), baselineEntry("a.go", 100)}
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2)
 	for i, s := range slots {
@@ -92,7 +92,7 @@ func TestBaselineSlots_OverPayloadCapInsideWindowIsNotOverWindow(t *testing.T) {
 // budget it is over, so an unreviewed bin never needs explaining after the fact.
 func TestBaselineSlots_OverWindowWarnsAtPlanTime(t *testing.T) {
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(overWindowConfig(), baselinePayloads(overWindowEntries()), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+		_, _, err := buildSlots(context.Background(), overWindowConfig(), baselinePayloads(overWindowEntries()), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 		require.NoError(t, err)
 	})
 	assert.Contains(t, out, `agent "greta"`)

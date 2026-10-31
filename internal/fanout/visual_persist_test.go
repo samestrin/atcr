@@ -47,7 +47,7 @@ func TestPersistVisualEvidence_WritesSafeNamesUnderVisualOnly(t *testing.T) {
 		NetworkFailures: []NetworkFailure{{Method: "GET", URL: "http://localhost:3000/api", Status: 500}},
 	}
 
-	got, err := persistVisualEvidence(secretGuardWarn, dir, res)
+	got, err := persistVisualEvidence(context.Background(), secretGuardWarn, dir, res)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"visual/home-page.png", "visual/escape.png"}, got.Screenshots)
@@ -78,7 +78,7 @@ func TestPersistVisualEvidence_NoScreenshotsWritesNothing(t *testing.T) {
 		"empty":   {},
 		"no data": {Screenshots: []BrowserScreenshot{{Name: "home", Path: "home.png"}}},
 	} {
-		got, err := persistVisualEvidence(secretGuardWarn, dir, res)
+		got, err := persistVisualEvidence(context.Background(), secretGuardWarn, dir, res)
 		require.NoError(t, err, name)
 		assert.Equal(t, VisualArtifacts{}, got, name)
 		_, statErr := os.Stat(filepath.Join(dir, visualEvidenceDir))
@@ -94,18 +94,18 @@ func TestPersistVisualEvidence_TextWithoutScreenshots(t *testing.T) {
 		Console:         []ConsoleEntry{{Level: "error", Text: "boom"}},
 		NetworkFailures: []NetworkFailure{{Method: "GET", URL: "http://localhost/api", Status: 500}},
 	}
-	got, err := persistVisualEvidence(secretGuardWarn, dir, res)
+	got, err := persistVisualEvidence(context.Background(), secretGuardWarn, dir, res)
 	require.NoError(t, err)
 	assert.Equal(t, VisualArtifacts{Console: "visual/console.txt", Network: "visual/network.txt"}, got)
 	assert.Equal(t, []string{"visual/console.txt", "visual/network.txt"}, treeFiles(t, dir))
 
-	_, err = persistVisualEvidence(secretGuardBlock, t.TempDir(), BrowserResult{Console: []ConsoleEntry{{Level: "log", Text: "token=" + guardAWSKey}}})
+	_, err = persistVisualEvidence(context.Background(), secretGuardBlock, t.TempDir(), BrowserResult{Console: []ConsoleEntry{{Level: "log", Text: "token=" + guardAWSKey}}})
 	require.ErrorIs(t, err, ErrSecretGuardBlocked)
 }
 
 // No review dir (a stage run outside a review) persists nothing.
 func TestPersistVisualEvidence_NoReviewDirIsANoOp(t *testing.T) {
-	got, err := persistVisualEvidence(secretGuardWarn, "", BrowserResult{Screenshots: []BrowserScreenshot{{Name: "a", Data: []byte("x")}}})
+	got, err := persistVisualEvidence(context.Background(), secretGuardWarn, "", BrowserResult{Screenshots: []BrowserScreenshot{{Name: "a", Data: []byte("x")}}})
 	require.NoError(t, err)
 	assert.Equal(t, VisualArtifacts{}, got)
 }
@@ -121,7 +121,7 @@ func TestPersistVisualEvidence_GuardsCapturedText(t *testing.T) {
 
 	t.Run("redact", func(t *testing.T) {
 		dir := t.TempDir()
-		got, err := persistVisualEvidence(secretGuardRedact, dir, res)
+		got, err := persistVisualEvidence(context.Background(), secretGuardRedact, dir, res)
 		require.NoError(t, err)
 		for _, p := range []string{got.Console, got.Network} {
 			b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p)))
@@ -133,7 +133,7 @@ func TestPersistVisualEvidence_GuardsCapturedText(t *testing.T) {
 
 	t.Run("block", func(t *testing.T) {
 		dir := t.TempDir()
-		_, err := persistVisualEvidence(secretGuardBlock, dir, res)
+		_, err := persistVisualEvidence(context.Background(), secretGuardBlock, dir, res)
 		require.ErrorIs(t, err, ErrSecretGuardBlocked)
 		_, statErr := os.Stat(filepath.Join(dir, visualEvidenceDir))
 		assert.True(t, os.IsNotExist(statErr), "nothing is written when the text is blocked")
@@ -145,7 +145,7 @@ func TestPersistVisualEvidence_GuardsCapturedText(t *testing.T) {
 func TestPersistVisualEvidence_RefusesASymlinkedVisualDir(t *testing.T) {
 	dir, elsewhere := t.TempDir(), t.TempDir()
 	require.NoError(t, os.Symlink(elsewhere, filepath.Join(dir, visualEvidenceDir)))
-	_, err := persistVisualEvidence(secretGuardWarn, dir, BrowserResult{Screenshots: []BrowserScreenshot{{Name: "a", Data: []byte("x")}}})
+	_, err := persistVisualEvidence(context.Background(), secretGuardWarn, dir, BrowserResult{Screenshots: []BrowserScreenshot{{Name: "a", Data: []byte("x")}}})
 	require.Error(t, err)
 	assert.Empty(t, treeFiles(t, elsewhere))
 }

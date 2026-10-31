@@ -37,12 +37,17 @@ func ptrF(f float64) *float64 { return &f }
 // resolution (EffectivePayloadMode, payloads[mode] lookup, scope injection,
 // renderAgent) — the single production resolution site — rather than a duplicate.
 func buildOneAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
+	return buildOneAgentCtx(context.Background(), cfg, name, payloads, rng, forceMode, scopeConstraint)
+}
+
+// buildOneAgentCtx is buildOneAgent with the context the guard logs through.
+func buildOneAgentCtx(ctx context.Context, cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
 	scoped := *cfg
 	proj := *cfg.Project
 	proj.Agents = []string{name}
 	proj.SerialAgents = nil
 	scoped.Project = &proj
-	slots, modes, err := buildSlots(&scoped, payloads, rng, forceMode, scopeConstraint, false)
+	slots, modes, err := buildSlots(ctx, &scoped, payloads, rng, forceMode, scopeConstraint, false)
 	if err != nil {
 		return Agent{}, "", err
 	}
@@ -867,7 +872,7 @@ func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
 	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100), baselineEntry("c.go", 100)}
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "greta plans one bin per file")
 	slots = append(slots,
