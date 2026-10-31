@@ -3,6 +3,9 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -554,6 +557,25 @@ func seedCopyTars(t *testing.T) map[string]string {
 		t.Logf("%s tar has no --exclude: BusyBox tar not covered in this run", bb)
 	}
 	return tars
+}
+
+// TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage pins the seedCopyTars doc
+// comment: BusyBox tar coverage is local-only, and CI cannot pick it up with
+// `apt install busybox` because Ubuntu's busybox has no --exclude.
+func TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "docker_test.go", nil, parser.ParseComments)
+	require.NoError(t, err)
+	var doc string
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "seedCopyTars" {
+			doc = fn.Doc.Text()
+		}
+	}
+	require.NotEmpty(t, doc, "seedCopyTars must keep its doc comment")
+	for _, want := range []string{"local-only", "apt install busybox", "--exclude"} {
+		assert.Contains(t, doc, want, "the doc comment must say BusyBox tar coverage is local-only and why CI cannot get it from apt")
+	}
 }
 
 // renderSeedScript points the fixed /src and /work paths of a setup script at
