@@ -528,7 +528,10 @@ exit 0`)
 // covered; BusyBox is covered when a `busybox` binary on PATH was built with
 // --exclude support. Alpine's is (CONFIG_FEATURE_TAR_FROM=y); Ubuntu's is not,
 // and against it the seed copy fails closed with 125, so it is no stand-in for
-// the alpine image.
+// the alpine image. BusyBox tar coverage is therefore local-only: the CI runners
+// are Ubuntu, and `apt install busybox` there installs a busybox without
+// --exclude, so it would be skipped just the same. CI coverage needs an
+// Alpine-built busybox in the Go Test job.
 func seedCopyTars(t *testing.T) map[string]string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
