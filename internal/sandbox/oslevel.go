@@ -194,7 +194,7 @@ func DefaultOSLevelConfig() OSLevelConfig {
 // sandbox — sandbox-exec on macOS, bwrap on Linux — as a second Backend
 // implementation alongside DockerBackend, for hosts without a Docker daemon.
 //
-// The type is exported (mirroring DockerBackend's shape, docker.go:80-88: the
+// The type is exported (mirroring DockerBackend's shape, the DockerBackend type: the
 // name is public, every field stays unexported) so a cross-package resolver can
 // assert timeout propagation through a concrete-type cast — internal/verify's
 // parity test does exactly that. Consumers should still hold it as a
@@ -213,7 +213,7 @@ type OSLevelBackend struct {
 	sem chan struct{}
 	// semOnce lazily allocates sem on first Run so a struct-literal backend
 	// (bypassing NewOSLevelBackend) still enforces the cap instead of failing
-	// open, as DockerBackend does at docker.go:237-245.
+	// open, as DockerBackend.Run does.
 	semOnce sync.Once
 	// goos overrides the platform the fault classifier reasons about. Empty
 	// means runtime.GOOS. It exists so both platforms' classification can be
@@ -271,7 +271,7 @@ var _ Backend = (*OSLevelBackend)(nil)
 
 // NewOSLevelBackend constructs an OS-level backend from cfg, flooring
 // non-positive values to their defaults. It mirrors NewDockerBackend
-// (docker.go:91-105): a caller must not have to pre-populate every field, and a
+// (NewDockerBackend): a caller must not have to pre-populate every field, and a
 // zero or negative timeout would be an unbounded run — the same
 // resource-exhaustion risk the Docker backend floors.
 func NewOSLevelBackend(cfg OSLevelConfig) *OSLevelBackend {
@@ -302,7 +302,7 @@ func (b *OSLevelBackend) Name() string { return osLevelBackendName }
 
 // Timeout reports the backend's default per-run wall-clock budget — the value
 // applied when RunSpec.Timeout is zero. Exposed for the same reason
-// DockerBackend.Timeout is (docker.go:115): the value is a context deadline and
+// DockerBackend.Timeout is: the value is a context deadline and
 // never appears in the spawned argv, so a resolver's propagation of an
 // operator's configured timeout cannot otherwise be asserted.
 func (b *OSLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
@@ -325,7 +325,7 @@ func (b *OSLevelBackend) Timeout() time.Duration { return b.cfg.Timeout }
 // Step 4 matters: reporting success on binary presence alone would let the CLI
 // enable --exec against a sandbox that cannot actually contain anything, which
 // is DockerBackend.Preflight's reason for spawning a trivial container
-// (docker.go:382-397). The execution nonce proves the workload ran; only the
+// (DockerBackend.Preflight). The execution nonce proves the workload ran; only the
 // negative-capability probe proves it ran UNDER containment. Every failure is
 // wrapped so the cause stays reachable.
 func (b *OSLevelBackend) Preflight(ctx context.Context) error {
@@ -630,7 +630,7 @@ var osLevelContainmentArgs = func(goos string, cfg OSLevelConfig, spec RunSpec) 
 // argv is the operator's trusted validate_command, so that is repository
 // content silently redirecting the operator's own validation — including the
 // power to make the tree's validation pass. DockerBackend avoids it by having
-// separate mount points (/scratch vs /work, docker.go:165-169); this backend
+// separate mount points (/scratch vs /work, see dockerRunArgs); this backend
 // has to create them.
 const (
 	osLevelScratchHomeSubdir = "home"
@@ -878,7 +878,7 @@ var copyRegularFile = func(path, target string, perm os.FileMode) error {
 }
 
 // preflightRunTimeout bounds the trivial verification run, matching the 30s
-// budget DockerBackend.Preflight gives its trivial container (docker.go:394).
+// budget DockerBackend.Preflight gives its trivial container.
 const preflightRunTimeout = 30 * time.Second
 
 // resolveToolPath returns the absolute path of the sandboxing binary, verifying
@@ -1100,7 +1100,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Bound concurrent sandbox spawns; block until a slot frees or ctx is done.
 	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
 	// enforces MaxConcurrent rather than silently spawning without limit,
-	// mirroring docker.go:237-251. Probes skip the acquire entirely (see the
+	// mirroring DockerBackend.Run. Probes skip the acquire entirely (see the
 	// doc comment).
 	if !probe {
 		b.semOnce.Do(func() {
@@ -1171,7 +1171,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// accounted for with fault=true — which is the right way round, since both
 	// are failures worth seeing in the evidence trail.
 	//
-	// DockerBackend logs its equivalent line inline (docker.go:289-294) before the
+	// DockerBackend logs its equivalent line inline in DockerBackend.Run before the
 	// timeout and exit-code branches run, so its trail records
 	// exit_code=0/timed_out=false for every run including the killed and faulted
 	// ones. The evidence trail for model-authored code should not carry that.
@@ -1312,7 +1312,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Hand the workload an explicit, minimal environment. Inheriting os.Environ()
 	// would pass every credential in the operator's shell (LITELLM_API_KEY,
 	// GITHUB_TOKEN, cloud tokens) straight to LLM-generated code. Docker gets
-	// this for free from a fresh container plus an -e allowlist (docker.go:165-169);
+	// this for free from a fresh container plus an -e allowlist (dockerRunArgs);
 	// neither sandbox-exec nor bwrap scrubs the environment on its own, so the
 	// allowlist has to be built here — and here is the ONLY place it is built.
 	// bwrap's --clearenv is deliberately not used: bwrap inherits exactly this
@@ -1418,7 +1418,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 
 	// A cancellation-class end (deadline exceeded OR parent cancellation) is
 	// folded into TimedOut so it is never misreported as a spurious non-zero
-	// program exit or a backend fault, mirroring docker.go:301. runErr is
+	// program exit or a backend fault, mirroring DockerBackend.Run. runErr is
 	// consulted first so a run that genuinely finished microseconds before the
 	// deadline keeps its real exit code instead of being relabelled a timeout.
 	if runCtxDone(runCtx) && !ranToCompletion(runErr) {
@@ -1568,7 +1568,7 @@ func ranToCompletion(runErr error) bool {
 // model-authored code.
 //
 // HOME/TMPDIR and the Go/XDG cache vars point at an ephemeral scratch directory
-// OUTSIDE the snapshot, mirroring docker.go:165-169's /scratch tmpfs. Pointing
+// OUTSIDE the snapshot, mirroring dockerRunArgs' /scratch tmpfs. Pointing
 // them at the snapshot would aim every toolchain write at the very tree the
 // package contract says a run must not mutate (sandbox.go:9) — and would break
 // outright once Phase 2 makes the snapshot read-only, since a Go build cannot
@@ -1735,7 +1735,7 @@ var sandboxExecFaultCodes = map[int]string{
 
 // signalExitBase is the shell/waitpid convention for a signal-killed child:
 // 128 + signal number. bwrap propagates it (propagate_exit_status), and Docker
-// treats the same range as a fault (docker.go:323-326).
+// treats the same range as a fault (DockerBackend.Run's exit-code classification).
 const signalExitBase = 128
 
 // classifyToolExit reports whether a non-zero exit came from the sandboxing tool
@@ -1833,7 +1833,7 @@ func (b *OSLevelBackend) classifyRunError(ctx context.Context, res RunResult, to
 		// a sandbox-profile kill) originates from the kernel, not the workload,
 		// and ExitCode() reports -1 for it. Reporting -1 as a program result
 		// would present an impossible exit status as a real one, so route it to
-		// a fault exactly as the Docker backend routes 128+N (docker.go:323-326).
+		// a fault exactly as the Docker backend routes 128+N (DockerBackend.Run).
 		code := ee.ExitCode()
 		if code < 0 {
 			logger.Error("sandbox exec killed by signal", "backend", osLevelBackendName, "command", cmdStr, "error", runErr)

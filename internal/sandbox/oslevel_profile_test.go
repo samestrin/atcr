@@ -143,7 +143,7 @@ func TestSandboxExecProfile_SnapshotIsReadOnlyForBothWritableValues(t *testing.T
 	// The corrected AC 02-01 Scenario 1 (2026-08-08): RunSpec.Writable is the
 	// single source of truth for writability, and Writable:false means the
 	// snapshot is READ-ONLY — DockerBackend mounts it -v snap:/work:ro
-	// (docker.go:172-189) and sandbox.go:9 makes it a package MUST. The original
+	// (dockerRunArgs) and sandbox.go:9 makes it a package MUST. The original
 	// scenario granted file-write* on the snapshot for Writable:false, which
 	// would have let model-authored code mutate the operator's work tree.
 	//
@@ -710,7 +710,7 @@ func TestSandboxExecProfile_RejectsRelativeScratch(t *testing.T) {
 func TestSandboxExecProfile_ValidatesSpecFirst(t *testing.T) {
 	// AC 02-01 Error Scenario 1. validate() runs before anything is built, so no
 	// partial profile is ever returned, exactly as dockerRunArgs does
-	// (docker.go:136-138).
+	// (its spec.validate() call).
 	cfg, _ := profileFixture(t)
 	for name, spec := range map[string]RunSpec{
 		"neither command nor script": {SnapshotDir: "/Users/dev/snap"},
@@ -1083,7 +1083,7 @@ func TestBwrapArgs_BindsAreScopedAndNeverExposeTheHostRoot(t *testing.T) {
 
 func TestBwrapArgs_SnapshotIsReadOnlyAtWorkAndWritableSplitsToSrc(t *testing.T) {
 	// AC 02-02 Scenario 1/2. The mount points mirror dockerRunArgs exactly
-	// (docker.go:172-189): Writable:false binds the snapshot read-only at /work;
+	// (dockerRunArgs): Writable:false binds the snapshot read-only at /work;
 	// Writable:true binds it read-only at /src and puts the writable scratch at
 	// /work. Reusing Docker's mount points is what lets a workload that
 	// hardcodes /work behave the same on either backend.
@@ -1210,7 +1210,7 @@ func TestBwrapArgs_PathsAreDiscreteArgvElements(t *testing.T) {
 }
 
 func TestBwrapArgs_ValidatesSpecFirst(t *testing.T) {
-	// AC 02-02 Error Scenario 1, mirroring dockerRunArgs (docker.go:136-138).
+	// AC 02-02 Error Scenario 1, mirroring dockerRunArgs (its spec.validate() call).
 	cfg, _ := bwrapFixture(t)
 	for name, spec := range map[string]RunSpec{
 		"neither command nor script": {SnapshotDir: "/srv/snap"},

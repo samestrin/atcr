@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// dockerLineCitation matches a docker.go line citation such as "docker.go:80-88".
+// dockerLineCitation matches a docker.go line citation of the form docker.go plus a colon and a number.
 var dockerLineCitation = regexp.MustCompile(`docker\.go:\d`)
 
 // TestOSLevelFiles_CiteDockerGoBySymbolNotLine pins the fix for citation drift:
 // a line number into docker.go goes stale the moment docker.go gains a line
-// (epic 86 T6 added 14), so the OS-level backend and its caller cite
+// (epic 86 T6 added 14 lines), so the OS-level backend and its caller cite
 // DockerBackend symbols by name instead.
 func TestOSLevelFiles_CiteDockerGoBySymbolNotLine(t *testing.T) {
 	files, err := filepath.Glob("oslevel*.go")

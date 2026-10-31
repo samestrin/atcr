@@ -87,7 +87,7 @@ func TestDefaultOSLevelConfig_BoundsAreTheDocumentedValues(t *testing.T) {
 }
 
 func TestNewOSLevelBackend_ZeroValueConfigGetsSafeDefaults(t *testing.T) {
-	// Mirrors NewDockerBackend's zero-value filling (docker.go:92-104): callers
+	// Mirrors NewDockerBackend's zero-value filling (NewDockerBackend): callers
 	// must not have to pre-populate every field (AC 01-01 Scenario 3).
 	def := DefaultOSLevelConfig()
 	b := NewOSLevelBackend(OSLevelConfig{})
@@ -105,7 +105,7 @@ func TestNewOSLevelBackend_ZeroValueConfigGetsSafeDefaults(t *testing.T) {
 
 func TestNewOSLevelBackend_FloorsNonPositiveConfig(t *testing.T) {
 	// A negative/zero timeout on an OS-level sandbox is the same
-	// resource-exhaustion risk NewDockerBackend floors at docker.go:98-100.
+	// resource-exhaustion risk NewDockerBackend floors.
 	def := DefaultOSLevelConfig()
 	b := NewOSLevelBackend(OSLevelConfig{
 		Timeout:        -1 * time.Second,
@@ -1227,7 +1227,7 @@ exit 0`)
 
 func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
 	// A cancellation must never be misreported as a spurious non-zero exit or a
-	// backend fault, matching docker.go:301.
+	// backend fault, matching DockerBackend.Run.
 	b := newFakeOSLevelBackend(t, fakeOSLevelSleepBody(""))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1244,7 +1244,7 @@ func TestOSLevelBackendRun_ParentCancelFoldsIntoTimeout(t *testing.T) {
 }
 
 func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
-	// docker.go:252-255 equivalent: an unset RunSpec.Timeout uses cfg.Timeout.
+	// DockerBackend.Run's timeout fallback equivalent: an unset RunSpec.Timeout uses cfg.Timeout.
 	cfg := DefaultOSLevelConfig()
 	cfg.ToolPath = writeFakeOSLevel(t, fakeOSLevelSleepBody(filepath.Join(t.TempDir(), "survived")))
 	cfg.Timeout = 300 * time.Millisecond
@@ -1263,7 +1263,7 @@ func TestOSLevelBackendRun_ZeroSpecTimeoutFallsBackToConfig(t *testing.T) {
 }
 
 func TestOSLevelBackendRun_TruncatesCombinedOutput(t *testing.T) {
-	// Both streams are captured and bounded, mirroring docker.go:279-287.
+	// Both streams are captured and bounded, mirroring DockerBackend.Run's limitedWriter.
 	b := newFakeOSLevelBackendConfigured(t, `echo "stdout-marker"
 echo "stderr-marker" >&2
 i=0
@@ -1791,7 +1791,7 @@ func TestOSLevelClassifyToolExit_DarwinUsesSysexitsAndDiagnostic(t *testing.T) {
 func TestOSLevelClassifyToolExit_SignalRangeIsAlwaysFault(t *testing.T) {
 	// bwrap propagates 128+signal for a signal-killed child, and once Phase 2
 	// lands a policy kill arrives the same way. A kernel kill is not a program
-	// result, so it is a fault on every platform (docker.go:323-326 parity).
+	// result, so it is a fault on every platform (DockerBackend.Run parity).
 	for _, goos := range []string{"linux", "darwin"} {
 		for _, code := range []int{137, 159, 128} {
 			isFault, reason := classifyToolExit(goos, code, "")
@@ -1981,7 +1981,7 @@ func TestOSLevelBackendRun_SpawnFailureIsWrappedError(t *testing.T) {
 	// AC 01-03 Scenario 2 words this as "returns RunResult{}". The result-
 	// bearing fields are indeed zero, but Command stays populated because it is
 	// a rendering of the REQUEST, not an outcome — and DockerBackend does the
-	// same on its spawn-failure path (docker.go:337 returns res, not RunResult{}).
+	// same on its spawn-failure path (DockerBackend.Run returns res, not RunResult{}).
 	// Story 1's whole premise is mirroring that backend, so parity wins over the
 	// AC's literal wording; the property that matters — no outcome a caller
 	// could mistake for a real run — holds either way.
@@ -2187,7 +2187,7 @@ func TestOSLevelBackend_Preflight_UnsupportedPlatformFailsClosed(t *testing.T) {
 
 func TestOSLevelBackend_Preflight_ChecksRunInDocumentedOrder(t *testing.T) {
 	// Binary presence -> host prerequisite -> trivial run, each short-circuiting
-	// (docker.go:346-398's ordered early-return pattern). Asserted by making the
+	// (DockerBackend.Preflight's ordered early-return pattern). Asserted by making the
 	// FIRST check fail and proving the later ones never ran.
 	var ran []string
 	b := newFakeOSLevelBackendConfigured(t, fakeOSLevelExecBody(),
@@ -2220,7 +2220,7 @@ func TestOSLevelBackend_Preflight_PrerequisiteFailureIsSpecificAndBeforeTrivialR
 
 func TestOSLevelBackend_Preflight_TrivialRunFailureFailsPreflight(t *testing.T) {
 	// Preflight must not report success on binary presence alone
-	// (docker.go:382-397).
+	// (DockerBackend.Preflight).
 	b := newFakeOSLevelBackend(t, `echo "sandbox-exec: syntax error: expecting ')'" >&2
 exit 65`)
 	b.goos = "darwin"
@@ -2688,7 +2688,7 @@ func TestOSLevelBackendRun_EmitsAuditLog(t *testing.T) {
 	// AC 01-05 Scenario 5. The evidence trail for an executed run is the only
 	// record of what model-authored code was spawned and how it ended, so all
 	// four fields are pinned — mirroring TestDockerBackendRun_EmitsAuditLog
-	// (sandbox_test.go:461) and DockerBackend's own call (docker.go:289-294).
+	// (sandbox_test.go:461) and DockerBackend's own call in DockerBackend.Run.
 	b := newFakeOSLevelBackend(t, fakeOSLevelExitBody(3))
 
 	var buf bytes.Buffer
@@ -2703,8 +2703,8 @@ func TestOSLevelBackendRun_EmitsAuditLog(t *testing.T) {
 	assert.Contains(t, rec, `command="go test"`)
 	assert.Contains(t, rec, "tool="+b.cfg.ToolPath, "the record must name the binary that contained the run")
 	// The exit code must be the REAL one. Docker's audit line is emitted before
-	// classification and always records exit_code=0 (docker.go:289 runs ahead of
-	// :331); repeating that here would make the audit trail claim every run
+	// classification and always records exit_code=0 (the audit call in DockerBackend.Run runs ahead of
+	// classification); repeating that here would make the audit trail claim every run
 	// succeeded.
 	assert.Contains(t, rec, "exit_code=3")
 	assert.Contains(t, rec, "timed_out=false")
