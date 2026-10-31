@@ -243,6 +243,28 @@ func (g *gitRunner) commitMessages(base, head string, maxBytes int64, maxCommits
 	return kept, truncated, nil
 }
 
+// commitsTouching returns the abbreviated SHAs of the non-merge commits in
+// base..head that changed any of paths, in the %h form commitMessages records,
+// so ScopeClaimLedger can match the two reads. --literal-pathspecs makes each
+// path a repository path rather than a glob or magic pathspec, and
+// --full-history stops history simplification from hiding a commit that
+// changed a path a later merge left the same.
+func (g *gitRunner) commitsTouching(base, head string, paths []string) (map[string]bool, error) {
+	args := []string{"--literal-pathspecs", "log", "-z", "--no-merges", "--full-history", "--format=%h",
+		"--end-of-options", base + ".." + head, "--"}
+	out, err := g.output(append(args, paths...)...)
+	if err != nil {
+		return nil, fmt.Errorf("reading the commits behind %d kept path(s) for %s..%s: %w", len(paths), base, head, err)
+	}
+	touching := map[string]bool{}
+	for _, sha := range strings.Split(string(out), commitRecordSep) {
+		if sha = strings.TrimSpace(sha); sha != "" {
+			touching[sha] = true
+		}
+	}
+	return touching, nil
+}
+
 // Claim-splitting shape recognizers. All are anchored and case-sensitive where
 // git's own conventions are, so the split is a pure function of the bytes.
 var (

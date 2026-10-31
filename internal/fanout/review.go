@@ -1797,10 +1797,12 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 		// shed-exempt, so TrimToPaths kept it; with the mapper's drops gone its
 		// spans can ground a dropped file's symbols. Strip it only when the
 		// mapper actually dropped a file: a fail-open mapper leaves keep nil and a
-		// keep-all map drops nothing, and both leave the block valid.
+		// keep-all map drops nothing, and both leave the block valid. The claim
+		// ledger is shed-exempt too, so it is scoped under the same condition to
+		// the claims of commits that touched a kept file.
 		if threatMapStripsPrefetch(record) {
 			for mode, entries := range built {
-				built[mode] = withoutPrefetchContext(entries)
+				built[mode] = rb.ScopeClaimLedger(withoutPrefetchContext(entries), keep)
 			}
 		}
 		log.FromContext(ctx).Info("threat map scoped the review", "kept", record.Keep, "dropped", record.Dropped)
