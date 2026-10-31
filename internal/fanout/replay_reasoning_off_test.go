@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// replayReasoningOff is true only for the one legal opt-out value; unset (the
+// isReplayReasoningOff is true only for the one legal opt-out value; unset (the
 // default, replay on) and any other string are false.
 func TestReplayReasoningOff_OnlyTheOffValue(t *testing.T) {
 	cases := []struct {
@@ -22,7 +22,7 @@ func TestReplayReasoningOff_OnlyTheOffValue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run("value="+tc.value, func(t *testing.T) {
-			assert.Equal(t, tc.want, replayReasoningOff(registry.AgentConfig{ReplayReasoning: tc.value}))
+			assert.Equal(t, tc.want, isReplayReasoningOff(registry.AgentConfig{ReplayReasoning: tc.value}))
 		})
 	}
 }

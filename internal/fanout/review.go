@@ -2237,6 +2237,19 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 	// The shared slice is read-only (uncoveredBaselineFiles only ranges over it).
 	wholePayloadPaths := map[string][]string{}
 
+	// byteOvershoots collects the chunk byte-overshoot warnings so an identical one
+	// prints once: every agent of one window chunks the diff the same way against
+	// the same budget, so a 13-agent roster repeated each line 13 times. Keyed on
+	// what the line reports (chunk, bytes, budget) and flushed when buildSlots
+	// returns, naming every agent the line applies to.
+	var overshootOrder []byteOvershoot
+	overshootAgents := map[byteOvershoot][]string{}
+	defer func() {
+		for _, k := range overshootOrder {
+			k.warn(overshootAgents[k])
+		}
+	}()
+
 	add := func(name string, serial bool) error {
 		ac, ok := cfg.Registry.Agents[name]
 		if !ok {
@@ -2763,15 +2776,28 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// the operator was already notified during the original preparation.
 			if warnOversized {
 				for ci, ct := range chunks {
+					prefixLines := diffPrefixLines(ct)
 					// The BYTE check, independent of the line checks below: ml was
 					// derived from chunkClampBudget at a fixed bytes/line estimate, so a
 					// diff of longer lines fills ml and still ships past the budget,
 					// silently, under a derived ml as well as an explicit one. Report it;
 					// re-splitting by bytes is chunkDiff's job and would move every chunk
-					// boundary a cached or resumed bin is keyed on.
+					// boundary a cached or resumed bin is keyed on. Like the line warning
+					// below, the gate runs on the delivered total and the message names
+					// the preamble's bytes apart from the diff's own.
 					if payload.ChunkExceedsByteBudget(len(ct), chunkClampBudget) {
-						fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: chunk %d of %d is %d bytes, over its %d-byte chunk budget; its lines are longer than the chunk sizing assumes, so it may overflow the model\n",
-							name, ci+1, len(chunks), len(ct), chunkClampBudget)
+						prefixBytes := 0
+						for _, ln := range strings.SplitAfterN(ct, "\n", prefixLines+1)[:prefixLines] {
+							prefixBytes += len(ln)
+						}
+						k := byteOvershoot{chunk: ci + 1, chunks: len(chunks), diffBytes: len(ct) - prefixBytes, preambleBytes: prefixBytes, budget: chunkClampBudget}
+						seen := overshootAgents[k]
+						if len(seen) == 0 {
+							overshootOrder = append(overshootOrder, k)
+						}
+						if len(seen) == 0 || seen[len(seen)-1] != name {
+							overshootAgents[k] = append(seen, name)
+						}
 					}
 					fileCount := countDiffFiles(ct)
 					// The GATE runs on the delivered total: every line of the chunk,
@@ -2790,7 +2816,6 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					// reporting its lines as the file's diff would name a line count that
 					// file did not produce. Name them separately instead, so the operator
 					// can still reconstruct the delivered total.
-					prefixLines := diffPrefixLines(ct)
 					fileLines := deliveredLines - prefixLines
 					preambleNote := ""
 					if prefixLines > 0 {
@@ -3258,6 +3283,32 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 	return slots, perAgentMode, nil
 }
 
+// byteOvershoot is one chunk byte-overshoot warning as buildSlotsFor reports it,
+// and the key it dedupes the warning on across agents.
+type byteOvershoot struct {
+	chunk, chunks            int
+	diffBytes, preambleBytes int
+	budget                   int64
+}
+
+// warn prints the warning once for every agent in agents.
+func (o byteOvershoot) warn(agents []string) {
+	who := fmt.Sprintf("agent %q", agents[0])
+	if len(agents) > 1 {
+		quoted := make([]string, len(agents))
+		for i, a := range agents {
+			quoted[i] = fmt.Sprintf("%q", a)
+		}
+		who = "agents " + strings.Join(quoted, ", ")
+	}
+	preambleNote := ""
+	if o.preambleBytes > 0 {
+		preambleNote = fmt.Sprintf(" plus %d engine-rendered preamble byte(s)", o.preambleBytes)
+	}
+	fmt.Fprintf(os.Stderr, "atcr: warning: %s: chunk %d of %d is %d bytes%s, over its %d-byte chunk budget; its lines are longer than the chunk sizing assumes, so it may overflow the model\n",
+		who, o.chunk, o.chunks, o.diffBytes, preambleNote, o.budget)
+}
+
 // defaultMaxTokens is the output-token cap applied to a reviewer call that
 // resolves no other value: it is the LAST tier of resolveMaxTokens
 // (--max-tokens > the agent's max_tokens declaration > this), not the only cap.
@@ -3547,10 +3598,10 @@ func entryPaths(entries []payload.FileEntry) []string {
 	return paths
 }
 
-// replayReasoningOff reports whether ac opted out of replaying reasoning
+// isReplayReasoningOff reports whether ac opted out of replaying reasoning
 // (Epic 35.16.11.2.2.9). It reads only ac's own replay_reasoning, so a fallback
 // never inherits its primary's value.
-func replayReasoningOff(ac registry.AgentConfig) bool {
+func isReplayReasoningOff(ac registry.AgentConfig) bool {
 	return ac.ReplayReasoning == registry.ReplayReasoningOff
 }
 
@@ -3676,7 +3727,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 		Tools:            ac.Tools,
 		SupportsFC:       ac.SupportsFC,
 		// Epic 35.16.11.2.2.9: the agent's own replay_reasoning opt-out.
-		ReplayReasoningOff: replayReasoningOff(ac),
+		ReplayReasoningOff: isReplayReasoningOff(ac),
 		MaxTurns:           derefMaxTurns(ac.MaxTurns),
 		ToolBudgetBytes:    derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:        ac.MinSeverity,
@@ -4017,7 +4068,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		fbReserved = fbMaxTokens
 	}
 	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
-	// render (review.go:3155) and for the same reason: fbBudget is sized with
+	// render (review.go:3180) and for the same reason: fbBudget is sized with
 	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
 	// closed a zero budget — the one record where it is the CAUSE of the
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that
@@ -4333,7 +4384,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// replay_reasoning is per-agent too (Epic 35.16.11.2.2.9): whether an
 		// endpoint tolerates a replayed reasoning member is a property of the
 		// fallback's OWN provider, so it sends its own value, not the primary's.
-		ReplayReasoningOff: replayReasoningOff(ac),
+		ReplayReasoningOff: isReplayReasoningOff(ac),
 		// Review constraints follow the slot, not the substitute model (Epic 2.2):
 		// a fallback answers in the primary's place, so the primary's min_severity
 		// and max_findings still govern the output.

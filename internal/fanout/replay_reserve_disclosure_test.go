@@ -159,7 +159,7 @@ func TestBuildFallbackAgent_RefitArmRecordsTheReplayReserve(t *testing.T) {
 // reservations absent — an operator recomputing 20000-8192-4096=7712 concludes the
 // window should have funded it. ResolvedMaxTokens was added unconditionally for
 // exactly this reason; the reserve did not inherit that precedent (TD
-// internal/fanout/review.go:3146).
+// internal/fanout/review.go:3171).
 func TestBuildOneAgent_ZeroBudgetToolLoopAgentStillStatesItsReserve(t *testing.T) {
 	cfg := toolLoopGretaRoster(t, 1) // a window that cannot fund even one cap
 	agent, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
