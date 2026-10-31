@@ -1,0 +1,1 @@
+- A Linear-triggered review of an issue with more than one linked GitHub pull request now logs each one it passes over, as `owner/repo#number` with the reason, so a newer linked pull request cannot replace the real one without a trace. (epic 100)

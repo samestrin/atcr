@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +134,67 @@ func TestPullRequestPicksNewestOfSeveral(t *testing.T) {
 			t.Errorf("%s: got %+v %v, want the newest PR #9", name, pr, err)
 		}
 	}
+}
+
+// Epic 100 F1: a PR the newest-wins rule skips is logged by owner/repo#N with
+// the reason, so a later-linked PR cannot hide the real one without a trace.
+func TestPullRequestLogsIgnoredAttachments(t *testing.T) {
+	older := `{"url":"https://github.com/o/r/pull/7","createdAt":"2026-01-01T00:00:00.000Z"}`
+	newer := `{"url":"https://github.com/x/y/pull/9","createdAt":"2026-02-01T00:00:00.000Z"}`
+	undated := `{"url":"https://github.com/o/r/pull/3"}`
+	other := `{"url":"https://slack.com/x","createdAt":"2026-03-01T00:00:00.000Z"}`
+	for name, nodes := range map[string]string{
+		"oldest first": older + "," + undated + "," + newer + "," + other,
+		"newest first": other + "," + newer + "," + undated + "," + older,
+	} {
+		c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+			write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+nodes+`]}}}}`))
+		})
+		var lines []string
+		c.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+		pr, err := c.PullRequest(context.Background(), "i1")
+		if err != nil || pr != (PR{"x", "y", 9}) {
+			t.Fatalf("%s: got %+v %v, want x/y#9", name, pr, err)
+		}
+		want := []string{
+			"linear: issue i1: ignored linked PR o/r#7: older than the chosen x/y#9",
+			"linear: issue i1: ignored linked PR o/r#3: older than the chosen x/y#9",
+		}
+		if !slices.Equal(sorted(lines), sorted(want)) {
+			t.Errorf("%s: log lines %q, want %q", name, lines, want)
+		}
+	}
+
+	// One linked PR: nothing ignored, nothing logged. A nil Logf is safe.
+	c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+older+`,`+older+`]}}}}`))
+	})
+	if pr, err := c.PullRequest(context.Background(), "i1"); err != nil || pr != (PR{"o", "r", 7}) {
+		t.Errorf("nil Logf: got %+v %v", pr, err)
+	}
+	var lines []string
+	c.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	if _, err := c.PullRequest(context.Background(), "i1"); err != nil || len(lines) != 0 {
+		t.Errorf("same PR listed twice: %v, logged %q, want nothing", err, lines)
+	}
+
+	// A tie keeps the first listed; the other is logged as not newer.
+	tie := `{"url":"https://github.com/o/r/pull/8","createdAt":"2026-01-01T00:00:00.000Z"}`
+	c = fake(t, func(w http.ResponseWriter, r *http.Request) {
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+older+`,`+tie+`]}}}}`))
+	})
+	lines = nil
+	c.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	want := "linear: issue i1: ignored linked PR o/r#8: attached no later than the chosen o/r#7"
+	if pr, err := c.PullRequest(context.Background(), "i1"); err != nil || pr != (PR{"o", "r", 7}) || !slices.Equal(lines, []string{want}) {
+		t.Errorf("tie: got %+v %v, logged %q, want o/r#7 and %q", pr, err, lines, want)
+	}
+}
+
+func sorted(s []string) []string {
+	s = slices.Clone(s)
+	slices.Sort(s)
+	return s
 }
 
 // Epic 100 T7: the query asks for createdAt, or the newest pick has no data.
