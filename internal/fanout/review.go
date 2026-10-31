@@ -1789,6 +1789,16 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 			record.Dropped = append(record.Dropped, p)
 		}
 		sort.Strings(record.Dropped)
+		// The Context Definitions block was retrieved for the whole diff and is
+		// shed-exempt, so TrimToPaths kept it; with the mapper's drops gone its
+		// spans can ground a dropped file's symbols. Strip it only when the
+		// mapper actually dropped a file: a fail-open mapper leaves keep nil and a
+		// keep-all map drops nothing, and both leave the block valid.
+		if len(record.Dropped) > 0 {
+			for mode, entries := range built {
+				built[mode] = withoutPrefetchContext(entries)
+			}
+		}
 		log.FromContext(ctx).Info("threat map scoped the review", "kept", record.Keep, "dropped", record.Dropped)
 	}
 	out := map[string]modePayload{}
@@ -2738,7 +2748,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 				if warnOversized {
 					// The reserve clause comes from the same helper doctor's zero-budget
 					// hint uses: naming only the unreserved cap made the window-vs-cap
-					// sum on screen look like it fit (TD internal/fanout/review.go:3103).
+					// sum on screen look like it fit (TD internal/fanout/review.go:3113).
 					fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: resolved window %d tokens leaves no input budget once the %d-token output cap%s and the fixed prompt overhead are reserved (effective budget 0); chunking at the %d-line floor (may overflow) rather than sizing to the window — %s\n",
 						name, agentWindow, agentMaxTokens, payload.ReasoningReserveClause(toolLoop, agentMaxTokens), ml, zeroBudgetRemedy)
 				}
@@ -3323,7 +3333,7 @@ const (
 // One predicate, because three places need the same answer: the sizing above, the
 // zero-budget warnings, and renderAgent's reservation record. Two of them used to
 // derive it independently and the record did not derive it at all (TD
-// internal/fanout/review.go:3103).
+// internal/fanout/review.go:3113).
 func toolLoopAgent(ac registry.AgentConfig, rng ReviewRange) bool {
 	return ac.Tools && ac.SupportsFC && rng.Head != ""
 }
@@ -3358,7 +3368,7 @@ func sizingToken(effectiveBudget int64, maxLines int) string {
 //
 // Zero values are meaningful, not missing initialization — every one carries
 // tested semantics that diffCacheKey itself interprets, so there is nothing to
-// validate at construction (TD internal/fanout/review.go:2864, clarified
+// validate at construction (TD internal/fanout/review.go:2874, clarified
 // 2026-09-29: documented, not constructor-gated):
 //
 //   - Temperature nil = unset (the literal default temperature); a set pointer
@@ -3467,7 +3477,7 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	// style-only agent keeps the undeclared key. Only ts= needs that explicit
 	// gate: th=/tl= append only when their key is non-empty, and either key
 	// being non-empty IS ThinkingDeclared, so their bare non-empty checks
-	// already imply the gate (TD internal/fanout/review.go:2965).
+	// already imply the gate (TD internal/fanout/review.go:2975).
 	if in.Thinking != "" {
 		tuning = tuning + "\x00th=" + in.Thinking
 	}
@@ -3482,7 +3492,7 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	// It renders on the wire only when thinking is enabled (newThinkingFields
 	// sends it only under on), so the clause is gated on ThinkingEnabled: a
 	// preserve flag with thinking off, or with nothing declared, sends nothing
-	// and must keep the key that body had (TD internal/fanout/review.go:2974).
+	// and must keep the key that body had (TD internal/fanout/review.go:2984).
 	// registry.validateThinking already rejects those shapes at load, so this
 	// gate only binds hand-built inputs — defense in depth, no production key
 	// changes. It only matters in multi-turn tool loops — which are never
@@ -3499,7 +3509,7 @@ func diffCacheKey(prompt string, in cacheKeyInputs) string {
 	if in.ReplayReasoning != "" {
 		tuning = tuning + "\x00rr=" + in.ReplayReasoning
 	}
-	// Key-version segment (TD internal/fanout/review.go:2901): unconditional, so
+	// Key-version segment (TD internal/fanout/review.go:2911): unconditional, so
 	// every entry written before the Salvaged cache gate existed is invalidated in
 	// one pass. The gate only stops NEW salvaged writes, and pt= is absent for
 	// agents that never set preserve_thinking — without this bump a salvaged-
@@ -3632,7 +3642,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// reserved_output_tokens, whose value is pinned as the output cap by
 	// TestBuildSlots_ToolLoopAgentReservesReplayedReasoning — so an operator
 	// reconciling resolved_window against the record reads the two together and gets
-	// the budget the run actually had (TD internal/fanout/review.go:3103).
+	// the budget the run actually had (TD internal/fanout/review.go:3113).
 	reasoningReserve := 0
 	if sz.effectiveBudget > 0 {
 		reservedOut = agentMaxTokens
@@ -3642,7 +3652,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// record — the one record where the reserve is what caused the degradation —
 	// omitted the very number that explains it, leaving an operator to recompute the
 	// window-vs-cap arithmetic and conclude the window should have funded the run
-	// (TD internal/fanout/review.go:3136).
+	// (TD internal/fanout/review.go:3146).
 	if toolLoopAgent(ac, rng) {
 		reasoningReserve = agentMaxTokens * payload.ReasoningReplayReserveCaps
 	}
@@ -3991,7 +4001,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// arm below. A fallback takes `tools` from its primary but declares function
 	// calling for itself, so this is not toolLoopAgent's predicate — it was inline
 	// here while the record derived nothing at all, which is how the reserve got
-	// sized and then not reported (TD internal/fanout/review.go:3103).
+	// sized and then not reported (TD internal/fanout/review.go:3113).
 	fbToolLoop := primary.Tools && ac.SupportsFC && refit.rng.Head != ""
 	fbBudget := payload.EffectiveByteBudget(ac.Model, ac.ContextWindowTokens, payload.SizingOutputTokens(fbToolLoop, fbMaxTokens))
 	fbWindow := payload.ContextWindowTokens(ac.Model, ac.ContextWindowTokens)
@@ -4007,12 +4017,12 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		fbReserved = fbMaxTokens
 	}
 	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
-	// render (review.go:3145) and for the same reason: fbBudget is sized with
+	// render (review.go:3155) and for the same reason: fbBudget is sized with
 	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
 	// closed a zero budget — the one record where it is the CAUSE of the
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that
 	// record while the identical condition on a primary disclosed it, so a consumer
-	// read "this agent held back no reserve" (TD internal/fanout/review.go:3497).
+	// read "this agent held back no reserve" (TD internal/fanout/review.go:3507).
 	//
 	// The pairing rule, stated once here for every producer: reasoning_reserve_tokens
 	// MAY appear beside an absent reserved_output_tokens, and only on a record that
@@ -4222,7 +4232,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 				// Ungated for the same reason as the inherited-payload site above and the
 				// primary render: the re-fit budget already has the reserve subtracted out,
 				// so a zero fbSizingBudget is the record the reserve explains
-				// (TD internal/fanout/review.go:3688). Pairing rule: see the
+				// (TD internal/fanout/review.go:3698). Pairing rule: see the
 				// inherited-payload site above.
 				if fbToolLoop {
 					fbReasoningReserve = fbMaxTokens * payload.ReasoningReplayReserveCaps
@@ -4899,4 +4909,15 @@ func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
 	}
 	s := rb.PrefetchStatus()
 	return &s
+}
+
+// withoutPrefetchContext returns entries minus the Context Definitions block.
+func withoutPrefetchContext(entries []payload.FileEntry) []payload.FileEntry {
+	out := make([]payload.FileEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Path != payload.PrefetchContextPath {
+			out = append(out, e)
+		}
+	}
+	return out
 }

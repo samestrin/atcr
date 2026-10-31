@@ -107,8 +107,8 @@ func gitRepo(t *testing.T) (dir, base, head string) {
 	run := func(args ...string) string {
 		cmd := gitexec.FixtureCommandContext(context.Background(), dir, args...)
 		cmd.Env = append(cmd.Env,
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=test@example.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=test@example.invalid")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
