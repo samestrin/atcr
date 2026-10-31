@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -241,4 +242,20 @@ func TestAnchoredPathWarning(t *testing.T) {
 	_, _ = validateFindingPaths(context.Background(), findings, root)
 	assert.Empty(t, AnchoredPathWarning(findings[0].PathWarning))
 	assert.Equal(t, stream.PathNotFoundWarning, AnchoredPathWarning(findings[1].PathWarning))
+}
+
+// TestValidateFindingPaths_SiblingDoesNotDoubleCountRootUnresolved: a marked
+// finding validates File and its sibling against the same root; an unresolvable
+// root is one fault and must be counted once, not once per call.
+func TestValidateFindingPaths_SiblingDoesNotDoubleCountRootUnresolved(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	findings := []JSONFinding{{File: "a.go", Line: 1, SiblingLocation: "b.go:2"}}
+	validateFindingPaths(context.Background(), findings, root)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value())
 }

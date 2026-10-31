@@ -49,6 +49,24 @@ const PathNotFoundWarning = "file not found"
 // and the case-only check; a nil idx (non-git repo, or git unavailable) cleanly
 // degrades to 5.0 existence-only behavior with no suggestion.
 func ValidatePath(f *Finding, root string, idx *FileIndex) {
+	ValidatePathIn(&PathRun{}, f, root, idx)
+}
+
+// PathRun scopes the path-validation health counters to one logical validation
+// that spans several ValidatePath calls (a finding's anchored File and its
+// sibling location). The root is shared, so an unresolved root is one fault and
+// is counted once per run; and once it is counted, a later indeterminate result
+// in the same run is a symptom of that fault, not a second one, so one
+// validation never increments both counters. The zero value is ready to use.
+type PathRun struct {
+	rootUnresolved bool
+}
+
+// ValidatePathIn is ValidatePath with the counters scoped to run.
+func ValidatePathIn(run *PathRun, f *Finding, root string, idx *FileIndex) {
+	if run == nil {
+		run = &PathRun{}
+	}
 	if f == nil {
 		return
 	}
@@ -84,7 +102,7 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 			return
 		}
 	}
-	switch existsContained(root, joined) {
+	switch existsContained(run, root, joined) {
 	case existsInside:
 		f.PathValid = true
 		f.PathWarning = ""
@@ -102,7 +120,9 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 		// would flag nothing and look identical to a clean run — so count the
 		// indeterminate result. The process-wide registry surfaces it via the
 		// Prometheus endpoint without threading a logger through this signature.
-		metrics.Counter("atcr_path_validation_indeterminate_total").Inc()
+		if !run.rootUnresolved {
+			metrics.Counter("atcr_path_validation_indeterminate_total").Inc()
+		}
 	}
 }
 
@@ -131,7 +151,7 @@ const (
 // lives under root once every symlink in both paths is resolved. A path that is
 // absent, or that escapes root via a symlink, is existsOutsideOrAbsent; a
 // permission/IO error that proves nothing is existsIndeterminate.
-func existsContained(root, joined string) existence {
+func existsContained(run *PathRun, root, joined string) existence {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		absRoot = root
@@ -147,7 +167,10 @@ func existsContained(root, joined string) existence {
 		// containment check that looks identical to a clean one. Count it (the same
 		// observability mechanism the indeterminate branch uses, avoiding a logger
 		// in this signature), then fall back to the lexical absRoot best-effort.
-		metrics.Counter("atcr_path_validation_root_unresolved_total").Inc()
+		if !run.rootUnresolved {
+			metrics.Counter("atcr_path_validation_root_unresolved_total").Inc()
+			run.rootUnresolved = true
+		}
 		realRoot = absRoot
 	}
 	resolved, err := filepath.EvalSymlinks(absJoined)

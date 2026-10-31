@@ -300,3 +300,47 @@ func TestValidatePath_NilIndexNoSuggestion(t *testing.T) {
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 	assert.Empty(t, f.PathSuggestion)
 }
+
+// TestValidatePathIn_RootUnresolvedCountedOnceAndNeverWithIndeterminate: two
+// calls sharing a PathRun against one unresolvable root count the root fault
+// once, and the run never also increments the indeterminate counter.
+func TestValidatePathIn_RootUnresolvedCountedOnceAndNeverWithIndeterminate(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	var run PathRun
+	a := Finding{File: "child.go", Line: 3}
+	b := Finding{File: "notadir/child.go"}
+	ValidatePathIn(&run, &a, root, nil)
+	ValidatePathIn(&run, &b, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value())
+}
+
+// TestValidatePathIn_IndeterminateSuppressedWhenRootUnresolved: a root whose
+// parent segment is a regular file fails EvalSymlinks with ENOTDIR for both the
+// root (root-unresolved) and the joined path (indeterminate). One validation
+// counts the root fault only; a nil run is tolerated and behaves as a fresh run.
+func TestValidatePathIn_IndeterminateSuppressedWhenRootUnresolved(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	seg := filepath.Join(t.TempDir(), "seg")
+	require.NoError(t, os.WriteFile(seg, []byte("x\n"), 0o644))
+	root := filepath.Join(seg, "x")
+
+	var run PathRun
+	f := Finding{File: "child.go", Line: 1}
+	ValidatePathIn(&run, &f, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value(),
+		"a run that counted an unresolved root must not also count indeterminate")
+
+	metrics.DefaultRegistry.Reset()
+	g := Finding{File: "child.go", Line: 1}
+	ValidatePathIn(nil, &g, root, nil)
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+}
