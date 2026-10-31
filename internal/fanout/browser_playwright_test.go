@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/sandbox"
 )
@@ -359,6 +360,23 @@ func TestPlaywrightBackend_NoReportOutputIsCapped(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %.300s..., want it to mention %q", err, want)
 		}
+	}
+}
+
+// TestCapPlaywrightText_CutsOnARuneBoundary: a cut that would fall inside a
+// multi-byte rune backs up to the rune's start, so the capped text stays valid
+// UTF-8.
+func TestCapPlaywrightText_CutsOnARuneBoundary(t *testing.T) {
+	// "é" is two bytes; a leading "x" puts the byte cap mid-rune.
+	got := capPlaywrightText("x" + strings.Repeat("é", 2*playwrightMaxErrorText))
+	if !utf8.ValidString(got) {
+		t.Fatalf("capped text is not valid UTF-8: %q", got[playwrightMaxErrorText-4:])
+	}
+	if !strings.Contains(got, "[...truncated") {
+		t.Fatalf("capped text %q has no truncation marker", got[playwrightMaxErrorText-4:])
+	}
+	if i := strings.Index(got, " [...truncated"); i > playwrightMaxErrorText {
+		t.Fatalf("kept %d bytes, want at most %d", i, playwrightMaxErrorText)
 	}
 }
 
