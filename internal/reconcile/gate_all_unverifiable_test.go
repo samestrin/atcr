@@ -237,3 +237,26 @@ func TestAllUnverifiableCollapse_NamesEveryReplyShapeCause(t *testing.T) {
 	assert.Contains(t, err.Error(), "response_truncated",
 		"the truncated cause is a different member of the same enumeration and stays named beside the shape family")
 }
+
+// TD internal/reconcile/gate.go:230: ambiguous_unopened_closer no longer means
+// only "a verdict envelope on both sides" of a bare closer. The skeptic lane
+// (internal/verify/invoke.go's `if ambiguous` arm) also returns it for a
+// `refuted` envelope that sits only BEFORE the closer, so the gate message must
+// name the shared property — no verdict envelope provably committed — in the
+// words the lane's own log detail uses, not the narrower both-sides shape that
+// sends an operator holding the refuted-before case looking for a second
+// envelope that is not there.
+func TestAllUnverifiableCollapse_AmbiguousCloserClauseNamesTheCommitRule(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(dir, "verification.json")
+	require.NoError(t, os.WriteFile(verPath, []byte(`{"findings":[{"verdict":"unverifiable"}]}`), 0o600))
+
+	err := allUnverifiableCollapse(verPath)
+	require.Error(t, err)
+	msg := err.Error()
+
+	assert.Contains(t, msg, "no verdict envelope provably committed (ambiguous_unopened_closer",
+		"the clause naming ambiguous_unopened_closer must state the rule the lane applies")
+	assert.NotContains(t, msg, "a bare closer with a verdict envelope on both sides",
+		"the both-sides shape is one of two that collapse here; naming it alone misdescribes the refuted-before case")
+}

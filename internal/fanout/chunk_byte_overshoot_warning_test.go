@@ -375,3 +375,48 @@ func TestChunkExceedsByteBudget(t *testing.T) {
 	assert.False(t, payload.ChunkExceedsByteBudget(1<<20, 1), "1 is the scope-block floor, not a real budget")
 	assert.True(t, payload.ChunkExceedsByteBudget(3, 2), "2 is the smallest budget that is checked")
 }
+
+// A preparation that fails must not print the overshoot warnings it collected
+// before the failure: no slot it described is ever dispatched.
+func TestBuildSlots_ChunkByteOvershoot_NotPrintedWhenPrepareFails(t *testing.T) {
+	cfg, _, _ := overshootFleet(t, 2)
+	cfg.Project.Agents = append(cfg.Project.Agents, "ghost") // not in the registry
+	w1 := wideLineSeg("w1.go", 600, 200)
+	payloads := map[string]modePayload{"blocks": {Text: w1, FileCount: 1}}
+
+	out := captureStderr(t, func() {
+		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		require.ErrorContains(t, err, `agent "ghost" not found`)
+	})
+	assert.NotContains(t, out, overshootMarker, "a failed prepare must not warn about chunks it never dispatches:\n%s", out)
+}
+
+// chunkPrefixBytes sums the first prefixLines lines of a chunk and clamps a
+// prefixLines past the chunk's last line instead of slicing out of range.
+func TestChunkPrefixBytes(t *testing.T) {
+	cases := []struct {
+		name        string
+		chunk       string
+		prefixLines int
+		want        int
+	}{
+		{"no preamble", "diff --git a/x b/x\n+x\n", 0, 0},
+		{"two preamble lines", "p1\np2\ndiff --git a/x b/x\n", 2, len("p1\np2\n")},
+		{"preamble only", "p1\np2", 2, len("p1\np2")},
+		{"prefixLines past the last line", "p1\np2\n", 5, len("p1\np2\n")},
+		{"empty chunk", "", 3, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, chunkPrefixBytes(tc.chunk, tc.prefixLines))
+		})
+	}
+}
+
+// warn with no agents prints nothing rather than indexing agents[0].
+func TestByteOvershootWarn_NoAgentsPrintsNothing(t *testing.T) {
+	out := captureStderr(t, func() {
+		byteOvershoot{chunk: 1, chunks: 1, diffBytes: 10, budget: 5}.warn(nil)
+	})
+	assert.Empty(t, out)
+}

@@ -30,9 +30,13 @@ const DefaultPlaywrightTimeout = 2 * time.Minute
 var ErrNoPlaywrightProject = errors.New("fanout: no Playwright project in the repo under review")
 
 // ErrBrowserBackendUnsupported is returned when the sandbox a browser backend
-// would run through cannot host it. The darwin OS-level backend is refused: its
-// sandbox-exec profile denies all network, loopback included, so the dev server
-// and the browser inside one run cannot reach each other. Use Docker or Linux.
+// would run through cannot host it. The darwin OS-level backend is refused. Its
+// profile can open a loopback port for a run (sandbox.RunSpec.LoopbackPorts),
+// but the browser run still cannot work there: the dev server's port is chosen
+// by the repo's own webServer config and atcr does not know it, the run shell
+// and spec filter use the /src and /work paths only Docker and Linux bwrap
+// provide, and the Playwright browsers live under the operator's home, which
+// the profile does not grant. Use Docker or Linux.
 var ErrBrowserBackendUnsupported = errors.New("fanout: browser backend unsupported on this sandbox")
 
 // ErrPlaywrightImageRequired is returned by Preflight when the Docker sandbox
@@ -117,7 +121,9 @@ func (b *PlaywrightBackend) checkSandbox() error {
 	}
 	if b.goos == "darwin" {
 		if _, ok := b.sb.(*sandbox.OSLevelBackend); ok || b.sb.Name() == "os-level" {
-			return fmt.Errorf("%w: the darwin os-level sandbox denies loopback, so the dev server cannot start; use Docker or Linux", ErrBrowserBackendUnsupported)
+			return fmt.Errorf("%w: on the darwin os-level sandbox the dev server's port comes from the repo's webServer config, "+
+				"the run needs /src and /work, and the Playwright browsers sit under the home tree the profile does not grant; "+
+				"use Docker or Linux", ErrBrowserBackendUnsupported)
 		}
 	}
 	return nil

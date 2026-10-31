@@ -1,0 +1,1 @@
+- `atcr review --config-dir <dir>` now reads `.atcr/ignore.yaml` from `<dir>`, not from the reviewed tree, so an untrusted pull request can no longer ship an ignore rule that hides its own findings from the gate and the auto-fix. The `reconcile` module gains `Options.IgnoreRoot` (v0.13.0) to carry that directory. (epic 99)

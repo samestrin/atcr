@@ -77,11 +77,23 @@ was requested:
 
 ## The darwin OS-level backend is refused
 
-The OS-level sandbox backend on macOS (darwin) cannot host a browser run: its
-sandbox-exec profile denies all network, loopback included, so the dev server
-and the browser inside one run cannot reach each other. The backend refuses it
-with `ErrBrowserBackendUnsupported` before anything runs. **Use the Docker
-backend or run on Linux** — Linux's OS-level sandbox keeps loopback.
+The OS-level sandbox backend on macOS (darwin) cannot host a browser run, and
+the backend refuses it with `ErrBrowserBackendUnsupported` before anything
+runs. **Use the Docker backend or run on Linux** — Linux's OS-level sandbox
+gives each run its own private loopback.
+
+Loopback is no longer the whole reason. The darwin sandbox-exec profile can now
+open a single loopback port for a run (TCP only, on this machine only, nothing else),
+but a browser run still needs three things macOS does not give it:
+
+- **The dev server's port.** The repo's own `webServer` config picks it, and
+  atcr does not read that config, so it cannot ask for the right port.
+- **The `/src` and `/work` paths.** The run uses them for `node_modules` and the
+  spec filter. Docker and Linux bwrap mount the snapshot there; sandbox-exec
+  cannot remap paths.
+- **The browsers.** Playwright installs the browsers under your home folder
+  (`~/Library/Caches/ms-playwright`). The profile does not let the run read or
+  execute anything there.
 
 ## The visual review: felix and the vision agent
 

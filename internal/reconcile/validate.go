@@ -1,8 +1,11 @@
 package reconcile
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/astgroup"
@@ -85,23 +88,42 @@ func AnchoredPathWarning(warning string) string {
 	return warning
 }
 
+// siblingLineInFile reports whether line falls within file's length. The parser
+// accepts any positive line, so the bound lives here with the rest of the
+// sibling trust check. A sibling that cannot be read as a file (a directory, an
+// I/O error) has no line to point at and fails the bound. root is non-empty:
+// validateFindingPaths returns early without one.
+func siblingLineInFile(root, file string, line int) bool {
+	data, err := os.ReadFile(filepath.Join(root, file))
+	if err != nil {
+		return false
+	}
+	n := bytes.Count(data, []byte{'\n'})
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		n++
+	}
+	return line <= n
+}
+
 // validateSiblingLocation runs a marked finding's sibling file through the same
 // stream.ValidatePath check File gets (root containment, case, existence), so no
 // consumer trusts an unchecked sibling path (Epic 35.16.15 T4, Q4). A sibling
 // that does not resolve has its marker cleared — consumers then fall back to the
 // anchored File:Line — and a warning naming it appended to any warning File
 // already carries, never overwriting it. An unmarked finding is untouched.
-func validateSiblingLocation(f *JSONFinding, root string, idx *stream.FileIndex) {
+func validateSiblingLocation(run *stream.PathRun, f *JSONFinding, root string, idx *stream.FileIndex) {
 	if f.SiblingLocation == "" {
 		return
 	}
 	file := f.SiblingLocation
+	line := 0
 	if i := strings.LastIndex(file, ":"); i >= 0 {
+		line, _ = strconv.Atoi(file[i+1:])
 		file = file[:i]
 	}
 	sf := stream.Finding{File: file}
-	stream.ValidatePath(&sf, root, idx)
-	if sf.PathValid {
+	stream.ValidatePathIn(run, &sf, root, idx)
+	if sf.PathValid && siblingLineInFile(root, file, line) {
 		return
 	}
 	warning := siblingNotFoundWarning(f.SiblingLocation)
@@ -182,11 +204,12 @@ func validateFindingPaths(ctx context.Context, findings []JSONFinding, root stri
 		// a stream.Finding. Bridge through a scratch finding so the stamping stays in
 		// the ATCR stream type while the result rides on the JSONFinding record.
 		sf := stream.Finding{File: findings[i].File, Line: findings[i].Line}
-		stream.ValidatePath(&sf, root, idx)
+		var run stream.PathRun // shared by the anchored and sibling calls
+		stream.ValidatePathIn(&run, &sf, root, idx)
 		findings[i].PathValid = sf.PathValid
 		findings[i].PathWarning = sf.PathWarning
 		findings[i].PathSuggestion = sf.PathSuggestion
-		validateSiblingLocation(&findings[i], root, idx)
+		validateSiblingLocation(&run, &findings[i], root, idx)
 
 		// Tier 4 keys off the ANCHORED path's result (sf), never the sibling
 		// warning above: a hallucinated sibling says nothing about File.

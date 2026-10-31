@@ -5,9 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,7 +77,7 @@ func TestValidateFindingPaths_FlowsIntoJSONRecord(t *testing.T) {
 func TestValidateFindingPaths_ValidatesSiblingLocation(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "sibling.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "sibling.go"), []byte(strings.Repeat("x\n", 9)), 0o644))
 
 	findings := []JSONFinding{
 		{File: "edited.go", Line: 3, SiblingLocation: "sibling.go:9"},
@@ -112,6 +114,47 @@ func TestValidateFindingPaths_ValidatesSiblingLocation(t *testing.T) {
 	// A sibling escaping the root is refused by the same guard File gets.
 	assert.Empty(t, findings[4].SiblingLocation)
 	assert.Equal(t, siblingNotFoundWarning("../escape.go:1"), findings[4].PathWarning)
+}
+
+// TestValidateFindingPaths_BoundsSiblingLine (Epic 99 T6): the parser accepts any
+// positive sibling line, so validateSiblingLocation bounds it against the file
+// length. A line past end of file clears the marker like an unresolved sibling;
+// the last line, with or without a trailing newline, is kept.
+func TestValidateFindingPaths_BoundsSiblingLine(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "three.go"), []byte("a\nb\nc\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "nonl.go"), []byte("a\nb"), 0o644))
+
+	findings := []JSONFinding{
+		{File: "edited.go", Line: 1, SiblingLocation: "three.go:3"},
+		{File: "edited.go", Line: 1, SiblingLocation: "three.go:4"},
+		{File: "edited.go", Line: 1, SiblingLocation: "nonl.go:2"},
+		{File: "edited.go", Line: 1, SiblingLocation: "nonl.go:3"},
+	}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	assert.Equal(t, "three.go:3", findings[0].SiblingLocation)
+	assert.Empty(t, findings[0].PathWarning)
+	assert.Empty(t, findings[1].SiblingLocation)
+	assert.Equal(t, siblingNotFoundWarning("three.go:4"), findings[1].PathWarning)
+	assert.True(t, findings[1].PathValid)
+	assert.Equal(t, "nonl.go:2", findings[2].SiblingLocation)
+	assert.Empty(t, findings[3].SiblingLocation)
+}
+
+// TestValidateFindingPaths_SiblingDirectoryClearsMarker: a sibling that resolves
+// to a directory has no lines to point at, so the marker is cleared.
+func TestValidateFindingPaths_SiblingDirectoryClearsMarker(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "cmd"), 0o755))
+
+	findings := []JSONFinding{{File: "edited.go", Line: 1, SiblingLocation: "cmd:120"}}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	assert.Empty(t, findings[0].SiblingLocation)
+	assert.Equal(t, siblingNotFoundWarning("cmd:120"), findings[0].PathWarning)
 }
 
 // resultWithPaths builds a Result whose cached path-stamped JSONFinding records
@@ -241,4 +284,20 @@ func TestAnchoredPathWarning(t *testing.T) {
 	_, _ = validateFindingPaths(context.Background(), findings, root)
 	assert.Empty(t, AnchoredPathWarning(findings[0].PathWarning))
 	assert.Equal(t, stream.PathNotFoundWarning, AnchoredPathWarning(findings[1].PathWarning))
+}
+
+// TestValidateFindingPaths_SiblingDoesNotDoubleCountRootUnresolved: a marked
+// finding validates File and its sibling against the same root; an unresolvable
+// root is one fault and must be counted once, not once per call.
+func TestValidateFindingPaths_SiblingDoesNotDoubleCountRootUnresolved(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	findings := []JSONFinding{{File: "a.go", Line: 1, SiblingLocation: "b.go:2"}}
+	validateFindingPaths(context.Background(), findings, root)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value())
+	assert.Equal(t, int64(0), metrics.Counter("atcr_path_validation_indeterminate_total").Value())
 }

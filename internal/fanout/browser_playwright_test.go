@@ -161,6 +161,27 @@ func TestPlaywrightBackend_RefusesDarwinOSLevel(t *testing.T) {
 		}
 	})
 
+	t.Run("the refusal names what is still missing", func(t *testing.T) {
+		// Epic 100 T4b: the darwin profile can now open a loopback port, so
+		// "denies loopback" is no longer the reason. What still blocks the run
+		// is the port the repo's own webServer config picks, the /src and /work
+		// paths the run shell uses, and the browsers living under the home
+		// tree the profile does not grant.
+		b := newPlaywrightBackendForOS(sandbox.NewOSLevelBackend(sandbox.DefaultOSLevelConfig()), "darwin")
+		err := b.Preflight(context.Background())
+		if err == nil {
+			t.Fatal("Preflight accepted the darwin OS-level backend")
+		}
+		for _, want := range []string{"webServer", "/work", "browsers", "Docker", "Linux"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q does not name %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "denies loopback") {
+			t.Errorf("refusal %q still blames the loopback deny, which the profile can now lift", err)
+		}
+	})
+
 	t.Run("nothing runs", func(t *testing.T) {
 		// A backend reporting the OS-level name is refused the same way, which
 		// lets the fake prove the sandbox is never reached.

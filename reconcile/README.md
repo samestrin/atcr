@@ -103,11 +103,15 @@ type Finding struct {
 }
 
 // Merged is one reconciled output finding (embeds Finding). SourceCategories
-// keeps each source finding's own category beside the modal Category; it is
-// in-process only and never serialized.
+// keeps each source finding's own category beside the modal Category,
+// ConfidenceDiscount says why Confidence was discounted (empty when it was
+// not), and SourceQuotes keeps each source finding's quote for the independence
+// test (IsPanelWideQuotes). All three are in-process only and never serialized.
 type Merged struct {
 	Finding
-	SourceCategories []SourceCategory `json:"-"`
+	SourceCategories   []SourceCategory `json:"-"`
+	ConfidenceDiscount string           `json:"-"`
+	SourceQuotes       []SourceQuote    `json:"-"`
 }
 
 // SourceCategory is one source finding's own category in a merged cluster.
@@ -116,12 +120,21 @@ type SourceCategory struct {
 	Category string // lower-cased and trimmed
 }
 
+// SourceQuote is one source finding as the independence test sees it.
+type SourceQuote struct {
+	Reviewer string // normalized as Merged.Reviewers is
+	File     string
+	Category string // lower-cased and trimmed
+	Evidence string
+}
+
 // Options parameterizes a run.
 type Options struct {
 	ReconciledAt time.Time      // stamps the summary; zero falls back to now (UTC)
 	Partial      bool           // true when some expected source was missing/unreadable
 	Merges       map[string]bool // ambiguous cluster ids a host adjudicated as duplicates
 	Root         string         // base dir for embedder-layered path validation (core ignores it)
+	IgnoreRoot   string         // dir an embedder loads ignore rules from; empty = Root (core ignores it)
 }
 
 // Result is a completed reconciliation.
@@ -183,7 +196,10 @@ result safely.
   `invariant` finding counts only when it is independent: reviewers who all
   file it in one file with near-identical evidence (`IsPanelWide`, the mark of
   a panel-wide instruction) get `MEDIUM`, not `HIGH`. The finding is kept, and
-  is not routed to the consensus sidecar (`ConfidenceForCategory`).
+  is not routed to the consensus sidecar. `DiscountedConfidence` returns the
+  confidence with the reason for any discount, and an embedder that unions
+  merged findings re-tests independence with `IsPanelWideQuotes` over their
+  `SourceQuotes`, so it decides exactly as `Merge` did.
 - **Ambiguity sidecar.** Three kinds of cluster surface in `Result.Ambiguous` as
   `AmbiguousCluster` values, neither silently merged nor dropped: **gray-zone
   pairs** (0.4–0.7) a host can adjudicate (and force a merge via

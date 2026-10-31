@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,10 +108,11 @@ func TestMergeJSONFindings_IndependentInvariantAgreementStaysHigh(t *testing.T) 
 	}
 }
 
-// A member reconcile already discounted is read through its first quote, so
-// unioning it with another reviewer's matching quote stays discounted, and a
+// A member reconcile already discounted is read through its per-reviewer quotes
+// (SourceQuotes, Epic 99 T4; before that, a first quote cut from its evidence),
+// so unioning it with another reviewer's matching quote stays discounted, and a
 // quote that itself holds " / " is not cut at the separator. The short quote is
-// the case that needs the first-quote reading: "[bruce] x == y / [greta] x == y"
+// the case that needs the per-reviewer reading: "[bruce] x == y / [greta] x == y"
 // shares only half its words with "x == y", below the near-identical threshold,
 // so read whole it would make the union look independent and HIGH.
 func TestMergeJSONFindings_DiscountedMemberIsReadThroughItsFirstQuote(t *testing.T) {
@@ -126,8 +128,12 @@ func TestMergeJSONFindings_DiscountedMemberIsReadThroughItsFirstQuote(t *testing
 		assert.Equal(t, ConfMedium, m.Confidence, name)
 		assert.Equal(t, PanelWideReason, m.ConfidenceDiscount, name)
 
-		assert.Equal(t, quote, firstQuote(pair[0].Evidence, pair[0].Reviewers), name)
-		assert.Equal(t, quote, firstQuote(quote, []string{"kai"}), "%s: an unprefixed quote passes through whole", name)
+		for _, q := range memberQuotes(pair[0]) {
+			assert.Equal(t, quote, q.Evidence, "%s: %s's quote is whole", name, q.Reviewer)
+		}
+		for _, q := range memberQuotes(predicateRecord("kai", "key.go", quote)) {
+			assert.Equal(t, quote, q.Evidence, "%s: an unprefixed quote passes through whole", name)
+		}
 	}
 }
 
@@ -139,9 +145,9 @@ func TestMergeJSONFindings_ReviewerlessMemberCountsInTheIndependenceTest(t *test
 	reviewerless := predicateRecord("", "hash.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }")
 	reviewerless.Reviewers = nil
 
-	members := panelWideMembers([]JSONFinding{reviewerless})
+	members := memberQuotes(reviewerless)
 	require.Len(t, members, 1)
-	assert.Equal(t, Finding{File: "hash.go", Category: "invariant", Evidence: reviewerless.Evidence}, members[0])
+	assert.Equal(t, reclib.SourceQuote{File: "hash.go", Category: "invariant", Evidence: reviewerless.Evidence}, members[0])
 
 	m := MergeJSONFindings([]JSONFinding{
 		predicateRecord("bruce", "key.go", discountQuote),

@@ -22,6 +22,18 @@ import (
 // at the doc to rewrite.
 var parseTimeNonEnforcementClaim = regexp.MustCompile(`(?i)not\s+(?:enforced|validated|canonicali[sz]ed|normali[sz]ed)\s+at\s+parse[\s-]time`)
 
+// claimsCategoryUnenforced reports whether line says CATEGORY specifically is not
+// enforced at parse time. Other fields' lines may say the same of themselves and
+// are not this test's concern.
+func claimsCategoryUnenforced(line string) bool {
+	return strings.Contains(strings.ToUpper(line), "CATEGORY") && parseTimeNonEnforcementClaim.MatchString(line)
+}
+
+func TestDocs_CategoryClaimIgnoresOtherFields(t *testing.T) {
+	assert.True(t, claimsCategoryUnenforced("| 5 | `CATEGORY` | Not enforced at parse time |"))
+	assert.False(t, claimsCategoryUnenforced("| 3 | `FILE` | Not enforced at parse time |"))
+}
+
 func TestDocs_NoClaimThatCategoryIsUnenforcedAtParseTime(t *testing.T) {
 	// Precondition: canonicalization is in place. Without it the claim would be
 	// true and this test would be guarding the wrong thing.
@@ -38,7 +50,7 @@ func TestDocs_NoClaimThatCategoryIsUnenforcedAtParseTime(t *testing.T) {
 		body, err := os.ReadFile(path)
 		require.NoError(t, err)
 		for i, line := range strings.Split(string(body), "\n") {
-			assert.Falsef(t, parseTimeNonEnforcementClaim.MatchString(line),
+			assert.Falsef(t, claimsCategoryUnenforced(line),
 				"%s:%d claims CATEGORY is not enforced at parse time, but every parse path canonicalizes it (stream.CanonicalCategory): %s",
 				filepath.Base(path), i+1, strings.TrimSpace(line))
 		}

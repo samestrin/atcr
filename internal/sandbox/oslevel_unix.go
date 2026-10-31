@@ -24,7 +24,7 @@ import (
 // the entire group rather than only the direct child. A workload that forked (a
 // build spawning a compiler, a test spawning a server) is therefore reaped
 // instead of outliving its deadline — the leak DockerBackend closes by killing
-// its container outright (docker.go:305-311).
+// its container outright (DockerBackend.Run's timeout path).
 //
 // This mirrors configureProcessGroup in internal/verify/localvalidate_pgroup_unix.go;
 // the two are deliberately separate because that one is unexported in a

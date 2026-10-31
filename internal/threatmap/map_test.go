@@ -77,6 +77,58 @@ func TestMap_AcceptsOneJSONFence(t *testing.T) {
 	require.Equal(t, []string{"auth.go"}, keep)
 }
 
+// A model may label the fence in any case or with another alphanumeric info
+// string, and may end its lines with CRLF; none of that is a malformed reply.
+func TestMap_AcceptsAnyAlphanumericFenceAndCRLF(t *testing.T) {
+	for name, reply := range map[string]string{
+		"upper-case label": "```JSON\n{\"keep\": [\"auth.go\"]}\n```",
+		"other label":      "```json5\n{\"keep\": [\"auth.go\"]}\n```",
+		"label with space": "``` json\n{\"keep\": [\"auth.go\"]}\n```",
+		"crlf fence":       "```json\r\n{\"keep\": [\"auth.go\"]}\r\n```\r\n",
+		"crlf bare fence":  "```\r\n{\"keep\": [\"auth.go\"]}\r\n```",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc := &fakeCompleter{persona: testPersona, reply: reply}
+
+			keep, err := Map(context.Background(), fc, []string{"auth.go", "style.css"})
+
+			require.NoError(t, err)
+			require.Equal(t, []string{"auth.go"}, keep)
+		})
+	}
+}
+
+// A path holding a newline, a quote or a backslash goes into the prompt as one
+// JSON string on one line, so the mapper can copy it back into its reply and
+// keep it; a plain path is listed as it is.
+func TestMap_OddPathsAreOneJSONStringPerLine(t *testing.T) {
+	paths := []string{"a.go", "evil\nauth.go", `q"uote.go`, `back\slash.go`, " pad.go"}
+	fc := &fakeCompleter{persona: testPersona,
+		reply: `{"keep": ["evil\nauth.go", "q\"uote.go", "back\\slash.go", " pad.go"]}`}
+
+	keep, err := Map(context.Background(), fc, paths)
+
+	require.NoError(t, err)
+	require.Equal(t, paths[1:], keep)
+	require.Equal(t, []string{"map these 5 files for nora:\na.go\n" +
+		`"evil\nauth.go"` + "\n" + `"q\"uote.go"` + "\n" + `"back\\slash.go"` + "\n" + `" pad.go"` + "\n"},
+		fc.prompts, "each path is exactly one line of the payload")
+}
+
+// A model may read U+2028 or U+2029 as a line break, so a path holding one is
+// quoted too, with the separator escaped.
+func TestMap_LineSeparatorPathsAreQuoted(t *testing.T) {
+	paths := []string{"a.go", "line\u2028sep.go", "para\u2029sep.go"}
+	fc := &fakeCompleter{persona: testPersona, reply: `{"keep": ["line\u2028sep.go", "para\u2029sep.go"]}`}
+
+	keep, err := Map(context.Background(), fc, paths)
+
+	require.NoError(t, err)
+	require.Equal(t, paths[1:], keep)
+	require.Equal(t, []string{"map these 3 files for nora:\na.go\n" +
+		`"line\u2028sep.go"` + "\n" + `"para\u2029sep.go"` + "\n"}, fc.prompts)
+}
+
 // Every failure returns an error and no paths: the caller reads an error as
 // "keep every file", so none of these may trim anything.
 func TestMap_FailuresReturnAnError(t *testing.T) {
@@ -98,7 +150,18 @@ func TestMap_FailuresReturnAnError(t *testing.T) {
 		{"keep missing", &fakeCompleter{reply: `{}`}},
 		{"keep null", &fakeCompleter{reply: `{"keep": null}`}},
 		{"bare array", &fakeCompleter{reply: `["auth.go"]`}},
+		{"upper-case key", &fakeCompleter{reply: `{"KEEP": ["auth.go"]}`}},
+		{"mixed-case key", &fakeCompleter{reply: `{"Keep": ["auth.go"]}`}},
+		{"duplicate keep", &fakeCompleter{reply: `{"keep": ["style.css"], "keep": ["auth.go"]}`}},
+		{"keep and a case variant", &fakeCompleter{reply: `{"keep": ["auth.go"], "KEEP": ["style.css"]}`}},
+		{"missing comma", &fakeCompleter{reply: `{"keep": ["auth.go"] "x": 1}`}},
+		{"unclosed object", &fakeCompleter{reply: `{"keep": ["auth.go"]`}},
 		{"unclosed fence", &fakeCompleter{reply: "```json\n{\"keep\": [\"auth.go\"]}\n"}},
+		{"fence label with punctuation", &fakeCompleter{reply: "```json{\n\"keep\": [\"auth.go\"]}\n```"}},
+		// The body is a well-formed reply, so only the fence label rejects these.
+		{"punctuation label around a good reply", &fakeCompleter{reply: "```json{\n{\"keep\": [\"auth.go\"]}\n```"}},
+		{"two-word label around a good reply", &fakeCompleter{reply: "```json reply\n{\"keep\": [\"auth.go\"]}\n```"}},
+		{"hyphenated label around a good reply", &fakeCompleter{reply: "```js-on\n{\"keep\": [\"auth.go\"]}\n```"}},
 		{"empty keep", &fakeCompleter{reply: `{"keep": []}`}},
 		{"only unknown paths", &fakeCompleter{reply: `{"keep": ["evil.go", "../auth.go", "./auth.go"]}`}},
 	}
