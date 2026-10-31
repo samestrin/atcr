@@ -147,6 +147,16 @@ shared quote, and the finding stays `HIGH`. A discounted finding's
 The field records the reconcile-time decision. A later verify verdict may
 restate `confidence` and leaves the field in place.
 
+A record merged from two or more reviewers' findings also carries the quotes
+the decision was made on:
+
+- `source_quotes` — one entry per source finding, with its `reviewer`, `file`,
+  `category` (lower-case) and `evidence`. When `atcr debate` merges two records
+  a judge ruled duplicates, it tests the union of their `source_quotes`, so
+  the merged record is discounted exactly when reconcile would have discounted
+  the same findings, and it carries the union on. A record from a single
+  finding has no `source_quotes`: its `evidence` is its only quote.
+
 ## Findings excluded from the primary stream
 
 `findings.txt`, `findings.json` and `report.md` do **not** necessarily contain
