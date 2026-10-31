@@ -1359,6 +1359,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	start := time.Now()
 	thinkOnlyAttempts := 0
 	madeCall := false
+	// The cap the primary LAST ran under: the resolved one, or the doubled one once
+	// the truncation retry below has fired. The failed-slot tail reports it.
+	primaryMaxTokens := s.Primary.ResolvedMaxTokens
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	primary5xx := false
@@ -1400,6 +1403,33 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 				r.ToolsDegradedReason = degradeReasonFallbackNotCapable
 			}
 		}
+		// Truncation retry (Epic 89 T5): before the gate below fails the primary
+		// over, ask the primary ONCE more at twice its resolved output cap. A
+		// reasoning model that ran out of max_tokens mid-thought is the commonest
+		// shape of this reply, and the same model with room to finish is a better
+		// answer than a backup that never saw the problem. A salvaged truncation is
+		// included: it is the same model cut off on the reasoning channel. Only the
+		// primary is retried, and only once; the retry's reply then meets the gate
+		// below like any other attempt, so a second truncation fails over exactly
+		// as it did before this retry existed.
+		if i == 0 && e.truncationFailover && r.truncatedWithZeroFindings() && ctx.Err() == nil {
+			if retryMax, ok := truncationRetryMaxTokens(a, r); ok {
+				args := []any{"agent", a.Name, "model", a.Invocation.Model,
+					"max_tokens", a.ResolvedMaxTokens, "retry_max_tokens", retryMax}
+				if r.Salvaged {
+					args = append(args, "salvaged", true, "reason", "truncated reply was a promoted reasoning draft")
+				}
+				log.FromContext(ctx).Warn("reviewer response truncated with zero findings; retrying on the primary at a larger output cap", args...)
+				// The discarded reply is NOT counted in thinkOnlyAttempts even when it
+				// was wholly a think run: that total drives the "exhausted the
+				// fallback chain" wording, and a one-agent slot whose retry was also
+				// think-only would claim a chain walk that never happened (TD
+				// internal/fanout/engine.go:1143). The line above records the attempt.
+				a = a.withRetryMaxTokens(retryMax)
+				primaryMaxTokens = retryMax
+				r = e.invokeAgent(ctx, a)
+			}
+		}
 		// Truncation failover (Epic 19.5): a reviewer response that hit
 		// finish_reason=length with zero pre-grounding parsed findings
 		// (stream.ParseModelOutput over the think-stripped content, before grounding)
@@ -1416,8 +1446,7 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 		// divergence is deferred TD (no ChangedLines at this call site to ground
 		// against), not reconciled in this epic. Applied per attempt, so a truncated
 		// fallback also fails over to the next one.
-		if e.truncationFailover && r.Status == StatusOK && r.ResponseTruncated &&
-			r.ParsedFindingCount() == 0 {
+		if e.truncationFailover && r.truncatedWithZeroFindings() {
 			r.Status = StatusFailed
 			r.Err = errTruncatedZeroFindings
 			// A truncated reply whose content was WHOLLY a think run fails
@@ -1687,7 +1716,9 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	last.ResolvedWindow = s.Primary.ResolvedWindow
 	last.ReservedOutputTokens = s.Primary.ReservedOutputTokens
 	last.ReasoningReserveTokens = s.Primary.ReasoningReserveTokens
-	last.ResolvedMaxTokens = s.Primary.ResolvedMaxTokens
+	// The cap the primary last asked for, so a slot whose truncation retry also
+	// truncated records the doubled cap that still was not enough (Epic 89 T5).
+	last.ResolvedMaxTokens = primaryMaxTokens
 	last.ChunkCount = s.Primary.ChunkTotal
 	last.DegradationAction = s.Primary.DegradationAction
 	// Same reason as the StatusOK exit above: the returned Result must describe the
@@ -1698,6 +1729,54 @@ func (e *Engine) invokeSlotWithRetry(ctx context.Context, s Slot, holdRateLimit 
 	last.failedFastOnly = !madeCall && classifyUnitFailure(last.Err) == failureCircuitOpen
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
+}
+
+// truncatedWithZeroFindings is the truncation gate's predicate: a reply the
+// provider cut off on finish_reason=length that parsed to zero findings. The
+// retry and the failover arms in invokeSlotWithRetry both test it, so the reply
+// that is retried is exactly the reply that would otherwise fail over.
+func (r *Result) truncatedWithZeroFindings() bool {
+	return r.Status == StatusOK && r.ResponseTruncated && r.ParsedFindingCount() == 0
+}
+
+// truncationRetryMaxTokens is the output cap the one truncation retry asks for
+// (Epic 89 T5): twice the agent's resolved cap, clamped by registry.MaxTokensCap
+// and by the context window. Input and output share the window, so when the
+// truncated reply was a single call that reported its prompt tokens, the window
+// clamp is the window less those tokens. A tool loop's TokensIn sums every turn,
+// which is no single call's input, so there the clamp is the window alone.
+//
+// ok is false when there is nothing larger to ask for: an unsized agent (no
+// resolved cap or window, so no doubling the payload layer vouched for), or a
+// clamp that leaves the retry cap at or below the cap that just truncated.
+func truncationRetryMaxTokens(a Agent, r Result) (int, bool) {
+	if a.ResolvedMaxTokens <= 0 || a.ResolvedWindow <= 0 {
+		return 0, false
+	}
+	limit := a.ResolvedWindow
+	if toolLoop := r.Tools && !r.ToolsDegraded; !toolLoop && r.TokensIn > 0 {
+		limit -= r.TokensIn
+	}
+	retry := min(2*a.ResolvedMaxTokens, registry.MaxTokensCap, limit)
+	if retry <= a.ResolvedMaxTokens {
+		return 0, false
+	}
+	return retry, true
+}
+
+// withRetryMaxTokens is a copy of the agent asking for maxTokens instead of its
+// resolved cap. The copy gets its own pointer, so the slot's primary still asks
+// the resolved cap when the outer retry requeues the unit. ResolvedMaxTokens
+// follows the wire value, which is what status.json's resolved_max_tokens then
+// shows. The cache key is dropped: it was derived from the resolved cap
+// (cacheKeyInputs.MaxTokens), so it does not describe this call, and a reply
+// stored under it would be replayed for a call that asked for less.
+func (a Agent) withRetryMaxTokens(maxTokens int) Agent {
+	mt := maxTokens
+	a.Invocation.MaxTokens = &mt
+	a.ResolvedMaxTokens = maxTokens
+	a.CacheKey = ""
+	return a
 }
 
 // invokeAgent performs a single agent's LLM call and classifies the outcome on
