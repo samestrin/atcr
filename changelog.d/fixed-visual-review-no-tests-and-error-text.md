@@ -1,0 +1,1 @@
+- The visual review's Playwright run now fails when the spec it ran yielded no tests, instead of reporting a clean run; the run output and Playwright errors it quotes in an error are capped at 2 KB, and that error text now passes `secret_guard` (redacted or blocked like the review prompt) (epic 98)

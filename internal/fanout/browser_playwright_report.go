@@ -86,37 +86,52 @@ type playwrightNetworkItem struct {
 // caller's to fill. Input that is not a Playwright report, an attachment that
 // is not the documented JSON, or a report with no suites and report-level
 // errors (the run failed before any test loaded) is an error rather than an
-// empty result.
+// empty result; the error quotes those messages up to playwrightMaxErrorText
+// bytes. A report with no tests and no errors parses as an empty result;
+// PlaywrightBackend.Run, which always requests a spec, refuses it.
 func ParsePlaywrightReport(data []byte) (BrowserResult, error) {
+	res, _, err := parsePlaywrightReport(data)
+	return res, err
+}
+
+// parsePlaywrightReport is ParsePlaywrightReport that also returns how many
+// tests the report holds.
+func parsePlaywrightReport(data []byte) (BrowserResult, int, error) {
 	var report playwrightReport
 	if err := json.Unmarshal(data, &report); err != nil {
-		return BrowserResult{}, fmt.Errorf("fanout: parse playwright report: %w", err)
+		return BrowserResult{}, 0, fmt.Errorf("fanout: parse playwright report: %w", err)
 	}
 	if report.Suites == nil {
-		return BrowserResult{}, errors.New("fanout: parse playwright report: no \"suites\" key, not a Playwright JSON report")
+		return BrowserResult{}, 0, errors.New("fanout: parse playwright report: no \"suites\" key, not a Playwright JSON report")
 	}
 	if len(report.Suites) == 0 && len(report.Errors) > 0 {
 		msgs := make([]string, 0, len(report.Errors))
 		for _, e := range report.Errors {
 			msgs = append(msgs, strings.TrimSpace(e.Message))
 		}
-		return BrowserResult{}, fmt.Errorf("fanout: playwright: no tests ran, Playwright reported %d error(s): %s", len(msgs), strings.Join(msgs, "; "))
+		return BrowserResult{}, 0, fmt.Errorf("fanout: playwright: no tests ran, Playwright reported %d error(s): %s", len(msgs), capPlaywrightText(strings.Join(msgs, "; ")))
 	}
 	var res BrowserResult
+	tests := 0
 	for _, suite := range report.Suites {
-		if err := collectPlaywrightSuite(&res, suite, nil); err != nil {
-			return BrowserResult{}, err
+		n, err := collectPlaywrightSuite(&res, suite, nil)
+		if err != nil {
+			return BrowserResult{}, 0, err
 		}
+		tests += n
 	}
-	return res, nil
+	return res, tests, nil
 }
 
-func collectPlaywrightSuite(res *BrowserResult, suite playwrightSuite, parents []string) error {
+// collectPlaywrightSuite adds suite's results to res and returns how many
+// tests it and its child suites hold.
+func collectPlaywrightSuite(res *BrowserResult, suite playwrightSuite, parents []string) (int, error) {
 	titles := parents
 	// A file-level suite is titled with its file name; keep it out of test titles.
 	if suite.Title != "" && suite.Title != suite.File {
 		titles = append(append([]string(nil), parents...), suite.Title)
 	}
+	tests := 0
 	for _, spec := range suite.Specs {
 		title := strings.Join(append(append([]string(nil), titles...), spec.Title), " > ")
 		file := spec.File
@@ -125,16 +140,19 @@ func collectPlaywrightSuite(res *BrowserResult, suite playwrightSuite, parents [
 		}
 		for _, test := range spec.Tests {
 			if err := collectPlaywrightTest(res, title, file, test); err != nil {
-				return fmt.Errorf("%w (test %q)", err, title)
+				return 0, fmt.Errorf("%w (test %q)", err, title)
 			}
 		}
+		tests += len(spec.Tests)
 	}
 	for _, child := range suite.Suites {
-		if err := collectPlaywrightSuite(res, child, titles); err != nil {
-			return err
+		n, err := collectPlaywrightSuite(res, child, titles)
+		if err != nil {
+			return 0, err
 		}
+		tests += n
 	}
-	return nil
+	return tests, nil
 }
 
 func collectPlaywrightTest(res *BrowserResult, title, file string, test playwrightTest) error {

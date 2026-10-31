@@ -109,7 +109,8 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	}
 	shots, err := s.Browser.Run(ctx, BrowserRun{RepoDir: in.RepoDir, Spec: spec, PreviewURL: s.PreviewURL})
 	if err != nil {
-		return VisualReviewResult{}, fmt.Errorf("visual review: browser %s: %w", s.Browser.Name(), err)
+		return VisualReviewResult{}, fmt.Errorf("visual review: browser %s: %w", s.Browser.Name(),
+			guardBrowserError(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), err))
 	}
 	artifacts, err := persistVisualEvidence(secretGuardPolicy(&ReviewConfig{Settings: s.Settings}), in.ReviewDir, shots)
 	if err != nil {
@@ -131,6 +132,36 @@ func (s *VisualStage) RunVisual(ctx context.Context, in VisualStageInput) (Visua
 	vr.Spec = spec
 	return vr, nil
 }
+
+// visualBrowserErrorLabel names a browser backend's error text in a
+// secret_guard warning or block error.
+const visualBrowserErrorLabel = "browser error"
+
+// guardBrowserError passes a browser backend's error through guardSecrets under
+// policy, since its text can quote what the run printed (sandbox output,
+// Playwright's report-level errors). Under block a secret replaces err with the
+// guard's error; under redact the returned error carries the redacted text and
+// still unwraps to err, so errors.Is keeps matching the backend's sentinels.
+func guardBrowserError(policy string, err error) error {
+	guarded, gerr := guardSecrets(policy, VisualPersonaName, guardSegment{text: err.Error(), file: visualBrowserErrorLabel})
+	if gerr != nil {
+		return gerr
+	}
+	if guarded[0] == err.Error() {
+		return err
+	}
+	return &redactedError{msg: guarded[0], err: err}
+}
+
+// redactedError is an error whose text was redacted by guardSecrets. It
+// unwraps to the original error, whose text it does not repeat.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
 
 // visualSpecRunID maps a review id (<date>_<slug>, which may carry "_", "."
 // and upper case) onto the spec-name pattern: lower case, every other

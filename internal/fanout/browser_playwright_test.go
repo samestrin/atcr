@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/sandbox"
 )
@@ -202,7 +203,7 @@ func TestPlaywrightBackend_RefusesDarwinOSLevel(t *testing.T) {
 	})
 
 	t.Run("linux OS-level is not refused", func(t *testing.T) {
-		fake := &fakeSandbox{name: "os-level", result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(`{"suites":[]}`)}}}
+		fake := &fakeSandbox{name: "os-level", result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(onePassingReport)}}}
 		b := newPlaywrightBackendForOS(fake, "linux")
 		if _, err := b.Run(context.Background(), run); err != nil {
 			t.Fatalf("Run: %v", err)
@@ -332,6 +333,74 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 	}
 }
 
+// onePassingReport is a Playwright JSON report in which the requested spec ran
+// one test, which passed.
+const onePassingReport = `{"suites":[{"title":"home.spec.ts","file":"home.spec.ts","specs":[{"title":"loads","tests":[{"results":[{"status":"passed"}]}]}]}]}`
+
+// TestPlaywrightBackend_NoTestsRunIsAnError covers a spec filter that selects
+// no file: Playwright writes a report with no tests, which on its own parses as
+// a clean run. The backend always runs one requested spec, so a report in which
+// no test ran is an error naming that spec, never an empty result.
+func TestPlaywrightBackend_NoTestsRunIsAnError(t *testing.T) {
+	repo := playwrightRepo(t)
+	for name, report := range map[string]string{
+		"no suites":          `{"suites":[]}`,
+		"no suites, errors":  `{"suites":[],"errors":[]}`,
+		"suite with no spec": `{"suites":[{"title":"home.spec.ts","file":"home.spec.ts","specs":[]}]}`,
+		"spec with no test":  `{"suites":[{"title":"home.spec.ts","file":"home.spec.ts","specs":[{"title":"loads","tests":[]}]}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(report)}}}
+			res, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts"})
+			if err == nil {
+				t.Fatalf("Run = %+v, want an error for a report with no tests", res)
+			}
+			for _, want := range []string{"no tests ran", "e2e/home.spec.ts"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("Run err = %v, want it to mention %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPlaywrightBackend_NoReportOutputIsCapped: when the run writes no report,
+// the error quotes the sandbox output, but only up to a fixed length.
+func TestPlaywrightBackend_NoReportOutputIsCapped(t *testing.T) {
+	repo := playwrightRepo(t)
+	out := "Error: Cannot find module '@playwright/test'\n" + strings.Repeat("y", 64*1024)
+	fake := &fakeSandbox{result: sandbox.RunResult{ExitCode: 1, Output: out}}
+	_, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts"})
+	if err == nil {
+		t.Fatal("want an error for a run with no report")
+	}
+	if len(err.Error()) > playwrightMaxErrorText+200 {
+		t.Fatalf("error is %d bytes, want the sandbox output capped near %d", len(err.Error()), playwrightMaxErrorText)
+	}
+	for _, want := range []string{"no JSON report", "Cannot find module", "truncated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %.300s..., want it to mention %q", err, want)
+		}
+	}
+}
+
+// TestCapPlaywrightText_CutsOnARuneBoundary: a cut that would fall inside a
+// multi-byte rune backs up to the rune's start, so the capped text stays valid
+// UTF-8.
+func TestCapPlaywrightText_CutsOnARuneBoundary(t *testing.T) {
+	// "é" is two bytes; a leading "x" puts the byte cap mid-rune.
+	got := capPlaywrightText("x" + strings.Repeat("é", 2*playwrightMaxErrorText))
+	if !utf8.ValidString(got) {
+		t.Fatalf("capped text is not valid UTF-8: %q", got[playwrightMaxErrorText-4:])
+	}
+	if !strings.Contains(got, "[...truncated") {
+		t.Fatalf("capped text %q has no truncation marker", got[playwrightMaxErrorText-4:])
+	}
+	if i := strings.Index(got, " [...truncated"); i > playwrightMaxErrorText {
+		t.Fatalf("kept %d bytes, want at most %d", i, playwrightMaxErrorText)
+	}
+}
+
 func containsRun(haystack, needle []string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if slices.Equal(haystack[i:i+len(needle)], needle) {
@@ -343,7 +412,7 @@ func containsRun(haystack, needle []string) bool {
 
 func TestPlaywrightBackend_PassesPreviewURLByEnv(t *testing.T) {
 	repo := playwrightRepo(t)
-	fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(`{"suites":[]}`)}}}
+	fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(onePassingReport)}}}
 	b := newPlaywrightBackendForOS(fake, "linux")
 	if _, err := b.Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts", PreviewURL: "http://localhost:5173/a b'$(x)"}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -522,7 +591,7 @@ func TestPlaywrightBackend_SpecFilterSelectsOnlyItself(t *testing.T) {
 				spec: "// spec\n",
 			}
 			repo := writeTree(t, files)
-			fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(`{"suites":[]}`)}}}
+			fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: []byte(onePassingReport)}}}
 			if _, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: spec}); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -560,7 +629,7 @@ func TestPlaywrightBackend_OversizeReportIsTruncationError(t *testing.T) {
 	}
 
 	t.Run("just under the cap still parses", func(t *testing.T) {
-		under := append([]byte(`{"suites":[]}`), bytes.Repeat([]byte(" "), sandbox.CollectMaxFileBytes-1-len(`{"suites":[]}`))...)
+		under := append([]byte(onePassingReport), bytes.Repeat([]byte(" "), sandbox.CollectMaxFileBytes-1-len(onePassingReport))...)
 		fake := &fakeSandbox{result: sandbox.RunResult{Files: map[string][]byte{playwrightReportPath: under}}}
 		if _, err := newPlaywrightBackendForOS(fake, "linux").Run(context.Background(), BrowserRun{RepoDir: repo, Spec: "e2e/home.spec.ts"}); err != nil {
 			t.Fatalf("Run: %v", err)
