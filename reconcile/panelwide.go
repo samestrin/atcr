@@ -46,9 +46,16 @@ import "strings"
 const PanelWideReason = "panel-wide instruction: invariant finding, one file, near-identical evidence"
 
 // IsPanelWide reports whether a merge group is in the panel-wide-instruction
-// class: two or more distinct reviewers, a modal category of CategoryInvariant,
-// every member in one file, and every pair of members quoting near-identical,
-// non-empty evidence.
+// class. It is IsPanelWideQuotes over the group's quotes, the form Merge
+// carries on Merged.SourceQuotes.
+func IsPanelWide(group []Finding) bool { return IsPanelWideQuotes(sourceQuotes(group)) }
+
+// IsPanelWideQuotes reports whether a set of per-finding quotes is in the
+// panel-wide-instruction class: two or more distinct reviewers, a modal
+// category of CategoryInvariant, every quote in one file, and every pair of
+// quotes near-identical and non-empty. It is the one independence predicate:
+// Merge applies it to its group, and an embedder applies it to the union of
+// the Merged.SourceQuotes it is combining.
 //
 // Evidence is compared the way dedupe compares PROBLEM text: the token-set
 // Jaccard similarity of the lowercased alphanumeric words must reach
@@ -57,7 +64,11 @@ const PanelWideReason = "panel-wide instruction: invariant finding, one file, ne
 // members all quote nothing has no shared quote to discount. File paths are
 // compared after trimming surrounding space; the line is not compared, because
 // the group is already co-located within the cluster window.
-func IsPanelWide(group []Finding) bool {
+func IsPanelWideQuotes(quotes []SourceQuote) bool {
+	group := make([]Finding, len(quotes))
+	for i, q := range quotes {
+		group[i] = Finding{Reviewer: q.Reviewer, File: q.File, Category: q.Category, Evidence: q.Evidence}
+	}
 	if len(distinctReviewers(group)) < 2 {
 		return false
 	}

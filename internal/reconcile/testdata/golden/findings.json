@@ -19,7 +19,21 @@
       "skeptic": "skeptic-a, skeptic-b",
       "notes": "skeptics split on exploitability"
     },
-    "id": "e1b16749cac599b5"
+    "id": "e1b16749cac599b5",
+    "source_quotes": [
+      {
+        "reviewer": "greta",
+        "file": "db.go",
+        "category": "security",
+        "evidence": "pool repro"
+      },
+      {
+        "reviewer": "host",
+        "file": "db.go",
+        "category": "security",
+        "evidence": "host low"
+      }
+    ]
   },
   {
     "severity": "HIGH",
@@ -35,7 +49,21 @@
       "host"
     ],
     "confidence": "HIGH",
-    "id": "c96ccb388aed038e"
+    "id": "c96ccb388aed038e",
+    "source_quotes": [
+      {
+        "reviewer": "greta",
+        "file": "auth.go",
+        "category": "security",
+        "evidence": "pool saw it"
+      },
+      {
+        "reviewer": "host",
+        "file": "auth.go",
+        "category": "security",
+        "evidence": "host also"
+      }
+    ]
   },
   {
     "severity": "HIGH",

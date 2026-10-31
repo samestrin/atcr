@@ -230,6 +230,17 @@ type JSONFinding struct {
 	// field on the extracted library Finding). omitempty keeps every undiscounted
 	// finding byte-identical to pre-35.16.17 findings.json.
 	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
+	// SourceQuotes is the independence provenance (Epic 99 T4): each source
+	// finding's reviewer, file, category and evidence, copied from
+	// reclib.Merged.SourceQuotes on the derived path and unioned by the cluster
+	// merge (MergeJSONFindings). The panel-wide test (reclib.IsPanelWideQuotes)
+	// reads these, in reclib.Merge, the cluster merge and the fallback recompute
+	// alike, so none of them restates a reviewer's quote from the joined
+	// EVIDENCE. It rides findings.json because the cluster merge reads its
+	// members back from disk. It is set only on a record merged from two or more
+	// source findings: a one-finding record's EVIDENCE is its only quote, so it
+	// carries none and serializes byte-identically under omitempty (memberQuotes).
+	SourceQuotes []reclib.SourceQuote `json:"source_quotes,omitempty"`
 	// VisualEvidence carries what the browser saw for a finding raised from a
 	// visual run (Epic 36.0.3): the screenshots and console log the run wrote
 	// under the review's visual/ directory, which the finding's EVIDENCE cell
@@ -292,6 +303,17 @@ type EvidenceExec struct {
 	BackendName string `json:"backend_name,omitempty"`
 }
 
+// recordQuotes is the JSONFinding.SourceQuotes value for a merged finding's
+// quotes: nil for a one-finding record, whose EVIDENCE is its only quote
+// (memberQuotes restates it exactly), so its findings.json is unchanged. Shared,
+// not copied: nothing mutates the provenance after Merge.
+func recordQuotes(quotes []reclib.SourceQuote) []reclib.SourceQuote {
+	if len(quotes) < 2 {
+		return nil
+	}
+	return quotes
+}
+
 // JSONFindings converts the merged findings to their JSON schema records.
 //
 // Path-validation fields (PathValid/PathWarning/PathSuggestion) are NOT carried
@@ -331,6 +353,7 @@ func (r Result) JSONFindings() []JSONFinding {
 			// Merge is the only place that can decide the discount (it reads each
 			// member's file and evidence), so the reason is carried, not recomputed.
 			ConfidenceDiscount: m.ConfidenceDiscount,
+			SourceQuotes:       recordQuotes(m.SourceQuotes),
 			// FixWarning and FixReview intentionally not copied: both are set by the
 			// verify fix phase (executor.go generateFixes) after reconcile, so the
 			// reconcile path owns only the pre-fix merged state.

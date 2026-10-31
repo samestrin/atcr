@@ -94,8 +94,9 @@ func distinctReviewerCount(reviewers []string, fallback map[string]string) int {
 // to HIGH — the exact distinct-reviewer inflation F5 de-weights on the disagreement
 // radar, but left uncorrected on the CONFIDENCE column. This recomputes from the
 // DISTINCT reviewer count so those collapse to MEDIUM. It recomputes with
-// ConfidenceForCategory, so a record discounted at merge (ConfidenceDiscount set)
-// stays discounted while two or more distinct voices remain (Epic 35.16.17).
+// discountedConfidence over the record's quotes (memberQuotes), the test merge
+// applied, so a panel-wide record stays discounted while two or more distinct
+// voices remain (Epic 35.16.17).
 //
 // It only touches records with an ACTUAL fallback collapse (distinct < raw count):
 // a finding with no fallback provenance, or with fully-distinct targets, keeps
@@ -114,12 +115,12 @@ func recomputeFallbackConfidence(findings []JSONFinding) {
 		if distinct >= len(findings[i].Reviewers) {
 			continue // no fallback collapse — leave merge/authority confidence intact
 		}
-		// A discount recorded at merge means the agreement was the panel-wide
-		// instruction, not independent corroboration, and that does not change
-		// when fallback collapses the count. The reason is re-derived so it
-		// survives only while it still lowers the confidence: a collapse to one
-		// distinct voice is MEDIUM on count alone.
+		// Whether the agreement was the panel-wide instruction rather than
+		// independent corroboration is a property of the quotes, and does not
+		// change when fallback collapses the count. The reason is re-derived so
+		// it survives only while it still lowers the confidence: a collapse to
+		// one distinct voice is MEDIUM on count alone.
 		findings[i].Confidence, findings[i].ConfidenceDiscount = discountedConfidence(
-			distinct, findings[i].Category, findings[i].ConfidenceDiscount == "")
+			distinct, findings[i].Category, memberQuotes(findings[i]))
 	}
 }
