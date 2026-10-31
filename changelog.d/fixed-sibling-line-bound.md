@@ -1,0 +1,1 @@
+- A reconciled finding whose `sibling: file:line` names a line past the end of that file now has the sibling marker cleared and a `sibling file not found` warning, instead of carrying an out-of-range line. (EST-3681)
