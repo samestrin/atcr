@@ -1,13 +1,16 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	atcrlog "github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -433,4 +436,91 @@ func TestBuildScopedPayloads_ThreatMapStripsPrefetchContext(t *testing.T) {
 		carries = carries || hasPrefetchEntry(mp)
 	}
 	assert.True(t, carries, "a fail-open mapper keeps prefetch on")
+}
+
+// When the threat map drops a file, buildScopedPayloads strips the Context
+// Definitions block from every mode on purpose. The manifest must then stop
+// claiming a delivered block, name the threat map as the cause, and the run
+// must not warn that a budget shed revoked grounding. Grounding on the
+// retrieved spans stays withdrawn, since no agent received them. A keep-all map
+// and a fail-open mapper strip nothing, so both keep the ordinary record.
+func TestPrepareReview_ThreatMapStripIsRecordedNotReportedAsAShed(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	readPrefetch := func(t *testing.T, dir string) map[string]any {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		pf, ok := m["prefetch"].(map[string]any)
+		require.True(t, ok, "a git-range review must record prefetch in its manifest")
+		return pf
+	}
+	prepare := func(t *testing.T, mapper ThreatMapper) (*PreparedReview, string, ReviewRequest) {
+		t.Helper()
+		repo, base, head := scopedPrefetchRepo(t)
+		req := reviewReq(repo, repo, base, head)
+		req.OutputDir = filepath.Join(t.TempDir(), "review")
+		req.ThreatMapper = mapper
+		var logBuf bytes.Buffer
+		ctx := atcrlog.NewContext(context.Background(),
+			slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		prep, err := PrepareReview(ctx, twoAgentConfig("http://unused"), req)
+		require.NoError(t, err)
+		return prep, logBuf.String(), req
+	}
+	prefetchOnly := func(c payload.ChangedLines) int {
+		n := 0
+		for _, fc := range c {
+			if fc.PrefetchOnly {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("a mapper drop records the strip and does not warn of a shed", func(t *testing.T) {
+		prep, logs, req := prepare(t, &fakeMapper{keep: []string{"other.go"}})
+		require.Equal(t, []string{"store.go"}, prep.threatMapDropped, "PRECONDITION: the mapper must drop a file, or nothing is stripped")
+
+		pf := readPrefetch(t, prep.Dir)
+		assert.Equal(t, false, pf["present"], "no agent received the block, so the manifest must not claim it")
+		assert.Equal(t, true, pf["dropped_by_threat_map"], "the manifest must name the threat map as the cause")
+		assert.Nil(t, pf["grounding_revoked"], "grounding_revoked means delivered then withdrawn; this block was never delivered")
+		assert.NotContains(t, logs, "prefetch grounding revoked", "a deliberate strip is not a budget shed")
+		assert.Contains(t, logs, "prefetch context stripped by the threat map", "the strip must still be traceable in the log")
+		assert.Zero(t, prefetchOnly(prep.Changed), "grounding on retrieved spans stays withdrawn: no block was delivered")
+
+		// The resume re-applies the recorded keep set, so it strips again and
+		// must record the same cause, not a revocation.
+		var logBuf bytes.Buffer
+		ctx := atcrlog.NewContext(context.Background(),
+			slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		rprep, _, err := PrepareResume(ctx, twoAgentConfig("http://unused"), prep.Dir, req)
+		require.NoError(t, err)
+		require.NotNil(t, rprep.prefetch)
+		assert.False(t, rprep.prefetch.Present)
+		assert.True(t, rprep.prefetch.DroppedByThreatMap)
+		assert.False(t, rprep.prefetch.GroundingRevoked)
+		assert.NotContains(t, logBuf.String(), "prefetch grounding revoked")
+		assert.Zero(t, prefetchOnly(rprep.Changed))
+	})
+
+	t.Run("a keep-all map leaves the record unchanged", func(t *testing.T) {
+		prep, logs, _ := prepare(t, &fakeMapper{keep: []string{"store.go", "other.go"}})
+		pf := readPrefetch(t, prep.Dir)
+		assert.Equal(t, true, pf["present"])
+		assert.Nil(t, pf["dropped_by_threat_map"])
+		assert.NotContains(t, logs, "prefetch grounding revoked")
+		assert.NotZero(t, prefetchOnly(prep.Changed), "every agent kept the block, so its spans still ground")
+	})
+
+	t.Run("a fail-open mapper leaves the record unchanged", func(t *testing.T) {
+		prep, logs, _ := prepare(t, &fakeMapper{err: assert.AnError})
+		pf := readPrefetch(t, prep.Dir)
+		assert.Equal(t, true, pf["present"])
+		assert.Nil(t, pf["dropped_by_threat_map"])
+		assert.NotContains(t, logs, "prefetch grounding revoked")
+		assert.NotZero(t, prefetchOnly(prep.Changed))
+	})
 }
