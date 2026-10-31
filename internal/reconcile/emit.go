@@ -230,6 +230,17 @@ type JSONFinding struct {
 	// field on the extracted library Finding). omitempty keeps every undiscounted
 	// finding byte-identical to pre-35.16.17 findings.json.
 	ConfidenceDiscount string `json:"confidence_discount,omitempty"`
+	// SourceQuotes is the independence provenance (Epic 99 T4): each source
+	// finding's reviewer, file, category and evidence, copied from
+	// reclib.Merged.SourceQuotes on the derived path and unioned by the cluster
+	// merge (MergeJSONFindings). The panel-wide test (reclib.IsPanelWideQuotes)
+	// reads these, in reclib.Merge, the cluster merge and the fallback recompute
+	// alike, so none of them restates a reviewer's quote from the joined
+	// EVIDENCE. It rides findings.json because the cluster merge reads its
+	// members back from disk. It is set only on a record merged from two or more
+	// source findings: a one-finding record's EVIDENCE is its only quote, so it
+	// carries none and serializes byte-identically under omitempty (memberQuotes).
+	SourceQuotes []reclib.SourceQuote `json:"source_quotes,omitempty"`
 	// VisualEvidence carries what the browser saw for a finding raised from a
 	// visual run (Epic 36.0.3): the screenshots and console log the run wrote
 	// under the review's visual/ directory, which the finding's EVIDENCE cell
