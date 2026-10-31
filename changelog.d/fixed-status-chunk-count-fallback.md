@@ -1,0 +1,1 @@
+- `atcr status` no longer shrinks a finished chunked persona to one chunk when its `chunks.json` is missing, too large or corrupt: `chunks_total` and `chunks_done` come from its `status.json`'s `chunk_count`, so the stale deadline stays scaled by the persona's bins and a live multi-bin review is not misread as `stale` (technical debt, 2026-10-30)
