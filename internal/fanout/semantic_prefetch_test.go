@@ -448,7 +448,7 @@ func TestSemanticPrefetch_AbsFailureDegradesConfigInvalid(t *testing.T) {
 func TestSemanticPrefetch_ConstructionErrorLeaksNoURL(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
 	var buf bytes.Buffer
-	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	repo, base, head := semanticFanoutRepo(t)
 	cfg := twoAgentConfig(mockProvider(t).URL)
 	enableSemantic(cfg, "http://qdrant.example.invalid:badport")
