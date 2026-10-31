@@ -1,0 +1,1 @@
+- When `--threat-map` drops a file and the pre-fetched Context Definitions block is stripped, the manifest now records `prefetch.present: false` with `prefetch.dropped_by_threat_map: true` instead of claiming a delivered block, and the run no longer warns "prefetch grounding revoked" as if a byte budget had shed it. Fresh and resumed runs both record it. (epic 89.0)

@@ -617,7 +617,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// here: a resumed run re-invokes precisely the agents that were pending, and
 	// recording the revocation only on the fresh path would leave the leg most
 	// likely to be re-run the one with no trace of it.
-	if prefetchGroundingRevoked {
+	// The recorded keep set strips the block again on a resume, and that strip
+	// is recorded as such rather than warned about as a shed.
+	resumedPrefetch := prefetchStatus(rb)
+	stripped := markThreatMapStrip(ctx, resumedPrefetch, threatMap)
+	if prefetchGroundingRevoked && !stripped {
 		log.FromContext(ctx).Warn("prefetch grounding revoked: not every resumed agent kept the Context Definitions block, so findings on merely-referenced files will be dropped",
 			"range", req.Range.Base+".."+req.Range.Head,
 			"slots", len(pending),
@@ -628,8 +632,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	// builder: rb reports what retrieval produced and cannot see slots, so a
 	// status taken straight from it would report grounding_revoked:false even on
 	// the resume that just revoked.
-	resumedPrefetch := prefetchStatus(rb)
-	if prefetchGroundingRevoked && resumedPrefetch != nil {
+	if prefetchGroundingRevoked && !stripped && resumedPrefetch != nil {
 		resumedPrefetch.GroundingRevoked = true
 	}
 	p := &PreparedReview{

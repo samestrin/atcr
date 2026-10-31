@@ -37,7 +37,7 @@ func TestScopeRule_CarriesEveryCategory(t *testing.T) {
 }
 
 // TestScopeRuleForPayload_CarriesEveryCategory covers the path agents actually
-// receive, ScopeRuleForPayload (internal/fanout/review.go:3657), including a per-file escalated
+// receive, ScopeRuleForPayload (internal/fanout/review.go:3661), including a per-file escalated
 // payload, whose rule adds the mixed-scope sentence (Epic 48.0).
 func TestScopeRuleForPayload_CarriesEveryCategory(t *testing.T) {
 	payloads := map[string]string{

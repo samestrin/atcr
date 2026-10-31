@@ -667,8 +667,12 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	// was still delivered (and still billed to every provider), and the only
 	// trace is the generic per-agent "dropped N ungrounded finding(s)" line,
 	// which reads as ordinary hallucination filtering.
+	// A threat-map strip is checked first: it removed the block from every agent
+	// on purpose, so the revocation it causes is not a budget shed and must not
+	// be reported as one.
 	pfStatus := prefetchStatus(rb)
-	if prefetchGroundingRevoked {
+	stripped := markThreatMapStrip(ctx, pfStatus, threatMap)
+	if prefetchGroundingRevoked && !stripped {
 		if pfStatus != nil {
 			pfStatus.GroundingRevoked = true
 		}
@@ -1794,7 +1798,7 @@ func buildScopedPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, hea
 		// spans can ground a dropped file's symbols. Strip it only when the
 		// mapper actually dropped a file: a fail-open mapper leaves keep nil and a
 		// keep-all map drops nothing, and both leave the block valid.
-		if len(record.Dropped) > 0 {
+		if threatMapStripsPrefetch(record) {
 			for mode, entries := range built {
 				built[mode] = withoutPrefetchContext(entries)
 			}
@@ -4960,6 +4964,35 @@ func prefetchStatus(rb *payload.RangeBuilder) *payload.PrefetchStatus {
 	}
 	s := rb.PrefetchStatus()
 	return &s
+}
+
+// threatMapStripsPrefetch reports whether the threat map dropped a file, the
+// one condition under which buildScopedPayloads strips the Context Definitions
+// block from every mode. A run that did not map, a fail-open mapper and a
+// keep-all map all drop nothing, so all three keep the block.
+func threatMapStripsPrefetch(r *payload.ThreatMapRecord) bool {
+	return r != nil && len(r.Dropped) > 0
+}
+
+// markThreatMapStrip records a threat-map strip on the pre-fetch status and
+// reports whether it applied. The builder's status says the section was
+// retrieved, but no agent received it, so Present goes false and
+// DroppedByThreatMap names the cause. GroundingRevoked stays false: it means a
+// delivered block was withdrawn, and this one was never delivered. Grounding on
+// the retrieved spans is still withdrawn by scopePrefetchGrounding, since no
+// dispatched agent kept the block. The strip is logged at Info, not as the
+// revocation warning, because it is a deliberate scope decision rather than a
+// budget shed an operator should act on.
+func markThreatMapStrip(ctx context.Context, s *payload.PrefetchStatus, threatMap *payload.ThreatMapRecord) bool {
+	if s == nil || !s.Present || !threatMapStripsPrefetch(threatMap) {
+		return false
+	}
+	s.Present = false
+	s.DroppedByThreatMap = true
+	log.FromContext(ctx).Info("prefetch context stripped by the threat map: it dropped a file, so no agent receives the Context Definitions block and findings on merely-referenced files will be dropped",
+		"snippets", s.Snippets,
+		"threat_map_dropped", threatMap.Dropped)
+	return true
 }
 
 // withoutPrefetchContext returns entries minus the Context Definitions block.
