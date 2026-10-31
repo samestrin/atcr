@@ -2792,10 +2792,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					// below, the gate runs on the delivered total and the message names
 					// the preamble's bytes apart from the diff's own.
 					if payload.ChunkExceedsByteBudget(len(ct), chunkClampBudget) {
-						prefixBytes := 0
-						for _, ln := range strings.SplitAfterN(ct, "\n", prefixLines+1)[:prefixLines] {
-							prefixBytes += len(ln)
-						}
+						prefixBytes := chunkPrefixBytes(ct, prefixLines)
 						k := byteOvershoot{chunk: ci + 1, chunks: len(chunks), diffBytes: len(ct) - prefixBytes, preambleBytes: prefixBytes, budget: chunkClampBudget}
 						seen := overshootAgents[k]
 						if len(seen) == 0 {
@@ -3295,6 +3292,16 @@ type byteOvershoot struct {
 	chunk, chunks            int
 	diffBytes, preambleBytes int
 	budget                   int64
+}
+
+// chunkPrefixBytes is the byte length of the first prefixLines lines of chunk,
+// the engine-rendered preamble diffPrefixLines counted.
+func chunkPrefixBytes(chunk string, prefixLines int) int {
+	n := 0
+	for _, ln := range strings.SplitAfterN(chunk, "\n", prefixLines+1)[:prefixLines] {
+		n += len(ln)
+	}
+	return n
 }
 
 // warn prints the warning once for every agent in agents.
