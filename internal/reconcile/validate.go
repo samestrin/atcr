@@ -90,15 +90,13 @@ func AnchoredPathWarning(warning string) string {
 
 // siblingLineInFile reports whether line falls within file's length. The parser
 // accepts any positive line, so the bound lives here with the rest of the
-// sibling trust check. A file that cannot be read is given the benefit of the
-// doubt: path validation already ruled on existence.
+// sibling trust check. A sibling that cannot be read as a file (a directory, an
+// I/O error) has no line to point at and fails the bound. root is non-empty:
+// validateFindingPaths returns early without one.
 func siblingLineInFile(root, file string, line int) bool {
-	if root == "" {
-		root = "."
-	}
 	data, err := os.ReadFile(filepath.Join(root, file))
 	if err != nil {
-		return true
+		return false
 	}
 	n := bytes.Count(data, []byte{'\n'})
 	if len(data) > 0 && data[len(data)-1] != '\n' {

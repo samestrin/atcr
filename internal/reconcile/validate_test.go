@@ -143,6 +143,20 @@ func TestValidateFindingPaths_BoundsSiblingLine(t *testing.T) {
 	assert.Empty(t, findings[3].SiblingLocation)
 }
 
+// TestValidateFindingPaths_SiblingDirectoryClearsMarker: a sibling that resolves
+// to a directory has no lines to point at, so the marker is cleared.
+func TestValidateFindingPaths_SiblingDirectoryClearsMarker(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "edited.go"), []byte("package x\n"), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "cmd"), 0o755))
+
+	findings := []JSONFinding{{File: "edited.go", Line: 1, SiblingLocation: "cmd:120"}}
+	_, _ = validateFindingPaths(context.Background(), findings, root)
+
+	assert.Empty(t, findings[0].SiblingLocation)
+	assert.Equal(t, siblingNotFoundWarning("cmd:120"), findings[0].PathWarning)
+}
+
 // resultWithPaths builds a Result whose cached path-stamped JSONFinding records
 // carry the given path fields, mirroring what RunReconcile produces after
 // validateFindingPaths runs.
