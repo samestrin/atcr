@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -220,11 +221,12 @@ func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 	if out.Data.Issue == nil {
 		return PR{}, ErrNoPR
 	}
-	var (
-		pr     PR
-		newest time.Time
-		found  bool
-	)
+	type linked struct {
+		pr PR
+		at time.Time
+	}
+	var all []linked
+	best := -1
 	for _, n := range out.Data.Issue.Attachments.Nodes {
 		owner, repo, num, perr := slack.ParsePRURL(n.URL)
 		if perr != nil {
@@ -233,12 +235,31 @@ func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 		// A missing or unparseable createdAt is the zero time, so it loses to
 		// any dated attachment and ties keep the first listed.
 		at, _ := time.Parse(time.RFC3339Nano, n.CreatedAt)
-		if !found || at.After(newest) {
-			pr, newest, found = PR{Owner: owner, Repo: repo, Number: num}, at, true
+		all = append(all, linked{PR{Owner: owner, Repo: repo, Number: num}, at})
+		if best < 0 || at.After(all[best].at) {
+			best = len(all) - 1
 		}
 	}
-	if !found {
+	if best < 0 {
 		return PR{}, ErrNoPR
 	}
-	return pr, nil
+	chosen := all[best]
+	if c.Logf != nil {
+		for _, l := range all {
+			if l.pr == chosen.pr {
+				continue
+			}
+			why := "older than"
+			if !l.at.Before(chosen.at) {
+				why = "attached no later than"
+			}
+			c.Logf("linear: issue %s: ignored linked PR %s: %s the chosen %s", issueID, l.pr, why, chosen.pr)
+		}
+	}
+	return chosen.pr, nil
+}
+
+// String formats the pull request as owner/repo#number.
+func (p PR) String() string {
+	return p.Owner + "/" + p.Repo + "#" + strconv.Itoa(p.Number)
 }

@@ -173,7 +173,7 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 			Repos:    cfg.Repos,
 			Teams:    cfg.Linear.Teams,
 			Statuses: cfg.Linear.TriggerStatuses,
-			Lookup:   &linear.Client{APIKey: linearKey, URL: linearAPIURL},
+			Lookup:   &linear.Client{APIKey: linearKey, URL: linearAPIURL, Logf: logf},
 			Review:   review,
 			Secrets:  secrets,
 			Logf:     logf,
