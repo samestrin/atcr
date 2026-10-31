@@ -1,18 +1,21 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,9 +81,9 @@ func TestGuardSecrets_PanelScansEachDistinctSegmentOnce(t *testing.T) {
 	scope := "SCOPE CONSTRAINT: only config.go\n"
 	text := guardPayload()
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range panel {
-			out, err := guardSecrets(secretGuardWarn, agent, panelSegments(scope, text)...)
+			out, err := guardSecrets(ctx, secretGuardWarn, agent, panelSegments(scope, text)...)
 			require.NoError(t, err)
 			assert.Equal(t, []string{scope, text}, out, "warn sends every agent's text unchanged")
 		}
@@ -100,12 +103,12 @@ func TestGuardSecrets_DistinctPayloadIsScannedAndReportedOnItsOwn(t *testing.T) 
 	shared := guardPayload()
 	other := "diff --git a/env.go b/env.go\n@@ -1 +1 @@\n+key := \"" + guardAWSKey + "\"\n"
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range panel {
-			_, err := guardSecrets(secretGuardWarn, agent, panelSegments("", shared)...)
+			_, err := guardSecrets(ctx, secretGuardWarn, agent, panelSegments("", shared)...)
 			require.NoError(t, err)
 		}
-		_, err := guardSecrets(secretGuardWarn, "zed", panelSegments("", other)...)
+		_, err := guardSecrets(ctx, secretGuardWarn, "zed", panelSegments("", other)...)
 		require.NoError(t, err)
 	})
 
@@ -122,9 +125,9 @@ func TestGuardSecrets_RedactAppliesCachedHitsToEveryAgent(t *testing.T) {
 	calls := countingScanner(t, nil)
 	text := guardPayload()
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range panel {
-			out, err := guardSecrets(secretGuardRedact, agent, panelSegments("", text)...)
+			out, err := guardSecrets(ctx, secretGuardRedact, agent, panelSegments("", text)...)
 			require.NoError(t, err)
 			assert.NotContains(t, out[1], guardAWSKey, "agent %s: the key must not reach the provider", agent)
 			assert.Contains(t, out[1], payload.SecretPlaceholder)
@@ -142,9 +145,9 @@ func TestGuardSecrets_BlockFailsClosedOnACachedScanError(t *testing.T) {
 	calls := countingScanner(t, scanErr)
 	clean := "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+port := 8080\n"
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range panel {
-			out, err := guardSecrets(secretGuardBlock, agent, panelSegments("", clean)...)
+			out, err := guardSecrets(ctx, secretGuardBlock, agent, panelSegments("", clean)...)
 			require.Error(t, err, "agent %s must not be sent an unchecked prompt", agent)
 			assert.Nil(t, out)
 			assert.True(t, errors.Is(err, ErrSecretGuardBlocked), "agent %s: %v", agent, err)
@@ -162,7 +165,7 @@ func TestGuardSecrets_BlockFailsEveryAgentOnACachedHit(t *testing.T) {
 	calls := countingScanner(t, nil)
 	text := guardPayload()
 	for _, agent := range panel {
-		_, err := guardSecrets(secretGuardBlock, agent, panelSegments("", text)...)
+		_, err := guardSecrets(context.Background(), secretGuardBlock, agent, panelSegments("", text)...)
 		require.Error(t, err, "agent %s", agent)
 		assert.True(t, errors.Is(err, ErrSecretGuardBlocked))
 		assert.Contains(t, err.Error(), "config.go")
@@ -177,10 +180,10 @@ func TestGuardSecrets_RepeatAgentStartsANewRun(t *testing.T) {
 	calls := countingScanner(t, nil)
 	text := guardPayload()
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for run := 0; run < 2; run++ {
 			for _, agent := range panel {
-				_, err := guardSecrets(secretGuardWarn, agent, panelSegments("", text)...)
+				_, err := guardSecrets(ctx, secretGuardWarn, agent, panelSegments("", text)...)
 				require.NoError(t, err)
 			}
 		}
@@ -196,10 +199,10 @@ func TestGuardSecrets_NewRunRetriesAFailedScan(t *testing.T) {
 	calls := countingScanner(t, fmt.Errorf("%w: timeout", payload.ErrSecretScanFailed))
 	text := guardPayload()
 
-	captureStderr(t, func() {
+	captureGuardLog(t, func(ctx context.Context) {
 		for run := 0; run < 2; run++ {
 			for _, agent := range panel {
-				_, err := guardSecrets(secretGuardBlock, agent, panelSegments("", text)...)
+				_, err := guardSecrets(ctx, secretGuardBlock, agent, panelSegments("", text)...)
 				require.ErrorIs(t, err, ErrSecretGuardBlocked)
 			}
 		}
@@ -215,10 +218,10 @@ func TestGuardSecrets_ChunksShareOneScopeScan(t *testing.T) {
 	scope := "SCOPE CONSTRAINT: only config.go\n"
 	chunks := []string{guardPayload(), "diff --git a/b.go b/b.go\n@@ -1 +1 @@\n+x := 1\n"}
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range panel {
 			for _, ck := range chunks {
-				_, err := guardSecrets(secretGuardWarn, agent, panelSegments(scope, ck)...)
+				_, err := guardSecrets(ctx, secretGuardWarn, agent, panelSegments(scope, ck)...)
 				require.NoError(t, err)
 			}
 		}
@@ -240,11 +243,11 @@ func TestGuardSecrets_CachedScanExpires(t *testing.T) {
 	t.Cleanup(func() { secretScanNow = oldNow })
 	text := guardPayload()
 
-	stderr := captureStderr(t, func() {
-		_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+	stderr := captureGuardLog(t, func(ctx context.Context) {
+		_, err := guardSecrets(ctx, secretGuardWarn, "greta", panelSegments("", text)...)
 		require.NoError(t, err)
 		now = now.Add(secretScanTTL + time.Second)
-		_, err = guardSecrets(secretGuardWarn, "kai", panelSegments("", text)...)
+		_, err = guardSecrets(ctx, secretGuardWarn, "kai", panelSegments("", text)...)
 		require.NoError(t, err)
 	})
 
@@ -258,11 +261,11 @@ func TestGuardSecrets_ScannerChangeRescans(t *testing.T) {
 	calls := countingScanner(t, nil)
 	text := guardPayload()
 	t.Setenv("GITLEAKS_CONFIG", "")
-	captureStderr(t, func() {
-		_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+	captureGuardLog(t, func(ctx context.Context) {
+		_, err := guardSecrets(ctx, secretGuardWarn, "greta", panelSegments("", text)...)
 		require.NoError(t, err)
 		t.Setenv("GITLEAKS_CONFIG", "/etc/gitleaks-strict.toml")
-		_, err = guardSecrets(secretGuardWarn, "kai", panelSegments("", text)...)
+		_, err = guardSecrets(ctx, secretGuardWarn, "kai", panelSegments("", text)...)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 2, calls[text], "a scan under another gitleaks config is not reused")
@@ -271,7 +274,15 @@ func TestGuardSecrets_ScannerChangeRescans(t *testing.T) {
 // The same holds when only PATH changes: a gitleaks binary appearing on PATH
 // mid-process rescans text the built-in ruleset already scanned, while an
 // unchanged PATH keeps reusing the cached scan.
+//
+// It swaps the process-wide PATH for its whole duration (t.Setenv), so it and
+// anything it shares the package with must stay non-parallel; t.Setenv panics
+// under t.Parallel. The fake gitleaks is a #!/bin/sh script, which Windows
+// exec.LookPath never resolves (no executable extension), so it is skipped there.
 func TestGuardSecrets_PathChangeRescans(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gitleaks is a shell script that Windows exec.LookPath does not resolve")
+	}
 	calls := countingScanner(t, nil)
 	text := guardPayload()
 	t.Setenv("GITLEAKS_CONFIG", "")
@@ -279,14 +290,14 @@ func TestGuardSecrets_PathChangeRescans(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	bin := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gitleaks"), []byte("#!/bin/sh\n"), 0o755))
-	captureStderr(t, func() {
-		_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+	captureGuardLog(t, func(ctx context.Context) {
+		_, err := guardSecrets(ctx, secretGuardWarn, "greta", panelSegments("", text)...)
 		require.NoError(t, err)
-		_, err = guardSecrets(secretGuardWarn, "kai", panelSegments("", text)...)
+		_, err = guardSecrets(ctx, secretGuardWarn, "kai", panelSegments("", text)...)
 		require.NoError(t, err)
 		require.Equal(t, 1, calls[text], "an unchanged PATH reuses the scan")
 		t.Setenv("PATH", bin)
-		_, err = guardSecrets(secretGuardWarn, "mira", panelSegments("", text)...)
+		_, err = guardSecrets(ctx, secretGuardWarn, "mira", panelSegments("", text)...)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 2, calls[text], "a scan under another gitleaks binary is not reused")
@@ -296,7 +307,7 @@ func TestGuardSecrets_PathChangeRescans(t *testing.T) {
 func TestGuardSecrets_OffNeverScans(t *testing.T) {
 	calls := countingScanner(t, nil)
 	for _, agent := range panel {
-		out, err := guardSecrets(secretGuardOff, agent, panelSegments("", guardPayload())...)
+		out, err := guardSecrets(context.Background(), secretGuardOff, agent, panelSegments("", guardPayload())...)
 		require.NoError(t, err)
 		assert.Contains(t, out[1], guardAWSKey)
 	}
@@ -308,7 +319,7 @@ func TestGuardSecrets_OffNeverScans(t *testing.T) {
 func TestGuardSecrets_CacheIsBounded(t *testing.T) {
 	countingScanner(t, nil)
 	for i := 0; i < 3*secretScanCacheCap; i++ {
-		_, err := guardSecrets(secretGuardWarn, "greta", guardSegment{text: fmt.Sprintf("chunk %d\n", i), file: "payload"})
+		_, err := guardSecrets(context.Background(), secretGuardWarn, "greta", guardSegment{text: fmt.Sprintf("chunk %d\n", i), file: "payload"})
 		require.NoError(t, err)
 	}
 	assert.LessOrEqual(t, secretScanCacheLen(), secretScanCacheCap)
@@ -333,10 +344,24 @@ func gateScanner(t *testing.T) (started *atomic.Int32, release func()) {
 	return started, release
 }
 
+// captureGuardLog runs fn with a context whose logger writes to a buffer and
+// returns what the guard logged. The guard's warnings go to the context logger,
+// so fn must pass ctx to guardSecrets. Anything the guard prints to os.Stderr
+// instead is captured too and returned after the log, so a warning that bypasses
+// the logger still fails the assertions on a log line's absence or count.
+func captureGuardLog(t *testing.T, fn func(ctx context.Context)) string {
+	t.Helper()
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+	stderr := captureStderr(t, func() { fn(ctx) })
+	require.Empty(t, stderr, "the guard must log through the context logger, not os.Stderr")
+	return buf.String()
+}
+
 // runConcurrently starts one goroutine per agent on a cold cache, lets them
 // pile up behind the first scan, then releases it. errs[i] is agents[i]'s
 // guardSecrets error.
-func runConcurrently(t *testing.T, policy string, agents []string, segs []guardSegment) []error {
+func runConcurrently(ctx context.Context, t *testing.T, policy string, agents []string, segs []guardSegment) []error {
 	t.Helper()
 	started, release := gateScanner(t)
 	errs := make([]error, len(agents))
@@ -345,7 +370,7 @@ func runConcurrently(t *testing.T, policy string, agents []string, segs []guardS
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, errs[i] = guardSecrets(policy, agent, segs...)
+			_, errs[i] = guardSecrets(ctx, policy, agent, segs...)
 		}()
 	}
 	require.Eventually(t, func() bool { return started.Load() > 0 }, 5*time.Second, time.Millisecond)
@@ -372,8 +397,8 @@ func TestGuardSecrets_ConcurrentPanelScansEachDistinctSegmentOnce(t *testing.T) 
 	text := guardPayload()
 
 	var errs []error
-	stderr := captureStderr(t, func() {
-		errs = runConcurrently(t, secretGuardWarn, manyAgents(16), panelSegments(scope, text))
+	stderr := captureGuardLog(t, func(ctx context.Context) {
+		errs = runConcurrently(ctx, t, secretGuardWarn, manyAgents(16), panelSegments(scope, text))
 	})
 
 	for i, err := range errs {
@@ -392,8 +417,8 @@ func TestGuardSecrets_ConcurrentBlockFailsClosedOnAScanError(t *testing.T) {
 	clean := "diff --git a/main.go b/main.go\n@@ -1 +1 @@\n+port := 8080\n"
 
 	var errs []error
-	captureStderr(t, func() {
-		errs = runConcurrently(t, secretGuardBlock, manyAgents(16), panelSegments("", clean))
+	captureGuardLog(t, func(ctx context.Context) {
+		errs = runConcurrently(ctx, t, secretGuardBlock, manyAgents(16), panelSegments("", clean))
 	})
 
 	for i, err := range errs {
@@ -410,9 +435,9 @@ func TestGuardSecrets_InterleavedRunsKeepEachOthersWarningClaims(t *testing.T) {
 	countingScanner(t, nil)
 	text := guardPayload()
 
-	stderr := captureStderr(t, func() {
+	stderr := captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range []string{"greta", "greta", "kai", "kai", "lena", "lena"} {
-			_, err := guardSecrets(secretGuardWarn, agent, panelSegments("", text)...)
+			_, err := guardSecrets(ctx, secretGuardWarn, agent, panelSegments("", text)...)
 			require.NoError(t, err)
 		}
 	})
@@ -426,9 +451,9 @@ func TestGuardSecrets_InterleavedRunsKeepEachOthersScanClaims(t *testing.T) {
 	calls := countingScanner(t, fmt.Errorf("%w: timeout", payload.ErrSecretScanFailed))
 	text := guardPayload()
 
-	captureStderr(t, func() {
+	captureGuardLog(t, func(ctx context.Context) {
 		for _, agent := range []string{"greta", "greta", "kai", "kai", "lena", "lena"} {
-			_, err := guardSecrets(secretGuardBlock, agent, panelSegments("", text)...)
+			_, err := guardSecrets(ctx, secretGuardBlock, agent, panelSegments("", text)...)
 			require.ErrorIs(t, err, ErrSecretGuardBlocked, "agent %s", agent)
 		}
 	})
@@ -454,7 +479,7 @@ func TestGuardSecrets_CrossingTheCapEvictsOneEntry(t *testing.T) {
 
 	guard := func(agent string, s guardSegment) {
 		t.Helper()
-		_, err := guardSecrets(secretGuardWarn, agent, s)
+		_, err := guardSecrets(context.Background(), secretGuardWarn, agent, s)
 		require.NoError(t, err)
 	}
 	guard("greta", chunkSeg(0))
@@ -487,7 +512,7 @@ func TestGuardSecrets_CrossingTheCapEvictsAnExpiredEntryFirst(t *testing.T) {
 
 	guard := func(agent string, s guardSegment) {
 		t.Helper()
-		_, err := guardSecrets(secretGuardWarn, agent, s)
+		_, err := guardSecrets(context.Background(), secretGuardWarn, agent, s)
 		require.NoError(t, err)
 	}
 	guard("greta", chunkSeg(0)) // scanned first, so it expires first
@@ -514,9 +539,11 @@ func TestGuardSecrets_PanickedScanFailsClosed(t *testing.T) {
 	}
 	text := guardPayload()
 
-	require.Panics(t, func() { _, _ = guardSecrets(secretGuardBlock, "greta", panelSegments("", text)...) })
-	captureStderr(t, func() {
-		_, err := guardSecrets(secretGuardBlock, "kai", panelSegments("", text)...)
+	require.Panics(t, func() {
+		_, _ = guardSecrets(context.Background(), secretGuardBlock, "greta", panelSegments("", text)...)
+	})
+	captureGuardLog(t, func(ctx context.Context) {
+		_, err := guardSecrets(ctx, secretGuardBlock, "kai", panelSegments("", text)...)
 		require.ErrorIs(t, err, ErrSecretGuardBlocked)
 		assert.ErrorIs(t, err, payload.ErrSecretScanFailed)
 	})
@@ -527,9 +554,9 @@ func TestGuardSecrets_PanickedScanFailsClosed(t *testing.T) {
 func TestGuardSecrets_RunsPerEntryAreBounded(t *testing.T) {
 	countingScanner(t, nil)
 	text := guardPayload()
-	captureStderr(t, func() {
+	captureGuardLog(t, func(ctx context.Context) {
 		for i := 0; i < 3*secretScanRunCap; i++ {
-			_, err := guardSecrets(secretGuardWarn, "greta", panelSegments("", text)...)
+			_, err := guardSecrets(ctx, secretGuardWarn, "greta", panelSegments("", text)...)
 			require.NoError(t, err)
 		}
 	})
@@ -538,5 +565,36 @@ func TestGuardSecrets_RunsPerEntryAreBounded(t *testing.T) {
 	require.Len(t, secretScanCache.warned, 1)
 	for _, e := range secretScanCache.warned {
 		assert.Len(t, e.runs, secretScanRunCap)
+	}
+}
+
+// Row secretguard.go:101: the warnings go to the context logger at warn level,
+// not to os.Stderr, so they follow the run's log routing.
+func TestGuardSecrets_WarningsUseContextLogger(t *testing.T) {
+	for _, tc := range []struct {
+		policy, want string
+		fail         bool
+	}{
+		{secretGuardWarn, "sent unchanged", false},
+		{secretGuardRedact, "redacted 1 secret(s)", false},
+		{secretGuardWarn, "using the built-in ruleset", true},
+	} {
+		t.Run(tc.policy+"/"+tc.want, func(t *testing.T) {
+			var scanErr error
+			if tc.fail {
+				scanErr = payload.ErrSecretScanFailed
+			}
+			countingScanner(t, scanErr)
+			var buf bytes.Buffer
+			ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+			stderr := captureStderr(t, func() {
+				_, err := guardSecrets(ctx, tc.policy, "greta", panelSegments("", guardPayload())...)
+				require.NoError(t, err)
+			})
+			assert.Empty(t, stderr)
+			assert.Contains(t, buf.String(), "level=WARN")
+			assert.Contains(t, buf.String(), tc.want)
+			assert.NotContains(t, buf.String(), guardAWSKey)
+		})
 	}
 }

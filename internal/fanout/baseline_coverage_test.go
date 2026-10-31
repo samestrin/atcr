@@ -327,7 +327,7 @@ func TestBaselineSlots_TagChunkFilesPerSlot(t *testing.T) {
 		baselineEntry("c.go", 100),
 	}
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "one persona × three chunks")
 	slots = renderedSlots(t, slots) // prompts as a worker leases them
@@ -355,7 +355,7 @@ func TestBaselineSlots_BulkFallThroughTagsWholePayload(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	entries := []payload.FileEntry{baselineEntry("a.go", 40), baselineEntry("b.go", 40)}
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 1, "a small payload is one chunk → the bulk path")
 	assert.ElementsMatch(t, []string{"a.go", "b.go"}, slots[0].Primary.chunkFiles,
@@ -380,7 +380,7 @@ func TestBaselineSlots_BulkTagSliceIsSharedAcrossPersonas(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	entries := []payload.FileEntry{baselineEntry("a.go", 40), baselineEntry("b.go", 40)}
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "two personas, one bulk slot each")
 	require.NotEmpty(t, slots[0].Primary.chunkFiles)
@@ -407,7 +407,7 @@ func TestBaselineSlots_BulkTagNeverNamesAnUnshippedFile(t *testing.T) {
 		baselineEntry("c.go", 60),
 	}
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	slots = renderedSlots(t, slots) // prompts as a worker leases them
 
@@ -446,7 +446,7 @@ func TestBaselineSlots_ChunkedStrategyStillTagsEverySlot(t *testing.T) {
 		patchEntry("c.patch", 3),
 	}
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 
 	for i, s := range slots {
@@ -482,7 +482,7 @@ func TestDiffSlots_LeaveChunkFilesUntagged(t *testing.T) {
 		"blocks": {Entries: []payload.FileEntry{baselineEntry("a.go", 40)}, Text: "a", FileCount: 1},
 	}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "b", Head: "h"}, "blocks", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "b", Head: "h"}, "blocks", "", true)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 	for i, s := range slots {

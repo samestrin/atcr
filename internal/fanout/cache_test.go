@@ -413,7 +413,7 @@ func TestDiffCacheKey_FallbackKeysOnItsOwnResponseFormat(t *testing.T) {
 		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 		primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return fb
 	}
@@ -533,7 +533,7 @@ func TestBuildFallbackAgent_CarriesAndKeysOnItsOwnThinking(t *testing.T) {
 		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, p, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return fb
 	}
@@ -611,7 +611,7 @@ func TestBuildAgents_PreserveThinkingIsPerAgent(t *testing.T) {
 		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, p, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return p, fb
 	}
@@ -644,7 +644,7 @@ func TestBuildAgents_ReplayReasoningIsPerAgent(t *testing.T) {
 		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, p, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return p, fb
 	}
@@ -680,7 +680,7 @@ func TestBuildAgents_ReplayReasoningKeysPerAgent(t *testing.T) {
 		payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 		p, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, p, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, p, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return p, fb
 	}
@@ -792,7 +792,7 @@ func TestBuildAgents_EveryKeyedFieldChangesTheCacheKey(t *testing.T) {
 		}
 		primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 		require.NoError(t, err)
-		fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 		require.NoError(t, err)
 		return fb
 	}

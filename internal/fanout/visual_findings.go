@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -112,7 +113,7 @@ func appendVisualFindings(content string, lines []string) string {
 // guardSecrets under policy, as persistVisualEvidence does for the saved
 // files, and returns a copy of res with it replaced: redact swaps in the
 // redacted text, block returns ErrSecretGuardBlocked.
-func guardBrowserText(policy string, res BrowserResult) (BrowserResult, error) {
+func guardBrowserText(ctx context.Context, policy string, res BrowserResult) (BrowserResult, error) {
 	var segs []guardSegment
 	for _, e := range res.Console {
 		segs = append(segs, guardSegment{text: e.Text, file: visualConsoleLabel}, guardSegment{text: e.Location, file: visualConsoleLabel})
@@ -120,7 +121,7 @@ func guardBrowserText(policy string, res BrowserResult) (BrowserResult, error) {
 	for _, f := range res.NetworkFailures {
 		segs = append(segs, guardSegment{text: f.URL, file: visualNetworkLabel}, guardSegment{text: f.Error, file: visualNetworkLabel})
 	}
-	guarded, err := guardSecrets(policy, VisualPersonaName, segs...)
+	guarded, err := guardSecrets(ctx, policy, VisualPersonaName, segs...)
 	if err != nil {
 		return BrowserResult{}, err
 	}

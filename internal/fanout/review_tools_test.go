@@ -57,7 +57,7 @@ func TestBuildFallbackAgent_InheritsLaneToolSettings(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.True(t, fb.Tools, "fallback inherits lane tools=true despite its own tools=false")
 	assert.Equal(t, 5, fb.MaxTurns)
@@ -78,7 +78,7 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Prompt: "// FILE:a.go\npackage a\n", PayloadMode: "files", chunkFiles: []string{"a.go"}}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.Equal(t, primary.Prompt, fb.Prompt,
 		"a fallback with no re-pack source must review the SAME payload as the primary it substitutes for — baseline coverage attributes it to the serving tag")
@@ -90,7 +90,7 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	cfg2 := refitRoster(t, 128000, OverflowTruncate)
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg2, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg2, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
@@ -110,7 +110,7 @@ func TestBuildFallbackAgent_NonToolPrimaryStaysNonTool(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: false, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.False(t, fb.Tools)
 	assert.Equal(t, 0, fb.MaxTurns)
@@ -125,7 +125,7 @@ func TestBuildFallbackAgent_OwnCapabilityNotInheritedFromLane(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.True(t, fb.Tools, "lane tools inherited")
 	assert.False(t, fb.SupportsFC, "fallback uses its own incapable model, not the primary's capability")
@@ -137,7 +137,7 @@ func TestBuildFallbackAgent_CapableFallbackKeepsCapability(t *testing.T) {
 	cfg := toolCfg()
 	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "zoe", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "zoe", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.True(t, fb.Tools)
 	assert.True(t, fb.SupportsFC, "capable fallback model keeps its capability")
@@ -170,7 +170,7 @@ func TestBuildFallbackAgent_PrimaryReviewConstraintsWin(t *testing.T) {
 
 	primary := Agent{Prompt: "p", PayloadMode: "blocks", MinSeverity: "HIGH", MaxFindings: ptrInt(3)}
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.Equal(t, "HIGH", fb.MinSeverity, "primary min_severity governs, not the fallback's own LOW")
 	require.NotNil(t, fb.MaxFindings)
@@ -221,7 +221,7 @@ func TestBuildFallbackAgent_ResponseFormatNotInheritedFromPrimary(t *testing.T) 
 			payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 			primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 			require.NoError(t, err)
-			fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.primaryRF, primary.Invocation.ResponseFormat, "the primary reads its own declaration")
@@ -241,7 +241,7 @@ func TestBuildFallbackAgent_UndeclaredFallbackWireRequestCarriesNoResponseFormat
 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
 	primary, _, err := buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	require.Empty(t, fb.Invocation.ResponseFormat, "precondition: the neither-declares case")
 

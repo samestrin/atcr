@@ -200,7 +200,7 @@ func TestBaselineChunkedRun_DeliveredFilesAreNotReportedAsShed(t *testing.T) {
 	mp.Truncation = payload.Truncation{Truncated: true, FilesDropped: []string{"kept_c.go"}}
 	payloads[string(payload.ModeFiles)] = mp
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
 
@@ -261,7 +261,7 @@ func TestBuildFallbackAgent_InheritsThePrimarysDiffWideShed(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must split into chunk slots")
@@ -293,7 +293,7 @@ func TestChunkedRun_FallbackServedSlotStillReportsTheDiffWideShed(t *testing.T) 
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must split into chunk slots")
@@ -373,7 +373,7 @@ func TestBaselineChunkedRun_RePackedChunkZeroNamesOnlyItsOwnShed(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
@@ -553,7 +553,7 @@ func TestChunkedRangeRun_ShedFilesReachStatusOnASuccessfulRun(t *testing.T) {
 		Truncation: shed,
 	}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must split into chunk slots")
 

@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -51,7 +52,7 @@ func chunkedDiffPayload(fileCount, bodyLines int) map[string]modePayload {
 func TestBuildSlots_ChunkedZeroBudgetHonorsOnOverflowFail(t *testing.T) {
 	cfg := chunkedZeroBudgetCfg(t, OverflowFail)
 
-	_, _, err := buildSlots(cfg, chunkedDiffPayload(4, 100), ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	_, _, err := buildSlots(context.Background(), cfg, chunkedDiffPayload(4, 100), ReviewRange{Base: "a", Head: "b"}, "", "", false)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrOverflowPolicyFail),
@@ -61,7 +62,7 @@ func TestBuildSlots_ChunkedZeroBudgetHonorsOnOverflowFail(t *testing.T) {
 func TestBuildSlots_ChunkedZeroBudgetHonorsOnOverflowFallback(t *testing.T) {
 	cfg := chunkedZeroBudgetCfg(t, OverflowFallback)
 
-	_, _, err := buildSlots(cfg, chunkedDiffPayload(4, 100), ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	_, _, err := buildSlots(context.Background(), cfg, chunkedDiffPayload(4, 100), ReviewRange{Base: "a", Head: "b"}, "", "", false)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrFallbackUnavailable),
@@ -87,7 +88,7 @@ func TestBuildSlots_ChunkedZeroBudgetWithNoEntriesSkipsThePolicy(t *testing.T) {
 			}
 			require.Empty(t, payloads["blocks"].Entries, "precondition: the gate's subject is an empty entry list")
 
-			_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
+			_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
 
 			require.NoError(t, err,
 				"an entry-less payload must not trip the overflow policy — the bulk twin does not")
@@ -103,7 +104,7 @@ func TestBuildSlots_ChunkedUsableWindowNotFailedByOnOverflowFail(t *testing.T) {
 	cfg.Settings.ReviewStrategy = "chunked"
 	cfg.Settings.OnOverflow = OverflowFail
 
-	slots, _, err := buildSlots(cfg, chunkedDiffPayload(12, 900), ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, chunkedDiffPayload(12, 900), ReviewRange{Base: "a", Head: "b"}, "", "", false)
 
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: this diff must still split at the declared budget")

@@ -51,8 +51,8 @@ func buildGuarded(t *testing.T, cfg *ReviewConfig, text string) (Agent, string, 
 		a   Agent
 		err error
 	)
-	out := captureStderr(t, func() {
-		a, _, err = buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+	out := captureGuardLog(t, func(ctx context.Context) {
+		a, _, err = buildOneAgentCtx(ctx, cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
 	})
 	return a, out, err
 }
@@ -168,8 +168,8 @@ func TestSecretGuard_RedactsTheScopeConstraint(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: "diff --git a/main.go b/main.go\n+x\n", FileCount: 1}}
 	var a Agent
 	var err error
-	stderr := captureStderr(t, func() {
-		a, _, err = buildOneAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "SCOPE: rotate "+guardGitHubPA+"\n")
+	stderr := captureGuardLog(t, func(ctx context.Context) {
+		a, _, err = buildOneAgentCtx(ctx, cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "SCOPE: rotate "+guardGitHubPA+"\n")
 	})
 	require.NoError(t, err)
 	assert.NotContains(t, a.Invocation.Prompt, guardGitHubPA)
@@ -206,8 +206,8 @@ func TestSecretGuard_CommitMessageCredentialInTheClaimLedger(t *testing.T) {
 			require.Contains(t, section, guardAWSKey, "precondition: the credential reached the ledger")
 		}
 		var slots []Slot
-		stderr := captureStderr(t, func() {
-			slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		stderr := captureGuardLog(t, func(ctx context.Context) {
+			slots, _, err = buildSlots(ctx, cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 		})
 		return slots, stderr, err
 	}
@@ -260,8 +260,8 @@ func TestSecretGuard_FallbackInheritsTheGuardedPrompt(t *testing.T) {
 			primary, _, err := buildGuarded(t, cfg, guardPayload())
 			require.NoError(t, err)
 			var fb Agent
-			stderr := captureStderr(t, func() {
-				fb, _, err = buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{})
+			stderr := captureGuardLog(t, func(ctx context.Context) {
+				fb, _, err = buildFallbackAgent(ctx, cfg, primary, "kai", false, fallbackRefit{})
 			})
 			require.NoError(t, err)
 			assert.Empty(t, stderr, "the primary's scan already reported this payload")
@@ -282,8 +282,8 @@ func TestSecretGuard_FallbackGuardsAnUnguardedPrompt(t *testing.T) {
 		cfg := guardCfg(t, "redact")
 		var fb Agent
 		var err error
-		stderr := captureStderr(t, func() {
-			fb, _, err = buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{})
+		stderr := captureGuardLog(t, func(ctx context.Context) {
+			fb, _, err = buildFallbackAgent(ctx, cfg, primary, "kai", false, fallbackRefit{})
 		})
 		require.NoError(t, err)
 		assert.NotContains(t, fb.Invocation.Prompt, guardAWSKey)
@@ -295,8 +295,8 @@ func TestSecretGuard_FallbackGuardsAnUnguardedPrompt(t *testing.T) {
 	t.Run("block", func(t *testing.T) {
 		cfg := guardCfg(t, "block")
 		var err error
-		captureStderr(t, func() {
-			_, _, err = buildFallbackAgent(cfg, primary, "kai", false, fallbackRefit{})
+		captureGuardLog(t, func(ctx context.Context) {
+			_, _, err = buildFallbackAgent(ctx, cfg, primary, "kai", false, fallbackRefit{})
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), `"kai"`)

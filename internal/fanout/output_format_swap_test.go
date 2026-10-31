@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -227,7 +228,7 @@ func TestRenderAgent_NoHeadingPersonaKeepsHeadingInDiff(t *testing.T) {
 	persona := registry.ResolvedPersona{Text: "## Role\nr\n\n## Payload\n{{.Payload}}\n"}
 	diff := "## Output Format\n+secret-line\n"
 
-	a, err := renderAgent(cfg, "greta", cfg.Registry.Agents["greta"], persona, "blocks", diff, 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
+	a, err := renderAgent(context.Background(), cfg, "greta", cfg.Registry.Agents["greta"], persona, "blocks", diff, 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
 	require.NoError(t, err)
 	un := a.swap.rebuildUnswapped(a.Prompt)
 	assert.Equal(t, un+"\n"+jsonObjectOutputFormat, a.Prompt, "the swapped prompt is the unswapped text plus the appended block")
@@ -286,7 +287,7 @@ func TestRenderAgent_ScopeFocusThenAppendedBlock(t *testing.T) {
 	ac.Scope = []string{"security"}
 	persona := registry.ResolvedPersona{Text: "## Role\nr\n\n## Payload\n{{.Payload}}\n"}
 
-	a, err := renderAgent(cfg, "greta", ac, persona, "blocks", "diff", 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
+	a, err := renderAgent(context.Background(), cfg, "greta", ac, persona, "blocks", "diff", 1, payload.Truncation{}, ReviewRange{}, "", agentSizing{})
 	require.NoError(t, err)
 	focus := payload.ScopeFocus(ac.Scope)
 	require.NotEmpty(t, focus)
@@ -312,7 +313,7 @@ func TestBuildFallbackAgent_SwapKeyedOnOwnFlag(t *testing.T) {
 			cfg := swapRoster(tc.gretaRF, tc.kaiRF)
 			primary, _, err := buildOneAgent(cfg, "greta", payloads, rng, "", "")
 			require.NoError(t, err)
-			fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+			fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 			require.NoError(t, err)
 
 			assert.Equal(t, tc.gretaRF != "", isSwapped(primary.Prompt), "primary follows its own flag")

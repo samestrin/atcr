@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -49,7 +50,7 @@ type VisualArtifacts struct {
 // Console and failed-request text is persisted even when res holds no
 // screenshot bytes. Nothing is written, and no visual/ is created, when
 // reviewDir is empty or res holds no screenshot bytes and no captured text.
-func persistVisualEvidence(policy, reviewDir string, res BrowserResult) (VisualArtifacts, error) {
+func persistVisualEvidence(ctx context.Context, policy, reviewDir string, res BrowserResult) (VisualArtifacts, error) {
 	var shots []BrowserScreenshot
 	for _, sc := range res.Screenshots {
 		if len(sc.Data) > 0 {
@@ -59,7 +60,7 @@ func persistVisualEvidence(policy, reviewDir string, res BrowserResult) (VisualA
 	if reviewDir == "" || (len(shots) == 0 && len(res.Console) == 0 && len(res.NetworkFailures) == 0) {
 		return VisualArtifacts{}, nil
 	}
-	guarded, err := guardSecrets(policy, VisualPersonaName,
+	guarded, err := guardSecrets(ctx, policy, VisualPersonaName,
 		guardSegment{text: consoleText(res.Console), file: visualConsoleLabel},
 		guardSegment{text: networkText(res.NetworkFailures), file: visualNetworkLabel})
 	if err != nil {

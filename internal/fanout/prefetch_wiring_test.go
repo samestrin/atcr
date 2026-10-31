@@ -286,7 +286,7 @@ func TestScopePrefetchGrounding_StripsWhenAFallbackShedTheContextBlock(t *testin
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "", "", false)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
@@ -363,7 +363,7 @@ func TestBuildSlots_ZeroBudgetArmFileCountExcludesSyntheticEntries(t *testing.T)
 
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: base, Head: head}, "blocks", "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: base, Head: head}, "blocks", "", true, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)

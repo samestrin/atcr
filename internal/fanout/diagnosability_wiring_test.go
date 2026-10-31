@@ -53,7 +53,7 @@ func TestBuildSlots_ChunkedAgentCarriesChunkRecord(t *testing.T) {
 	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "precondition: the diff bin-packs into two chunk slots")
 

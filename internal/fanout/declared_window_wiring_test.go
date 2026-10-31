@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -94,14 +95,14 @@ func TestBuildSlots_ChunkedLineBudgetRisesWithDeclaration(t *testing.T) {
 	base := sizingRosterConfig()
 	base.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	base.Settings.ReviewStrategy = "chunked"
-	undeclaredSlots, _, err := buildSlots(base, payloads, rng, "", "", true)
+	undeclaredSlots, _, err := buildSlots(context.Background(), base, payloads, rng, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(undeclaredSlots), 1, "precondition: at the 32768 default this diff must split")
 
 	big := declaredWindowRoster(t, 128000)
 	big.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	big.Settings.ReviewStrategy = "chunked"
-	declaredSlots, _, err := buildSlots(big, payloads, rng, "", "", true)
+	declaredSlots, _, err := buildSlots(context.Background(), big, payloads, rng, "", "", true)
 	require.NoError(t, err)
 
 	assert.Less(t, len(declaredSlots), len(undeclaredSlots),
@@ -119,7 +120,7 @@ func TestBuildSlots_ChunkedRecordsDeclaredLineBudget(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.ReviewStrategy = "chunked"
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: 10800 lines must still split at a 6328-line budget")
 
@@ -169,7 +170,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 	}
 
 	t.Run("explicit max_context_lines beats the declaration", func(t *testing.T) {
-		slots, _, err := buildSlots(roster(t, true), payloads, rng, "", "", true)
+		slots, _, err := buildSlots(context.Background(), roster(t, true), payloads, rng, "", "", true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: a 700-line budget must split this diff")
 		assert.Equal(t, explicit, slots[0].Primary.chunkMaxLines,
@@ -187,7 +188,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 		want := int((agentBudget - int64(len(plan))) / payload.AvgBytesPerLine)
 		require.Less(t, want, derived, "precondition: the reservation must actually shave the derived budget")
 
-		slots, _, err := buildSlots(roster(t, false), payloads, rng, "", plan, true)
+		slots, _, err := buildSlots(context.Background(), roster(t, false), payloads, rng, "", plan, true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: the shaved budget must still split this diff")
 		assert.Equal(t, want, slots[0].Primary.chunkMaxLines,
@@ -198,7 +199,7 @@ func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *
 		// The branch is an else-if by design: an explicit operator value is left
 		// untouched (least surprise). Without this case, folding the reservation
 		// into both arms would pass the other two.
-		slots, _, err := buildSlots(roster(t, true), payloads, rng, "", plan, true)
+		slots, _, err := buildSlots(context.Background(), roster(t, true), payloads, rng, "", plan, true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1)
 		assert.Equal(t, explicit, slots[0].Primary.chunkMaxLines,
@@ -223,7 +224,7 @@ func TestBuildFallbackAgent_ResolvesItsOwnDeclaration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 512000, primary.ResolvedWindow, "precondition: the primary carries its own large declaration")
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 
 	assert.Equal(t, 64000, fb.ResolvedWindow,
@@ -244,7 +245,7 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesResolutionChain(t *testing.T) 
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.Equal(t, 32768, fb.ResolvedWindow,
 		"an undeclared fallback keeps the conservative default, not the primary's 512000")
@@ -268,7 +269,7 @@ func TestBuildFallbackAgent_UndeclaredFallbackUsesStaticTableTier(t *testing.T) 
 	primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
 	require.NoError(t, err)
 
-	fb, _, err := buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+	fb, _, err := buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	require.NoError(t, err)
 	assert.Equal(t, 128000, fb.ResolvedWindow,
 		"an undeclared fallback on a table-listed model resolves the TABLE entry, not the 32768 default and not the primary's 512000")
@@ -292,7 +293,7 @@ func TestBuildFallbackAgent_WarnsWhenInheritingAnOversizedPrompt(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	})
 	require.NoError(t, err)
 
@@ -322,7 +323,7 @@ func TestBuildFallbackAgent_NoWarningWhenBudgetsMatch(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	})
 	require.NoError(t, err)
 
@@ -351,7 +352,7 @@ func TestBuildFallbackAgent_NoWarningWhenFallbackWindowIsLarger(t *testing.T) {
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	})
 	require.NoError(t, err)
 	require.Greater(t, fb.EffectiveBudget, primary.EffectiveBudget,
@@ -380,7 +381,7 @@ func TestBuildFallbackAgent_WarnsWhenFallbackIsOnlyMarginallySmaller(t *testing.
 
 	var fb Agent
 	out := captureStderr(t, func() {
-		fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{})
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
 	})
 	require.NoError(t, err)
 	require.Less(t, fb.EffectiveBudget, primary.EffectiveBudget,
@@ -451,7 +452,9 @@ func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t
 			"precondition: the budget comparison alone WOULD fire — the fallback's budget is the smaller one")
 
 		var fb Agent
-		out := captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+		out := captureStderr(t, func() {
+			fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+		})
 		require.NoError(t, err)
 
 		assert.NotContains(t, out, "may overflow",
@@ -472,7 +475,9 @@ func TestBuildFallbackAgent_WarningGatesOnTheInheritedPayloadNotOnBudgetsAlone(t
 			"precondition: the shipped payload really does exceed the fallback's budget")
 
 		var fb Agent
-		out := captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+		out := captureStderr(t, func() {
+			fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+		})
 		require.NoError(t, err)
 
 		assert.Contains(t, out, "may overflow", "a payload past the fallback's budget must still warn")
@@ -507,7 +512,7 @@ func TestBuildSlots_FallbackOverflowWarningIsGatedAndDeduped(t *testing.T) {
 
 	var slots []Slot
 	var err error
-	out := captureStderr(t, func() { slots, _, err = buildSlots(cfg, payloads, rng, "", "", true) })
+	out := captureStderr(t, func() { slots, _, err = buildSlots(context.Background(), cfg, payloads, rng, "", "", true) })
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the diff must split into several chunks")
 	require.Len(t, slots[0].Fallbacks, 1, "precondition: the lane has a fallback")
@@ -517,7 +522,7 @@ func TestBuildSlots_FallbackOverflowWarningIsGatedAndDeduped(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out, "may overflow"),
 		"the fallback-overflow warning must fire once per lane, not once per chunk")
 
-	quiet := captureStderr(t, func() { _, _, err = buildSlots(cfg, payloads, rng, "", "", false) })
+	quiet := captureStderr(t, func() { _, _, err = buildSlots(context.Background(), cfg, payloads, rng, "", "", false) })
 	require.NoError(t, err)
 	assert.NotContains(t, quiet, "may overflow",
 		"warnOversized=false (the resume rebuild path) must silence it, like every sibling warning in buildSlots")
@@ -548,7 +553,7 @@ func TestBuildSlots_FallbackWarningDedupSuppressesOnlyWhatWasEmitted(t *testing.
 	var slots []Slot
 	var err error
 	out := captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, map[string]modePayload{"blocks": {Text: diff, FileCount: 2}},
+		slots, _, err = buildSlots(context.Background(), cfg, map[string]modePayload{"blocks": {Text: diff, FileCount: 2}},
 			ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
@@ -583,7 +588,7 @@ func TestBuildFallbackAgent_OverflowSupersedesInheritedActionWithoutLosingTheReg
 	var slots []Slot
 	var err error
 	_ = captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 3000), FileCount: 12}},
+		slots, _, err = buildSlots(context.Background(), cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(12, 3000), FileCount: 12}},
 			ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
@@ -617,7 +622,9 @@ func TestBuildFallbackAgent_CacheKeyNeverCollidesWithItsPrimarys(t *testing.T) {
 		primary, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "")
 		require.NoError(t, err)
 		var fb Agent
-		_ = captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+		_ = captureStderr(t, func() {
+			fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+		})
 		require.NoError(t, err)
 
 		require.Equal(t, primary.Prompt, fb.Prompt, "precondition: the fallback reviews the identical prompt text")
@@ -640,7 +647,9 @@ func TestBuildFallbackAgent_CacheKeyNeverCollidesWithItsPrimarys(t *testing.T) {
 		_ = captureStderr(t, func() { primary, _, err = buildOneAgent(cfg, "greta", oversizedBlocksPayload(), rng, "", "") })
 		require.NoError(t, err)
 		var fb Agent
-		_ = captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+		_ = captureStderr(t, func() {
+			fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+		})
 		require.NoError(t, err)
 
 		require.Zero(t, primary.EffectiveBudget, "precondition: the primary's token collapses")
@@ -674,7 +683,9 @@ func TestReservedOutputTokens_NotRecordedWhenTheWindowCannotFundIt(t *testing.T)
 		"precondition: a primary whose budget DOES fund the cap still records it")
 
 	var fb Agent
-	_ = captureStderr(t, func() { fb, _, err = buildFallbackAgent(cfg, primary, "kai", true, fallbackRefit{}) })
+	_ = captureStderr(t, func() {
+		fb, _, err = buildFallbackAgent(context.Background(), cfg, primary, "kai", true, fallbackRefit{})
+	})
 	require.NoError(t, err)
 	require.Equal(t, 1, fb.ResolvedWindow, "precondition: the fallback's declaration is honoured")
 	require.Zero(t, fb.EffectiveBudget, "precondition: a 1-token window funds no input budget")
@@ -729,7 +740,7 @@ func TestBuildSlots_BaselineChunkedRecordsDeclaredWindow(t *testing.T) {
 	cfg := declaredWindowRoster(t, declared)
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, string(payload.ModeFiles), "", true, true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: 500000 bytes must split at a 404992-byte budget")
 
@@ -787,7 +798,7 @@ func TestBuildSlots_UndeclaredRosterIsUnchangedOnChunkedAndTableTiers(t *testing
 		proj.SerialAgents = nil
 		scoped.Project = &proj
 
-		slots, _, err := buildSlots(&scoped, payloads, rng, "", "", true)
+		slots, _, err := buildSlots(context.Background(), &scoped, payloads, rng, "", "", true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: %s must split this diff into chunks", tc.agent)
 

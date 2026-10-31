@@ -507,7 +507,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		withSAST.sastBlock = block
 		cfg = &withSAST
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint, true)
+	slots, perAgentMode, err := buildSlots(ctx, cfg, payloads, req.Range, "", scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -998,7 +998,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	filesMode := string(payload.ModeFiles)
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, filesMode, scopeConstraint, true, true)
+	slots, perAgentMode, err := buildSlots(ctx, cfg, payloads, req.Range, filesMode, scopeConstraint, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1223,7 +1223,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint, true)
+	slots, perAgentMode, err := buildSlots(ctx, cfg, payloads, req.Range, diffMode, scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2093,13 +2093,13 @@ func recordedChunks(entries []payload.FileEntry, recorded [][]string, chunkBudge
 	return chunks, nil
 }
 
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
+func buildSlots(ctx context.Context, cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
 	// baseline enables the (--all / --dir) multi-chunk fan-out branch inside add
 	// (Sprint 35.0 Phase 5, Decision 2). Variadic-optional so the diff/range callers
 	// and the existing test call sites stay unchanged — the same idiom
 	// mergeChunkResults uses for its optional serialAgents map.
 	baseline := len(baselineOpt) > 0 && baselineOpt[0]
-	return buildSlotsFor(cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, baseline, nil)
+	return buildSlotsFor(ctx, cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, baseline, nil)
 }
 
 // buildSlotsFor is buildSlots with the chunk-aware resume input (Epic 35.16.13
@@ -2107,7 +2107,7 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 // its interrupted run never finished. A persona in it is dispatched those bins
 // (recordedChunks) instead of a fresh partition of the whole payload; every other
 // persona is built exactly as buildSlots builds it.
-func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized, baseline bool, resumeBins map[string][][]string) ([]Slot, map[string]string, error) {
+func buildSlotsFor(ctx context.Context, cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized, baseline bool, resumeBins map[string][][]string) ([]Slot, map[string]string, error) {
 	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
 	// renderAgent (Payload: scopeConstraint + payloadText), so a small PayloadByteBudget
 	// causes the constraint alone to inflate the rendered prompt past the budget.
@@ -2190,7 +2190,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 			// overflows: marking the lane on every call would swallow that second
 			// warning entirely, which is the opposite of the dedup's purpose.
 			lane := name + "\x00" + fb
-			agent, emitted, err := buildFallbackAgent(cfg, primary, fb, warn && !warned[lane], refit)
+			agent, emitted, err := buildFallbackAgent(ctx, cfg, primary, fb, warn && !warned[lane], refit)
 			if err != nil {
 				return nil, err
 			}
@@ -2521,7 +2521,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 						}
 						// Neutral per-chunk truncation: whole-payload truncation is a scan-wide
 						// event decided upstream, not a per-chunk property (mirrors the chunked path).
-						primary, rerr := renderAgent(cfg, name, ac, persona, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
+						primary, rerr := renderAgent(ctx, cfg, name, ac, persona, mode, pb.String(), len(ck), payload.Truncation{}, rng, agentScopeConstraint, chunkSizing)
 						if rerr != nil {
 							return Slot{}, rerr
 						}
@@ -2983,7 +2983,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 					if perr != nil {
 						return perr
 					}
-					primary, err := renderAgent(cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, chunkScopeConstraint, chunkSizing)
+					primary, err := renderAgent(ctx, cfg, name, ac, persona, mode, ct, fileCount, payload.Truncation{}, rng, chunkScopeConstraint, chunkSizing)
 					if err != nil {
 						return err
 					}
@@ -3208,7 +3208,7 @@ func buildSlotsFor(cfg *ReviewConfig, payloads map[string]modePayload, rng Revie
 		if perr != nil {
 			return perr
 		}
-		primary, err := renderAgent(cfg, name, ac, persona, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
+		primary, err := renderAgent(ctx, cfg, name, ac, persona, mode, bulkText, bulkFileCount, bulkTrunc, rng, agentScopeConstraint, bulkSizing)
 		if err != nil {
 			return err
 		}
@@ -3634,7 +3634,7 @@ func isReplayReasoningOff(ac registry.AgentConfig) bool {
 // identity but a different diff subset. Passing the payload text in (rather than reading a
 // modePayload) is the seam that lets a chunk render its own slice of the diff
 // and report its own file count in the prompt.
-func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, persona registry.ResolvedPersona, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string, sz agentSizing) (Agent, error) {
+func renderAgent(ctx context.Context, cfg *ReviewConfig, name string, ac registry.AgentConfig, persona registry.ResolvedPersona, mode, payloadText string, fileCount int, trunc payload.Truncation, rng ReviewRange, scopeConstraint string, sz agentSizing) (Agent, error) {
 	// persona arrives resolved: buildSlots memoizes registry.ResolvePersona per
 	// agent per run (a filesystem walk plus read), so this function's per-chunk
 	// and per-re-fit callers never re-resolve.
@@ -3657,7 +3657,7 @@ func renderAgent(cfg *ReviewConfig, name string, ac registry.AgentConfig, person
 	// The SAST block (Epic 50.0) is scanner output over repository content, so
 	// it is guarded as its own segment, and it is prepended ahead of the scope
 	// constraint so the constraint still sits immediately before the diff.
-	guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+	guarded, err := guardSecrets(ctx, secretGuardPolicy(cfg), name,
 		guardSegment{text: cfg.sastBlock, file: secretSASTLabel},
 		guardSegment{text: scopeConstraint, file: secretScopeLabel},
 		guardSegment{text: payloadText, file: "payload", mode: mode})
@@ -4039,7 +4039,7 @@ func (r fallbackRefit) canRefit() bool { return len(r.entries) > 0 }
 // The second return reports whether the warning was actually emitted, so a
 // caller deduplicating it across a lane's chunks suppresses only what the
 // operator has really seen.
-func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOversized bool, refit fallbackRefit) (Agent, bool, error) {
+func buildFallbackAgent(ctx context.Context, cfg *ReviewConfig, primary Agent, name string, warnOversized bool, refit fallbackRefit) (Agent, bool, error) {
 	// refit is a REQUIRED parameter (a zero fallbackRefit declines the re-fit by
 	// construction via canRefit): every construction site must say explicitly
 	// whether it has a re-pack source, so a future production caller cannot
@@ -4232,7 +4232,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 		// Conservatism NFR hold by construction: the arm can only be taken when it
 		// strictly reduces the bytes sent.
 		if cfg.Settings.OnOverflow == OverflowTruncate && refit.canRefit() {
-			rp, ok, err := refitFallbackPayload(cfg, refit, fbBudget, fbWindow)
+			rp, ok, err := refitFallbackPayload(ctx, cfg, refit, fbBudget, fbWindow)
 			if err != nil {
 				return Agent{}, false, err
 			}
@@ -4350,7 +4350,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string, warnOvers
 	// primary's warning. An unguarded inherited prompt is scanned whole, split at
 	// fbPayloadStart so a redaction keeps that offset pointing at the payload.
 	if !fbGuarded {
-		guarded, err := guardSecrets(secretGuardPolicy(cfg), name,
+		guarded, err := guardSecrets(ctx, secretGuardPolicy(cfg), name,
 			guardSegment{text: fbPrompt[:fbPayloadStart], file: "prompt"},
 			guardSegment{text: fbPrompt[fbPayloadStart:], file: "payload", mode: primary.PayloadMode})
 		if err != nil {
@@ -4591,7 +4591,7 @@ type refitPayload struct {
 // raw per-model figure the non-re-fit path records. That is the quantity the
 // payload is genuinely sized to, so it is what effective_budget must report for an
 // agent that re-fit (AC6), and it is the more conservative of the two.
-func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64, fbWindow int) (refitPayload, bool, error) {
+func refitFallbackPayload(ctx context.Context, cfg *ReviewConfig, refit fallbackRefit, fbBudget int64, fbWindow int) (refitPayload, bool, error) {
 	// Re-cap the SCOPE CONSTRAINT against the FALLBACK's window before reserving
 	// it. It arrives capped to the PRIMARY's budget/8 (see add()), and renderAgent
 	// prepends it UNCOUNTED, so a plan sized for a 128k primary would ride whole
@@ -4739,7 +4739,7 @@ func refitFallbackPayload(cfg *ReviewConfig, refit fallbackRefit, fbBudget int64
 		chunkTotal: 1,
 		action:     action,
 	}
-	a, err := renderAgent(cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), payload.ReviewableCount(kept), trunc, refit.rng, scopeConstraint, sz)
+	a, err := renderAgent(ctx, cfg, refit.primaryName, refit.primaryConfig, refit.persona, refit.mode, pb.String(), payload.ReviewableCount(kept), trunc, refit.rng, scopeConstraint, sz)
 	if err != nil {
 		return refitPayload{}, false, err
 	}

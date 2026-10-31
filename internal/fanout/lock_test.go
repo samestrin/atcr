@@ -83,7 +83,7 @@ func TestReviewPath_FallbackModelIsLockNotBinding(t *testing.T) {
 	}
 	payloads := map[string]modePayload{"blocks": {Text: "diff body", FileCount: 1}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
 	require.Len(t, slots[0].Fallbacks, 1, "greta's fallback chain must produce one fallback (kai)")

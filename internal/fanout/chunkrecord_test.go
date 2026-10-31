@@ -75,7 +75,7 @@ func TestChunkRecord_KilledAfterBinThreeOfEight(t *testing.T) {
 	cfg.Settings.PayloadByteBudget = 100
 	entries, files := eightBinEntries()
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 8)
 
@@ -135,7 +135,7 @@ func TestChunkRecord_ParallelLaneRecordsEveryBin(t *testing.T) {
 	cfg.Settings.PayloadByteBudget = 100
 	entries, files := eightBinEntries()
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 16, "two personas × eight bins")
 
@@ -180,7 +180,7 @@ func TestChunkRecord_CeilingDefersLeftoverBins(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
+		slots, _, err = buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", true, true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, total, "T5: a plan within the unit budget dispatches every bin")
@@ -231,7 +231,7 @@ func TestChunkRecord_BulkRunWritesNoFile(t *testing.T) {
 		cfg.Registry.Agents["greta"] = g
 		payloads := map[string]modePayload{"blocks": {Text: fileSeg("a.go", 6) + fileSeg("b.go", 6), FileCount: 2}}
 
-		slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 		require.NoError(t, err)
 		require.Len(t, slots, 2, "one persona bin-packs into two diff chunk slots")
 		for i, s := range slots {
@@ -248,7 +248,7 @@ func TestChunkRecord_BulkRunWritesNoFile(t *testing.T) {
 	t.Run("single-chunk baseline", func(t *testing.T) {
 		cfg := twoAgentConfig("http://unused")
 		entries, _ := eightBinEntries()
-		slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+		slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 		require.NoError(t, err)
 		require.Len(t, slots, 2, "one bulk slot per persona")
 
@@ -329,7 +329,7 @@ func TestWorkLedger_KilledMidDrainAccountsForEveryUnit(t *testing.T) {
 	cfg.Settings.PayloadByteBudget = 100
 	entries, _ := eightBinEntries()
 
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 16, "two personas × eight bins")
 

@@ -594,7 +594,7 @@ func earlyWriteSlots(t *testing.T, single ...string) []Slot {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
 	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100), baselineEntry("c.go", 100)}
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "greta plans one bin per file")
 	for i := 0; i+1 < len(single); i += 2 {

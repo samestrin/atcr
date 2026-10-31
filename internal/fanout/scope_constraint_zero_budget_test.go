@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestBuildFallbackAgent_RefitDropsScopeConstraintAtZeroBudget(t *testing.T) 
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
+		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "blocks", scope, true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots[0].Fallbacks, 1)

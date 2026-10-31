@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestBuildSlots_ChunkedExpandsPersonaIntoPerChunkSlots(t *testing.T) {
 	diff := fileSeg("a.go", 6) + fileSeg("b.go", 6)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "one persona bin-packs into two chunk slots")
 	require.Equal(t, "greta", slots[0].Primary.Name)
@@ -44,7 +45,7 @@ func TestBuildSlots_BulkEmitsOneSlotPerAgent(t *testing.T) {
 	diff := fileSeg("a.go", 50) + fileSeg("b.go", 50)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "bulk: one slot for greta, one for kai — no chunk expansion")
 	require.Equal(t, "greta", slots[0].Primary.Name)
@@ -59,7 +60,7 @@ func TestBuildSlots_ChunkedSingleChunkStaysOneSlot(t *testing.T) {
 	diff := fileSeg("a.go", 3) + fileSeg("b.go", 3)
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 1, "chunked but a single chunk => one slot, nothing to merge")
 	require.Equal(t, "greta", slots[0].Primary.Name)
@@ -156,7 +157,7 @@ func TestBuildSlots_ChunkedUsesNeutralTruncationPerChunk(t *testing.T) {
 	trunc := payload.Truncation{Truncated: true, FilesDropped: []string{"big.go"}}
 	payloads := map[string]modePayload{"blocks": {Text: diff, FileCount: 2, Truncation: trunc}}
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "two chunk slots")
 	for _, s := range slots {

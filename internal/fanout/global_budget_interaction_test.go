@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.
 		cfg.Settings.ReviewStrategy = "chunked"
 		cfg.Settings.PayloadByteBudget = globalCap
 
-		slots, _, err := buildSlots(cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}, rng, "", "", true)
+		slots, _, err := buildSlots(context.Background(), cfg, map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}, rng, "", "", true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: the diff must actually split into chunk slots")
 
@@ -89,7 +90,7 @@ func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.
 		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 		cfg.Settings.PayloadByteBudget = globalCap
 
-		slots, _, err := buildSlots(cfg, baselinePayloads(entries), rng, string(payload.ModeFiles), "", true, true)
+		slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), rng, string(payload.ModeFiles), "", true, true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: 400000 bytes must split at a 100000-byte cap")
 
@@ -131,11 +132,11 @@ func TestBuildSlots_ChunkedLineBudgetIsClampedByGlobalBudget(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	cappedSlots, _, err := buildSlots(capped, payloads, rng, "", "", true)
+	cappedSlots, _, err := buildSlots(context.Background(), capped, payloads, rng, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(cappedSlots), 1, "precondition: this diff must split at the clamped line budget")
 
-	uncappedSlots, _, err := buildSlots(uncapped, payloads, rng, "", "", true)
+	uncappedSlots, _, err := buildSlots(context.Background(), uncapped, payloads, rng, "", "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(uncappedSlots), 1, "precondition: this diff must split at the declared line budget too")
 
@@ -171,9 +172,9 @@ func TestBuildSlots_ChunkByteBudgetSizesChunksWithoutSheddingFiles(t *testing.T)
 	payloads := map[string]modePayload{"blocks": {Text: diffOfNFiles(60, 900), FileCount: 60}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	wide, _, err := buildSlots(cfg(generousPayload), payloads, rng, "", "", true)
+	wide, _, err := buildSlots(context.Background(), cfg(generousPayload), payloads, rng, "", "", true)
 	require.NoError(t, err)
-	narrow, _, err := buildSlots(cfg(100000), payloads, rng, "", "", true)
+	narrow, _, err := buildSlots(context.Background(), cfg(100000), payloads, rng, "", "", true)
 	require.NoError(t, err)
 
 	assert.Greater(t, len(narrow), len(wide),

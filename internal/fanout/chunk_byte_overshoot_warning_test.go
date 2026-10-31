@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -79,7 +80,7 @@ func TestBuildSlots_ChunkByteOvershoot_WarnsOncePerOverBudgetChunk(t *testing.T)
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 4, "precondition: one chunk per file")
@@ -114,7 +115,7 @@ func TestBuildSlots_ChunkByteOvershoot_WarnsUnderExplicitMaxContextLines(t *test
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 2)
@@ -145,7 +146,7 @@ func TestBuildSlots_ChunkByteOvershoot_SilentForBudgetZeroOrOne(t *testing.T) {
 		var slots []Slot
 		out := captureStderr(t, func() {
 			var err error
-			slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+			slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 			require.NoError(t, err)
 		})
 		require.Greater(t, len(slots), 1, "precondition: the floor still chunks the diff")
@@ -165,7 +166,7 @@ func TestBuildSlots_ChunkByteOvershoot_SilentForBudgetZeroOrOne(t *testing.T) {
 		var slots []Slot
 		out := captureStderr(t, func() {
 			var err error
-			slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
+			slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", scopeBlock(t, planBytes), true)
 			require.NoError(t, err)
 		})
 		require.Greater(t, len(slots), 1)
@@ -191,7 +192,7 @@ func TestBuildSlots_ChunkByteOvershoot_SilentAtFixtureDensity(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Greater(t, len(slots), 1, "precondition: the diff fills more than one chunk")
@@ -206,7 +207,7 @@ func TestBuildSlots_ChunkByteOvershoot_SilentOnResume(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: wide, FileCount: 2}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 		require.NoError(t, err)
 	})
 	assert.NotContains(t, out, overshootMarker, out)
@@ -225,7 +226,7 @@ func TestBuildSlots_ChunkByteOvershoot_LineWarningUnchanged(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: w1 + w2, FileCount: 2}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 2, strings.Count(out,
@@ -245,9 +246,9 @@ func TestBuildSlots_ChunkByteOvershoot_BoundariesUnchanged(t *testing.T) {
 	var warned, quiet []Slot
 	captureStderr(t, func() {
 		var err error
-		warned, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		warned, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
-		quiet, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+		quiet, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 		require.NoError(t, err)
 	})
 	require.Len(t, warned, 3)
@@ -271,7 +272,7 @@ func TestBuildSlots_ChunkByteOvershoot_NamesPreambleBytesApart(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: preamble + w1, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 1, strings.Count(out, overshootMarker), out)
@@ -293,7 +294,7 @@ func TestBuildSlots_ChunkByteOvershoot_PreamblePushesTotalOver(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: preamble + w1, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	assert.Contains(t, out, fmt.Sprintf("chunk 1 of 1 is %d bytes plus %d engine-rendered preamble byte(s), over its %d-byte chunk budget", len(w1), len(preamble), budget), out)
@@ -327,7 +328,7 @@ func TestBuildSlots_ChunkByteOvershoot_DedupedAcrossAgents(t *testing.T) {
 	var slots []Slot
 	out := captureStderr(t, func() {
 		var err error
-		slots, _, err = buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	require.Len(t, slots, 26, "precondition: 13 agents x 2 chunks")
@@ -360,7 +361,7 @@ func TestBuildSlots_ChunkByteOvershoot_DistinctBudgetsWarnSeparately(t *testing.
 	payloads := map[string]modePayload{"blocks": {Text: w1, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.NoError(t, err)
 	})
 	assert.Equal(t, 2, strings.Count(out, overshootMarker), out)
@@ -385,7 +386,7 @@ func TestBuildSlots_ChunkByteOvershoot_NotPrintedWhenPrepareFails(t *testing.T) 
 	payloads := map[string]modePayload{"blocks": {Text: w1, FileCount: 1}}
 
 	out := captureStderr(t, func() {
-		_, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
+		_, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", true)
 		require.ErrorContains(t, err, `agent "ghost" not found`)
 	})
 	assert.NotContains(t, out, overshootMarker, "a failed prepare must not warn about chunks it never dispatches:\n%s", out)

@@ -44,7 +44,7 @@ func gretaBaselineSlots(t *testing.T, entries []payload.FileEntry) []Slot {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, len(entries), "one bin per file")
 	return slots
@@ -389,7 +389,7 @@ func TestResumeMerge_DeferredBinsStayUnreviewed(t *testing.T) {
 	cfg.Settings.PayloadByteBudget = 100
 	slotsFor := func(t *testing.T, es []payload.FileEntry) []Slot {
 		t.Helper()
-		slots, _, err := buildSlots(cfg, baselinePayloads(es), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+		slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(es), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 		require.NoError(t, err)
 		return slots
 	}

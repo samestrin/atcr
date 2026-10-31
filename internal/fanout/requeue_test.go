@@ -100,7 +100,7 @@ func sixteenBaselineSlots(t *testing.T) []Slot {
 	cfg := twoAgentConfig("http://unused")
 	cfg.Settings.PayloadByteBudget = 100
 	entries, _ := eightBinEntries()
-	slots, _, err := buildSlots(cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
 	require.NoError(t, err)
 	require.Len(t, slots, 16)
 	return slots

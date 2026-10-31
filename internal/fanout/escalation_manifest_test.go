@@ -160,7 +160,7 @@ func TestBuildSlots_PerAgentShedKeepsEscalatedFile(t *testing.T) {
 	// must be shed — the choice of which is the whole point.
 	cfg.Settings.PayloadByteBudget = int64(len(escBody) + len(aBody))
 
-	slots, _, err := buildSlots(cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
+	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)
 
