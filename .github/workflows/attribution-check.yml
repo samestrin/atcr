@@ -1,0 +1,45 @@
+# Copied from samestrin/research `paperclip/orchestrator/attribution-check.yml`;
+# change the script there first, with its tests, then copy it here.
+#
+# Fails a PR when any commit on it, or its title or body (GitHub may build the squash
+# message from either), carries an identity other than the owner's or a Co-authored-by,
+# Claude-Session or Generated-with line. Add a bot's email to ALLOW only if a release or
+# maintenance job of that repo really commits as it.
+#
+# The PR title and body reach the shell only through env, never through ${{ }} in run:,
+# so a crafted title cannot run commands.
+name: Attribution check
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: No foreign identity or attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commits and the planned squash message
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          # github-actions[bot]: refresh-synthetic-manifest.yml commits as it.
+          ALLOW: sam.estrin@gmail.com github-actions[bot]@users.noreply.github.com
+        run: |
+          printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title"
+          printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body"
+          read -ra allow <<< "$ALLOW"   # no unquoted expansion: "[bot]" is a glob
+          args=()
+          for e in "${allow[@]}"; do args+=(--allow "$e"); done
+          python3 .github/scripts/attribution-check.py --range "$BASE..$HEAD" "${args[@]}" \
+            --message-file "$RUNNER_TEMP/pr-title" --message-file "$RUNNER_TEMP/pr-body"
