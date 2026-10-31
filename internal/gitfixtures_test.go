@@ -289,6 +289,46 @@ func TestUnfixturedGitCalls_FlagsUnqualifiedConstructorsInGitexec(t *testing.T) 
 	}
 }
 
+// TestUnfixturedGitCalls_FlagsCalledConstructorAlias pins the swap shape
+// gitexec's own tests use: `orig := CommandFn` saves the constructor, and a
+// later `orig("status")` runs it. The call goes through a local name, so a
+// direct-call check never saw it. A saved constructor that is only restored,
+// never called, is still not flagged.
+func TestUnfixturedGitCalls_FlagsCalledConstructorAlias(t *testing.T) {
+	const src = `package p
+
+import (
+	"context"
+
+	"github.com/samestrin/atcr/internal/gitexec"
+)
+
+func f(ctx context.Context) {
+	orig := gitexec.CommandFn
+	_ = orig("status")
+	var octx = gitexec.CommandContextFn
+	_ = octx(ctx, "log")
+	var later func(...string) *exec.Cmd
+	later = gitexec.CommandFn
+	_ = later("diff")
+	saved := gitexec.CommandFn
+	gitexec.CommandFn = saved
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p_test.go", src, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []gitCall{{line: 11}, {line: 13}, {line: 16}}, unfixturedGitCalls(fset, file),
+		"a call through a local name bound to a gitexec constructor is flagged; a saved, uncalled one is not")
+
+	const inGitexec = "package gitexec\n\nfunc f() {\n\torig := CommandFn\n\tdefer func() { CommandFn = orig }()\n" +
+		"\t_ = orig(\"status\")\n}\n"
+	file, err = parser.ParseFile(fset, "q_test.go", inGitexec, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []gitCall{{line: 6}}, unfixturedGitCalls(fset, file),
+		"inside package gitexec the unqualified alias call is flagged too")
+}
+
 // readerRunsGit reports whether the test file at path builds a git command the
 // gate would flag: the same AST classifier, not a substring search, so a "git"
 // in a comment or an unrelated string keeps no entry alive. An indirect call is

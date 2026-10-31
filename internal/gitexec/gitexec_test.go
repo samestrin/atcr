@@ -125,16 +125,14 @@ func TestFixtureCommandContext_RelativeDirIsAbsolutized(t *testing.T) {
 // TestFixtureCommandContext_PanicsWhenDirCannotBeResolved asserts a relative dir
 // that cannot be made absolute (the cwd is gone) panics instead of silently
 // running against the wrong directory.
+//
+// It deletes the process cwd, which every goroutine shares, so this package's
+// tests stay serial: a parallel test running meanwhile would fail on ENOENT.
+// t.Chdir refuses a parallel caller, and TestPackageTestsStaySerial refuses a
+// t.Parallel anywhere in the package.
 func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
-	orig, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
 	gone := t.TempDir()
-	if err := os.Chdir(gone); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(orig) })
+	t.Chdir(gone)
 	if err := os.Remove(gone); err != nil {
 		t.Skipf("cannot remove the cwd on this platform: %v", err)
 	}
@@ -144,6 +142,31 @@ func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
 		}
 	}()
 	FixtureCommandContext(context.Background(), "relative", "status")
+}
+
+// TestPackageTestsStaySerial keeps the precondition the cwd-deleting test above
+// relies on: no test in this package runs in parallel.
+func TestPackageTestsStaySerial(t *testing.T) {
+	paths, err := filepath.Glob("*_test.go")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob test files: %v (found %d)", err, len(paths))
+	}
+	fset := token.NewFileSet()
+	for _, path := range paths {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Parallel" {
+					t.Errorf("%s: a parallel test races TestFixtureCommandContext_PanicsWhenDirCannotBeResolved, "+
+						"which deletes the process cwd", fset.Position(call.Pos()))
+				}
+			}
+			return true
+		})
+	}
 }
 
 // TestFixtureCommandContext_DropsInheritedRepoVars asserts the other repo-locating
