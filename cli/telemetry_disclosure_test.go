@@ -374,3 +374,75 @@ func TestQuickstart_RealConfigWithoutPersonasIsStillExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "agents: [bruce]\ntelemetry_notice_shown: true\n", string(data), "a real config is never rewritten")
 }
+
+// --- Epic 104 T1: the notice under `review --config-dir` ---------------------
+//
+// `review --config-dir` loads the operator's project config instead of the
+// reviewed tree's, so an untrusted PR head cannot steer the run. The one-time
+// notice must follow the same root: the opt-out and the marker are read from the
+// config dir, and the marker is written there, never into the reviewed tree.
+
+// configDirWith makes a --config-dir root holding content as its
+// .atcr/config.yaml; empty content leaves the directory without a config.
+func configDirWith(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if content != "" {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcr"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".atcr", "config.yaml"), []byte(content), 0o644))
+	}
+	return dir
+}
+
+// TestTelemetryDisclosure_ConfigDirOptOutSilences: the operator's opt-out in the
+// config dir silences the notice even though the reviewed tree carries none, and
+// the reviewed tree gets no marker written into it.
+func TestTelemetryDisclosure_ConfigDirOptOutSilences(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	dir := configDirWith(t, "telemetry: false\n")
+
+	_, _, errOut := execTransmitting(t, "review", "--config-dir", dir)
+	assert.NotContains(t, errOut, defaultNoticeMarker,
+		"the config dir's opt-out must govern the notice under --config-dir")
+	assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
+		"the reviewed tree must not be written to under --config-dir")
+}
+
+// TestTelemetryDisclosure_ConfigDirMarkerIsReadAndWrittenThere: the notice fires
+// once, records its marker in the config dir rather than the reviewed tree, and a
+// marker already in the config dir keeps a fresh reviewed tree quiet.
+func TestTelemetryDisclosure_ConfigDirMarkerIsReadAndWrittenThere(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	dir := configDirWith(t, "")
+
+	_, _, errOut := execTransmitting(t, "review", "--config-dir", dir)
+	require.Contains(t, errOut, defaultNoticeMarker, "first run under --config-dir must disclose")
+	assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
+		"the marker must not land in the reviewed tree")
+	shown, err := registry.LoadTelemetryNoticeShown(dir)
+	require.NoError(t, err)
+	require.NotNil(t, shown, "the marker must be written to the config dir")
+	assert.True(t, *shown)
+
+	t.Chdir(t.TempDir()) // a different reviewed tree, same operator config
+	_, _, errOut2 := execTransmitting(t, "review", "--config-dir", dir)
+	assert.NotContains(t, errOut2, defaultNoticeMarker,
+		"the config dir's marker must keep the notice one-time")
+}
+
+// TestTelemetryDisclosure_InvalidConfigDirSkipsNotice: an invalid --config-dir is
+// a usage error the review run reports itself, so the notice is skipped rather
+// than falling back to the reviewed tree's config.
+func TestTelemetryDisclosure_InvalidConfigDirSkipsNotice(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+
+	code, _, errOut := execTransmitting(t, "review", "--config-dir", filepath.Join(t.TempDir(), "missing"))
+	assert.Equal(t, 2, code, "stderr:\n%s", errOut)
+	assert.NotContains(t, errOut, defaultNoticeMarker,
+		"an invalid --config-dir must skip the notice")
+	assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
+		"an invalid --config-dir must not fall back to writing the reviewed tree")
+}
