@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -96,6 +98,34 @@ func TestReviewCmd_AutoFixWithoutBaseOverrideTargetsDefaultBranch(t *testing.T) 
 	require.Equal(t, 1, gh.createPR, "the run must open one pull request: %s", out)
 	require.Equal(t, "main", gh.lastPRReq.Base,
 		"without --auto-fix-base the base stays the repository default branch")
+}
+
+// TestReviewCmd_AutoFixWithoutBaseOverrideStripsRemotePrefix: on a clone whose
+// origin/HEAD points at origin/main, gitrange resolves the default branch to the
+// remote-tracking ref "origin/main"; the pull request base must be "main",
+// since GitHub refuses a remote-tracking ref (422).
+func TestReviewCmd_AutoFixWithoutBaseOverrideStripsRemotePrefix(t *testing.T) {
+	setup := func() {
+		wd, err := os.Getwd()
+		require.NoError(t, err)
+		runFixtureGit(t, wd, "branch", "-M", "main")
+		runFixtureGit(t, wd, "checkout", "-q", "-b", "feature")
+		runFixtureGit(t, wd, "branch", "-f", "main", "HEAD^")
+		bare := filepath.Join(t.TempDir(), "origin.git")
+		// Plain exec: the fixture env pins GIT_WORK_TREE, which a bare init refuses.
+		out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput()
+		require.NoError(t, err, "git init --bare: %s", out)
+		runFixtureGit(t, wd, "remote", "add", "origin", bare)
+		runFixtureGit(t, wd, "push", "-q", "origin", "main")
+		runFixtureGit(t, wd, "fetch", "-q", "origin")
+		runFixtureGit(t, wd, "remote", "set-head", "origin", "main")
+		runFixtureGit(t, wd, "branch", "-D", "main")
+	}
+	code, out, gh := runReviewAutoFix(t, setup)
+	require.Equal(t, 0, code, out)
+	require.Equal(t, 1, gh.createPR, "the run must open one pull request: %s", out)
+	require.Equal(t, "main", gh.lastPRReq.Base,
+		"the origin/ remote-tracking prefix must not reach the pull request base")
 }
 
 // TestReviewCmd_AutoFixBaseRequiresAutoFix: the override alone does nothing, so
