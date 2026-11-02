@@ -130,7 +130,8 @@ type RunSpec struct {
 	// ports on it (oslevel_profile.go's loopbackRules) and Run refuses with
 	// ErrOSLevelLoopbackPortHeld when a host process already listens on one
 	// (at loopback or at any of the host's own addresses, which the darwin
-	// grant also reaches). UDP, unix sockets, every other port and every
+	// grant also reaches), or with ErrOSLevelLoopbackCheckUnavailable when that
+	// check cannot finish. UDP, unix sockets, every other port and every
 	// off-host address stay denied.
 	LoopbackPorts []int
 }

@@ -491,9 +491,28 @@ var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopb
 // answered or refused at once; the bound only covers a firewalled stack.
 const loopbackDialTimeout = 500 * time.Millisecond
 
+// ErrOSLevelLoopbackCheckUnavailable is returned by a darwin Run when the
+// held-port check behind ErrOSLevelLoopbackPortHeld could not finish: the
+// host's addresses could not be listed, or the run's context ended mid-check.
+// The run is refused, as for a held port, because an unfinished check cannot
+// say the grant reaches nothing of the host's; the sentinel is separate so the
+// message does not claim a port was found in use.
+var ErrOSLevelLoopbackCheckUnavailable = errors.New("os-level sandbox: could not check whether the requested loopback ports are free on the host")
+
+// The held-port check's view of the host, replaced in tests.
+var (
+	netInterfaces  = net.Interfaces
+	interfaceAddrs = func(ifc net.Interface) ([]net.Addr, error) { return ifc.Addrs() }
+	loopbackDial   = (&net.Dialer{Timeout: loopbackDialTimeout}).DialContext
+)
+
 // checkLoopbackPortsFree returns ErrOSLevelLoopbackPortHeld when anything on
 // the host accepts a TCP connect on a port in ports, at any of the host's own
-// addresses: 127.0.0.1 and ::1, plus every interface address.
+// addresses: 127.0.0.1 and ::1, plus every interface address. It returns
+// ErrOSLevelLoopbackCheckUnavailable when it cannot finish: the addresses
+// cannot be listed, or ctx ends. The probes run one after another, each
+// bounded by loopbackDialTimeout, so under a firewall that drops rather than
+// refuses ctx is what bounds the whole check.
 //
 // The interface addresses are not belt-and-braces. Measured on the macOS CI
 // runner (PR #753): under a grant on port P the workload connected to a host
@@ -501,21 +520,27 @@ const loopbackDialTimeout = 500 * time.Millisecond
 // its own addresses over lo0, and sandbox-exec's "localhost" covers that
 // traffic, so a host service bound only to a LAN address is as reachable
 // through the grant as one on 127.0.0.1.
-func checkLoopbackPortsFree(ports []int) error {
+//
+// The check is a probe, not a reservation. A host process can still bind a
+// port after the check and before the workload does, and the grant would then
+// reach it. That race is inherent to sandbox-exec: it applies a policy to the
+// host's own network stack and cannot hand the workload a socket held for it.
+// Run narrows the window by checking right before the spawn; it cannot close it.
+func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 	if len(ports) == 0 {
 		return nil
 	}
 	hosts := []string{"127.0.0.1", "::1"}
-	ifaces, err := net.Interfaces()
+	ifaces, err := netInterfaces()
 	if err != nil {
 		// Without the address list the check cannot cover what the grant
 		// reaches, so it fails closed rather than checking loopback alone.
-		return fmt.Errorf("%w: cannot list the host's addresses to check: %v", ErrOSLevelLoopbackPortHeld, err)
+		return fmt.Errorf("%w: cannot list the host's addresses: %w", ErrOSLevelLoopbackCheckUnavailable, err)
 	}
 	for _, ifc := range ifaces {
-		addrs, err := ifc.Addrs()
+		addrs, err := interfaceAddrs(ifc)
 		if err != nil {
-			return fmt.Errorf("%w: cannot list the addresses of %s to check: %v", ErrOSLevelLoopbackPortHeld, ifc.Name, err)
+			return fmt.Errorf("%w: cannot list the addresses of %s: %w", ErrOSLevelLoopbackCheckUnavailable, ifc.Name, err)
 		}
 		for _, a := range addrs {
 			ipn, ok := a.(*net.IPNet)
@@ -532,10 +557,18 @@ func checkLoopbackPortsFree(ports []int) error {
 	}
 	for _, p := range ports {
 		for _, host := range hosts {
-			conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(p)), loopbackDialTimeout)
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("%w: %w", ErrOSLevelLoopbackCheckUnavailable, err)
+			}
+			conn, err := loopbackDial(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(p)))
 			if err == nil {
 				_ = conn.Close()
 				return fmt.Errorf("%w: port %d on %s", ErrOSLevelLoopbackPortHeld, p, host)
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// A dial cut short by ctx fails like a refused one; read as
+				// "refused", it would report a port free that was never checked.
+				return fmt.Errorf("%w: %w", ErrOSLevelLoopbackCheckUnavailable, ctxErr)
 			}
 		}
 	}
@@ -1371,9 +1404,11 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	}
 
 	// Checked as late as possible, right before the spawn, to keep the window
-	// between the check and the workload's own bind short.
+	// between the check and the workload's own bind short. The check is a
+	// probe, not a reservation: a host process can still take a port inside
+	// that window (see checkLoopbackPortsFree). runCtx bounds the probes.
 	if b.platform() == "darwin" {
-		if err := checkLoopbackPortsFree(spec.LoopbackPorts); err != nil {
+		if err := checkLoopbackPortsFree(runCtx, spec.LoopbackPorts); err != nil {
 			return RunResult{Command: cmdStr}, err
 		}
 	}

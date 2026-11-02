@@ -1,0 +1,1 @@
+- On macOS, the OS-level sandbox's check that a granted loopback port is free now stops at the run's deadline instead of probing on under a firewall that drops connections, and it refuses the run with its own error ("could not check whether the requested loopback ports are free") when it cannot finish, instead of claiming a port is in use. (epic 103)

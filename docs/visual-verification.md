@@ -83,8 +83,11 @@ runs. **Use the Docker backend or run on Linux** — Linux's OS-level sandbox
 gives each run its own private loopback.
 
 Loopback is no longer the whole reason. The darwin sandbox-exec profile can now
-open a single loopback port for a run (TCP only, on this machine only, nothing else),
-but a browser run still needs three things macOS does not give it:
+open a single loopback port for a run (TCP only, nothing else). That port is on
+the host's own loopback, not a private one: sandbox-exec has no network
+namespace, so the run shares it with every service on your Mac. atcr refuses
+the run if a host process already listens on the port, but that check cannot
+reserve it. And a browser run still needs three things macOS does not give it:
 
 - **The dev server's port.** The repo's own `webServer` config picks it, and
   atcr does not read that config, so it cannot ask for the right port.
