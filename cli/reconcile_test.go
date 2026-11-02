@@ -2218,21 +2218,41 @@ func TestReconcile_LogFormatJSONStderrIsNDJSON(t *testing.T) {
 	next := renderSuggestions(suggestReconcile, invocation{})
 	require.NotEmpty(t, next)
 
-	t.Run("json", func(t *testing.T) {
-		setup(t)
-		code, _, stderr := execCmdSplit(t, "--log-format", "json", "reconcile", "r")
+	// ndjsonMsgs runs reconcile under the given --log-format spelling, requires
+	// every stderr line to parse as JSON, and returns the records' msg fields.
+	ndjsonMsgs := func(t *testing.T, format string) []string {
+		t.Helper()
+		code, _, stderr := execCmdSplit(t, "--log-format", format, "reconcile", "r")
 		require.Equal(t, 0, code)
 		var msgs []string
 		for _, line := range nonEmptyLines(stderr) {
 			v := map[string]any{}
 			require.NoError(t, json.Unmarshal([]byte(line), &v),
-				"stderr line must be valid NDJSON under --log-format json: %q", line)
+				"stderr line must be valid NDJSON under --log-format %q: %q", format, line)
 			msg, _ := v["msg"].(string)
 			msgs = append(msgs, msg)
 		}
-		assert.Contains(t, msgs, suppressed, "the suppressed notice must be a logger record")
-		for _, line := range next {
-			assert.Contains(t, msgs, "Next: "+line, "each Next: line must be a logger record")
+		return msgs
+	}
+	// The logger accepts the format case-insensitively and trimmed
+	// (internal/log.New), so every spelling that selects the JSON sink must
+	// also keep these lines off the raw-text path.
+	for _, format := range []string{"json", "JSON", " json "} {
+		t.Run(fmt.Sprintf("json/%q", format), func(t *testing.T) {
+			setup(t)
+			msgs := ndjsonMsgs(t, format)
+			assert.Contains(t, msgs, suppressed, "the suppressed notice must be a logger record")
+			for _, line := range next {
+				assert.Contains(t, msgs, "Next: "+line, "each Next: line must be a logger record")
+			}
+		})
+	}
+	t.Run("json/zero-suppressed", func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": findings})
+		for _, msg := range ndjsonMsgs(t, "json") {
+			assert.NotContains(t, msg, "suppressed by .atcr/ignore.yaml",
+				"a run that suppressed nothing logs no suppressed record")
 		}
 	})
 	t.Run("text", func(t *testing.T) {
