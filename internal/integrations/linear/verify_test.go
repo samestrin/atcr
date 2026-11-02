@@ -234,6 +234,14 @@ func TestPullRequestMalformedCreatedAt(t *testing.T) {
 			t.Errorf("%s: log lines %q, want %q", name, lines, tc.lines)
 		}
 	}
+
+	// A nil Logf is safe on a malformed value too: no panic, same pick.
+	c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+		write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+bad+`,`+undated+`]}}}}`))
+	})
+	if pr, err := c.PullRequest(context.Background(), "i1"); err != nil || pr != (PR{"o", "r", 5}) {
+		t.Errorf("nil Logf: got %+v %v, want o/r#5", pr, err)
+	}
 }
 
 func sorted(s []string) []string {
