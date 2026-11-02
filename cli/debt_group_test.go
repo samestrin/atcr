@@ -252,3 +252,50 @@ func TestDebtGroup_CriticalThemeKeepsItsItems(t *testing.T) {
 	assert.Equal(t, "b", got.Groups[2].Theme)
 	assert.Equal(t, 7, got.Summary.GroupedCount)
 }
+
+func TestDebtGroup_MiscFallbacks(t *testing.T) {
+	// Captured from `llm-support group-td --group-by category|path
+	// --min-group-size 1` (v1.5.0): an empty CATEGORY is misc under category;
+	// under path, a record with neither file nor category, and a file of "/" or
+	// "\" (no directory segment left), are misc too.
+	item := func(fl, p, cat string) localdebt.Record {
+		return debtGroupRecord("", tdGroupItem{Severity: "LOW", FileLine: fl, Problem: p, Category: cat, EstMinutes: "1"})
+	}
+	dir := writeLocalDebt(t,
+		item("a/b.go:1", "1", ""),
+		item("c/d.go:1", "2", ""),
+		item("", "3", ""),
+		item("/", "4", "z"),
+		item(`\`, "5", "z"),
+	)
+	themes := func(doc debtGroupDoc) map[string][]string {
+		out := map[string][]string{}
+		for _, g := range doc.Groups {
+			out[g.Theme] = problemsOf(g.Items)
+		}
+		return out
+	}
+	byCategory := runDebtGroupJSON(t, dir, "--group-by", "category", "--min-group-size", "1")
+	assert.ElementsMatch(t, []string{"1", "2", "3"}, themes(byCategory)["misc"])
+	assert.ElementsMatch(t, []string{"4", "5"}, themes(byCategory)["z"])
+
+	byPath := runDebtGroupJSON(t, dir, "--min-group-size", "1")
+	assert.ElementsMatch(t, []string{"3", "4", "5"}, themes(byPath)["misc"])
+	assert.Equal(t, []string{"1"}, themes(byPath)["a"])
+	assert.Equal(t, []string{"2"}, themes(byPath)["c"])
+}
+
+func TestDebtGroupPathTheme_NoSegments(t *testing.T) {
+	for _, file := range []string{".", "", "/", `\`, "main.go", "./main.go"} {
+		assert.Equal(t, "misc", debtGroupPathTheme(file, 2), "%q", file)
+	}
+	assert.Equal(t, "src-auth", debtGroupPathTheme(`src\auth\h\x.go`, 2))
+}
+
+func TestDebtGroup_GroupByIsCaseInsensitive(t *testing.T) {
+	// Intended difference #9: group-td rejects "PATH"; debt group accepts any case.
+	dir := debtGroupStore(t)
+	want := runDebtGroupJSON(t, dir)
+	assert.Equal(t, want, runDebtGroupJSON(t, dir, "--group-by", "PATH"))
+	assert.Equal(t, runDebtGroupJSON(t, dir, "--group-by", "category"), runDebtGroupJSON(t, dir, "--group-by", " Category "))
+}
