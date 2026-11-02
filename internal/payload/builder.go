@@ -318,8 +318,12 @@ func renderWithSentinels(content string, ranges []lineRange) string {
 		// containing a literal sentinel line could otherwise mislead consumers
 		// about which regions changed, or — with the skeleton markers — inject a
 		// fabricated declaration map the reviewing model trusts as authoritative.
+		// A line that would read as a per-file section header is neutralized the
+		// same way, so the only column-0 headers in a payload are real section
+		// starts: the scope rule, the chunker and the audit split all key on them.
 		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) ||
-			strings.HasPrefix(line, skeletonStart) || strings.HasPrefix(line, skeletonEnd) {
+			strings.HasPrefix(line, skeletonStart) || strings.HasPrefix(line, skeletonEnd) ||
+			isRenderedEntryStart(line) {
 			b.WriteString("> ")
 		}
 		b.WriteString(line)

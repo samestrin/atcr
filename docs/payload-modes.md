@@ -212,6 +212,8 @@ In `files` mode the reviewer sees each changed file's full head-version content,
 <<< END CHANGED
 ```
 
+A line of the file's own content that would read as one of these markers, or as the start of another file (`=== FILE: `, `diff --git `, `diff --cc `, `diff --combined `, `[deleted file: `, `[binary file changed: `), is shown prefixed with `> `. A diff fixture inside a test file therefore stays part of that file, and cannot change the scope rule below.
+
 Special files are represented by one-line markers instead of full content:
 
 - Deleted file → `[deleted file: <path>]`
