@@ -740,7 +740,7 @@ func TestBuildSlots_BaselineChunkedRecordsDeclaredWindow(t *testing.T) {
 	cfg := declaredWindowRoster(t, declared)
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 
-	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, string(payload.ModeFiles), "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: 500000 bytes must split at a 404992-byte budget")
 

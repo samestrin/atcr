@@ -872,7 +872,7 @@ func TestRunEngine_PersonaDone_ThreeSpeedsOneChunked(t *testing.T) {
 	cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 	cfg.Settings.PayloadByteBudget = 100
 	entries := []payload.FileEntry{baselineEntry("a.go", 100), baselineEntry("b.go", 100), baselineEntry("c.go", 100)}
-	slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false, true)
+	slots, _, err := buildBaselineSlots(context.Background(), cfg, baselinePayloads(entries), ReviewRange{}, string(payload.ModeFiles), "", false)
 	require.NoError(t, err)
 	require.Len(t, slots, 3, "greta plans one bin per file")
 	slots = append(slots,

@@ -746,7 +746,7 @@ func TestBuildFallbackAgent_RefitRecordsOneChunkAndBulkSizing(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+		slots, _, err = buildBaselineSlots(context.Background(), cfg, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 2, "precondition: greta's budget must partition the payload into two chunk slots")
@@ -856,7 +856,7 @@ func BenchmarkBuildSlots_MultiChunkBaselineWithRefits(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false, true)
+		slots, _, err := buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "", "", false)
 		if err != nil {
 			b.Fatal(err)
 		}

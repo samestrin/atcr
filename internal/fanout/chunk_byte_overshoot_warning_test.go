@@ -404,7 +404,9 @@ func TestChunkPrefixBytes(t *testing.T) {
 		{"no preamble", "diff --git a/x b/x\n+x\n", 0, 0},
 		{"two preamble lines", "p1\np2\ndiff --git a/x b/x\n", 2, len("p1\np2\n")},
 		{"preamble only", "p1\np2", 2, len("p1\np2")},
-		{"prefixLines past the last line", "p1\np2\n", 5, len("p1\np2\n")},
+		// A clamped count is not a real split: report no preamble so the caller
+		// attributes the whole chunk to the diff, not 0 diff bytes plus the chunk.
+		{"prefixLines past the last line", "p1\np2\n", 5, 0},
 		{"empty chunk", "", 3, 0},
 	}
 	for _, tc := range cases {
@@ -414,10 +416,12 @@ func TestChunkPrefixBytes(t *testing.T) {
 	}
 }
 
-// warn with no agents prints nothing rather than indexing agents[0].
-func TestByteOvershootWarn_NoAgentsPrintsNothing(t *testing.T) {
+// warn with no agents still reports the overshoot, naming no agent, rather than
+// dropping it silently or indexing agents[0].
+func TestByteOvershootWarn_NoAgentsStillWarns(t *testing.T) {
 	out := captureStderr(t, func() {
 		byteOvershoot{chunk: 1, chunks: 1, diffBytes: 10, budget: 5}.warn(nil)
 	})
-	assert.Empty(t, out)
+	assert.Contains(t, out, "chunk 1 of 1 is 10 bytes")
+	assert.NotContains(t, out, `agent "`)
 }

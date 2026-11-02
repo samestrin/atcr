@@ -200,7 +200,7 @@ func TestBaselineChunkedRun_DeliveredFilesAreNotReportedAsShed(t *testing.T) {
 	mp.Truncation = payload.Truncation{Truncated: true, FilesDropped: []string{"kept_c.go"}}
 	payloads[string(payload.ModeFiles)] = mp
 
-	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+	slots, _, err := buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")
 
@@ -373,7 +373,7 @@ func TestBaselineChunkedRun_RePackedChunkZeroNamesOnlyItsOwnShed(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true, true)
+		slots, _, err = buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{}, string(payload.ModeFiles), "", true)
 	})
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1, "precondition: the payload must fan out into multiple chunk slots")

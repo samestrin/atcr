@@ -998,7 +998,7 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	filesMode := string(payload.ModeFiles)
-	slots, perAgentMode, err := buildSlots(ctx, cfg, payloads, req.Range, filesMode, scopeConstraint, true, true)
+	slots, perAgentMode, err := buildBaselineSlots(ctx, cfg, payloads, req.Range, filesMode, scopeConstraint, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2093,13 +2093,15 @@ func recordedChunks(entries []payload.FileEntry, recorded [][]string, chunkBudge
 	return chunks, nil
 }
 
-func buildSlots(ctx context.Context, cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool, baselineOpt ...bool) ([]Slot, map[string]string, error) {
-	// baseline enables the (--all / --dir) multi-chunk fan-out branch inside add
-	// (Sprint 35.0 Phase 5, Decision 2). Variadic-optional so the diff/range callers
-	// and the existing test call sites stay unchanged — the same idiom
-	// mergeChunkResults uses for its optional serialAgents map.
-	baseline := len(baselineOpt) > 0 && baselineOpt[0]
-	return buildSlotsFor(ctx, cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, baseline, nil)
+func buildSlots(ctx context.Context, cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
+	return buildSlotsFor(ctx, cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, false, nil)
+}
+
+// buildBaselineSlots is buildSlots for the (--all / --dir) baseline scan: it
+// enables the multi-chunk fan-out branch inside add (Sprint 35.0 Phase 5,
+// Decision 2).
+func buildBaselineSlots(ctx context.Context, cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string, warnOversized bool) ([]Slot, map[string]string, error) {
+	return buildSlotsFor(ctx, cfg, payloads, rng, forceMode, scopeConstraint, warnOversized, true, nil)
 }
 
 // buildSlotsFor is buildSlots with the chunk-aware resume input (Epic 35.16.13
@@ -3295,27 +3297,31 @@ type byteOvershoot struct {
 
 // chunkPrefixBytes is the byte length of the first prefixLines lines of
 // chunk, the engine-rendered preamble diffPrefixLines counted. prefixLines is
-// clamped to the lines chunk has, so a count past its last line cannot slice out
-// of range.
+// past the lines chunk has is a clamp, not a real split: it returns 0 so the
+// caller attributes the whole chunk to the diff rather than to the preamble.
 func chunkPrefixBytes(chunk string, prefixLines int) int {
 	if prefixLines <= 0 {
 		return 0
 	}
 	parts := strings.SplitAfterN(chunk, "\n", prefixLines+1)
+	if len(parts) < prefixLines {
+		return 0
+	}
 	n := 0
-	for _, ln := range parts[:min(prefixLines, len(parts))] {
+	for _, ln := range parts[:prefixLines] {
 		n += len(ln)
 	}
 	return n
 }
 
-// warn prints the warning once for every agent in agents. It prints nothing
-// when agents is empty: there is no agent to name.
+// warn prints the warning once for every agent in agents. With no agent to name
+// (unreachable today: a key is only recorded alongside an agent) it still
+// prints, unattributed, rather than drop the overshoot.
 func (o byteOvershoot) warn(agents []string) {
-	if len(agents) == 0 {
-		return
+	who := "a reviewer"
+	if len(agents) == 1 {
+		who = fmt.Sprintf("agent %q", agents[0])
 	}
-	who := fmt.Sprintf("agent %q", agents[0])
 	if len(agents) > 1 {
 		quoted := make([]string, len(agents))
 		for i, a := range agents {

@@ -22,7 +22,7 @@ func toolLoopGretaRoster(t *testing.T, window int) *ReviewConfig {
 	return cfg
 }
 
-// TD internal/fanout/review.go:3113 — review's zero-budget warning named only the
+// TD internal/fanout/review.go:3115 — review's zero-budget warning named only the
 // "%d-token output cap", with the UNRESERVED cap, so for a tool-loop agent the
 // window-vs-cap arithmetic on screen looked like it fit while the real reservation
 // was three caps. doctor got a reserveClause for exactly this; review did not.
@@ -160,7 +160,7 @@ func TestBuildFallbackAgent_RefitArmRecordsTheReplayReserve(t *testing.T) {
 // reservations absent — an operator recomputing 20000-8192-4096=7712 concludes the
 // window should have funded it. ResolvedMaxTokens was added unconditionally for
 // exactly this reason; the reserve did not inherit that precedent (TD
-// internal/fanout/review.go:3171).
+// internal/fanout/review.go:3173).
 func TestBuildOneAgent_ZeroBudgetToolLoopAgentStillStatesItsReserve(t *testing.T) {
 	cfg := toolLoopGretaRoster(t, 1) // a window that cannot fund even one cap
 	agent, _, err := buildOneAgent(cfg, "greta", oversizedBlocksPayload(), ReviewRange{Base: "a", Head: "b"}, "", "")
@@ -180,7 +180,7 @@ func TestBuildOneAgent_ZeroBudgetToolLoopAgentStillStatesItsReserve(t *testing.T
 // payload.SizingOutputTokens(fbToolLoop, fbMaxTokens) — the reserve is exactly what
 // closed that budget — so on the zero-budget fallback the record omits (omitempty)
 // the very number that explains it, while the identical condition on a PRIMARY is
-// disclosed unconditionally (TD internal/fanout/review.go:3507).
+// disclosed unconditionally (TD internal/fanout/review.go:3513).
 func TestBuildFallbackAgent_ZeroBudgetToolLoopStillStatesItsReserve(t *testing.T) {
 	cfg := toolLoopGretaRoster(t, 128000)
 	k := cfg.Registry.Agents["kai"]
@@ -211,7 +211,7 @@ func TestBuildFallbackAgent_ZeroBudgetToolLoopStillStatesItsReserve(t *testing.T
 // returns ok=true even when the applied budget is <= 0 (it keeps the smallest entry),
 // so fbSizingBudget can be 0 — again the record the reserve explains, since the re-fit
 // budget already has the reserve subtracted out. Both fallback sites must match the
-// primary's unconditional rule (TD internal/fanout/review.go:3698).
+// primary's unconditional rule (TD internal/fanout/review.go:3704).
 func TestBuildFallbackAgent_RefitZeroBudgetStillStatesItsReserve(t *testing.T) {
 	cfg := refitRoster(t, 128000, OverflowTruncate)
 	g := cfg.Registry.Agents["greta"]

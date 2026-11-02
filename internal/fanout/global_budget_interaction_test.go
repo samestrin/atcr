@@ -90,7 +90,7 @@ func TestBuildSlots_EveryStrategyRecordsTheSameCappedEffectiveBudget(t *testing.
 		cfg.Project = &registry.ProjectConfig{Agents: []string{"greta"}}
 		cfg.Settings.PayloadByteBudget = globalCap
 
-		slots, _, err := buildSlots(context.Background(), cfg, baselinePayloads(entries), rng, string(payload.ModeFiles), "", true, true)
+		slots, _, err := buildBaselineSlots(context.Background(), cfg, baselinePayloads(entries), rng, string(payload.ModeFiles), "", true)
 		require.NoError(t, err)
 		require.Greater(t, len(slots), 1, "precondition: 400000 bytes must split at a 100000-byte cap")
 
