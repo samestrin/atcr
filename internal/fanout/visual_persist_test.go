@@ -140,6 +140,31 @@ func TestPersistVisualEvidence_GuardsCapturedText(t *testing.T) {
 	})
 }
 
+// persistVisualEvidence's secret warnings go to the ctx logger, under the
+// visual persona and the captured-text labels, and never to os.Stderr.
+func TestPersistVisualEvidence_WarnsThroughTheContextLogger(t *testing.T) {
+	res := BrowserResult{
+		Console:         []ConsoleEntry{{Level: "log", Text: "token=" + guardAWSKey}},
+		NetworkFailures: []NetworkFailure{{Method: "GET", URL: "http://localhost/?key=" + guardAWSKey, Error: "net::ERR_FAILED"}},
+	}
+	for policy, want := range map[string]string{
+		secretGuardWarn:   "is sent unchanged (secret_guard: warn)",
+		secretGuardRedact: "redacted 2 secret(s) [aws-access-token] in " + visualConsoleLabel + ", " + visualNetworkLabel,
+	} {
+		t.Run(policy, func(t *testing.T) {
+			countingScanner(t, nil)
+			logged := captureGuardLog(t, func(ctx context.Context) {
+				_, err := persistVisualEvidence(ctx, policy, t.TempDir(), res)
+				require.NoError(t, err)
+			})
+			assert.Equal(t, 1, strings.Count(logged, "level=WARN"), "one warning:\n%s", logged)
+			assert.Contains(t, logged, `agent \"`+VisualPersonaName+`\"`)
+			assert.Contains(t, logged, want)
+			assert.NotContains(t, logged, guardAWSKey)
+		})
+	}
+}
+
 // A visual/ that is not a plain directory (a symlink planted in the review
 // dir) is refused rather than followed.
 func TestPersistVisualEvidence_RefusesASymlinkedVisualDir(t *testing.T) {
