@@ -68,17 +68,16 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// (out of scope). Silently ignoring them would let a CI pipeline resume a
 	// review and false-PASS despite surviving findings, so reject them fail-closed
 	// (exit 2) and point at the standalone gate commands.
-	//
-	// --require-coverage is deliberately NOT in this list (Epic 35.16.13 T5,
-	// decided on EST-816): it gates on chunk coverage read from the review's
-	// chunks.json, not on surviving findings, so it needs none of the finding
-	// gate this rejection protects — and draining a partial run is exactly what
-	// --resume is for. Do not move it back into the list.
 	for _, f := range []string{"fail-on", "verify", "require-verified"} {
 		if cmd.Flags().Changed(f) {
 			return usageError(fmt.Errorf("--resume does not support --%s; resume reconciles automatically — run `atcr reconcile --fail-on <severity>` or `atcr verify` afterward to gate", f))
 		}
 	}
+	// --require-coverage is deliberately NOT in the rejection list above (Epic
+	// 35.16.13 T5, decided on EST-816): it gates on chunk coverage read from the
+	// review's chunks.json, not on surviving findings, so it needs none of the
+	// finding gate that rejection protects — and draining a partial run is
+	// exactly what --resume is for. Do not move it back into the list.
 	coveragePct, requireCoverage, err := requireCoverageThreshold(cmd)
 	if err != nil {
 		return err

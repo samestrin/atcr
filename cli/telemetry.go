@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -165,13 +166,24 @@ func telemetryEnabled(envEnabled bool, cfgTelemetry *bool) bool {
 // model. `--sync-cloud` gets its own opt-in surface (the presence of a valid
 // ATCR_API_KEY plus the explicit flag), independent of telemetryGate.
 func telemetryGate(w io.Writer) bool {
+	return telemetryGateFrom(w, "")
+}
+
+// telemetryGateFrom is telemetryGate reading the persisted opt-out from
+// configRoot's .atcr/config.yaml (`review --config-dir`, Epic 49.2), so the
+// operator's opt-out governs rather than the reviewed tree's. An empty
+// configRoot keeps the repo-root discovery. It mirrors qualitySignalGateFrom.
+func telemetryGateFrom(w io.Writer, configRoot string) bool {
 	// Resolve the config via repo-root discovery so the gate reads the same
 	// .atcr/config.yaml `config set` writes, from any subdirectory. On a
 	// discovery failure (os.Getwd), fall back to the former cwd-relative read
 	// rather than breaking the gate.
-	root, rerr := repoRoot()
-	if rerr != nil {
-		root = "."
+	root := configRoot
+	if root == "" {
+		var rerr error
+		if root, rerr = repoRoot(); rerr != nil {
+			root = "."
+		}
 	}
 	cfg, err := loadTelemetrySetting(root)
 	if err != nil {
@@ -232,15 +244,27 @@ func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
 	if !client.HasUsageDestination() {
 		return
 	}
-	root, err := repoRoot()
+	// Under `review --config-dir` the opt-out and the marker live in the
+	// operator's config dir, not the reviewed tree (Epic 104 T1). An invalid
+	// --config-dir skips the notice: the review run reports the usage error. That
+	// includes a dir with no .atcr/config.yaml, where the marker write would
+	// otherwise create a marker-only config and mask that error on the next run.
+	root, err := configRootFromFlags(cmd)
 	if err != nil {
-		root = "."
+		return
+	}
+	if root == "." { // no --config-dir: the repo root, as `config set` writes it
+		if r, rerr := repoRoot(); rerr == nil {
+			root = r
+		}
+	} else if _, serr := os.Stat(filepath.Join(root, ".atcr", "config.yaml")); serr != nil {
+		return
 	}
 	shown, lerr := registry.LoadTelemetryNoticeShown(root)
 	if lerr != nil || (shown != nil && *shown) {
 		return
 	}
-	if !telemetryGate(io.Discard) {
+	if !telemetryGateFrom(io.Discard, root) {
 		return
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(),

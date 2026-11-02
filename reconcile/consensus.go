@@ -203,6 +203,14 @@ func panelReviewers(sources []Source) int {
 // finding was always HIGH at reconcile time, so the guard changed nothing; since
 // ConfidenceForCategory discounts the panel-wide-instruction class to MEDIUM, it
 // is what keeps a discounted finding in Findings instead of the sidecar.
+//
+// The guard's contract is wider than that class, on purpose. Through Reconcile
+// it only changes the outcome for a finding carrying ConfidenceDiscount: Merge
+// gives every other 2+-reviewer finding HIGH (ConfidenceFor), demoteByTrust
+// touches only singletons, and nothing else lowers confidence before this
+// filter. A hand-built Merged, or any future path that lowers a corroborated
+// finding's confidence, is kept by reviewer count too, discount or not:
+// corroboration, not the discount, is what the guard keys on.
 func consensusSingletonAt(m Merged, floor string) bool {
 	if confidenceRank[strings.ToUpper(strings.TrimSpace(floor))] == 0 {
 		return false

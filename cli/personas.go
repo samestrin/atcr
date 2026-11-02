@@ -364,7 +364,7 @@ func listExcludedCases(cmd *cobra.Command, dir, name string) error {
 	}
 	rows := make([]string, len(list))
 	for i, c := range list {
-		rows[i] = c.RunID + "\t" + c.Reason
+		rows[i] = sanitizeCell(c.RunID) + "\t" + sanitizeCell(c.Reason)
 	}
 	return writeTable(cmd.OutOrStdout(), "RUN ID\tREASON", rows)
 }

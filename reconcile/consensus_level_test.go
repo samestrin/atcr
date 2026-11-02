@@ -277,6 +277,35 @@ func TestConsensusSingletonAt_UnrecognizedFloorKeeps(t *testing.T) {
 	}
 }
 
+// TestConsensusSingletonAt_MultiReviewerBelowFloorKeeps pins the 2+-reviewer
+// guard's full contract: a finding with two or more distinct reviewers is never
+// a drop candidate, at any floor, whatever its confidence and whether or not
+// it carries a ConfidenceDiscount. Through Merge the guard only changes the
+// outcome for a discounted finding (the first case); the hand-built cases pin
+// that it is deliberately wider than that class, so a future path that lowers a
+// corroborated finding's confidence cannot start dropping it.
+func TestConsensusSingletonAt_MultiReviewerBelowFloorKeeps(t *testing.T) {
+	discounted := Merge(fivePredicateFindings())
+	eq(t, discounted.ConfidenceDiscount, PanelWideReason, "fixture is the discounted class")
+	eq(t, discounted.Confidence, ConfMedium, "fixture is below the strict floor")
+	isTrue(t, !consensusSingletonAt(discounted, ConfHigh), "discounted multi-reviewer MEDIUM at strict floor must be kept")
+
+	for _, c := range []struct{ confidence, floor string }{
+		{ConfMedium, ConfHigh},
+		{ConfLow, ConfHigh},
+		{ConfLow, ConfMedium},
+	} {
+		for _, discount := range []string{PanelWideReason, ""} {
+			m := Merged{Finding: Finding{Confidence: c.confidence, Reviewers: []string{"bruce", "kai"}}, ConfidenceDiscount: discount}
+			isTrue(t, !consensusSingletonAt(m, c.floor),
+				c.confidence+" with 2 reviewers at floor "+c.floor+" (discount "+discount+") must not be a drop candidate")
+			m.Reviewers = []string{"bruce"}
+			isTrue(t, consensusSingletonAt(m, c.floor),
+				c.confidence+" with 1 reviewer at floor "+c.floor+" is a drop candidate")
+		}
+	}
+}
+
 // TestConsensusFloor_OffReturnsUsableFloor pins the off case returning a real
 // floor alongside enabled=false, so a dropped enabled check degrades to strict
 // rather than to delete-everything.

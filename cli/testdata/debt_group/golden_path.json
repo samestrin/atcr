@@ -1,0 +1,168 @@
+{
+  "groups": [
+    {
+      "theme": "critical",
+      "path_pattern": "CRITICAL severity items",
+      "items": [
+        {
+          "CATEGORY": "security",
+          "EST_MINUTES": "60",
+          "FILE_LINE": "internal/db/conn.go:3",
+          "FIX": "f06",
+          "PROBLEM": "p06",
+          "SEVERITY": "CRITICAL"
+        },
+        {
+          "CATEGORY": "style",
+          "EST_MINUTES": "40",
+          "FILE_LINE": "tools/gen.go:1",
+          "FIX": "f14",
+          "PROBLEM": "p14",
+          "SEVERITY": "CRITICAL"
+        }
+      ],
+      "count": 2,
+      "total_minutes": 100,
+      "frontend": false
+    },
+    {
+      "theme": "internal-api",
+      "path_pattern": "internal/api/*",
+      "items": [
+        {
+          "CATEGORY": "security",
+          "EST_MINUTES": "15",
+          "FILE_LINE": "internal/api/handlers/user.go:10",
+          "FIX": "f02",
+          "PROBLEM": "p02",
+          "SEVERITY": "HIGH"
+        },
+        {
+          "CATEGORY": "security",
+          "EST_MINUTES": "20",
+          "FILE_LINE": "internal/api/handlers/user.go:40",
+          "FIX": "f03",
+          "PROBLEM": "p03",
+          "SEVERITY": "MEDIUM"
+        },
+        {
+          "CATEGORY": "style",
+          "EST_MINUTES": "5",
+          "FILE_LINE": "internal/api/router.go:5",
+          "FIX": "f04",
+          "PROBLEM": "p04",
+          "SEVERITY": "LOW"
+        },
+        {
+          "CATEGORY": "ui",
+          "EST_MINUTES": "30",
+          "FILE_LINE": "internal/api/views/page.tsx:12",
+          "FIX": "f05",
+          "PROBLEM": "p05",
+          "SEVERITY": "MEDIUM"
+        }
+      ],
+      "count": 4,
+      "total_minutes": 70,
+      "frontend": true
+    },
+    {
+      "theme": "internal-db",
+      "path_pattern": "internal/db/*",
+      "items": [
+        {
+          "CATEGORY": "performance",
+          "EST_MINUTES": "25",
+          "FILE_LINE": "internal/db/query.go:8",
+          "FIX": "f07",
+          "PROBLEM": "p07",
+          "SEVERITY": "HIGH"
+        },
+        {
+          "CATEGORY": "performance",
+          "EST_MINUTES": "10",
+          "FILE_LINE": "internal/db/query.go:90",
+          "FIX": "f08",
+          "PROBLEM": "p08",
+          "SEVERITY": "MEDIUM"
+        },
+        {
+          "CATEGORY": "performance",
+          "EST_MINUTES": "45",
+          "FILE_LINE": "internal/db/schema/migrate.go:2",
+          "FIX": "f09",
+          "PROBLEM": "p09",
+          "SEVERITY": "LOW"
+        }
+      ],
+      "count": 3,
+      "total_minutes": 80,
+      "frontend": false
+    },
+    {
+      "theme": "pkg-util",
+      "path_pattern": "pkg/util/*",
+      "items": [
+        {
+          "CATEGORY": "Error Handling",
+          "EST_MINUTES": "15",
+          "FILE_LINE": "pkg/util/strings.go:7",
+          "FIX": "f11",
+          "PROBLEM": "p11",
+          "SEVERITY": "MEDIUM"
+        },
+        {
+          "CATEGORY": "Error Handling",
+          "EST_MINUTES": "5",
+          "FILE_LINE": "pkg/util/strings.go:9",
+          "FIX": "f12",
+          "PROBLEM": "p12",
+          "SEVERITY": "LOW"
+        },
+        {
+          "CATEGORY": "Error Handling",
+          "EST_MINUTES": "20",
+          "FILE_LINE": "pkg/util/time.go:4",
+          "FIX": "f13",
+          "PROBLEM": "p13",
+          "SEVERITY": "HIGH"
+        }
+      ],
+      "count": 3,
+      "total_minutes": 40,
+      "frontend": false
+    }
+  ],
+  "ungrouped": [
+    {
+      "CATEGORY": "style",
+      "EST_MINUTES": "5",
+      "FILE_LINE": "",
+      "FIX": "f01",
+      "PROBLEM": "p01",
+      "SEVERITY": "LOW"
+    },
+    {
+      "CATEGORY": "style",
+      "EST_MINUTES": "5",
+      "FILE_LINE": "main.go:1",
+      "FIX": "f10",
+      "PROBLEM": "p10",
+      "SEVERITY": "LOW"
+    },
+    {
+      "CATEGORY": "style",
+      "EST_MINUTES": "5",
+      "FILE_LINE": "tools/lint.go:2",
+      "FIX": "f15",
+      "PROBLEM": "p15",
+      "SEVERITY": "LOW"
+    }
+  ],
+  "summary": {
+    "total_items": 15,
+    "grouped_count": 12,
+    "ungrouped_count": 3,
+    "group_count": 4
+  }
+}
