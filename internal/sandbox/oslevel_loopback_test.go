@@ -3,12 +3,16 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,8 +233,112 @@ func TestCheckLoopbackPortsFree_CoversTheHostsOwnAddresses(t *testing.T) {
 	}()
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	err = checkLoopbackPortsFree([]int{port})
+	err = checkLoopbackPortsFree(context.Background(), []int{port})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "got %v", err)
 	assert.Contains(t, err.Error(), ip, "the refusal must name the address that answered")
+}
+
+func TestCheckLoopbackPortsFree_StopsWhenTheContextEnds(t *testing.T) {
+	// Each probe is bounded at loopbackDialTimeout, but they run one after
+	// another, so under a firewall that drops rather than refuses, ports x hosts
+	// probes could hold up the run for many seconds. The check takes the run's
+	// context and stops at its deadline. It then fails closed: a check that did
+	// not finish cannot say the ports are free.
+	origIfaces, origDial := netInterfaces, loopbackDial
+	t.Cleanup(func() { netInterfaces, loopbackDial = origIfaces, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return nil, nil } // 127.0.0.1 and ::1 only
+	var dials int
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials++
+		// A dropped SYN: no answer until the context or the per-probe bound
+		// gives up.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(loopbackDialTimeout):
+			return nil, errors.New("i/o timeout")
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := checkLoopbackPortsFree(ctx, []int{3000, 5173})
+	require.Error(t, err, "a check cut short must not report the ports free")
+	assert.True(t, errors.Is(err, context.DeadlineExceeded), "got %v", err)
+	assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+	assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
+	assert.Equal(t, 1, dials, "no probe may start once the context has ended")
+	assert.Less(t, time.Since(start), 2*time.Second)
+}
+
+func TestCheckLoopbackPortsFree_CancelledContextFailsClosed(t *testing.T) {
+	// A dial on a cancelled context fails at once, the same as a refused one.
+	// Read as "refused", every port would look free.
+	free := freeLoopbackPort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := checkLoopbackPortsFree(ctx, []int{free})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled), "got %v", err)
+	assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+}
+
+func TestCheckLoopbackPortsFree_AddressListFailureHasItsOwnSentinel(t *testing.T) {
+	// Without the host's address list the check cannot cover what the grant
+	// reaches, so it refuses. That refusal is not "a port is held": it gets its
+	// own sentinel so the message says what went wrong.
+	boom := errors.New("boom")
+	for _, tc := range []struct {
+		name   string
+		ifaces func() ([]net.Interface, error)
+		addrs  func(net.Interface) ([]net.Addr, error)
+		want   string
+	}{
+		{
+			name:   "interfaces",
+			ifaces: func() ([]net.Interface, error) { return nil, boom },
+			addrs:  func(net.Interface) ([]net.Addr, error) { return nil, nil },
+		},
+		{
+			name:   "addresses of one interface",
+			ifaces: func() ([]net.Interface, error) { return []net.Interface{{Name: "en7"}}, nil },
+			addrs:  func(net.Interface) ([]net.Addr, error) { return nil, boom },
+			want:   "en7",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			origIfaces, origAddrs := netInterfaces, interfaceAddrs
+			t.Cleanup(func() { netInterfaces, interfaceAddrs = origIfaces, origAddrs })
+			netInterfaces, interfaceAddrs = tc.ifaces, tc.addrs
+
+			err := checkLoopbackPortsFree(context.Background(), []int{3000})
+			require.Error(t, err, "the check must fail closed")
+			assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+			assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
+			assert.ErrorIs(t, err, boom)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+}
+
+func TestCheckLoopbackPortsFree_DocumentsTheCheckThenBindRace(t *testing.T) {
+	// The check is a probe, not a reservation: sandbox-exec cannot hand the
+	// workload a socket the host bound first, so a host process can still take
+	// the port after the check. The function's own doc comment must say so,
+	// where a caller reading it will see it.
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "oslevel.go", nil, parser.ParseComments)
+	require.NoError(t, err)
+	var doc string
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == "checkLoopbackPortsFree" {
+			doc = fn.Doc.Text()
+		}
+	}
+	require.NotEmpty(t, doc, "checkLoopbackPortsFree has no doc comment")
+	for _, want := range []string{"not a reservation", "after the check"} {
+		assert.Contains(t, doc, want)
+	}
 }

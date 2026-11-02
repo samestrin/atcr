@@ -104,6 +104,15 @@ func TestVisualVerificationDocStatesDarwinReason(t *testing.T) {
 	if strings.Contains(section, "denies all network, loopback included") {
 		t.Error("the darwin section still says the profile cannot allow loopback; since epic 100 T4b it can, per port")
 	}
+	// sandbox-exec has no network namespace, so the port it opens is on the
+	// host's own loopback, shared with every host service. "This machine only"
+	// reads as containment; the doc must say whose loopback it is.
+	if strings.Contains(section, "this machine only") {
+		t.Error(`the darwin section says the grant is "on this machine only"; it must say the port is on the host's own loopback`)
+	}
+	if !strings.Contains(section, "host's own loopback") {
+		t.Error(`the darwin section must say the opened port is on the host's own loopback`)
+	}
 }
 
 // TestVisualVerificationDocCoversTheVisualReview pins the epic 36.0.2 T6

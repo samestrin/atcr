@@ -491,6 +491,16 @@ var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopb
 // answered or refused at once; the bound only covers a firewalled stack.
 const loopbackDialTimeout = 500 * time.Millisecond
 
+// ErrOSLevelLoopbackCheckUnavailable placeholder.
+var ErrOSLevelLoopbackCheckUnavailable = errors.New("placeholder")
+
+// Seams for the held-port check, replaced in tests.
+var (
+	netInterfaces  = net.Interfaces
+	interfaceAddrs = func(ifc net.Interface) ([]net.Addr, error) { return ifc.Addrs() }
+	loopbackDial   = (&net.Dialer{Timeout: loopbackDialTimeout}).DialContext
+)
+
 // checkLoopbackPortsFree returns ErrOSLevelLoopbackPortHeld when anything on
 // the host accepts a TCP connect on a port in ports, at any of the host's own
 // addresses: 127.0.0.1 and ::1, plus every interface address.
@@ -501,19 +511,19 @@ const loopbackDialTimeout = 500 * time.Millisecond
 // its own addresses over lo0, and sandbox-exec's "localhost" covers that
 // traffic, so a host service bound only to a LAN address is as reachable
 // through the grant as one on 127.0.0.1.
-func checkLoopbackPortsFree(ports []int) error {
+func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 	if len(ports) == 0 {
 		return nil
 	}
 	hosts := []string{"127.0.0.1", "::1"}
-	ifaces, err := net.Interfaces()
+	ifaces, err := netInterfaces()
 	if err != nil {
 		// Without the address list the check cannot cover what the grant
 		// reaches, so it fails closed rather than checking loopback alone.
 		return fmt.Errorf("%w: cannot list the host's addresses to check: %v", ErrOSLevelLoopbackPortHeld, err)
 	}
 	for _, ifc := range ifaces {
-		addrs, err := ifc.Addrs()
+		addrs, err := interfaceAddrs(ifc)
 		if err != nil {
 			return fmt.Errorf("%w: cannot list the addresses of %s to check: %v", ErrOSLevelLoopbackPortHeld, ifc.Name, err)
 		}
@@ -532,7 +542,7 @@ func checkLoopbackPortsFree(ports []int) error {
 	}
 	for _, p := range ports {
 		for _, host := range hosts {
-			conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(p)), loopbackDialTimeout)
+			conn, err := loopbackDial(context.Background(), "tcp", net.JoinHostPort(host, strconv.Itoa(p)))
 			if err == nil {
 				_ = conn.Close()
 				return fmt.Errorf("%w: port %d on %s", ErrOSLevelLoopbackPortHeld, p, host)
@@ -1373,7 +1383,7 @@ func (b *OSLevelBackend) runWith(ctx context.Context, tool string, spec RunSpec,
 	// Checked as late as possible, right before the spawn, to keep the window
 	// between the check and the workload's own bind short.
 	if b.platform() == "darwin" {
-		if err := checkLoopbackPortsFree(spec.LoopbackPorts); err != nil {
+		if err := checkLoopbackPortsFree(runCtx, spec.LoopbackPorts); err != nil {
 			return RunResult{Command: cmdStr}, err
 		}
 	}
