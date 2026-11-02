@@ -415,7 +415,7 @@ func TestTelemetryDisclosure_ConfigDirOptOutSilences(t *testing.T) {
 func TestTelemetryDisclosure_ConfigDirMarkerIsReadAndWrittenThere(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")
-	dir := configDirWith(t, "")
+	dir := configDirWith(t, "agents: [bruce]\n")
 
 	_, _, errOut := execTransmitting(t, "review", "--config-dir", dir)
 	require.Contains(t, errOut, defaultNoticeMarker, "first run under --config-dir must disclose")
@@ -434,15 +434,33 @@ func TestTelemetryDisclosure_ConfigDirMarkerIsReadAndWrittenThere(t *testing.T) 
 
 // TestTelemetryDisclosure_InvalidConfigDirSkipsNotice: an invalid --config-dir is
 // a usage error the review run reports itself, so the notice is skipped rather
-// than falling back to the reviewed tree's config.
+// than falling back to the reviewed tree's config. A directory with no
+// .atcr/config.yaml is invalid too, and the notice must not create one there: a
+// marker-only config would turn the next run's "config.yaml not found" into a
+// later, vaguer failure.
 func TestTelemetryDisclosure_InvalidConfigDirSkipsNotice(t *testing.T) {
-	isolate(t)
-	t.Setenv("ATCR_TELEMETRY", "1")
+	t.Run("not a directory", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("ATCR_TELEMETRY", "1")
 
-	code, _, errOut := execTransmitting(t, "review", "--config-dir", filepath.Join(t.TempDir(), "missing"))
-	assert.Equal(t, 2, code, "stderr:\n%s", errOut)
-	assert.NotContains(t, errOut, defaultNoticeMarker,
-		"an invalid --config-dir must skip the notice")
-	assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
-		"an invalid --config-dir must not fall back to writing the reviewed tree")
+		code, _, errOut := execTransmitting(t, "review", "--config-dir", filepath.Join(t.TempDir(), "missing"))
+		assert.Equal(t, 2, code, "stderr:\n%s", errOut)
+		assert.NotContains(t, errOut, defaultNoticeMarker,
+			"an invalid --config-dir must skip the notice")
+		assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
+			"an invalid --config-dir must not fall back to writing the reviewed tree")
+	})
+	t.Run("no config.yaml", func(t *testing.T) {
+		isolate(t)
+		t.Setenv("ATCR_TELEMETRY", "1")
+		dir := configDirWith(t, "")
+
+		_, _, errOut := execTransmitting(t, "review", "--config-dir", dir)
+		assert.NotContains(t, errOut, defaultNoticeMarker,
+			"a --config-dir with no .atcr/config.yaml must skip the notice")
+		assert.NoFileExists(t, filepath.Join(dir, ".atcr", "config.yaml"),
+			"the notice must not create a config in the operator's config dir")
+		assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
+			"nor fall back to writing the reviewed tree")
+	})
 }
