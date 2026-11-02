@@ -72,7 +72,7 @@ func readCleanedREADME(t *testing.T) (files []string, stats []debtCleanSeverityR
 	t.Helper()
 	f, err := os.Open(filepath.Join("testdata", "debt_clean", "golden_cleaned_README.md"))
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	inStats := false
 	for sc.Scan() {

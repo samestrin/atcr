@@ -101,6 +101,16 @@ No flags.
 | `--review-root` | string | `` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt clean`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
+| `--store` | string | `` |  |
+
 ### `atcr debt compact`
 
 | Flag | Type | Default | Status |

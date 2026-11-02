@@ -18,6 +18,7 @@ import (
 // reportCommands produce a report: a read-only rendering of stored or computed
 // state for a reader. Each must accept --json.
 var reportCommands = map[string]bool{
+	"atcr debt clean":     true,
 	"atcr debt dashboard": true,
 	"atcr debt filter":    true,
 	"atcr debt list":      true,

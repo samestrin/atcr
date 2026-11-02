@@ -134,7 +134,7 @@ func runDebtFilter(cmd *cobra.Command, _ []string) error {
 	if axiFromContext(cmd.Context()) {
 		return renderDebtFilterAXI(out, doc)
 	}
-	return renderDebtFilterJSON(out, doc)
+	return renderDebtDocJSON(out, doc)
 }
 
 func splitFilterList(s string) []string {
@@ -183,7 +183,7 @@ func summarizeDebtFilter(cmd *cobra.Command, f debtFilter) (debtFilterSummary, e
 	return s, nil
 }
 
-func renderDebtFilterJSON(w io.Writer, doc debtFilterDoc) error {
+func renderDebtDocJSON(w io.Writer, doc any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
@@ -193,21 +193,7 @@ func renderDebtFilterJSON(w io.Writer, doc debtFilterDoc) error {
 // a tabular array of the selection fields, summary as an object. Text cells are
 // sanitized as every other --axi payload's are.
 func renderDebtFilterAXI(w io.Writer, doc debtFilterDoc) error {
-	rows := make([]toon.Object, 0, len(doc.Items))
-	for _, r := range doc.Items {
-		rows = append(rows, toon.NewObject(
-			toon.Field{Key: "id", Value: goaxi.SanitizeString(r.ID)},
-			toon.Field{Key: "severity", Value: goaxi.SanitizeString(r.Severity)},
-			toon.Field{Key: "confidence", Value: goaxi.SanitizeString(r.Confidence)},
-			toon.Field{Key: "status", Value: debtStatusBucket(r.Status)},
-			toon.Field{Key: "file", Value: goaxi.SanitizeString(r.File)},
-			toon.Field{Key: "line", Value: r.Line},
-			toon.Field{Key: "category", Value: goaxi.SanitizeString(r.Category)},
-			toon.Field{Key: "est_minutes", Value: r.EstMinutes},
-			toon.Field{Key: "problem", Value: goaxi.SanitizeString(r.Problem)},
-			toon.Field{Key: "fix", Value: goaxi.SanitizeString(r.Fix)},
-		))
-	}
+	rows := debtItemAXIRows(doc.Items)
 	s := doc.Summary
 	summary := toon.NewObject(
 		toon.Field{Key: "total", Value: s.Total},
@@ -225,4 +211,25 @@ func renderDebtFilterAXI(w io.Writer, doc debtFilterDoc) error {
 		return fmt.Errorf("axi encoder: %w", err)
 	}
 	return nil
+}
+
+// debtItemAXIRows is the items tabular array debt filter and debt clean share:
+// the selection fields, text cells sanitized as every other --axi payload's are.
+func debtItemAXIRows(items []localdebt.Record) []toon.Object {
+	rows := make([]toon.Object, 0, len(items))
+	for _, r := range items {
+		rows = append(rows, toon.NewObject(
+			toon.Field{Key: "id", Value: goaxi.SanitizeString(r.ID)},
+			toon.Field{Key: "severity", Value: goaxi.SanitizeString(r.Severity)},
+			toon.Field{Key: "confidence", Value: goaxi.SanitizeString(r.Confidence)},
+			toon.Field{Key: "status", Value: debtStatusBucket(r.Status)},
+			toon.Field{Key: "file", Value: goaxi.SanitizeString(r.File)},
+			toon.Field{Key: "line", Value: r.Line},
+			toon.Field{Key: "category", Value: goaxi.SanitizeString(r.Category)},
+			toon.Field{Key: "est_minutes", Value: r.EstMinutes},
+			toon.Field{Key: "problem", Value: goaxi.SanitizeString(r.Problem)},
+			toon.Field{Key: "fix", Value: goaxi.SanitizeString(r.Fix)},
+		))
+	}
+	return rows
 }
