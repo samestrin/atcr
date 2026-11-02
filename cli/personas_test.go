@@ -1611,6 +1611,30 @@ func TestPersonasList_DetailPrintsEachExcludedCase(t *testing.T) {
 	assert.Len(t, rows, 2)
 }
 
+// TestPersonasList_DetailSanitizesTableCells pins that a run id or reason
+// carrying a tab or newline cannot break the two-column plain-text table, while
+// the --json branch still reports the raw values.
+func TestPersonasList_DetailSanitizesTableCells(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withExcludedCases(t, map[string][]scorecard.ExcludedCase{
+		"dax": {{RunID: "run\tone\nX", Reason: "bad\nreason\tY"}},
+	})
+
+	out, err := execute(t, "personas", "list", "--scores", "--detail", "dax")
+	require.NoError(t, err)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	require.Len(t, lines, 2, "header plus one row, got %q", out)
+	assert.Regexp(t, `^runoneX\s+badreasonY\s*$`, lines[1])
+
+	out, err = execute(t, "personas", "list", "--scores", "--detail", "dax", "--json")
+	require.NoError(t, err)
+	var rows []excludedCaseJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	require.Len(t, rows, 1)
+	assert.Equal(t, excludedCaseJSON{RunID: "run\tone\nX", Reason: "bad\nreason\tY"}, rows[0])
+}
+
 func TestPersonasList_DetailUnknownLensFails(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
