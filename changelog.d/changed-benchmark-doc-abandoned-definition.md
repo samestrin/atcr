@@ -1,0 +1,1 @@
+- `docs/benchmark.md` now defines "abandoned" inline where `slot_failures[]` first uses it: abandoned = salvaged without `salvaged_on_stop`. (technical debt, 2026-11-02)
