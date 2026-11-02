@@ -191,6 +191,51 @@ func TestPullRequestLogsIgnoredAttachments(t *testing.T) {
 	}
 }
 
+// Epic 103 T2: a malformed createdAt is logged, not dropped silently, and is
+// read as the zero time: it loses to a dated PR and ties an undated one, where
+// the first listed wins.
+func TestPullRequestMalformedCreatedAt(t *testing.T) {
+	dated := `{"url":"https://github.com/o/r/pull/7","createdAt":"2026-01-01T00:00:00.000Z"}`
+	bad := `{"url":"https://github.com/o/r/pull/5","createdAt":"yesterday"}`
+	undated := `{"url":"https://github.com/o/r/pull/3"}`
+	badLine := `linear: issue i1: linked PR o/r#5: unparseable createdAt "yesterday": read as the zero time`
+	for name, tc := range map[string]struct {
+		nodes string
+		want  PR
+		lines []string
+	}{
+		"dated wins, bad first": {bad + "," + dated, PR{"o", "r", 7}, []string{
+			badLine,
+			"linear: issue i1: ignored linked PR o/r#5: older than the chosen o/r#7",
+		}},
+		"dated wins, bad last": {dated + "," + bad, PR{"o", "r", 7}, []string{
+			badLine,
+			"linear: issue i1: ignored linked PR o/r#5: older than the chosen o/r#7",
+		}},
+		"tie at zero, bad first": {bad + "," + undated, PR{"o", "r", 5}, []string{
+			badLine,
+			"linear: issue i1: ignored linked PR o/r#3: attached no later than the chosen o/r#5",
+		}},
+		"tie at zero, undated first": {undated + "," + bad, PR{"o", "r", 3}, []string{
+			badLine,
+			"linear: issue i1: ignored linked PR o/r#5: attached no later than the chosen o/r#3",
+		}},
+	} {
+		c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+			write(t, w, []byte(`{"data":{"issue":{"attachments":{"nodes":[`+tc.nodes+`]}}}}`))
+		})
+		var lines []string
+		c.Logf = func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+		pr, err := c.PullRequest(context.Background(), "i1")
+		if err != nil || pr != tc.want {
+			t.Errorf("%s: got %+v %v, want %v", name, pr, err, tc.want)
+		}
+		if !slices.Equal(sorted(lines), sorted(tc.lines)) {
+			t.Errorf("%s: log lines %q, want %q", name, lines, tc.lines)
+		}
+	}
+}
+
 func sorted(s []string) []string {
 	s = slices.Clone(s)
 	slices.Sort(s)
