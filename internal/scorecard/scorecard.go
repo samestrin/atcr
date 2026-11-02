@@ -961,8 +961,8 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     on the record — data a persisted count cannot carry. That provenance
 //     work was a rider on epic 35.16.11.3, moved to
 //     35.16.11.3.1_scorecard-trust-riders.md, and that plan completed without
-//     delivering it, so the TD-036 doc-shield residual is unowned: no live
-//     plan or debt row tracks it. Do not narrow one side without the other
+//     delivering it, so the TD-036 doc-shield residual is now owned by epic 107
+//     (107_scorecard-doc-shield-provenance.md). Do not narrow one side without the other
 //     here; that is how the two drifted apart.
 //
 //   - The result is SORTED, not map-ordered. Two byte-identical runs must
