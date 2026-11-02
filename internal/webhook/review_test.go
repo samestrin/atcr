@@ -347,6 +347,50 @@ func TestSummarize_SlackKeepsMrkdwn(t *testing.T) {
 	assert.Contains(t, text, "Compare a &amp; b &lt; c")
 }
 
+// The GitHub escaper breaks a mention or an issue reference with a zero-width
+// space wherever GitHub would read one: an @ or a # at the start of the text
+// or after a character that is not an ASCII word character. Mid-word, as in
+// an email address, GitHub links nothing, so it is left alone. A cross-repo
+// owner/repo#7 does link on GitHub; it is left alone here so the trusted
+// heading keeps its PR reference, which leaves that shape linkable in a title.
+func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
+	const zwsp = "\u200b"
+	cases := map[string]string{
+		"@octocat":          "@" + zwsp + "octocat",
+		"#12":               "#" + zwsp + "12",
+		"hi @octocat":       "hi @" + zwsp + "octocat",
+		"see #12 and #34":   "see #" + zwsp + "12 and #" + zwsp + "34",
+		"(@octocat)":        "(@" + zwsp + "octocat)",
+		"ping @acme/team":   "ping @" + zwsp + "acme/team",
+		"é@octocat":         "é@" + zwsp + "octocat",
+		"@@octocat":         "@@" + zwsp + "octocat",
+		"*@octocat*":        `\*@` + zwsp + `octocat\*`,
+		"mail a@b.example":  "mail a@b.example",
+		"acme/widget#7":     "acme/widget#7",
+		"x_@octocat":        `x\_@octocat`,
+		"#heading":          "#heading",
+		"# 12":              "# 12",
+		"@ octocat":         "@ octocat",
+		"@-x":               "@-x",
+		"@_octocat":         `@\_octocat`,
+		"trailing @ and #":  "trailing @ and #",
+		"Compare a & b < c": `Compare a \& b \< c`,
+	}
+	for in, want := range cases {
+		assert.Equal(t, want, githubFormat.escape(in), "input %q", in)
+	}
+}
+
+// A finding title that names a user or an issue reaches the PR comment with
+// the mention and the reference broken, so posting it pings and links nobody.
+func TestSummarize_GitHubNeutralizesMentionsInTitles(t *testing.T) {
+	text := summarize("acme/widget#7", []reconcile.Finding{{Severity: "HIGH", Problem: "@octocat broke #12"}}, nil, githubFormat)
+	assert.True(t, strings.HasPrefix(text, "**ATCR review of acme/widget#7**:"), "heading keeps the PR reference: %q", text)
+	assert.Contains(t, text, "[HIGH] @\u200boctocat broke #\u200b12")
+	assert.NotContains(t, text, "@octocat")
+	assert.NotContains(t, text, "#12")
+}
+
 func TestFindingTitle(t *testing.T) {
 	r := newScrubber("/srv/wt/abc", []string{plantedToken})
 	cases := map[string]string{

@@ -226,7 +226,11 @@ type replyFormat struct {
 var slackFormat = replyFormat{bold: "*", escape: slack.EscapeText}
 
 // githubFormat is GitHub markdown, for a PR comment.
-var githubFormat = replyFormat{bold: "**", escape: markdownEscaper.Replace}
+var githubFormat = replyFormat{bold: "**", escape: githubEscape}
+
+// githubEscape escapes s for GitHub markdown and then breaks every mention
+// and issue reference in it, so untrusted text pings and links nobody.
+func githubEscape(s string) string { return neutralizeRefs(markdownEscaper.Replace(s)) }
 
 // markdownEscaper backslash-escapes the characters GitHub markdown can read as
 // emphasis, code, a link, an HTML tag or an entity, so untrusted text renders
@@ -235,6 +239,33 @@ var markdownEscaper = strings.NewReplacer(
 	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "~", `\~`,
 	"[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`, "&", `\&`,
 )
+
+// neutralizeRefs inserts a zero-width space after each @ that starts a
+// mention and each # that starts an issue reference. GitHub reads one only at
+// the start of the text or after a character that is not an ASCII word
+// character, so a@b.example is left alone. A cross-repo owner/repo#7 links on
+// GitHub but is left alone too, so the trusted heading keeps its PR reference.
+// It runs after markdownEscaper, so an underscore arrives as \_ and @_x is
+// never read as a mention.
+func neutralizeRefs(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		b.WriteByte(c)
+		if i+1 == len(s) || (i > 0 && isASCIIWord(s[i-1])) {
+			continue
+		}
+		next := s[i+1]
+		if (c == '@' && isASCIIWord(next)) || (c == '#' && next >= '0' && next <= '9') {
+			b.WriteString("\u200b")
+		}
+	}
+	return b.String()
+}
+
+func isASCIIWord(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
 
 // heading is the bold "ATCR review of label" line.
 func (f replyFormat) heading(label string) string {
