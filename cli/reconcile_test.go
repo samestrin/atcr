@@ -2200,3 +2200,52 @@ func TestReconcile_SuppressedCountOnStderr(t *testing.T) {
 		assert.NotContains(t, stderr, "suppressed by .atcr/ignore.yaml")
 	})
 }
+
+// TestReconcile_LogFormatJSONStderrIsNDJSON pins the --log-format json contract
+// for `atcr reconcile`: every stderr line parses as a JSON object, so the
+// suppressed-findings notice and the closing Next: lines ride the structured
+// logger instead of raw text an NDJSON consumer would choke on. Text mode keeps
+// both as the exact raw lines it always printed (TD: cli/reconcile.go:364).
+func TestReconcile_LogFormatJSONStderrIsNDJSON(t *testing.T) {
+	const findings = "HIGH|a.go:1|unsafe use|f|security|1|ev|host\nLOW|b.go:2|slow|f|perf|1|ev|host\n"
+	setup := func(t *testing.T) {
+		isolate(t)
+		fixtureReview(t, "r", map[string]string{"sources/host/findings.txt": findings})
+		require.NoError(t, os.WriteFile(filepath.Join(".atcr", reconcile.IgnoreFileName),
+			[]byte("rules:\n  - file: a.go\n    reason: reviewed, intentional\n"), 0o644))
+	}
+	suppressed := "atcr: 1 finding(s) suppressed by .atcr/ignore.yaml rules (listed in reconciled/" + reconcile.SuppressedJSON + ")"
+	next := renderSuggestions(suggestReconcile, invocation{})
+	require.NotEmpty(t, next)
+
+	t.Run("json", func(t *testing.T) {
+		setup(t)
+		code, _, stderr := execCmdSplit(t, "--log-format", "json", "reconcile", "r")
+		require.Equal(t, 0, code)
+		var msgs []string
+		for _, line := range nonEmptyLines(stderr) {
+			v := map[string]any{}
+			require.NoError(t, json.Unmarshal([]byte(line), &v),
+				"stderr line must be valid NDJSON under --log-format json: %q", line)
+			msg, _ := v["msg"].(string)
+			msgs = append(msgs, msg)
+		}
+		assert.Contains(t, msgs, suppressed, "the suppressed notice must be a logger record")
+		for _, line := range next {
+			assert.Contains(t, msgs, "Next: "+line, "each Next: line must be a logger record")
+		}
+	})
+	t.Run("text", func(t *testing.T) {
+		setup(t)
+		code, _, stderr := execCmdSplit(t, "reconcile", "r")
+		require.Equal(t, 0, code)
+		lines := nonEmptyLines(stderr)
+		assert.Contains(t, lines, suppressed, "text mode keeps the raw suppressed line")
+		require.GreaterOrEqual(t, len(lines), len(next))
+		var want []string
+		for _, line := range next {
+			want = append(want, "Next: "+line)
+		}
+		assert.Equal(t, want, lines[len(lines)-len(next):], "text mode keeps the raw Next: lines, last on stderr")
+	})
+}
