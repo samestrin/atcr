@@ -1,0 +1,17 @@
+[
+  {"SEVERITY": "LOW", "FILE_LINE": "", "PROBLEM": "p01", "FIX": "f01", "CATEGORY": "style", "EST_MINUTES": "5"},
+  {"SEVERITY": "HIGH", "FILE_LINE": "internal/api/handlers/user.go:10", "PROBLEM": "p02", "FIX": "f02", "CATEGORY": "security", "EST_MINUTES": "15"},
+  {"SEVERITY": "MEDIUM", "FILE_LINE": "internal/api/handlers/user.go:40", "PROBLEM": "p03", "FIX": "f03", "CATEGORY": "security", "EST_MINUTES": "20"},
+  {"SEVERITY": "LOW", "FILE_LINE": "internal/api/router.go:5", "PROBLEM": "p04", "FIX": "f04", "CATEGORY": "style", "EST_MINUTES": "5"},
+  {"SEVERITY": "MEDIUM", "FILE_LINE": "internal/api/views/page.tsx:12", "PROBLEM": "p05", "FIX": "f05", "CATEGORY": "ui", "EST_MINUTES": "30"},
+  {"SEVERITY": "CRITICAL", "FILE_LINE": "internal/db/conn.go:3", "PROBLEM": "p06", "FIX": "f06", "CATEGORY": "security", "EST_MINUTES": "60"},
+  {"SEVERITY": "HIGH", "FILE_LINE": "internal/db/query.go:8", "PROBLEM": "p07", "FIX": "f07", "CATEGORY": "performance", "EST_MINUTES": "25"},
+  {"SEVERITY": "MEDIUM", "FILE_LINE": "internal/db/query.go:90", "PROBLEM": "p08", "FIX": "f08", "CATEGORY": "performance", "EST_MINUTES": "10"},
+  {"SEVERITY": "LOW", "FILE_LINE": "internal/db/schema/migrate.go:2", "PROBLEM": "p09", "FIX": "f09", "CATEGORY": "performance", "EST_MINUTES": "45"},
+  {"SEVERITY": "LOW", "FILE_LINE": "main.go:1", "PROBLEM": "p10", "FIX": "f10", "CATEGORY": "style", "EST_MINUTES": "5"},
+  {"SEVERITY": "MEDIUM", "FILE_LINE": "pkg/util/strings.go:7", "PROBLEM": "p11", "FIX": "f11", "CATEGORY": "Error Handling", "EST_MINUTES": "15"},
+  {"SEVERITY": "LOW", "FILE_LINE": "pkg/util/strings.go:9", "PROBLEM": "p12", "FIX": "f12", "CATEGORY": "Error Handling", "EST_MINUTES": "5"},
+  {"SEVERITY": "HIGH", "FILE_LINE": "pkg/util/time.go:4", "PROBLEM": "p13", "FIX": "f13", "CATEGORY": "Error Handling", "EST_MINUTES": "20"},
+  {"SEVERITY": "CRITICAL", "FILE_LINE": "tools/gen.go:1", "PROBLEM": "p14", "FIX": "f14", "CATEGORY": "style", "EST_MINUTES": "40"},
+  {"SEVERITY": "LOW", "FILE_LINE": "tools/lint.go:2", "PROBLEM": "p15", "FIX": "f15", "CATEGORY": "style", "EST_MINUTES": "5"}
+]
