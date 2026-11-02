@@ -282,8 +282,9 @@ const ReasoningReplayReserveCaps = 2
 // zero-budget hint and review's zero-budget warnings cannot word the same reservation
 // differently — review previously named only the unreserved cap, which made the
 // window-vs-cap arithmetic on screen look like it fit. Both of review's zero-budget
-// warnings now call it: the chunking one and the smallest-file one,
-// both calling ReasoningReserveClause in internal/fanout/review.go.
+// warnings now call it: the chunk-planning one (warnOversized, before chunks are
+// cut) and the smallest-file one (warnOversized, on the keepSmallestEntry arm), both in
+// internal/fanout/review.go.
 func ReasoningReserveClause(toolLoop bool, outputTokens int) string {
 	if !toolLoop {
 		return ""

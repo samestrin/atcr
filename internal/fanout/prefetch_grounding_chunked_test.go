@@ -23,7 +23,7 @@ import (
 // the correct answer there, not a defect.
 //
 // A chunked run that produces ONE chunk is a different path entirely: the
-// chunk-slot loop is guarded by `if len(chunks) > 1 || resumed` in review.go, so a
+// chunk-slot loop is guarded by `if len(chunks) > 1` in review.go, so a
 // single-chunk run falls through to the bulk path, which builds its slot with
 // entries: bulkEntries (also in review.go). Those entries include the
 // Context Definitions entry, so the guard sees it and the widening SURVIVES.
