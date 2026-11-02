@@ -115,17 +115,40 @@ func TestParsePlaywrightReportTopLevelErrors(t *testing.T) {
 	})
 
 	t.Run("joined messages are capped", func(t *testing.T) {
-		long := strings.Repeat("x", 4*playwrightMaxErrorText)
-		data := []byte(`{"suites":[],"errors":[{"message":"` + long + `"},{"message":"` + long + `"}]}`)
-		_, err := ParsePlaywrightReport(data)
-		if err == nil {
-			t.Fatal("want an error for a report with only top-level errors")
+		// A position-revealing fixture, so a cut one byte off shows in the text.
+		text := func(n int) string { return strings.Repeat("0123456789", n/10+1)[:n] }
+		const prefix = "fanout: playwright: no tests ran, Playwright reported %d error(s): "
+		long := text(4 * playwrightMaxErrorText)
+		joined := long + "; " + long
+		cases := []struct {
+			name string
+			msgs []string
+			want string
+		}{
+			{"under the cap", []string{text(playwrightMaxErrorText - 1)},
+				fmt.Sprintf(prefix, 1) + text(playwrightMaxErrorText-1)},
+			{"at the cap", []string{text(playwrightMaxErrorText)},
+				fmt.Sprintf(prefix, 1) + text(playwrightMaxErrorText)},
+			{"one byte over the cap", []string{text(playwrightMaxErrorText + 1)},
+				fmt.Sprintf(prefix, 1) + text(playwrightMaxErrorText) + " [...truncated 1 bytes]"},
+			{"two messages far over the cap", []string{long, long},
+				fmt.Sprintf(prefix, 2) + joined[:playwrightMaxErrorText] + fmt.Sprintf(" [...truncated %d bytes]", len(joined)-playwrightMaxErrorText)},
 		}
-		if len(err.Error()) > playwrightMaxErrorText+200 {
-			t.Fatalf("error is %d bytes, want the joined messages capped near %d", len(err.Error()), playwrightMaxErrorText)
-		}
-		if !strings.Contains(err.Error(), "reported 2 error(s)") || !strings.Contains(err.Error(), "truncated") {
-			t.Fatalf("err = %.300s..., want the count and a truncation marker", err)
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				errs := make([]string, len(tc.msgs))
+				for i, m := range tc.msgs {
+					errs[i] = `{"message":"` + m + `"}`
+				}
+				data := []byte(`{"suites":[],"errors":[` + strings.Join(errs, ",") + `]}`)
+				_, err := ParsePlaywrightReport(data)
+				if err == nil {
+					t.Fatal("want an error for a report with only top-level errors")
+				}
+				if got := err.Error(); got != tc.want {
+					t.Fatalf("err (%d bytes) =\n%s\nwant (%d bytes)\n%s", len(got), got, len(tc.want), tc.want)
+				}
+			})
 		}
 	})
 }
