@@ -408,6 +408,16 @@ func TestChunkPrefixBytes(t *testing.T) {
 		// attributes the whole chunk to the diff, not 0 diff bytes plus the chunk.
 		{"prefixLines past the last line", "p1\np2\n", 5, 0},
 		{"empty chunk", "", 3, 0},
+		// Boundaries around the chunk's line count, with and without a trailing
+		// newline: prefixLines == lines is a real split covering the whole chunk,
+		// lines+1 and lines+2 are clamps. A trailing newline ends the last line;
+		// it does not start another one.
+		{"newline-terminated, prefixLines == lines", "a\nb\n", 2, len("a\nb\n")},
+		{"newline-terminated, prefixLines == lines+1", "a\nb\n", 3, 0},
+		{"newline-terminated, prefixLines == lines+2", "a\nb\n", 4, 0},
+		{"unterminated, prefixLines == lines", "a\nb", 2, len("a\nb")},
+		{"unterminated, prefixLines == lines+1", "a\nb", 3, 0},
+		{"unterminated, prefixLines == lines+2", "a\nb", 4, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
