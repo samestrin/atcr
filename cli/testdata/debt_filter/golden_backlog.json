@@ -1,0 +1,15 @@
+{
+ "files": [
+  "b.go:20",
+  "f.go:2",
+  "g.go:3"
+ ],
+ "summary": {
+  "total": 7,
+  "matched": 3,
+  "max": 100,
+  "mode": "backlog",
+  "excluded_by_severity": 0,
+  "excluded_by_confidence": 0
+ }
+}

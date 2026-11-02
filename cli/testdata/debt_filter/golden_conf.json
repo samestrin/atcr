@@ -1,0 +1,17 @@
+{
+ "files": [
+  "a.go:10",
+  "d.go:7",
+  "e.go:1",
+  "f.go:2",
+  "h.go:4"
+ ],
+ "summary": {
+  "total": 7,
+  "matched": 5,
+  "max": 100,
+  "mode": "all",
+  "excluded_by_severity": 0,
+  "excluded_by_confidence": 2
+ }
+}

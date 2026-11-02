@@ -1,0 +1,1 @@
+- `atcr debt filter` selects open technical-debt items by severity, confidence, status and `--mode quick-wins|backlog|all`, capped by `--max` (default 10), and emits `{items, summary}` as JSON or, with `--axi`, as TOON. It is the store-backed replacement for `llm-support td-filter`; attempts, group and focus filters are not offered. (epic 94)

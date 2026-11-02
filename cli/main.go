@@ -541,7 +541,9 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 				// via dryRunFlagSet) is skipped: it short-circuits to the quality-signal
 				// preview in runReview before any pipe renderer is selected, so the
 				// notice would describe output that never happens (TD: cli/review.go:283).
-				if axi && legacy && !dryRunFlagSet(cmd) {
+				// A command annotated noLegacyPipeAnnotation (debt filter) has no pipe
+				// encoder, so the notice would describe output that never happens.
+				if axi && legacy && !dryRunFlagSet(cmd) && cmd.Annotations[noLegacyPipeAnnotation] == "" {
 					if legacyFlag {
 						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
 					} else {
