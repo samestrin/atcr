@@ -140,8 +140,10 @@ func TestPersistVisualEvidence_GuardsCapturedText(t *testing.T) {
 	})
 }
 
-// persistVisualEvidence's secret warnings go to the ctx logger, under the
-// visual persona and the captured-text labels, and never to os.Stderr.
+// Under warn and redact, persistVisualEvidence logs exactly one WARN through
+// the ctx logger (nothing on os.Stderr, via captureGuardLog), naming the
+// visual persona and never echoing the secret. Only the redact message is
+// checked for the captured-text labels.
 func TestPersistVisualEvidence_WarnsThroughTheContextLogger(t *testing.T) {
 	res := BrowserResult{
 		Console:         []ConsoleEntry{{Level: "log", Text: "token=" + guardAWSKey}},
