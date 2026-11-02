@@ -95,6 +95,15 @@ func TestRepoStateFormat_ComputableForClaimAbsentCursorFix(t *testing.T) {
 	if !regexp.MustCompile(`\d+(\.\d+)?\s*/\s*\d+`).MatchString(sec) {
 		t.Error("worked example contains no fraction (matched/expected); it does not demonstrate computing a score")
 	}
+	// The example must cite a line that exists in the materialized head state:
+	// applying change.diff to base/ puts `self._offset = self._drain_offset()` at
+	// streamer/cursor.py:46 (case.json line_start: 46); the file is 47 lines, so
+	// any other citation leaves the example unverifiable from the document alone.
+	// Matching the reported-finding sentence, not a bare ":46": the line above the
+	// example legitimately cites cursor.py:46 for the other expected finding.
+	if !strings.Contains(sec, "reports exactly one finding: `streamer/cursor.py:46`") {
+		t.Error("worked example's reported finding is not cited at streamer/cursor.py:46, the line that holds `self._offset = self._drain_offset()` in the materialized head state")
+	}
 }
 
 // TestRepoStateFormat_ClosedVocabularyInline pins the row
