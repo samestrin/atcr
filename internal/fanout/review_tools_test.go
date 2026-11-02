@@ -90,7 +90,7 @@ func TestBuildFallbackAgent_ReusesPrimaryPayloadVerbatim(t *testing.T) {
 	cfg2 := refitRoster(t, 128000, OverflowTruncate)
 	var slots []Slot
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(context.Background(), cfg2, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true, true)
+		slots, _, err = buildBaselineSlots(context.Background(), cfg2, markedOversizedPayload(), ReviewRange{Base: "a", Head: "b"}, "", "", true)
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, slots)

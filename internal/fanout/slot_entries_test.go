@@ -88,7 +88,7 @@ func TestBuildSlots_BaselineChunkSlotCarriesItsChunkEntries(t *testing.T) {
 	cfg.Project.Agents = []string{"greta"}
 	payloads := oversizedBlocksPayload()
 
-	slots, _, err := buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false, true)
+	slots, _, err := buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", false)
 	require.NoError(t, err)
 	require.Greater(t, len(slots), 1,
 		"precondition: this payload must partition into multiple baseline chunks for greta's window")

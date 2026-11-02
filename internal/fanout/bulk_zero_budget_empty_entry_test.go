@@ -46,7 +46,7 @@ func TestBuildSlots_ZeroBudgetBulkArmNeverShipsAnEmptyPayload(t *testing.T) {
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(context.Background(), cfg, zeroBudgetPayloadWithEmptyFile(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true, true)
+		slots, _, err = buildBaselineSlots(context.Background(), cfg, zeroBudgetPayloadWithEmptyFile(), ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
@@ -82,7 +82,7 @@ func TestBuildSlots_ZeroBudgetBulkArmAllEntriesEmptyStillShipsOne(t *testing.T) 
 	var slots []Slot
 	var err error
 	captureStderr(t, func() {
-		slots, _, err = buildSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true, true)
+		slots, _, err = buildBaselineSlots(context.Background(), cfg, payloads, ReviewRange{Base: "a", Head: "b"}, "blocks", "", true)
 	})
 	require.NoError(t, err)
 	require.Len(t, slots, 1)
