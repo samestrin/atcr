@@ -120,6 +120,19 @@ No flags.
 | `--store` | string | `` |  |
 | `--top` | int | `10` |  |
 
+### `atcr debt filter`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--confidence` | string | `` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--max` | int | `10` |  |
+| `--mode` | string | `quick-wins` |  |
+| `--severity` | string | `` |  |
+| `--status` | string | `open` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt list`
 
 | Flag | Type | Default | Status |

@@ -50,6 +50,8 @@ type Summary struct {
 	Category   string
 	EstMinutes int
 	Origin     string
+	// Confidence is the selection field `atcr debt filter --confidence` narrows on.
+	Confidence string
 
 	// ReconcilerFeedbackKind is the kind of the record's ReconcilerFeedback
 	// annotation (a Feedback* constant), or "" when it carries none. It is the one
@@ -104,6 +106,7 @@ type summaryLine struct {
 	Line          int    `json:"line"`
 	EstMinutes    int    `json:"est_minutes"`
 	Origin        string `json:"origin"`
+	Confidence    string `json:"confidence"`
 
 	// A value, not a pointer, so an unannotated line allocates nothing for it; the
 	// write gate refuses an empty kind, so a non-empty Kind is exactly "the record
@@ -136,7 +139,6 @@ type summaryLine struct {
 	Problem        jsonString `json:"problem"`
 	Fix            jsonString `json:"fix"`
 	Evidence       jsonString `json:"evidence"`
-	Confidence     jsonString `json:"confidence"`
 	Model          jsonString `json:"model"`
 	Justification  jsonString `json:"justification"`
 	ResolvedAt     jsonString `json:"resolved_at"`
@@ -223,6 +225,7 @@ func decodeSummary(line []byte, shard string, w io.Writer) (Summary, bool) {
 		Category:   s.Category,
 		EstMinutes: s.EstMinutes,
 		Origin:     s.Origin,
+		Confidence: s.Confidence,
 
 		ReconcilerFeedbackKind: s.ReconcilerFeedback.Kind,
 	}, true

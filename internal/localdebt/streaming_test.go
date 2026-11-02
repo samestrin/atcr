@@ -112,6 +112,7 @@ func TestStreamSummaries_ProjectsFoldFields(t *testing.T) {
 		Category:   rec.Category,
 		EstMinutes: rec.EstMinutes,
 		Origin:     OriginManual,
+		Confidence: "HIGH",
 	}, sums[0])
 	assert.False(t, sums[1].HasFile, "an empty File is projected as HasFile false")
 	assert.Empty(t, sums[1].File, "and the path itself is empty, not a stale value")

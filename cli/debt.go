@@ -36,7 +36,7 @@ func newDebtCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtFilterCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
 	return cmd
 }
 
@@ -469,6 +469,12 @@ type debtFilter struct {
 	Category  string // substring, case-insensitive
 	Component string // path-prefix match against the record's File
 	Origin    string // exact, case-insensitive (review|manual); matches the EFFECTIVE origin
+
+	// The remaining fields serve `debt filter` only; `debt list` leaves them zero.
+	// All stay comparable so selectDebtForList's pass-through check holds.
+	Confidence string // comma list, case-insensitive (low|medium|high); also narrows Severity to a comma list
+	EstFloor   int    // keep est_minutes >= EstFloor
+	EstCeil    int    // keep est_minutes < EstCeil; 0 = no ceiling
 }
 
 // debtView is the projection filtering and sorting act on. A full
@@ -486,13 +492,14 @@ type debtView struct {
 	EstMinutes int
 	Date       string // YYYY-MM-DD, the sort key's date component
 	Origin     string // EFFECTIVE origin (localdebt.EffectiveOrigin normalization)
+	Confidence string
 }
 
 func viewOfRecord(r localdebt.Record) debtView {
 	return debtView{
 		Severity: r.Severity, Status: r.Status, Category: r.Category,
 		File: r.File, Line: r.Line, EstMinutes: r.EstMinutes, Date: debtRecordDate(r),
-		Origin: r.EffectiveOrigin(),
+		Origin: r.EffectiveOrigin(), Confidence: r.Confidence,
 	}
 }
 
@@ -504,7 +511,7 @@ func viewOfSummary(s localdebt.Summary) debtView {
 	return debtView{
 		Severity: s.Severity, Status: s.Status, Category: s.Category,
 		File: s.File, Line: s.Line, EstMinutes: s.EstMinutes, Date: date,
-		Origin: s.EffectiveOrigin(),
+		Origin: s.EffectiveOrigin(), Confidence: s.Confidence,
 	}
 }
 
@@ -512,7 +519,13 @@ func viewOfSummary(s localdebt.Summary) debtView {
 func (f debtFilter) match(r localdebt.Record) bool { return f.matchView(viewOfRecord(r)) }
 
 func (f debtFilter) matchView(r debtView) bool {
-	if f.Severity != "" && !strings.EqualFold(r.Severity, f.Severity) {
+	if f.Severity != "" && !inFoldedList(f.Severity, r.Severity) {
+		return false
+	}
+	if f.Confidence != "" && !inFoldedList(f.Confidence, r.Confidence) {
+		return false
+	}
+	if r.EstMinutes < f.EstFloor || (f.EstCeil > 0 && r.EstMinutes >= f.EstCeil) {
 		return false
 	}
 	// The store's canonical open record carries an EMPTY status, so a literal
@@ -548,6 +561,17 @@ func (f debtFilter) matchView(r debtView) bool {
 		}
 	}
 	return true
+}
+
+// inFoldedList reports whether v equals one element of the comma-separated list,
+// case-insensitively. A single-value list is the exact match `debt list` relies on.
+func inFoldedList(list, v string) bool {
+	for _, e := range strings.Split(list, ",") {
+		if strings.EqualFold(strings.TrimSpace(e), v) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyDebtFilter returns the subset of recs matching f, preserving order. It
