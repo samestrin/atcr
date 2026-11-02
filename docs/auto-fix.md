@@ -178,10 +178,11 @@ Under `--config-dir`, `<dir>/.atcr/config.yaml` supplies the roster, `fail_on`,
 (finding suppressions applied at reconcile) replace the reviewed tree's; those
 four are never read from the reviewed tree, so a pull request cannot ship an
 ignore rule that hides its own findings from the gate and the auto-fix. A rule's
-`file` glob still matches paths in the reviewed tree. One thing still comes from
-the reviewed tree: the one-time telemetry notice, which reads that tree's
-`telemetry` opt-out and writes its notice marker there. The usage ping itself
-follows `<dir>`'s `telemetry` setting. A value that is not an
+`file` glob still matches paths in the reviewed tree. The one-time telemetry
+notice also reads `<dir>`'s `telemetry` opt-out and notice marker and writes the
+marker there, and the usage ping follows `<dir>`'s `telemetry` setting; the
+reviewed tree is never written. When `--config-dir` is invalid the notice is
+skipped and the run reports the error. A value that is not an
 existing directory, a directory with no `.atcr/config.yaml`, and `--resume` with
 the flag are usage errors (exit 2) before any review work. The patch is still
 applied to, validated in and committed from the current directory.

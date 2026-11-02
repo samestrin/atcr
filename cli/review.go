@@ -170,7 +170,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("legacy-pipe", false, "with --axi, emit the deprecated pipe-delimited payload instead of standard TOON (also ATCR_LEGACY_PIPE=1)")
 	cmd.Flags().String(previewURLFlag, "", "the page a visual-verification spec opens (https://, or http:// on a loopback host: localhost, 127.0.0.0/8, ::1); with felix in the roster, felix writes e2e/felix-<review id>.spec.ts, the browser runs it in the sandbox, and the visual_review.agent reviews the screenshots")
 	cmd.Flags().Bool(allowCloudVisionFlag, false, "with --preview-url: let the visual_review.agent sit on a non-loopback host; the screenshot pixels then leave this machine, and secret_guard does not scan pixels")
-	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr/config.yaml, registry.yaml, personas and ignore.yaml are not read; its one-time telemetry notice still is")
+	cmd.Flags().String(configDirFlag, "", "load the project config (.atcr/config.yaml, .atcr/registry.yaml and .atcr/personas, including auto_fix.validate_command and sandbox:) from this directory instead of the reviewed tree; the current directory is still the tree under review. The reviewed tree's .atcr/config.yaml, registry.yaml, personas and ignore.yaml are not read, and the one-time telemetry notice reads and records its marker in this directory too")
 	addRangeFlags(cmd)
 	addBaselineFlags(cmd)
 	addAutoFixFlags(cmd)
