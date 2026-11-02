@@ -140,7 +140,8 @@ type Client struct {
 	Timeout time.Duration // defaults to DefaultTimeout
 	HTTP    *http.Client  // defaults to a fresh client
 	// Logf receives one line per linked PR that PullRequest passes over, so
-	// a later-linked PR never hides the real one without a trace. May be nil.
+	// a later-linked PR never hides the real one without a trace, and one per
+	// linked PR whose createdAt does not parse. May be nil.
 	Logf func(format string, args ...any)
 }
 
@@ -233,9 +234,14 @@ func (c *Client) PullRequest(ctx context.Context, issueID string) (PR, error) {
 			continue
 		}
 		// A missing or unparseable createdAt is the zero time, so it loses to
-		// any dated attachment and ties keep the first listed.
-		at, _ := time.Parse(time.RFC3339Nano, n.CreatedAt)
-		all = append(all, linked{PR{Owner: owner, Repo: repo, Number: num}, at})
+		// any dated attachment and ties keep the first listed. An unparseable
+		// one is logged (value capped at 64 bytes) so the tie is traceable.
+		pr := PR{Owner: owner, Repo: repo, Number: num}
+		at, terr := time.Parse(time.RFC3339Nano, n.CreatedAt)
+		if terr != nil && n.CreatedAt != "" && c.Logf != nil {
+			c.Logf("linear: issue %s: linked PR %s: unparseable createdAt %.64q: read as the zero time", issueID, pr, n.CreatedAt)
+		}
+		all = append(all, linked{pr, at})
 		if best < 0 || at.After(all[best].at) {
 			best = len(all) - 1
 		}
