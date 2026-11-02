@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -111,12 +109,9 @@ func TestReviewCmd_AutoFixWithoutBaseOverrideStripsRemotePrefix(t *testing.T) {
 		runFixtureGit(t, wd, "branch", "-M", "main")
 		runFixtureGit(t, wd, "checkout", "-q", "-b", "feature")
 		runFixtureGit(t, wd, "branch", "-f", "main", "HEAD^")
-		bare := filepath.Join(t.TempDir(), "origin.git")
-		// Plain exec: the fixture env pins GIT_WORK_TREE, which a bare init refuses.
-		out, err := exec.Command("git", "init", "-q", "--bare", bare).CombinedOutput()
-		require.NoError(t, err, "git init --bare: %s", out)
-		runFixtureGit(t, wd, "remote", "add", "origin", bare)
-		runFixtureGit(t, wd, "push", "-q", "origin", "main")
+		// The repo itself is the remote: fetching from it yields origin/main with
+		// no second repository (and no raw git invocation outside the fixture helpers).
+		runFixtureGit(t, wd, "remote", "add", "origin", wd)
 		runFixtureGit(t, wd, "fetch", "-q", "origin")
 		runFixtureGit(t, wd, "remote", "set-head", "origin", "main")
 		runFixtureGit(t, wd, "branch", "-D", "main")
