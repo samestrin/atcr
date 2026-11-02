@@ -1,8 +1,8 @@
 # Technical-Debt Tooling (`atcr debt`)
 
 `atcr debt` queries, captures, and reports on the project's technical debt. All
-five of its subcommands — `list`, `add`, `dashboard`, `resolve`, and `compact` —
-read and write **one** store: the append-only, month-sharded JSONL backlog under
+of its subcommands — `list`, `add`, `dashboard`, `resolve`, `compact`, and the
+read-only `filter`, `clean` and `group` views — read and write **one** store: the append-only, month-sharded JSONL backlog under
 `.atcr/debt/` that `atcr reconcile` populates. An item filed by `atcr debt add`
 is therefore visible to `atcr debt list` and closeable by `atcr debt resolve`.
 
@@ -142,6 +142,9 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt list` | Print debt items as a table or JSON, with filtering and sorting |
 | `atcr debt add` | File a new item into the store |
 | `atcr debt dashboard` | Render an aggregated Markdown dashboard |
+| `atcr debt filter` | Select open items by severity, confidence, status and mode (replaces `llm-support td-filter`) |
+| `atcr debt clean` | Show what `llm-support td-clean` would leave: open, deferred and unreproducible items (read-only) |
+| `atcr debt group` | Group open items by path, category or file (replaces `llm-support group-td`; read-only) |
 | `atcr debt resolve` | List open items and record resolutions |
 | `atcr debt recluster` | Record feedback on how reconcile grouped a finding |
 | `atcr debt compact` | Fold the append-only store to its live records |
@@ -257,6 +260,52 @@ counter.
 Secret-shaped tokens (bearer / `sk-` API keys) accidentally pasted into finding
 text are scrubbed from the output; file paths and finding ids are preserved (both
 are required core data, and scrubbing an id would break the join contract).
+
+### `atcr debt filter`, `clean` and `group`
+
+Three read-only views over the store, ported from the `llm-support` commands that
+read the technical-debt README. They write nothing: no store record, event file
+or README is created, changed or deleted. Each emits JSON by default (`--json`)
+or a token-dense TOON payload with `--axi`, and takes `--store <path>` (default
+`<repo root>/.atcr/debt`).
+
+| Command | Replaces | Output | Flags |
+|---------|----------|--------|-------|
+| `atcr debt filter` | `llm-support td-filter` | `{items, summary}` | `--severity`, `--confidence`, `--status` (default `open`), `--mode quick-wins\|backlog\|all` (default `quick-wins`), `--max` (default 10, `0` = no cap) |
+| `atcr debt clean` | `llm-support td-clean` | `{items, summary}` | none beyond `--store`, `--json`, `--axi` |
+| `atcr debt group` | `llm-support group-td` | `{groups, ungrouped, summary}` | `--group-by path\|category\|file` (default `path`), `--path-depth` (default 2), `--min-group-size` (default 3) |
+
+Items are ordered most severe first. `--mode quick-wins` keeps estimates under
+30 minutes and `backlog` keeps 30 up to 2880; `all` keeps both.
+
+`atcr debt clean` is a **view, not a cleanup**. `td-clean` deleted `[x]` rows from
+the README; here the items it would leave are listed (open, deferred and
+unreproducible, with regenerated counts and the per-severity Stats table), and
+resolved, wontfix and attempts-exhausted items are counted as excluded. Nothing
+is removed from the store; use `atcr debt compact` to fold it.
+
+`atcr debt group` computes its grouping on every run and never stores it: a
+theme smaller than `--min-group-size` is left in `ungrouped`, and every CRITICAL
+item gets its own group regardless of size.
+
+#### Intended differences from the originals
+
+- They read the store, not the README table, so a README row without a
+  `debt:<id>` record is not seen. Run `atcr debt sync-outcomes` first to bring
+  ticked rows into the store.
+- `filter` does not offer the attempts, group or focus filters. Group is not a
+  record field (see [the seam](#ownership-model-and-the-seam)).
+- `clean` never rewrites or deletes anything.
+- Output is the `{items, summary}` / `{groups, ungrouped, summary}` shape, with
+  `--axi` for agents, not the `llm-support` output formats.
+
+#### Other `llm-support` tools
+
+| Tool | Replacement |
+|------|-------------|
+| `td_dedupe` | `atcr reconcile`, which merges duplicate findings before they reach the store |
+| `td_stats` | `atcr debt dashboard` |
+| `td-matrix`, `td_validate` | Not covered by `atcr debt`; tracked as rows in the technical-debt list |
 
 ### `atcr debt resolve`
 
