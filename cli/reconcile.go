@@ -365,10 +365,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 }
 
 // jsonLogFormat reports whether the run selected --log-format json, where
-// stderr must carry only NDJSON records.
+// stderr must carry only NDJSON records. It normalizes the flag the way
+// log.New does, so every spelling that picks the JSON sink is caught here too.
 func jsonLogFormat(cmd *cobra.Command) bool {
 	format, _ := cmd.Flags().GetString("log-format")
-	return format == "json"
+	return strings.EqualFold(strings.TrimSpace(format), "json")
 }
 
 // writeReconcileNextSteps closes the run with reconcile's Next: lines. Text mode
