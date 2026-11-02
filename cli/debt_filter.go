@@ -60,10 +60,25 @@ func newDebtFilterCmd() *cobra.Command {
 	cmd.Flags().String("mode", filterModeQuickWins, "quick-wins (est < 30) | backlog (30 <= est < 2880) | all")
 	cmd.Flags().Int("max", 10, "cap on how many items are returned, most severe first (0 = no cap)")
 	cmd.Flags().Bool("json", false, "emit {items, summary} as JSON (the default output)")
+	// The root PersistentPreRunE propagates this into the command context, as it
+	// does for `atcr review`; there is no legacy pipe encoder for this command.
+	cmd.Flags().Bool("axi", false, "emit {items, summary} as a token-dense TOON payload for agent consumption")
+	// Registered because every --axi command must carry it (TestAxiImpliesLegacyPipeFlag),
+	// but rejected: the pipe encoder is frozen and deprecated, and this command is new.
+	cmd.Flags().Bool("legacy-pipe", false, "not supported by this command; rejected")
+	_ = cmd.Flags().MarkHidden("legacy-pipe")
+	cmd.Annotations = map[string]string{noLegacyPipeAnnotation: "true"}
 	return cmd
 }
 
+// noLegacyPipeAnnotation marks a command whose --axi has no legacy pipe encoding,
+// so the root does not announce a deprecated encoder that will never run.
+const noLegacyPipeAnnotation = "atcr.noLegacyPipe"
+
 func runDebtFilter(cmd *cobra.Command, _ []string) error {
+	if legacy, _ := cmd.Flags().GetBool("legacy-pipe"); legacy {
+		return usageError(fmt.Errorf("--legacy-pipe is not supported by debt filter; --axi emits standard TOON"))
+	}
 	mode := strings.ToLower(strings.TrimSpace(mustFlag(cmd, "mode")))
 	var floor, ceil int
 	switch mode {

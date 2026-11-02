@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -145,13 +143,21 @@ func TestDebtFilter_UsageErrors(t *testing.T) {
 
 func TestDebtFilter_AXI(t *testing.T) {
 	dir := debtFilterStore(t)
-	cmd := newDebtCmd()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"filter", "--dir", dir, "--mode", "all", "--max", "3"})
-	require.NoError(t, cmd.ExecuteContext(newAXIContext(context.Background(), true)))
-	out := buf.String()
-	assert.Contains(t, out, "items[3]{id,severity,confidence,status,file,line,category,est_minutes,problem,fix}:")
-	assert.Contains(t, out, "matched: 7")
+	// Through the real root, so the test proves a user can select the flag.
+	code, stdout, _ := execCmdSplit(t, "debt", "filter", "--dir", dir, "--axi", "--mode", "all", "--max", "3")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "items[3]{id,severity,confidence,status,file,line,category,est_minutes,problem,fix}:")
+	assert.Contains(t, stdout, "matched: 7")
+}
+
+func TestDebtFilter_LegacyPipeRejected(t *testing.T) {
+	dir := debtFilterStore(t)
+	code, _, _ := execCmdSplit(t, "debt", "filter", "--dir", dir, "--axi", "--legacy-pipe")
+	assert.Equal(t, 2, code)
+
+	t.Setenv("ATCR_LEGACY_PIPE", "1")
+	code, stdout, stderr := execCmdSplit(t, "debt", "filter", "--dir", dir, "--axi")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stdout, "items[")
+	assert.NotContains(t, stderr, "deprecated", "no deprecation notice for an encoder this command lacks")
 }
