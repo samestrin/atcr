@@ -98,6 +98,31 @@ func TestReviewCmd_AutoFixWithoutBaseOverrideTargetsDefaultBranch(t *testing.T) 
 		"without --auto-fix-base the base stays the repository default branch")
 }
 
+// TestReviewCmd_AutoFixWithoutBaseOverrideStripsRemotePrefix: on a clone whose
+// origin/HEAD points at origin/main, gitrange resolves the default branch to the
+// remote-tracking ref "origin/main"; the pull request base must be "main",
+// since GitHub refuses a remote-tracking ref (422).
+func TestReviewCmd_AutoFixWithoutBaseOverrideStripsRemotePrefix(t *testing.T) {
+	setup := func() {
+		wd, err := os.Getwd()
+		require.NoError(t, err)
+		runFixtureGit(t, wd, "branch", "-M", "main")
+		runFixtureGit(t, wd, "checkout", "-q", "-b", "feature")
+		runFixtureGit(t, wd, "branch", "-f", "main", "HEAD^")
+		// The repo itself is the remote: fetching from it yields origin/main with
+		// no second repository (and no raw git invocation outside the fixture helpers).
+		runFixtureGit(t, wd, "remote", "add", "origin", wd)
+		runFixtureGit(t, wd, "fetch", "-q", "origin")
+		runFixtureGit(t, wd, "remote", "set-head", "origin", "main")
+		runFixtureGit(t, wd, "branch", "-D", "main")
+	}
+	code, out, gh := runReviewAutoFix(t, setup)
+	require.Equal(t, 0, code, out)
+	require.Equal(t, 1, gh.createPR, "the run must open one pull request: %s", out)
+	require.Equal(t, "main", gh.lastPRReq.Base,
+		"the origin/ remote-tracking prefix must not reach the pull request base")
+}
+
 // TestReviewCmd_AutoFixBaseRequiresAutoFix: the override alone does nothing, so
 // it is a usage error (exit 2) before any review work, like --single-model.
 func TestReviewCmd_AutoFixBaseRequiresAutoFix(t *testing.T) {
@@ -155,4 +180,12 @@ func TestReviewCmd_ResumeRejectsAutoFixBase(t *testing.T) {
 	code, out := execCmdCapture(t, "review", "--resume", "latest", "--auto-fix-base", "release/1.x")
 	require.Equal(t, 2, code, out)
 	require.Contains(t, out, "--resume does not support --auto-fix-base")
+}
+
+// TestLocalBranchName: auto mode's default branch is a remote-tracking ref
+// (origin/main); the PR base must be the bare branch GitHub accepts.
+func TestLocalBranchName(t *testing.T) {
+	require.Equal(t, "main", autoFixBaseBranch("", localBranchName("origin/main")))
+	require.Equal(t, "release/1.x", localBranchName("origin/release/1.x"))
+	require.Equal(t, "main", localBranchName("main"))
 }

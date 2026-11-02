@@ -1123,7 +1123,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// findings, and it is terminal — the fail-on exit gate below is bypassed
 		// because the intent under --auto-fix is to remediate, not to fail CI.
 		if autoFix {
-			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, autoFixBaseBranch(afBase, res.DefaultBranch))
+			return orchestrateAutoFix(ctx, cmd.OutOrStdout(), afBackend, result.Dir, threshold, autoFixBaseBranch(afBase, localBranchName(res.DefaultBranch)))
 		}
 
 		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
@@ -1180,10 +1180,22 @@ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) 
 	for i, s := range steps {
 		steps[i] = strings.ReplaceAll(s, idPlaceholder, prep.ID)
 	}
+	// A registry entry shorter than the two-step hint must not panic the
+	// interrupt path: fall back to the plain commands.
+	if len(steps) < 2 {
+		steps = []string{"atcr status " + prep.ID, "atcr review --resume " + prep.ID}
+	}
 	return fmt.Sprintf(
 		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
 			"   Run '%s' to inspect, or '%s' to finish the remaining agents.\n",
 		done, total, dir, steps[0], steps[1])
+}
+
+// localBranchName strips the origin/ remote-tracking prefix from a resolved
+// default branch (origin/main -> main): GitHub refuses a PR base spelled as a
+// remote-tracking ref.
+func localBranchName(ref string) string {
+	return strings.TrimPrefix(ref, "origin/")
 }
 
 // runReviewWithHelp is the review command's RunE: runReview (fresh or
