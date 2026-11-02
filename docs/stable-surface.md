@@ -145,6 +145,19 @@ No flags.
 | `--status` | string | `open` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt group`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--group-by` | string | `path` |  |
+| `--json` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
+| `--min-group-size` | int | `3` |  |
+| `--path-depth` | int | `2` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt list`
 
 | Flag | Type | Default | Status |

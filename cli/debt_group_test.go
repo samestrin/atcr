@@ -38,7 +38,7 @@ type tdGroupGolden struct {
 		TotalMinutes int           `json:"total_minutes"`
 		Frontend     bool          `json:"frontend"`
 	} `json:"groups"`
-	Ungrouped []tdGroupItem      `json:"ungrouped"`
+	Ungrouped []tdGroupItem    `json:"ungrouped"`
 	Summary   debtGroupSummary `json:"summary"`
 }
 
@@ -225,4 +225,30 @@ func TestDebtGroupFrontend(t *testing.T) {
 	for _, c := range cases {
 		assert.Equal(t, c.want, debtGroupFrontend(localdebt.Record{File: c.file, Category: c.category}), "%+v", c)
 	}
+}
+
+func TestDebtGroup_CriticalThemeKeepsItsItems(t *testing.T) {
+	// group-td sorts a theme named "critical" first; with CRITICAL items present
+	// its map lets their group overwrite the theme and it exits on "Data loss
+	// detected". Intended difference: the theme follows the CRITICAL group.
+	item := func(sev, fl, p string) localdebt.Record {
+		return debtGroupRecord("", tdGroupItem{Severity: sev, FileLine: fl, Problem: p, Category: "x", EstMinutes: "1"})
+	}
+	dir := writeLocalDebt(t,
+		item("CRITICAL", "a/x.go:1", "c"),
+		item("LOW", "critical/a.go:1", "1"),
+		item("LOW", "critical/b.go:1", "2"),
+		item("LOW", "critical/c.go:1", "3"),
+		item("LOW", "b/a.go:1", "b1"),
+		item("LOW", "b/b.go:1", "b2"),
+		item("LOW", "b/c.go:1", "b3"),
+	)
+	got := runDebtGroupJSON(t, dir)
+	require.Len(t, got.Groups, 3)
+	assert.Equal(t, []string{"c"}, problemsOf(got.Groups[0].Items))
+	assert.Equal(t, "critical", got.Groups[1].Theme)
+	assert.Equal(t, "critical/*", got.Groups[1].PathPattern)
+	assert.Equal(t, []string{"1", "2", "3"}, problemsOf(got.Groups[1].Items))
+	assert.Equal(t, "b", got.Groups[2].Theme)
+	assert.Equal(t, 7, got.Summary.GroupedCount)
 }
