@@ -3296,7 +3296,7 @@ type byteOvershoot struct {
 }
 
 // chunkPrefixBytes is the byte length of the first prefixLines lines of
-// chunk, the engine-rendered preamble diffPrefixLines counted. prefixLines is
+// chunk, the engine-rendered preamble diffPrefixLines counted. A prefixLines
 // past the lines chunk has is a clamp, not a real split: it returns 0 so the
 // caller attributes the whole chunk to the diff rather than to the preamble.
 func chunkPrefixBytes(chunk string, prefixLines int) int {
@@ -3304,6 +3304,11 @@ func chunkPrefixBytes(chunk string, prefixLines int) int {
 		return 0
 	}
 	parts := strings.SplitAfterN(chunk, "\n", prefixLines+1)
+	// A trailing newline ends the last line; the empty element after it is not
+	// another line, so drop it before comparing the line count to prefixLines.
+	if parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
 	if len(parts) < prefixLines {
 		return 0
 	}
