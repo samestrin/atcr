@@ -506,7 +506,7 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 // reader to "epic 35.16.11.3 ... (its task 7 rider)", but that epic completed
 // and its riders moved to 35.16.11.3.1_scorecard-trust-riders.md, which also
 // completed without taking the residual. The comment must name the plan the
-// riders actually landed in and say plainly that nothing owns the residual, so
+// riders actually landed in and name epic 107, which now owns the residual, so
 // no reader goes looking for a task that will never deliver it.
 func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "scorecard", "scorecard.go"))
@@ -532,8 +532,10 @@ func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
 		"the comment must point at the completed riders plan, not the parent epic")
 	assert.Contains(t, flat, "TD-036",
 		"the comment must still name the residual it is talking about")
-	assert.Contains(t, flat, "unowned",
-		"the comment must say the residual is unowned, since no plan took it")
+	assert.Contains(t, flat, "107_scorecard-doc-shield-provenance.md",
+		"the comment must name epic 107 as the owner of the residual")
+	assert.NotContains(t, flat, "unowned",
+		"the residual is owned by epic 107 now; the stale 'unowned' claim must be gone")
 	assert.NotContains(t, flat, "its task 7 rider",
 		"the stale pointer at the parent epic's task 7 rider must be gone")
 }
