@@ -267,12 +267,6 @@ func TokensToBytes(tokens int) int64 {
 // providers reject a continuation turn whose reasoning is missing.
 const ReasoningReplayReserveCaps = 2
 
-// SizingOutputTokens is the token reservation a payload is sized against: the
-// output cap, plus the replayed-reasoning reserve when the agent runs the tool
-// loop (its lane requests tools and its own model declares function calling). A
-// single-shot or degraded agent replays nothing and keeps the plain output-cap
-// reservation. It lives here, not in internal/fanout, so review's sizing and
-// doctor's zero-budget pre-flight apply one rule and cannot disagree.
 // ReasoningReserveClause names the replayed-reasoning reserve a tool-loop agent's
 // sizing holds back on top of its output cap, as a clause to append after a message
 // has named that cap. It returns "" for a single-shot agent, which reserves nothing
@@ -282,9 +276,9 @@ const ReasoningReplayReserveCaps = 2
 // zero-budget hint and review's zero-budget warnings cannot word the same reservation
 // differently — review previously named only the unreserved cap, which made the
 // window-vs-cap arithmetic on screen look like it fit. Both of review's zero-budget
-// warnings now call it: the chunk-planning one (warnOversized, before chunks are
-// cut) and the smallest-file one (warnOversized, on the keepSmallestEntry arm), both in
-// internal/fanout/review.go.
+// warnings now call it, and both live in buildSlotsFor (internal/fanout/review.go),
+// gated by its warnOversized parameter: the chunk-planning one, before chunks are
+// cut, and the smallest-file one, after keepSmallestEntry picks the file.
 func ReasoningReserveClause(toolLoop bool, outputTokens int) string {
 	if !toolLoop {
 		return ""
@@ -293,6 +287,12 @@ func ReasoningReserveClause(toolLoop bool, outputTokens int) string {
 		outputTokens*ReasoningReplayReserveCaps, ReasoningReplayReserveCaps)
 }
 
+// SizingOutputTokens is the token reservation a payload is sized against: the
+// output cap, plus the replayed-reasoning reserve when the agent runs the tool
+// loop (its lane requests tools and its own model declares function calling). A
+// single-shot or degraded agent replays nothing and keeps the plain output-cap
+// reservation. It lives here, not in internal/fanout, so review's sizing and
+// doctor's zero-budget pre-flight apply one rule and cannot disagree.
 func SizingOutputTokens(toolLoop bool, outputTokens int) int {
 	if !toolLoop {
 		return outputTokens
