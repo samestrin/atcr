@@ -102,8 +102,47 @@ The example below is deliberately fictional — its ids and line numbers name no
 | `line_end` | integer | yes | Last line of the settling range, 1-based, inclusive. Equals `line_start` for a single line. |
 | `line_tolerance` | integer | no | Match tolerance in lines. Defaults to `3` when omitted. |
 | `outside_diff` | boolean | yes | `true` when the settling line is **not** among the diff's added or removed lines. |
-| `category` | string | yes | Expected finding category, from atcr's closed category vocabulary (for example `correctness`, `security`, `performance`, `maintainability`). |
+| `category` | string | yes | Expected finding category, from atcr's closed category vocabulary, enumerated in full under [The category vocabulary](#the-category-vocabulary) below. |
 | `summary` | string | yes | One sentence stating the defect concretely enough that a third party can confirm it is really present in the case. |
+
+### The category vocabulary
+
+`category` is closed, not illustrative. The complete vocabulary — every legal value, in the order reviewers are offered it — is:
+
+- `correctness` — the code produces a wrong result: off-by-one, inverted condition, unreachable branch
+- `logic` — accepted equivalent spelling of `correctness`
+- `security` — injection, auth bypass, traversal; every vulnerability class except credential exposure
+- `secret` — an exposed credential specifically: hardcoded key, secret in a log, weak secret handling
+- `performance` — hot-path cost: N+1 calls, needless allocation, accidental O(n²)
+- `concurrency` — synchronization and lifecycle misuse: lock discipline, channel/WaitGroup hazards, goroutines with no exit path
+- `race` — a specific unsynchronized access to specific shared state, including check-then-act (TOCTOU)
+- `error-handling` — swallowed or ignored errors, missing timeouts, unbounded retries, partial-failure states
+- `state` — stale caches, mutation of shared data, ordering assumptions
+- `invariant` — a property the code assumes but never establishes or enforces
+- `type` — type-safety gaps: over-broad any/dynamic typing, unchecked assertions, lossy conversion
+- `api-contract` — the published interface itself is wrong: signature, error type, or ownership semantics that callers must code around
+- `contract` — this change violates an existing contract: the function does not honour its own name, docs, or signature
+- `validation` — a validation rule that is missing, too weak, or applied on the wrong side of the boundary
+- `input-validation` — untrusted input reaching logic unchecked (the trust-boundary subset of `validation`)
+- `resource-leak` — an acquired resource with no release path: unclosed handle, connection churn, unbounded cache
+- `leak` — a leak of something other than a held resource: memory retained by a live reference, a leaked secret or internal detail
+- `dependency` — a dependency that is unnecessary, unpinned, misused, or points the wrong way
+- `configuration` — dangerous defaults, unvalidated config, undocumented environment dependence
+- `coupling` — hidden dependencies, layer violations, config reach-through, two sources of truth
+- `complexity` — this code is harder to follow than the problem requires
+- `bloat` — code that should not exist at all: dead branches, unused abstraction, speculative generality
+- `duplication` — parallel implementations that will drift apart
+- `extensibility` — a hardcoded assumption the known roadmap already contradicts
+- `maintainability` — structural readability cost not captured above: functions doing three jobs, misleading structure, comments that lie
+- `naming` — an identifier that promises something the code does not do, or one concept spelled three ways
+- `style` — formatting and idiom only; no behavioural or structural claim
+- `observability` — if this breaks in production nobody will know: no log, metric, or error context
+- `testing` — absent, vacuous, or non-isolated tests
+- `docs` — documentation or comments made wrong by this change
+- `out-of-scope` — routing value: the finding is outside the reviewed change
+- `other` — routing value: a real finding that genuinely fits no member above; the escape hatch that makes the set closed rather than lossy
+
+The loader rejects any other value at load time, naming the nearest legal member. This list is the same vocabulary `reconcile.Categories()` returns; it is copied here so picking a legal value requires no Go source, and a divergence between the two is a bug in whichever one changed last.
 
 ### The matching rule
 
@@ -114,6 +153,8 @@ A reported finding **matches** an expected finding when all three hold:
 3. When the expected finding has `outside_diff: true`, the reported line must itself not be an added or removed line of the diff.
 
 The reported file and line are the finding's `FILE:LINE`, unless its `EVIDENCE` declares `sibling: <file>:<line>`: then they are that sibling location. A reviewer anchors a sibling-arm finding on the edited line so the grounding gate keeps it, and the marker names where the defect actually is.
+
+`category` does not participate in matching. The three conditions above are the whole rule — file, line window, and the `outside_diff` guard — so a category mismatch neither breaks nor degrades a match; it is not consulted at all. A reviewer that cites the right line under a defensible neighbouring word still scores the hit. What `category` feeds instead is the category-recall side of scoring; see [Scoring](#scoring).
 
 Condition 3 is what makes `outside_diff` a measurement rather than a label: a tolerance window can brush the change (the settling line sits near the code the diff edits), and without it a reviewer citing an added line inside the window would score the tier's outside-diff metric while having read nothing but added and removed lines.
 
@@ -127,7 +168,51 @@ A reported finding matches at most one expected finding: when several are in ran
 
 A finding with `outside_diff: false` is settled by a line the diff itself contains. Any reviewer reading only added and removed lines can reach it.
 
-A finding with `outside_diff: true` is settled by a line the diff does **not** touch. It is reachable only by a reviewer that consulted repository state beyond the diff — because the claim named a behavior the diff never changed, or because the defect is an *absence* and an absent change leaves no trace in a diff. Scoring reports these separately from in-diff findings: a run that scores well on in-diff findings and zero on `outside_diff` ones has demonstrated exactly the gap this tier measures, and collapsing the two into one number would hide it.
+A finding with `outside_diff: true` is settled by a line the diff does **not** touch. It is reachable only by a reviewer that consulted repository state beyond the diff — because the claim named a behavior the diff never changed, or because the defect is an *absence* and an absent change leaves no trace in a diff. Scoring reports these separately from in-diff findings (the figures are defined under [Scoring](#scoring)): a run that scores well on in-diff findings and zero on `outside_diff` ones has demonstrated exactly the gap this tier measures, and collapsing the two into one number would hide it.
+
+## Scoring
+
+A repo-state-v1 run produces two kinds of figures for each reviewer: **positional recall**, which this tier exists for and which is defined here, and the **standard-v1 submission-envelope metrics**, which apply unchanged.
+
+### Positional recall
+
+The matching rule decides, for every expected finding of every case, whether the reviewer matched it. Per case, the recall numerator is the number of expected findings matched (each expected finding is matched at most once, so N reports of one defect count once), and the denominator is the number of entries in `expected_findings`, which is never empty.
+
+Across the suite, a reviewer's figures are **micro-averaged over findings** — the per-case outcomes are pooled into counts, and each rate is one division of pooled counts — deliberately not macro-averaged over cases: a case that plants no `outside_diff` finding has no per-case rate for that half, so any per-case averaging rule would have to invent one. The run-result carries them per reviewer under `reviewer_positional_recall[]`, each rate beside the counts it was divided from:
+
+| Field | Definition |
+|-------|------------|
+| `expected_total`, `matched_total`, `recall` | All expected findings: `recall = matched_total / expected_total`. |
+| `expected_within_diff`, `matched_within_diff`, `within_diff_recall` | The in-diff half only (`outside_diff: false`): `within_diff_recall = matched_within_diff / expected_within_diff`. |
+| `expected_outside_diff`, `matched_outside_diff`, `outside_diff_recall` | The out-of-diff half only (`outside_diff: true`): `outside_diff_recall = matched_outside_diff / expected_outside_diff`. |
+
+A rate whose denominator is zero is **omitted** (`null`), not reported as `0.0`: a suite that plants no out-of-diff finding gives a reviewer nothing to miss, and `0.0` would claim they missed findings that were never there. The counts beside each rate are what tell an unmeasured rate from a measured zero.
+
+A reported finding that matches no expected finding changes none of these figures: recall's numerator and denominator both count the expected side only, so an unmatched report is not a penalty and not a credit. **Precision is deliberately not reported** — `expected_findings` is the planted-defect subset, not exhaustive ground truth, so a precision-vs-planted metric would penalize a reviewer for also surfacing legitimate non-planted issues. Volume is visible separately as `findings_raised_avg` (below).
+
+One caveat on reading `outside_diff_recall`: it counts out-of-diff findings that survived the review pipeline's grounding gate *and* matched. The gate drops a finding whose cited file the patch never touched unless context pre-fetching retrieved the cited span, so `outside_diff_recall: 0.0` conflates "the reviewer never consulted unchanged code" with "the reviewer found something the gate discarded before scoring". The rate alone cannot separate the two.
+
+### The standard-v1 envelope applies unchanged
+
+A repo-state-v1 run also emits the same per-reviewer submission envelope `standard-v1` defines — `corroboration_rate`, `findings_raised_avg`, `runs`, `cost_per_corroborated_finding_usd`, `latency_p50_ms` — with identical definitions. In particular `corroboration_rate` stays **category recall**: the macro-average across cases of (distinct expected categories the reviewer satisfied with ≥1 finding) ÷ (distinct expected categories), where a case's expected categories are the deduplicated `category` values of its `expected_findings`. It answers a different question than positional recall — "did the reviewer raise the right *kind* of finding anywhere in the case" versus "did the reviewer find *this* defect" — and the two are reported side by side precisely so neither is read as the other.
+
+Category matching on this side is case-insensitive and whitespace-trimmed, and the standard-v1 **equivalence families** apply: a reported category satisfies an expected category when it is a member of that category's family. The families run coarse-expected → fine-raised only and are not symmetric; an expected category with no family is satisfied by exact match. The families are:
+
+- correctness: correctness, logic
+- security: security, secret, validation, input-validation
+- maintainability: maintainability, complexity, duplication, naming, bloat, style
+- performance: performance
+
+Because one raised finding could otherwise satisfy two expected categories at once, a case whose expected categories overlap through a family — say `maintainability` beside `style` — is invalid and rejected at load. Two findings sharing one category stay legal: the deduplicated set is then a single category with a denominator of 1.
+
+### Worked example: `claim-absent-cursor-fix`
+
+`claim-absent-cursor-fix` plants two expected findings, both `category: correctness` with `line_tolerance: 3`:
+
+- `begin-still-wipes-the-cursor` at `streamer/cursor.py:46`, `outside_diff: true` — match window lines 43–49;
+- `test-named-for-the-fix-asserts-the-helper` at `tests/test_cursor.py:8`, `outside_diff: false` — match window lines 5–11.
+
+Suppose a reviewer reports exactly one finding: `streamer/cursor.py:49` (the `self._offset = self._drain_offset()` assignment in `begin()`), categorized `correctness`. Line 49 sits inside 43–49 and is a context line, not an added or removed line of `change.diff`, so condition 3 passes and the first expected finding matches; nothing is reported near `tests/test_cursor.py:8`, so the second does not. The positional figures are therefore `expected_total = 2`, `matched_total = 1`, `recall = 1/2 = 0.5`; `expected_outside_diff = 1`, `matched_outside_diff = 1`, `outside_diff_recall = 1/1 = 1.0`; `expected_within_diff = 1`, `matched_within_diff = 0`, `within_diff_recall = 0/1 = 0.0`. On the envelope side the case's deduplicated expected categories are just `correctness`, the report's `correctness` satisfies it, and the case contributes a category recall of 1/1 toward `corroboration_rate`. Had the reviewer filed the same line under `logic` instead, the positional figures would be identical — category does not participate in matching — and the envelope figure would also be unchanged, because `logic` is in the `correctness` family.
 
 ## Suite manifest
 

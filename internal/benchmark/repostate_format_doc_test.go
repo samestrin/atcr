@@ -106,7 +106,7 @@ func TestRepoStateFormat_ClosedVocabularyInline(t *testing.T) {
 	doc := formatMD(t)
 	for _, word := range reconcile.Categories() {
 		// Word-boundary match: `state` must not be satisfied by "head state".
-		if !regexp.MustCompile(`\b`+regexp.QuoteMeta(word)+`\b`).MatchString(doc) {
+		if !regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`).MatchString(doc) {
 			t.Errorf("FORMAT.md never enumerates vocabulary member %q; an author must read Go source (reconcile/category.go) to learn it is legal", word)
 		}
 	}
