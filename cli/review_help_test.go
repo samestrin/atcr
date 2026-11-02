@@ -150,3 +150,17 @@ func TestReviewCmd_DryRunNoHelp(t *testing.T) {
 	assert.NotContains(t, stdout, "help[")
 	assert.NotContains(t, stderr, "Next:")
 }
+
+// TestInterruptMessage_ShortRegistryEntryDoesNotPanic: shrinking the
+// review:interrupted entry must not panic the interrupt path.
+func TestInterruptMessage_ShortRegistryEntryDoesNotPanic(t *testing.T) {
+	saved := suggestionRegistry[suggestReviewInterrupted]
+	t.Cleanup(func() { suggestionRegistry[suggestReviewInterrupted] = saved })
+	suggestionRegistry[suggestReviewInterrupted] = []nextStep{{Command: "show", Args: []string{idPlaceholder}}}
+	var msg string
+	require.NotPanics(t, func() {
+		msg = interruptMessage(nil, &fanout.PreparedReview{ID: "rev-7", Dir: "/d"})
+	})
+	assert.Contains(t, msg, "atcr status rev-7")
+	assert.Contains(t, msg, "atcr review --resume rev-7")
+}

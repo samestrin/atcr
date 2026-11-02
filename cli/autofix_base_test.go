@@ -156,3 +156,11 @@ func TestReviewCmd_ResumeRejectsAutoFixBase(t *testing.T) {
 	require.Equal(t, 2, code, out)
 	require.Contains(t, out, "--resume does not support --auto-fix-base")
 }
+
+// TestLocalBranchName: auto mode's default branch is a remote-tracking ref
+// (origin/main); the PR base must be the bare branch GitHub accepts.
+func TestLocalBranchName(t *testing.T) {
+	require.Equal(t, "main", autoFixBaseBranch("", localBranchName("origin/main")))
+	require.Equal(t, "release/1.x", localBranchName("origin/release/1.x"))
+	require.Equal(t, "main", localBranchName("main"))
+}

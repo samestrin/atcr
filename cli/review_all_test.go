@@ -1081,7 +1081,7 @@ func TestBaselineWithheldCause_NamesTheCauseThatActuallyFired(t *testing.T) {
 // counter that the surrounding comment is about is the one to name, so the operator
 // sees the remedy the comment promises.
 func TestBaselineWithheldCause_ContributedNothingOutranksOtherCauses(t *testing.T) {
-	got := baselineWithheldCause(fanout.Summary{ContributedNothingCount: 1, UnreviewedChunks: 5})
+	got := baselineWithheldCause(fanout.Summary{ContributedNothingCount: 1, UnreviewedChunks: 5, Failed: 1})
 	assert.Contains(t, got, "contributed nothing")
 	assert.NotContains(t, got, "failed chunks")
 }
