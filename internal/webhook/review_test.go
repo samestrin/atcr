@@ -350,7 +350,9 @@ func TestSummarize_SlackKeepsMrkdwn(t *testing.T) {
 // The GitHub escaper breaks a mention or an issue reference with a zero-width
 // space wherever GitHub would read one: an @ or a # at the start of the text
 // or after a character that is not an ASCII word character. Mid-word, as in
-// an email address or owner/repo#7, GitHub links nothing, so it is left alone.
+// an email address, GitHub links nothing, so it is left alone. A cross-repo
+// owner/repo#7 does link on GitHub; it is left alone here so the trusted
+// heading keeps its PR reference, which leaves that shape linkable in a title.
 func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 	const zwsp = "\u200b"
 	cases := map[string]string{
@@ -370,6 +372,7 @@ func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 		"# 12":              "# 12",
 		"@ octocat":         "@ octocat",
 		"@-x":               "@-x",
+		"@_octocat":         `@\_octocat`,
 		"trailing @ and #":  "trailing @ and #",
 		"Compare a & b < c": `Compare a \& b \< c`,
 	}

@@ -243,7 +243,10 @@ var markdownEscaper = strings.NewReplacer(
 // neutralizeRefs inserts a zero-width space after each @ that starts a
 // mention and each # that starts an issue reference. GitHub reads one only at
 // the start of the text or after a character that is not an ASCII word
-// character, so a@b.example and owner/repo#7 are left alone.
+// character, so a@b.example is left alone. A cross-repo owner/repo#7 links on
+// GitHub but is left alone too, so the trusted heading keeps its PR reference.
+// It runs after markdownEscaper, so an underscore arrives as \_ and @_x is
+// never read as a mention.
 func neutralizeRefs(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -253,7 +256,7 @@ func neutralizeRefs(s string) string {
 			continue
 		}
 		next := s[i+1]
-		if (c == '@' && isASCIIWord(next) && next != '_') || (c == '#' && next >= '0' && next <= '9') {
+		if (c == '@' && isASCIIWord(next)) || (c == '#' && next >= '0' && next <= '9') {
 			b.WriteString("\u200b")
 		}
 	}
