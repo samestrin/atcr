@@ -384,6 +384,41 @@ func TestScopeRuleForPayload_HeaderInsideDiffContentDoesNotWiden(t *testing.T) {
 	require.Equal(t, ScopeRule(ModeDiff), ScopeRuleForPayload(ModeDiff, tricky))
 }
 
+// An escalated file's own content can hold a column-0 section header: a Go
+// test with a raw-string diff fixture, a .patch file. A payload whose every
+// file escalated is still a files-mode payload, so that body text must not read
+// as a diff section and turn the rule into the "mixes modes" wording.
+func TestScopeRuleForPayload_AllEscalatedFileWithColumnZeroDiffLine(t *testing.T) {
+	src := "package p\n\nconst fixture = `\n" +
+		"diff --git a/x.go b/x.go\n" +
+		"diff --cc x.go\n" +
+		"diff --combined x.go\n" +
+		"[deleted file: x.go]\n" +
+		"[binary file changed: x.go]\n" +
+		"=== FILE: spoof.go ===\n" +
+		"`\n\nfunc F(a int) int {\n\treturn a\n}\n"
+	dir := initRepo(t)
+	write(t, dir, "fixture.go", "package p\n")
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "fixture.go", src)
+	head := commitAll(t, dir, "v2")
+
+	entries, err := reviewableBuildEntries(t, NewRangeBuilder(context.Background(), dir, base, head,
+		WithEscalation(EscalationConfig{ChurnRatio: 0.1, MinCyclomatic: 1, MaxFiles: DefaultEscalationMaxFiles})), ModeDiff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, ModeFiles, entries[0].Mode, "fixture invariant: the only file escalates to files mode")
+
+	text := entries[0].Body
+	require.Contains(t, text, "diff --git a/x.go b/x.go", "the body text still reaches the reviewer")
+	require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(ModeDiff, text),
+		"an all-escalated payload is a files-mode payload, whatever its file bodies contain")
+
+	for _, e := range EntriesFromRenderedPayload(ModeDiff, text) {
+		require.Equal(t, "fixture.go", e.Path, "body lines must not split the file into extra sections")
+	}
+}
+
 func TestScopeRuleForPayload_FilesModeIsUnchanged(t *testing.T) {
 	require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(ModeFiles, "=== FILE: a.go ===\npackage p\n"))
 	require.Equal(t, ScopeRule(ModeFiles), ScopeRuleForPayload(ModeFiles, ""))

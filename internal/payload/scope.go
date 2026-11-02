@@ -195,7 +195,10 @@ func ScopeRule(mode PayloadMode) string {
 // chunk that contains no escalated file should keep the narrow rule. Detection
 // keys on a files-mode header at the start of a line: inside a unified diff
 // every content line carries a +/-/space prefix, so a header can never appear at
-// column 0 unless a file really was rendered in files mode.
+// column 0 unless a file really was rendered in files mode. A files-mode body
+// is raw file content, so renderWithSentinels prefixes any of its lines that
+// would read as a section header; the column-0 markers are therefore only the
+// section headers themselves.
 func ScopeRuleForPayload(mode PayloadMode, text string) string {
 	if mode == ModeFiles {
 		return scopeFilesFull
@@ -280,6 +283,8 @@ const maxNamedScopeFiles = 10
 
 // hasNonFilesEntry reports whether text holds a per-file body that is not a
 // files-mode one (a diff, deleted or binary marker) at the start of a line.
+// Only section headers sit at column 0: a files-mode body's own lines that
+// look like one are prefixed when rendered (renderWithSentinels).
 func hasNonFilesEntry(text string) bool {
 	for _, m := range []string{gitDiffMarker, combinedHeaderCC, combinedHeader, deletedMarkerPfx, binaryMarkerPrefix} {
 		if strings.HasPrefix(text, m) || strings.Contains(text, "\n"+m) {
