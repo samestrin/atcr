@@ -274,7 +274,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
-	writeSuppressedNotice(cmd.ErrOrStderr(), len(res.Suppressed))
+	writeSuppressedNoticeCmd(cmd, len(res.Suppressed))
 
 	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
 	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
@@ -360,8 +360,30 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// Next-step suggestions (Epic 42.0) close the run on stderr, after every
 	// other diagnostic. The findings were reconciled whatever the gate or the
 	// cloud push decided, so the next steps apply on every path that gets here.
-	writeNextSteps(cmd.ErrOrStderr(), suggestReconcile, invocation{Flags: invocationFlags(cmd)})
+	writeReconcileNextSteps(cmd, invocation{Flags: invocationFlags(cmd)})
 	return err
+}
+
+// jsonLogFormat reports whether the run selected --log-format json, where
+// stderr must carry only NDJSON records. It normalizes the flag the way
+// log.New does, so every spelling that picks the JSON sink is caught here too.
+func jsonLogFormat(cmd *cobra.Command) bool {
+	format, _ := cmd.Flags().GetString("log-format")
+	return strings.EqualFold(strings.TrimSpace(format), "json")
+}
+
+// writeReconcileNextSteps closes the run with reconcile's Next: lines. Text mode
+// prints them raw via writeNextSteps; under --log-format json each line rides the
+// context logger (the warnLegacyPipe pattern), so stderr stays NDJSON-only.
+func writeReconcileNextSteps(cmd *cobra.Command, inv invocation) {
+	if !jsonLogFormat(cmd) {
+		writeNextSteps(cmd.ErrOrStderr(), suggestReconcile, inv)
+		return
+	}
+	logger := log.FromContext(cmd.Context())
+	for _, line := range renderSuggestions(suggestReconcile, inv) {
+		logger.Warn("Next: " + line)
+	}
 }
 
 // persistLocalDebt is the CLI half of the local-TD persistence hook: delegate to
@@ -561,5 +583,24 @@ func writeSuppressedNotice(w io.Writer, n int) {
 	if n == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "atcr: %d finding(s) suppressed by .atcr/ignore.yaml rules (listed in reconciled/%s)\n", n, reconcile.SuppressedJSON)
+	_, _ = fmt.Fprintln(w, suppressedNotice(n))
+}
+
+// writeSuppressedNoticeCmd is writeSuppressedNotice on cmd's stderr, except under
+// --log-format json, where the notice rides the context logger so stderr stays
+// NDJSON-only.
+func writeSuppressedNoticeCmd(cmd *cobra.Command, n int) {
+	if n == 0 {
+		return
+	}
+	if !jsonLogFormat(cmd) {
+		writeSuppressedNotice(cmd.ErrOrStderr(), n)
+		return
+	}
+	log.FromContext(cmd.Context()).Warn(suppressedNotice(n))
+}
+
+// suppressedNotice is the suppressed-findings line both writers emit.
+func suppressedNotice(n int) string {
+	return fmt.Sprintf("atcr: %d finding(s) suppressed by .atcr/ignore.yaml rules (listed in reconciled/%s)", n, reconcile.SuppressedJSON)
 }
