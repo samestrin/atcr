@@ -26,10 +26,15 @@ func TestPredicateRuleGaps_NamesOnlyTheRuleLess(t *testing.T) {
 		[]byte("# owasp\n\n## Focus\n1. Injection findings\n\n## Output Format\nSEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE\n"),
 		0o644))
 
-	// A project persona that DOES carry the rule (both anchors verbatim).
-	require.NoError(t, os.WriteFile(filepath.Join(project, "strict.md"),
-		[]byte("# strict\n\n## Focus\n1. Predicate exhaustiveness: enumerate every branch of that predicate and every field it is contracted to cover — file it on the edited branch's changed line, quoting the sibling branch as evidence\n"),
-		0o644))
+	// A project persona that DOES carry the rule (both anchors verbatim). It is
+	// written to the pre-Epic-108 wording — no `sibling: <file>:<line>` marker —
+	// and must stay a carrier: the sibling anchor is pinned on the embedded
+	// built-ins only (personas.predicateSiblingAnchor), so doctor's verdict for
+	// a persona an operator already wrote does not change under them.
+	strict := "# strict\n\n## Focus\n1. Predicate exhaustiveness: enumerate every branch of that predicate and every field it is contracted to cover — file it on the edited branch's changed line, quoting the sibling branch as evidence\n"
+	require.NotContains(t, strict, "sibling:",
+		"precondition: the carrier row uses the pre-marker wording")
+	require.NoError(t, os.WriteFile(filepath.Join(project, "strict.md"), []byte(strict), 0o644))
 
 	dirs := PersonaDirs{Project: project}
 
