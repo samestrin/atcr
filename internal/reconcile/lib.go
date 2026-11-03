@@ -103,9 +103,23 @@ const PanelWideReason = reclib.PanelWideReason
 // JSONFinding.ConfidenceDiscount, with independence decided by
 // reclib.IsPanelWideQuotes. It is the rule reclib.Merge applies, so the
 // cluster merge and the fallback recompute record a discount exactly when the
-// library would, and take the reason from the same source.
-func discountedConfidence(reviewerCount int, category string, quotes []reclib.SourceQuote) (confidence, discount string) {
-	return reclib.DiscountedConfidence(reviewerCount, category, !reclib.IsPanelWideQuotes(quotes))
+// library would, and take the reason from the same source. provenanced is
+// false when a record's quotes were restated from a legacy record (memberQuotes)
+// rather than carried: such agreement is never read as independent.
+func discountedConfidence(reviewerCount int, category string, quotes []reclib.SourceQuote, provenanced bool) (confidence, discount string) {
+	return reclib.DiscountedConfidence(reviewerCount, category, provenanced && !reclib.IsPanelWideQuotes(quotes))
+}
+
+// quotesCategory is the modal category of a set of quotes, ranked the way
+// reclib.ModalCategory ranks a group's findings. The cluster merge takes its
+// record's category from here, so the category and the panel-wide test (whose
+// modal category is the same quotes') read one set (TD merge.go:69).
+func quotesCategory(quotes []reclib.SourceQuote) string {
+	group := make([]reclib.Finding, len(quotes))
+	for i, q := range quotes {
+		group[i] = reclib.Finding{Category: q.Category}
+	}
+	return reclib.ModalCategory(group)
 }
 
 // memberQuotes returns a findings.json record's per-reviewer quotes for the
@@ -115,13 +129,17 @@ func discountedConfidence(reviewerCount int, category string, quotes []reclib.So
 // evidence is its only quote. A record with no reviewers (hand-built, or an old
 // findings.json) still yields one quote with an empty Reviewer: it adds no
 // voice to the distinct-reviewer count, but its file and evidence are tested,
-// so it cannot drop out of the test. A multi-reviewer record written before
-// SourceQuotes existed is read with its joined evidence as every reviewer's
-// quote, which rarely matches a quote, so a union with it reads as independent:
-// the same accepted false negative reclib.IsPanelWide documents.
-func memberQuotes(f JSONFinding) []reclib.SourceQuote {
+// so it cannot drop out of the test.
+//
+// provenanced is false for a record with more than one reviewer and no
+// SourceQuotes: a findings.json written before source_quotes existed, whose
+// joined EVIDENCE cannot be split back into each reviewer's quote (the cluster
+// merge's joinEvidence stores no reviewer prefix). Its restated quotes still
+// count toward the category, but its agreement is not read as independent, so
+// a union that includes it stays discounted (EST-3970 Q1).
+func memberQuotes(f JSONFinding) (quotes []reclib.SourceQuote, provenanced bool) {
 	if len(f.SourceQuotes) > 0 {
-		return f.SourceQuotes
+		return f.SourceQuotes, true
 	}
 	reviewers := f.Reviewers
 	if len(reviewers) == 0 {
@@ -136,7 +154,7 @@ func memberQuotes(f JSONFinding) []reclib.SourceQuote {
 			Evidence: f.Evidence,
 		})
 	}
-	return out
+	return out, len(f.Reviewers) <= 1
 }
 
 // Result is ATCR's reconcile result. It mirrors reclib.Result (its fields are the

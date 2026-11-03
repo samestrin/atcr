@@ -120,7 +120,8 @@ func recomputeFallbackConfidence(findings []JSONFinding) {
 		// change when fallback collapses the count. The reason is re-derived so
 		// it survives only while it still lowers the confidence: a collapse to
 		// one distinct voice is MEDIUM on count alone.
+		quotes, provenanced := memberQuotes(findings[i])
 		findings[i].Confidence, findings[i].ConfidenceDiscount = discountedConfidence(
-			distinct, findings[i].Category, memberQuotes(findings[i]))
+			distinct, findings[i].Category, quotes, provenanced)
 	}
 }
