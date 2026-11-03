@@ -154,8 +154,15 @@ the decision was made on:
   `category` (lower-case) and `evidence`. When `atcr debate` merges two records
   a judge ruled duplicates, it tests the union of their `source_quotes`, so
   the merged record is discounted exactly when reconcile would have discounted
-  the same findings, and it carries the union on. A record from a single
+  the same findings, and it carries the union on. The merged record's
+  `category` is the most common category across that union, so it agrees
+  with the discount. A record from a single
   finding has no `source_quotes`: its `evidence` is its only quote.
+  A record with two or more reviewers and no `source_quotes` was written
+  before the field existed, and its reviewers' quotes cannot be recovered.
+  `atcr debate` treats its agreement as not independent, so a merge that
+  includes it is discounted when its category is `invariant`. The merged
+  record then carries no `source_quotes` either.
 
 ## Findings excluded from the primary stream
 

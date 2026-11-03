@@ -128,10 +128,14 @@ func TestMergeJSONFindings_DiscountedMemberIsReadThroughItsFirstQuote(t *testing
 		assert.Equal(t, ConfMedium, m.Confidence, name)
 		assert.Equal(t, PanelWideReason, m.ConfidenceDiscount, name)
 
-		for _, q := range memberQuotes(pair[0]) {
+		quotes, provenanced := memberQuotes(pair[0])
+		assert.True(t, provenanced, name)
+		for _, q := range quotes {
 			assert.Equal(t, quote, q.Evidence, "%s: %s's quote is whole", name, q.Reviewer)
 		}
-		for _, q := range memberQuotes(predicateRecord("kai", "key.go", quote)) {
+		quotes, provenanced = memberQuotes(predicateRecord("kai", "key.go", quote))
+		assert.True(t, provenanced, name)
+		for _, q := range quotes {
 			assert.Equal(t, quote, q.Evidence, "%s: an unprefixed quote passes through whole", name)
 		}
 	}
@@ -145,7 +149,8 @@ func TestMergeJSONFindings_ReviewerlessMemberCountsInTheIndependenceTest(t *test
 	reviewerless := predicateRecord("", "hash.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }")
 	reviewerless.Reviewers = nil
 
-	members := memberQuotes(reviewerless)
+	members, provenanced := memberQuotes(reviewerless)
+	assert.True(t, provenanced, "a reviewer-less record restates no one's quote")
 	require.Len(t, members, 1)
 	assert.Equal(t, reclib.SourceQuote{File: "hash.go", Category: "invariant", Evidence: reviewerless.Evidence}, members[0])
 

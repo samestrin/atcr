@@ -20,15 +20,18 @@ import (
 // MergeJSONFindings collapses a group of findings.json records — a gray-zone
 // cluster's members the judge ruled "merge" (Epic 6.1) — into one reconciled
 // record. It applies the same field rules as the library Merge (severity max with
-// a "<lo> vs <hi>" disagreement annotation, longest problem/fix, modal category,
-// max est-minutes) but over the already-reconciled JSONFinding shape, where
+// a "<lo> vs <hi>" disagreement annotation, longest problem/fix, modal category
+// over the source findings, max est-minutes) but over the already-reconciled JSONFinding shape, where
 // REVIEWERS is a list (the merge unions the per-record lists, not a single
 // per-source name). The location is the first member's file/line; EVIDENCE is the
-// distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
-// reviewer count, discounted to MEDIUM with ConfidenceDiscount set when the union
-// of the members' quotes is in the panel-wide-instruction class (memberQuotes,
-// discountedConfidence), and SourceQuotes carries that union so a later union
-// tests it too. Verification is combined by mergeVerification (verdict
+// distinct members' evidence joined by " / "; CATEGORY is the modal category of
+// the union of the members' quotes (memberQuotes, quotesCategory), so a member
+// merged from three findings weighs three; CONFIDENCE follows the unioned
+// reviewer count, discounted to MEDIUM with ConfidenceDiscount set when that
+// same union is in the panel-wide-instruction class or a member is a legacy
+// multi-reviewer record (discountedConfidence), and SourceQuotes carries the
+// union so a later union tests it too, except when a legacy member is present:
+// the record then carries none, so a later union reads it as legacy again. Verification is combined by mergeVerification (verdict
 // precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
 // the Epic 5.0 path-validation fields carry the first member's — the members are
 // co-located, so their path status is identical. ID is the first member's, not a
@@ -61,12 +64,20 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 	// tension (TD merge.go:282).
 	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
-	category := reclib.ModalCategory(sf)
 	var quotes []reclib.SourceQuote
+	provenanced := true
 	for _, f := range group {
-		quotes = append(quotes, memberQuotes(f)...)
+		q, ok := memberQuotes(f)
+		quotes = append(quotes, q...)
+		provenanced = provenanced && ok
 	}
-	confidence, discount := discountedConfidence(len(reviewers), category, quotes)
+	category := quotesCategory(quotes)
+	confidence, discount := discountedConfidence(len(reviewers), category, quotes, provenanced)
+	if !provenanced {
+		// A legacy member's restated quotes are not provenance: carrying them
+		// would let a later merge read this record as independent.
+		quotes = nil
+	}
 	merged := JSONFinding{
 		ID:           group[0].ID,
 		Severity:     maxSev,
