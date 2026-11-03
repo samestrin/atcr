@@ -1,0 +1,1 @@
+- The predicate-exhaustiveness rule in the built-in personas now asks the reviewer to declare the sibling branch's real location in EVIDENCE as `sibling: <file>:<line>`, instead of coaching the citation onto the edited line so the grounding gate keeps it. (epic 108)

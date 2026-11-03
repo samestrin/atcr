@@ -189,15 +189,15 @@ func TestRemitCategories_TableIsGroundedInTheEmbeddedPersonaFiles(t *testing.T) 
 // which fails with "re-derive this persona's remit" when the block drifts —
 // the answer to the grounding being one-way and unguarded.
 var personaFocusHashes = map[string]string{
-	"bruce":  "004fc16561276ab3",
-	"dax":    "d34a7f6c1e2f578f",
-	"greta":  "4133c3b9fcbf44cb",
-	"ingrid": "6e38fad4b8f6b217",
-	"kai":    "2eb148e3f3142dc2",
-	"mira":   "47af4070e9280ff4",
-	"otto":   "aafbb92a8d8c3a52",
-	"penny":  "0aa54d5004998028",
-	"sasha":  "3c8682aa976e0f00",
+	"bruce":  "10c7109fc8cdaa80",
+	"dax":    "8869d373a93e3bf0",
+	"greta":  "f2c628821ab1b30a",
+	"ingrid": "444a37221b90e368",
+	"kai":    "02b67d2aed8956d0",
+	"mira":   "fe2b12345fdd14ea",
+	"otto":   "f2e500b9b3f47151",
+	"penny":  "3bb36ca62c91c676",
+	"sasha":  "a127d92ee7a082c2",
 }
 
 // personaFocusHash returns the heading-scoped hash of a persona file's ## Focus
