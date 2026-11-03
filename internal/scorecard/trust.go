@@ -853,9 +853,10 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // Case 2) while this fold restores its CHARGE, so a lens whose only in-remit
 // evidence on a run was doc-shielded contributes nothing to that run's union.
 // That does not open a laundering route (TD-036): the restored charge makes the
-// record a raiser, so opportunityDisposition counts it rather than dropping it
-// as out-of-remit, even beside a discriminating out-of-remit category from
-// another reviewer. TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins
+// record a raiser, so opportunityDisposition keeps it as dispUnscopeable (kept,
+// charged, annotated no-recognized-category) rather than dropping it as
+// out-of-remit, even beside a discriminating out-of-remit category from another
+// reviewer. TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins
 // that through keptForTrust.
 //
 // ERA 4 gets the shield half of the fold and NOT the relabel. It keeps era 3's
@@ -892,7 +893,8 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // CategoriesRaised tracks the chargeable split, so a record whose charge this
 // fold just restored carries a category set that under-reports it. That is
 // harmless to the tally: the restored charge makes the record a raiser, so the
-// opportunity gate keeps it (TD-036 escape closed; see the test named above)
+// opportunity gate keeps it as dispUnscopeable (kept, charged, annotated
+// no-recognized-category; TD-036 escape closed, see the test named above)
 // without needing the shielded findings' categories on the record.
 //
 // The input slice is never mutated: callers hand in records read from the store

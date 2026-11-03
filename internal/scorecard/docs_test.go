@@ -533,6 +533,10 @@ func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
 		"the comment must point at the test that pins the closed escape")
 	assert.Contains(t, flat, "does not reopen the escape",
 		"the comment must say the escape is closed by the fold")
+	assert.Contains(t, flat, "dispUnscopeable",
+		"the comment must name the disposition the folded record actually gets")
+	assert.NotContains(t, flat, "dispCounted",
+		"the folded doc-shielded-only record is unscopeable, not counted")
 	assert.NotContains(t, flat, "107",
 		"epic 107 must not be named")
 	assert.NotContains(t, flat, "residual escape",
