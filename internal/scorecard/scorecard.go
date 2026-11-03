@@ -944,26 +944,20 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     FindingsRaised before the opportunity link runs, precisely so a reviewer
 //     cannot launder phantoms out of its prior by anchoring them on doc-named
 //     tokens. So in the trust tally the shielded finding IS charged while its
-//     category is still withheld, and a lens whose only in-remit evidence on a
-//     run was doc-shielded contributes nothing to that run's union — its record,
-//     re-folded charge and all, is then dropped whenever another reviewer raised
-//     a discriminating out-of-remit category. That is a real residual escape
-//     from the anti-laundering property, filed as TD-036. The code here is
-//     correct against its AC; only the old rationale was.
+//     category is still withheld. That does not reopen the escape (TD-036): the
+//     fold makes the record a raiser, so opportunityDisposition counts it
+//     (dispCounted) rather than dropping it as out-of-remit, even when another
+//     reviewer raised a discriminating out-of-remit category on the same run.
+//     TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins that through
+//     keptForTrust for eras 3 and 4.
 //
 //     DECIDED (clarification 2026-09-22): the category set is a CHARGE MIRROR
 //     per AC 03-02 Edge Case 2 — it tracks the chargeable split exactly, and
 //     CASE EVIDENCE (passing both unresolved splits) is the rejected
-//     alternative. The mirror's consequence for the fold: the folded record's
-//     charge provably exceeds what its category set can vouch for, so the
-//     opportunity gate must never treat that set as complete evidence for an
-//     out-of-remit drop. Delivering that needs the shielded findings' categories
-//     on the record — data a persisted count cannot carry. That provenance
-//     work was a rider on epic 35.16.11.3, moved to
-//     35.16.11.3.1_scorecard-trust-riders.md, and that plan completed without
-//     delivering it, so the TD-036 doc-shield residual is now owned by epic 107
-//     (107_scorecard-doc-shield-provenance.md). Do not narrow one side without the other
-//     here; that is how the two drifted apart.
+//     alternative. The mirror's consequence is that the folded record's charge
+//     exceeds what its category set can vouch for; the fold, not the category
+//     set, is what keeps such a lens in the tally. Do not narrow one side
+//     without the other here; that is how the two drifted apart.
 //
 //   - The result is SORTED, not map-ordered. Two byte-identical runs must
 //     serialize byte-identically, or a diff of the store reports churn that is

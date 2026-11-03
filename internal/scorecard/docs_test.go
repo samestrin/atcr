@@ -503,11 +503,10 @@ func TestDocs_ScorecardMdDocumentsTheRaiserIsNeverDropped(t *testing.T) {
 
 // TestDocs_ReviewerCategoriesRiderPointerIsLive pins the reviewerCategories doc
 // comment's pointer for the TD-036 doc-shield residual. It used to send the
-// reader to "epic 35.16.11.3 ... (its task 7 rider)", but that epic completed
-// and its riders moved to 35.16.11.3.1_scorecard-trust-riders.md, which also
-// completed without taking the residual. The comment must name the plan the
-// riders actually landed in and name epic 107, which now owns the residual, so
-// no reader goes looking for a task that will never deliver it.
+// reader to a rider plan that never delivered it. The comment must say the
+// escape is closed by the fold and pinned by
+// TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4, and must not name
+// epic 107 or the stale "its task 7 rider" pointer.
 func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "scorecard", "scorecard.go"))
 	require.NoError(t, err)
@@ -528,14 +527,18 @@ func TestDocs_ReviewerCategoriesRiderPointerIsLive(t *testing.T) {
 	comment := strings.Join(lines[start:fn], "\n")
 	flat := strings.Join(strings.Fields(strings.ReplaceAll(comment, "//", " ")), " ")
 
-	assert.Contains(t, flat, "35.16.11.3.1_scorecard-trust-riders.md",
-		"the comment must point at the completed riders plan, not the parent epic")
 	assert.Contains(t, flat, "TD-036",
 		"the comment must still name the residual it is talking about")
-	assert.Contains(t, flat, "107_scorecard-doc-shield-provenance.md",
-		"the comment must name epic 107 as the owner of the residual")
+	assert.Contains(t, flat, "TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4",
+		"the comment must point at the test that pins the closed escape")
+	assert.Contains(t, flat, "does not reopen the escape",
+		"the comment must say the escape is closed by the fold")
+	assert.NotContains(t, flat, "107",
+		"epic 107 must not be named")
+	assert.NotContains(t, flat, "residual escape",
+		"the stale 'real residual escape' claim must be gone")
 	assert.NotContains(t, flat, "unowned",
-		"the residual is owned by epic 107 now; the stale 'unowned' claim must be gone")
+		"the stale 'unowned' claim must be gone")
 	assert.NotContains(t, flat, "its task 7 rider",
 		"the stale pointer at the parent epic's task 7 rider must be gone")
 }

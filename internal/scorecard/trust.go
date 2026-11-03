@@ -849,15 +849,14 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // always had: a reviewer cannot launder phantoms out of its prior by anchoring
 // them on doc-named tokens, because the shield never reaches this denominator.
 //
-// THAT PROPERTY IS NO LONGER ABSOLUTE, and the qualification belongs here rather
-// than only at the far end. reviewerCategories withholds a doc-shielded
-// finding's CATEGORY (AC 03-02 Edge Case 2) while this fold restores its CHARGE,
-// so the two now disagree for the trust tally. A lens whose only in-remit
-// evidence on a run was doc-shielded contributes nothing to that run's union,
-// and opportunitySetRuns then drops the whole record — re-folded charge included
-// — whenever some other reviewer raised a discriminating out-of-remit category.
-// The laundering route is narrower than before this fold existed, not closed.
-// Filed as TD-036.
+// reviewerCategories withholds a doc-shielded finding's CATEGORY (AC 03-02 Edge
+// Case 2) while this fold restores its CHARGE, so a lens whose only in-remit
+// evidence on a run was doc-shielded contributes nothing to that run's union.
+// That does not open a laundering route (TD-036): the restored charge makes the
+// record a raiser, so opportunityDisposition counts it rather than dropping it
+// as out-of-remit, even beside a discriminating out-of-remit category from
+// another reviewer. TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins
+// that through keptForTrust.
 //
 // ERA 4 gets the shield half of the fold and NOT the relabel. It keeps era 3's
 // carve-out, so the anti-laundering argument above holds for it unchanged; but
@@ -888,18 +887,13 @@ func weightedRate(corroborated, raised int, w weightedTally, c Confirmation, min
 // denominator. Nothing on this path reads either, but the value is a Record, and
 // the type's other consumers do.
 //
-// One consistency the fold CANNOT deliver, recorded as a decision rather than
-// silently absorbed: under the CHARGE MIRROR rule (clarification 2026-09-22,
-// per AC 03-02 Edge Case 2) CategoriesRaised tracks the chargeable split — so a
-// record whose charge this fold just restored carries a category set that
-// provably under-reports it. The opportunity gate must not read that set as
-// complete evidence for an out-of-remit drop, but the shielded findings'
-// categories are not on the record to restore (FindingsDocShielded is a count),
-// and a folded record is indistinguishable from a native era-4 one. Closing the
-// gap needs category provenance on the record — epic 35.16.11.3's task 7 rider.
-// Until then a lens whose only in-remit evidence on a run was doc-shielded can
-// still be dropped as out-of-remit (the TD-036 residual), narrowed exactly as
-// the charge restoration narrows it.
+// One consistency the fold does not deliver, recorded as a decision: under the
+// CHARGE MIRROR rule (clarification 2026-09-22, per AC 03-02 Edge Case 2)
+// CategoriesRaised tracks the chargeable split, so a record whose charge this
+// fold just restored carries a category set that under-reports it. That is
+// harmless to the tally: the restored charge makes the record a raiser, so the
+// opportunity gate keeps it (TD-036 escape closed; see the test named above)
+// without needing the shielded findings' categories on the record.
 //
 // The input slice is never mutated: callers hand in records read from the store
 // and must not see them rewritten underneath.
