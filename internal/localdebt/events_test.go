@@ -1,6 +1,7 @@
 package localdebt
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/gitexec"
 )
 
 // eventRec builds a minimal record that passes the write gate, with the given
@@ -159,16 +162,13 @@ func TestReadEventRecords_MissingDirIsEmpty(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
-// git runs one git command in dir with an isolated configuration, so the test
-// never reads the developer's or the CI runner's global git config.
+// git runs one git command pinned to the fixture repository dir, with no global or
+// system git config, so it can never write into the developer's own checkout.
 func git(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{
-		"-c", "user.name=atcr-test", "-c", "user.email=atcr-test@example.invalid",
+	cmd := gitexec.FixtureCommandContext(context.Background(), dir, append([]string{
 		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
 	}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -186,7 +186,9 @@ func commitAll(t *testing.T, repo, msg string) {
 	mustGit(t, repo, "commit", "-q", "-m", msg)
 }
 
-// divergedClones makes repository A holding one open item P, clones it to B, and
+// divergedClones makes repository A holding one open item P, copies it to B (init
+// and fetch: a fixture command is pinned to an existing repository, which a
+// `git clone` target is not yet), and
 // then on each side independently adds a new item and resolves P. It returns the
 // two repositories and A's store dir, ready for B to be merged into A.
 func divergedClones(t *testing.T, events bool) (repoA, repoB string) {
@@ -206,7 +208,10 @@ func divergedClones(t *testing.T, events bool) (repoA, repoB string) {
 	require.NoError(t, Append(storeA, eventRec(idP, "2026-06-14T10:00:00Z", "")))
 	commitAll(t, repoA, "base: add P")
 
-	mustGit(t, root, "clone", "-q", repoA, repoB)
+	require.NoError(t, os.Mkdir(repoB, 0o700))
+	mustGit(t, repoB, "init", "-q")
+	mustGit(t, repoB, "fetch", "-q", repoA, "main")
+	mustGit(t, repoB, "reset", "-q", "--hard", "FETCH_HEAD")
 	storeB := DefaultDir(repoB)
 
 	require.NoError(t, Append(storeA, eventRec(idX, "2026-06-15T09:00:00Z", "")))

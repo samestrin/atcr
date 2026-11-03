@@ -102,6 +102,9 @@ func isTypedNil(w io.Writer) bool {
 // concurrency. One Write per record preserves the guarantee. The file is 0600.
 // (Portability caveat for non-POSIX append semantics: the accepted TD-004 won't-fix
 // stance shared with the other five append-only ledgers.)
+//
+// A store opted in to the event layout (EnableEventLayout) gets a new event file
+// per record instead of a shard line; see events.go.
 func Append(dir string, rec Record) error {
 	return withLock(dir, "append", func() error {
 		return appendLocked(dir, rec)
@@ -141,6 +144,10 @@ func appendLocked(dir string, rec Record) error {
 	}
 	line = append(line, '\n')
 
+	// An opted-in store writes the record as its own event file instead (events.go).
+	if UsesEventLayout(dir) {
+		return writeEventLocked(dir, rec, line)
+	}
 	path := filepath.Join(dir, month+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
