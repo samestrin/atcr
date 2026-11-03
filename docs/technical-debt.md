@@ -257,11 +257,11 @@ untruncated so it pastes verbatim into `atcr debt resolve <id>`. A
 record with no id (only reachable by hand-editing the store) renders as `-`
 rather than a fabricated value that `resolve` could not match.
 
-## Record schema (v3)
+## Record schema (v4)
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `schema_version` | int | Record format version (currently `3`) |
+| `schema_version` | int | Record format version (currently `4`) |
 | `id` | string | Stable finding id; the join key |
 | `run_id` | string | Producing run; its `YYYY-MM` prefix selects the record's month shard when the store uses month shards |
 | `ts` | string | RFC3339 UTC timestamp of the append |
@@ -286,10 +286,11 @@ rather than a fabricated value that `resolve` could not match.
 | `first_seen` | string | **v3** — timestamp of the id's first append; carried through compaction |
 | `confidence_discount` | string | **v3** — why reconcile lowered `confidence` below what the reviewer count earns (today only the panel-wide-instruction reason); absent when it did not. `atcr debt dashboard` appends it to the Top Priority problem cell as `(confidence discounted: …)` |
 | `reconciler_feedback` | object | **v3** — a verdict on how reconcile grouped the finding, not on the finding: `{"kind": …, "with": …, "reason": …}`, where `kind` is `wrong-merge`, `wrong-split` or `wrong-category` and `with` (only on `wrong-split`, optional) is the partner finding's id. It never changes `status`, and a record carrying it is not counted as a sighting in `occurrences`; absent on every unannotated record |
+| `attempts` | int | **v4** — how many times a fix was tried, from the `Attempts` column of a technical-debt README table; never negative, absent when none was recorded |
 
-Reads are tolerant in one direction only: a v1 or v2 record decodes cleanly, with
+Reads are tolerant in one direction only: a v1, v2 or v3 record decodes cleanly, with
 zero values for fields that did not exist yet, and a record with no `origin`
-predates v3 and means `review`. A record from a *newer* schema (v4+) is skipped
+predates v3 and means `review`. A record from a *newer* schema (v5+) is skipped
 with a warning and left untouched on disk rather than being folded or dropped by
 a binary that cannot understand it.
 
@@ -543,7 +544,7 @@ existing finding other than the one named positionally), `--reason`
 (required). The id is positional and is the leading column of `atcr debt list`.
 
 The feedback is appended to the store as a `reconciler_feedback` annotation (see
-the [record schema](#record-schema-v3)). It deliberately changes nothing else:
+the [record schema](#record-schema-v4)). It deliberately changes nothing else:
 the finding's `status` stays as it is, the annotation is not counted as a
 sighting in `occurrences`, and it does not move the `wontfix` count — close or
 dismiss the finding itself with `atcr debt resolve`. The separation matters
@@ -938,7 +939,7 @@ $ atcr debt dashboard --top 5
 $ atcr debt list --json
 [
   {
-    "schema_version": 3,
+    "schema_version": 4,
     "id": "8421025ce7cde4d3",
     "run_id": "2026-08-05T04:44:55Z-manual",
     "ts": "2026-08-05T04:44:55Z",

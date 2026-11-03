@@ -1,0 +1,1 @@
+- Debt store records are now `schema_version` 4, which adds an optional `attempts` count: how many times a fix was tried, read from the `Attempts` column of a technical-debt README table. Records without one are unchanged apart from the version, and v1-v3 records still read; an atcr built before this change skips v4 records instead of misreading them. (epic 95)

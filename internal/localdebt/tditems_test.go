@@ -240,3 +240,33 @@ func TestAppend_RejectsNegativeAttempts(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attempts")
 }
+
+// TestParseTDItems_HeaderlessEdgeLayouts covers a headerless row with no Group
+// cell and one without the Attempts cell (the 9-column layout).
+func TestParseTDItems_HeaderlessEdgeLayouts(t *testing.T) {
+	in := "| [ ] | LOW | a.go:1 | P | F | style | 5 | src | 2 |\n\n" +
+		"| 4 | [x] | HIGH | b.go:2 | Q | G | logic | 6 | src2 |\n"
+	items, err := ParseTDItems(strings.NewReader(in))
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Empty(t, items[0].Invalid)
+	assert.Equal(t, "", items[0].Group)
+	assert.Equal(t, "P", items[0].Problem)
+	assert.Equal(t, 2, items[0].Attempts)
+	assert.Empty(t, items[1].Invalid)
+	assert.Equal(t, "4", items[1].Group)
+	assert.Equal(t, "src2", items[1].Source)
+	assert.Zero(t, items[1].Attempts)
+}
+
+// TestParseTDItems_EstHeaderAlias: the canonical layout names the column `Est`,
+// the tables atcr writes name it `Est Minutes`; both read.
+func TestParseTDItems_EstHeaderAlias(t *testing.T) {
+	in := "| Group | | Severity | File | Problem | Fix | Category | Est | Source |\n" +
+		"|---|---|---|---|---|---|---|---|---|\n" +
+		"| 1 | [ ] | LOW | a.go:1 | P | F | style | 25 | src |\n"
+	items, err := ParseTDItems(strings.NewReader(in))
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, 25, items[0].EstMinutes)
+}
