@@ -75,7 +75,10 @@ func runDebtClean(cmd *cobra.Command, _ []string) error {
 	if legacy, _ := cmd.Flags().GetBool("legacy-pipe"); legacy {
 		return usageError(fmt.Errorf("--legacy-pipe is not supported by debt clean; --axi emits standard TOON"))
 	}
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
 
 	// The two-pass read selectDebtForList uses: classify and count over folded

@@ -194,3 +194,13 @@ func TestPersistForReconcile_InvalidStoreConfigIsNoPersist(t *testing.T) {
 	_, err = os.Stat(filepath.Join(filepath.Dir(root), "escape"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+// A dangling link cannot be followed, so containment cannot be shown: refused.
+func TestStoreDir_ProjectDanglingSymlinkRejected(t *testing.T) {
+	root, _ := storeDirEnv(t)
+	require.NoError(t, os.Symlink(filepath.Join(root, "gone"), filepath.Join(root, "debtlink")))
+	setProjectStore(t, root, "debt:\n  store: debtlink\n")
+	_, err := StoreDir(root)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), root)
+}

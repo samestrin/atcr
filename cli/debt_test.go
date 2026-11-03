@@ -883,7 +883,9 @@ func TestDebtStoreDir_DefaultWalksUpToTheRepoRoot(t *testing.T) {
 
 	cmd := newDebtListCmd()
 	require.NoError(t, cmd.Flags().Parse(nil))
-	assert.Equal(t, localdebt.DefaultDir(root), debtStoreDir(cmd),
+	got, err := debtStoreDir(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, localdebt.DefaultDir(root), got,
 		"an unset --dir resolves against the repo root, not the working directory")
 }
 
@@ -900,7 +902,9 @@ func TestDebtStoreDir_AcceptsAGitFileMarker(t *testing.T) {
 
 	cmd := newDebtListCmd()
 	require.NoError(t, cmd.Flags().Parse(nil))
-	assert.Equal(t, localdebt.DefaultDir(root), debtStoreDir(cmd))
+	got, err := debtStoreDir(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, localdebt.DefaultDir(root), got)
 }
 
 // The broader marker rule is scoped to the debt readers on purpose: it must not
@@ -935,7 +939,9 @@ func TestDebtStoreDir_ExplicitFlagWins(t *testing.T) {
 
 	cmd := newDebtListCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{"--dir", "/tmp/elsewhere/debt"}))
-	assert.Equal(t, "/tmp/elsewhere/debt", debtStoreDir(cmd))
+	got, err := debtStoreDir(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/elsewhere/debt", got)
 }
 
 // No marker anywhere up the tree is the pre-existing behavior repoRoot already
@@ -947,7 +953,8 @@ func TestDebtStoreDir_NoMarkerFallsBackToWorkingDir(t *testing.T) {
 
 	cmd := newDebtListCmd()
 	require.NoError(t, cmd.Flags().Parse(nil))
-	got := debtStoreDir(cmd)
+	got, err := debtStoreDir(cmd)
+	require.NoError(t, err)
 	// The fallback root is the working directory itself unless an ancestor of the
 	// temp tree happens to carry a marker; either way the path must be absolute
 	// and end at the store subdirectory, never a stale process-start directory.

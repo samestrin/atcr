@@ -109,3 +109,14 @@ func TestDebtBlockIsKnownField(t *testing.T) {
 	require.NotNil(t, reg.Debt)
 	assert.Equal(t, "/srv/planning/debt", reg.Debt.Store)
 }
+
+// An unreadable config (here a directory where the file should be) is an error
+// naming the file by its label, never by its absolute path.
+func TestLoadProjectDebtStore_UnreadableConfigIsAnError(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(DefaultProjectConfigPath(root), 0o755))
+	_, err := LoadProjectDebtStore(root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".atcr/config.yaml")
+	assert.NotContains(t, err.Error(), root)
+}
