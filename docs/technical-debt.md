@@ -171,7 +171,7 @@ month shards still conflict at merge.
 
    ```bash
    atcr debt convert --dry-run   # see what would move
-   atcr debt convert             # move it; the store is opted in when this commits
+   atcr debt convert             # move it; this opts the store in
    ```
 
 3. Commit the store's `items/` directory, including its `.event-layout` marker,
@@ -192,9 +192,14 @@ month shards still conflict at merge.
   and different content gets a different name. Git sees added paths and merges
   them with no conflict.
 - If both clones resolved the same id, both resolutions survive and the fold
-  picks the effective status by the usual precedence (`wontfix` >
-  `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`). Read the
-  result with `atcr debt list`; do not hand-edit event files to change a status.
+  keeps the newest one. A `wontfix` is the one unconditional exception: if any
+  clone dismissed the id, the dismissal wins no matter when it was written.
+  Otherwise the resolution with the latest timestamp wins, so a later `resolved`
+  beats an earlier `unreproducible`. The status chain (`wontfix` >
+  `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`) only breaks
+  an exact same-timestamp tie; the same chain decides which record
+  `atcr debt compact` retains. Read the result with `atcr debt list`; do not
+  hand-edit event files to change a status.
 - `atcr debt compact` does nothing to `items/`, so a shared event store keeps its
   full history and does not shrink at merge time. If unbounded growth matters
   more than sharing, keep a single-writer month-shard store instead — do not
@@ -642,10 +647,15 @@ Flags: `--store`, `--dry-run`.
   Running `atcr debt convert` again finishes a conversion a crash left behind
   ("Finished an interrupted conversion") and throws away staging that never
   committed.
-- **A dry run or a failure leaves a month-shard store exactly as it was.** The
-  store is opted in only when the conversion commits. On a store that already
-  uses the event layout the command writes nothing and says so; on a store with
-  no records it says there is nothing to convert.
+- **A dry run, or a failure before the store is opted in, leaves the store
+  exactly as it was.** A dry run writes nothing, and a failure during validation
+  or the fold comparison happens before anything is enabled. Past that point the
+  run has already enabled the event layout and written its commit journal, so a
+  failure or crash while publishing the staged events and removing the shards
+  can leave the store opted in with month shards and staged events still in
+  place. Running `atcr debt convert` again finishes that conversion. On a store
+  that already uses the event layout the command writes nothing and says so; on
+  a store with no records it says there is nothing to convert.
 
 The `items/` directory and its `.event-layout` marker are part of the store once
 the conversion commits: commit them, and every clone that pulls them writes
