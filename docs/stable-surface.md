@@ -119,6 +119,14 @@ No flags.
 | `--dry-run` | bool | `false` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt convert`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--dry-run` | bool | `false` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt dashboard`
 
 | Flag | Type | Default | Status |

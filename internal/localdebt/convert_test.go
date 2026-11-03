@@ -279,3 +279,17 @@ func TestConvert_DiscardsAnUncommittedStaging(t *testing.T) {
 	assert.False(t, res.Resumed)
 	assert.Equal(t, before, foldedAll(t, dir), "the uncommitted staged event is not published")
 }
+
+func TestFoldDiff_NamesEveryChangedMissingAndNewID(t *testing.T) {
+	before := []Record{eventRec(idP, "2026-06-01T00:00:00Z", ""), eventRec(idX, "2026-06-01T00:00:00Z", "")}
+	changed := eventRec(idP, "2026-06-01T00:00:00Z", "")
+	changed.Model = "other"
+	after := []Record{changed, eventRec(idY, "2026-06-01T00:00:00Z", "")}
+	assert.Equal(t, []string{idP, idX, idY}, foldDiff(before, after))
+	assert.Empty(t, foldDiff(before, before))
+
+	ids := []string{"1", "2", "3", "4", "5", "6", "7"}
+	err := foldChangedError(ids)
+	require.ErrorIs(t, err, ErrFoldChanged)
+	assert.Contains(t, err.Error(), "for 7 item(s): 1, 2, 3, 4, 5 and 2 more; nothing was changed")
+}
