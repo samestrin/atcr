@@ -1,10 +1,18 @@
 # Technical-Debt Tooling (`atcr debt`)
 
 `atcr debt` queries, captures, and reports on the project's technical debt. All
-of its subcommands — `list`, `add`, `dashboard`, `resolve`, `compact`, and the
-read-only `filter`, `clean` and `group` views — read and write **one** store: the append-only, month-sharded JSONL backlog under
-`.atcr/debt/` that `atcr reconcile` populates. An item filed by `atcr debt add`
-is therefore visible to `atcr debt list` and closeable by `atcr debt resolve`.
+of its subcommands — `list`, `add`, `dashboard`, `resolve`, `convert`, `compact`,
+and the read-only `filter`, `clean` and `group` views — read and write **one**
+store: the append-only JSONL backlog under `.atcr/debt/` (or wherever
+`debt.store` / `--store` puts it) that `atcr reconcile` populates. An item filed
+by `atcr debt add` is therefore visible to `atcr debt list` and closeable by
+`atcr debt resolve`.
+
+The store has two record layouts. Month shards are the default and what every
+store used before this change. The opt-in **event layout** writes one file per
+add and per resolution, so two clones can share a store through git and merge
+with no conflict. atcr reads both, and one store may hold both; `atcr debt
+convert` moves a store from the first to the second.
 
 The Markdown views this tooling renders are **projections** of that log, not the
 authoritative copy. The log is the system of record; a table or dashboard is one
@@ -12,27 +20,196 @@ rendering of it at a moment in time.
 
 ## The store
 
+A store is a directory of append-only record files. atcr understands two
+layouts, and one store may hold both:
+
+| Layout | Files | Written when |
+|--------|-------|--------------|
+| Month shards (default) | One `YYYY-MM.jsonl` per calendar month, selected by the `YYYY-MM` prefix of each record's `run_id` | The store was never opted in — every store before the event layout, and every new store |
+| Event files (opt-in) | One file per record: `items/<finding id>.<event ts>-<short hash>.json` | The store has an `items/` directory (see [Event layout](#event-layout-one-file-per-item)) |
+
 | Property | Value |
 |----------|-------|
-| Location | `.atcr/debt/`, resolved from the repository root |
-| Layout | One shard per calendar month: `YYYY-MM.jsonl` |
-| Shard key | The `YYYY-MM` prefix of the record's `run_id` |
-| Mutation model | Append-only; one atomic `O_APPEND` write per record, under a cross-process lock: an OS file lock on `.flock` in the store directory (`flock` on Linux and macOS, `LockFileEx` on Windows), released by the kernel if the holder dies; only builds that are neither unix nor Windows (js/wasm, wasip1, plan9; none are shipped) keep the older lock directory (`.lock`) |
+| Location | `<repo>/.atcr/debt` by default; `--store`, `debt.store` in `.atcr/config.yaml`, or `debt.store` in `~/.config/atcr/registry.yaml` override it (see [Where the store lives](#where-the-store-lives)) |
+| Mutation model | Append-only; a month shard takes one `O_APPEND` write per record, an event is written under a temporary name and renamed into place, both under a cross-process lock: an OS file lock on `.flock` in the store directory (`flock` on Linux and macOS, `LockFileEx` on Windows), released by the kernel if the holder dies; only builds that are neither unix nor Windows (js/wasm, wasip1, plan9; none are shipped) keep the older lock directory (`.lock`) |
+| Read model | Every read folds all record files to one **effective** record per id |
 
 Every subcommand resolves the store through `--store`. With no `--store`, atcr walks
-up from the working directory to the nearest `.git`/`.atcr` marker and uses that
-repository's `.atcr/debt` — so `atcr debt list` reads the same store from a
-subdirectory as it does from the root. Pass `--store` to work against another
-checkout or a fixture tree. `--dir` remains a deprecated hidden alias.
+up from the working directory to the nearest `.git`/`.atcr` marker, then resolves
+the store under that repository from `debt.store` (project, then user), falling
+back to that repository's `.atcr/debt` — so `atcr debt list` reads the same store
+from a subdirectory as it does from the root. Pass `--store` to work against
+another checkout or a fixture tree. `--dir` remains a deprecated hidden alias.
 
 A resolution never edits a line in place: it appends a new record carrying the
-same id and a terminal status. Reads fold the log to one **effective** record per
-id, so history is preserved without the views showing an item twice.
+same id and a terminal status (a new line in a month shard, a new event file in
+the event layout). Reads fold the log to one **effective** record per id, so
+history is preserved without the views showing an item twice.
 
 `.atcr/` is local, uncommitted state by default, and whether the store is tracked
 is your per-repo `.gitignore` decision — the single correct lever. Ignore
 `.atcr/` in a public repo and the backlog stays private; track it in a private
-repo and the history is preserved with the code.
+repo and the history is preserved with the code. To let two clones share that
+tracked history, use the event layout ([Sharing a store between
+clones](#sharing-a-store-between-clones)); a store configured outside the
+repository is outside this lever entirely.
+
+## Event layout (one file per item)
+
+Month shards are files that two clones both extend, so git conflicts on every
+month both touched. In the event layout each add and each resolution is a new
+file whose name no other clone produces differently, so a merge has nothing to
+conflict on and the whole history is kept.
+
+Each file under `<store>/items/` is named:
+
+```
+<finding id>.<event ts>-<short hash>.json
+```
+
+- `<finding id>` is the 16-lowercase-hex [finding id](#finding-ids). It must be
+  well formed, because it becomes part of a path: an id holding a dot or a slash
+  would break the name or escape `items/`.
+- `<event ts>` is the record's own `ts` in UTC, formatted
+  `20060102T150405.000000000Z` — fixed width and free of the colons RFC3339
+  carries (not legal in a Windows file name), so one item's events sort
+  chronologically in name order.
+- `<short hash>` is the first 12 hex characters of SHA-256 over the exact bytes
+  of the file: the record's JSON line, newline included. It tells apart two
+  different events of one item at the same instant; writing the same event twice
+  produces the same name over the same bytes.
+
+Each file holds one record, byte for byte the line a month shard would have
+carried.
+
+The layout is opt-in: a new store keeps month shards, so a standalone user sees
+no change. The presence of `<store>/items/` is the switch — `atcr debt convert`
+creates it, and every append after that writes an event file instead of a shard
+line. Because git does not track an empty directory, a converted store also
+carries an empty `items/.event-layout` marker, so a store opted in before its
+first event still clones as an event store. A clone of an opted-in store is
+opted in too: the directory is in the tree.
+
+Every read path folds both layouts together — month shards in lexical order
+first, then event files in name order — so a store holding both reads as one
+backlog. Compaction and justification backfill treat event files as frozen:
+`atcr debt compact` never rewrites, moves or removes one, and `atcr debt
+backfill-justifications` skips any id held in an event file (reporting it as
+left unrepaired) rather than rewriting a file it cannot change. The event layout
+keeps full history and is not shrunk by compaction; the month-shard layout is
+the one `atcr debt compact` folds.
+
+## Where the store lives
+
+The default is `<repo>/.atcr/debt`, where `<repo>` is the repository root found
+by walking up from the working directory as described above. It resolves in this
+order; the first one set wins:
+
+1. `--store <path>` on the command. Any path; `--dir` remains a deprecated
+   hidden alias.
+2. `debt.store` in the project's `.atcr/config.yaml`, relative to the repository
+   root and required to stay inside it:
+
+   ```yaml
+   debt:
+     store: .debt
+   ```
+
+3. `debt.store` in the user's `~/.config/atcr/registry.yaml`. Absolute as given,
+   or relative to the repository root:
+
+   ```yaml
+   debt:
+     store: ../planning/debt
+   ```
+
+4. Otherwise `<repo>/.atcr/debt`.
+
+The two file tiers are trusted differently, because the project file is
+committed and anyone who can land a commit can write it:
+
+- A **project** value must be a clean repo-relative path: no leading `/`, no
+  `..` segment, no `./`, `//` or trailing `/`, not `.`, and it must still be
+  inside the repository once every symlink on its existing prefix is followed.
+  Anything else is an error naming the value, which points at the two ways to
+  set an external store instead. A committed config cannot redirect atcr's
+  writes outside the repository.
+- A **user** value may point anywhere: absolute as given, relative against the
+  repository root (so `../planning/debt` in `~/src/app` means
+  `~/src/planning/debt` — the same string in another repo resolves elsewhere),
+  and it gets the same system-directory guard `--store` gets.
+- `ATCR_REGISTRY_URL` is deliberately ignored for this key: the store path is a
+  per-user, per-machine choice, so a shared team registry must not choose it for
+  everyone.
+- An invalid or unreadable value is an error, never a fall-through to the next
+  tier: falling through would turn a visible mistake into a silent write to a
+  different store. A blank value counts as unset.
+
+One resolver (`localdebt.StoreDir`) applies these rules for every debt command,
+`atcr reconcile`'s persistence, the quality-signal payload and the next-step
+suggestions, so a configured store cannot be read by one path and missed by
+another. The root it resolves under has its own rules — see [How findings enter
+the store](#how-findings-enter-the-store).
+
+Because a committed project path may not leave the repository, sharing a store
+through a sibling private planning repo is a per-user setting in
+`registry.yaml`, or an explicit `--store`, not a project one.
+
+## Sharing a store between clones
+
+Two working copies — a laptop and a server, or two teammates — can read and
+write one backlog if the store is committed to git (typically in a private
+repo) or lives outside both repositories. The store must be on the event layout:
+month shards still conflict at merge.
+
+### Set it up once
+
+1. Choose the store: the repository's own `.atcr/debt`, tracked in git, or a
+   store outside the tree set per user through `debt.store` / `--store` (see
+   [Where the store lives](#where-the-store-lives)).
+2. If it still has month shards, convert it from one clone:
+
+   ```bash
+   atcr debt convert --dry-run   # see what would move
+   atcr debt convert             # move it; the store is opted in when this commits
+   ```
+
+3. Commit the store's `items/` directory, including its `.event-layout` marker,
+   and any month shard the conversion left in place.
+4. Pull in the other clones. Nothing else needs configuring: the `items/`
+   directory in the tree opts each clone in.
+
+### Day to day
+
+- An add writes a new event file. `atcr debt add` always does; a reconcile
+  append does only when its write-time dedup does not skip the id, which it
+  does while the id is open or dismissed as `wontfix`.
+- A resolution appends an event file for the same id. It never edits or deletes
+  the earlier events, so the item's history crosses the merge intact.
+- Merge with plain `git merge`, `git pull` or `git rebase`. Two clones cannot
+  produce different files under one name: a name is the finding id, the event's
+  own timestamp and a hash of its bytes, so the same name means the same content
+  and different content gets a different name. Git sees added paths and merges
+  them with no conflict.
+- If both clones resolved the same id, both resolutions survive and the fold
+  picks the effective status by the usual precedence (`wontfix` >
+  `unreproducible` > `attempts-exhausted` > `resolved` > `deferred`). Read the
+  result with `atcr debt list`; do not hand-edit event files to change a status.
+- `atcr debt compact` does nothing to `items/`, so a shared event store keeps its
+  full history and does not shrink at merge time. If unbounded growth matters
+  more than sharing, keep a single-writer month-shard store instead — do not
+  share month shards between clones.
+
+### What the lock does and does not cover
+
+The store lock (`.flock` in the store directory) serializes writers that share
+one store path on one machine. It cannot see another machine, and each clone has
+its own copy of the lock file, so two clones can write at the same instant. That
+is safe in the event layout because no write edits a shared file: each event is a
+complete new file published by rename, and two clones only collide on a name
+when they wrote the same bytes. A month shard's single `O_APPEND` write has no
+such protection across machines, which is the other reason a shared store is
+converted first.
 
 ## Ownership model and the seam
 
@@ -147,7 +324,8 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt group` | Group open items by path, category or file (replaces `llm-support group-td`; read-only) |
 | `atcr debt resolve` | List open items and record resolutions |
 | `atcr debt recluster` | Record feedback on how reconcile grouped a finding |
-| `atcr debt compact` | Fold the append-only store to its live records |
+| `atcr debt compact` | Fold the append-only store's month shards to their live records |
+| `atcr debt convert` | Move month shards to the event layout (one way; checked by a fold comparison) |
 | `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
 | `atcr debt sync-outcomes` | Record the outcomes of ticked technical-debt README rows that carry a `debt:<id>` token; `--report` shows whether the scorecard gate is met |
 
@@ -212,9 +390,9 @@ Required in flag mode: `--severity`, `--file`, `--problem`, `--fix`,
 `--file` takes a `path:line` location; a purely numeric suffix is parsed into
 the record's line number, and anything else is kept verbatim as the path.
 
-The record is written with `origin: manual` and a synthetic `run_id` carrying the
-`YYYY-MM` prefix the shard layout requires, so a hand-filed item lands in the
-same month shard a reviewed one would.
+The record is written with `origin: manual` and a synthetic `run_id` carrying a
+`YYYY-MM` prefix, so a hand-filed item lands in the same month bucket a reviewed
+one would: in that month's shard, or in its own event file on an opted-in store.
 
 Omit the required flags on an interactive terminal to be walked through a
 prompt instead. In a non-interactive context (CI, a pipe) with required flags
@@ -423,6 +601,55 @@ Compaction also runs **automatically** after a reconcile append, once the store
 trips **100k records or 100 MiB, whichever comes first** (and only when it has
 grown materially since the last compaction, so an already-compact store does not
 rewrite itself on every append). The manual command remains for on-demand use.
+
+Event files are out of reach: compaction folds month shards only, so on an
+event-only store it is a successful no-op that says so, and on a mixed store it
+reports the event records it left untouched. Automatic compaction therefore has
+nothing to shrink in an event-only store.
+
+### `atcr debt convert`
+
+Moves a store from month shards to the [event layout](#event-layout-one-file-per-item).
+It is one way: there is no command back, and it is run once per store, not once
+per clone.
+
+```bash
+atcr debt convert --dry-run   # report what a real run would move; writes nothing
+atcr debt convert             # convert, then keep writing event files
+```
+
+Flags: `--store`, `--dry-run`.
+
+- **No record is lost, and that is checked rather than assumed.** The run folds
+  the store before, folds what the store would be after (the month shards it
+  keeps plus every event file, the staged ones included, read back from disk),
+  and removes no shard unless every item folds identically both times. If an
+  item would fold differently it fails with `converting would change how the
+  store folds` (naming up to five ids), changes nothing, and leaves the store on
+  month shards.
+- **Line order is the one thing the event layout cannot preserve.** An id whose
+  records tie on timestamp and status breaks the tie by line order in a month
+  shard and by file name in the event layout, so such a store is refused.
+  Compacting the month shards first can remove the ambiguity.
+- **A shard converts only when every line in it can become an event file.** A
+  shard holding a corrupt or over-long line, a record from a newer atcr, or a
+  record whose id or timestamp cannot name an event file is left whole and named
+  with the reason; its records stay readable where they are. A `.jsonl` file
+  that is not a month shard is left alone too.
+- **A crash cannot duplicate a record.** New events are staged under
+  `<store>/.convert/` (no read path looks there) and the run commits by writing a
+  journal naming the shards to remove; past that point it only finishes the plan.
+  Running `atcr debt convert` again finishes a conversion a crash left behind
+  ("Finished an interrupted conversion") and throws away staging that never
+  committed.
+- **A dry run or a failure leaves a month-shard store exactly as it was.** The
+  store is opted in only when the conversion commits. On a store that already
+  uses the event layout the command writes nothing and says so; on a store with
+  no records it says there is nothing to convert.
+
+The `items/` directory and its `.event-layout` marker are part of the store once
+the conversion commits: commit them, and every clone that pulls them writes
+events too.
 
 ### `atcr debt backfill-justifications`
 
@@ -755,7 +982,10 @@ through the same code path, so a review driven by an editor or agent lands in th
 same backlog a CLI review does.
 
 The store's location resolves by **explicit `--repo-root` > the review manifest >
-the current working directory** (`--repo` remains a deprecated alias). The repo root recorded in the manifest at review
+the current working directory** (`--repo` remains a deprecated alias). Below the
+repository root, the store directory is the one `debt.store` resolves, or
+`<repo>/.atcr/debt` when it is unset (see [Where the store lives](#where-the-store-lives)).
+The repo root recorded in the manifest at review
 time is re-validated before any write (it must exist and look like a repository);
 when it does not — an artifact tree copied to another machine carries a stale
 absolute path — the run warns and persists nothing rather than writing to the
