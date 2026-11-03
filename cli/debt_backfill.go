@@ -495,10 +495,13 @@ const locatorSuffixHexLen = 12
 
 // eventSkipClause is the report's trailing clause for ids held in event files
 // (localdebt.BackfillResult.SkippedEventFiles). It is empty when there are none, so
-// a month-shard store's report reads exactly as it always has.
+// a month-shard store's report reads exactly as it always has. It deliberately does
+// not say "skipped (": that literal is the anchor
+// internal/reconcile/technical_debt_doc_drift_test.go uses to find the rationale
+// clause, and it must stay unique.
 func eventSkipClause(n int) string {
 	if n == 0 {
 		return ""
 	}
-	return fmt.Sprintf(", %d skipped (held in event files, which are never rewritten)", n)
+	return fmt.Sprintf(", %d left unrepaired (held in event files, which are never rewritten)", n)
 }

@@ -117,7 +117,7 @@ func TestDebtBackfillJustifications_ReportsEventFileSkips(t *testing.T) {
 
 	code, out := execCmdCapture(t, "debt", "backfill-justifications", "--store", store, "--review-root", reviewRoot)
 	require.Equal(t, 0, code, out)
-	assert.Contains(t, out, "1 skipped (held in event files, which are never rewritten)")
+	assert.Contains(t, out, "1 left unrepaired (held in event files, which are never rewritten)")
 	after, err := os.ReadFile(ev)
 	require.NoError(t, err)
 	assert.Equal(t, string(b), string(after))
