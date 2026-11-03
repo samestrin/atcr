@@ -124,13 +124,23 @@ When the local store is **empty or absent**, `atcr debt resolve` reports that th
 
 ### Storage
 
-The local TD store lives inside your repository, populated automatically as a byproduct of `atcr reconcile` — no flag is needed to enable it:
+The local TD store lives inside your repository by default, populated
+automatically as a byproduct of `atcr reconcile` — no flag is needed to enable
+it. Its directory can be changed with `debt.store` (a git-shareable store may
+live outside the repo; see [technical-debt.md](technical-debt.md#where-the-store-lives)).
 
 ```
-.atcr/debt/YYYY-MM.jsonl
+.atcr/debt/                 # the default store; debt.store may point elsewhere
+.atcr/debt/YYYY-MM.jsonl    # month-shard layout (the default)
+.atcr/debt/items/*.json     # event layout, after `atcr debt convert`
 ```
 
-- **Monthly rotation.** One append-only file per calendar month (`YYYY-MM.jsonl`), named from each record's `run_id` month prefix.
+- **Layout.** A new store keeps one append-only file per calendar month
+  (`YYYY-MM.jsonl`), named from each record's `run_id` month prefix. A store
+  converted with `atcr debt convert` instead writes one file per add and
+  resolution under `items/`, so two clones can merge with no git conflict. atcr
+  reads both layouts, and [technical-debt.md](technical-debt.md#event-layout-one-file-per-item)
+  has the naming rules and the conversion guarantees.
 - **Append-only with write-time dedup.** Each `atcr reconcile` run appends its findings; before appending, the store scans the history and skips a finding whose identity (`FindingID`, derived from file + line + problem text) is already present **and currently open, or dismissed as `wontfix`** — so re-running reconcile on an unchanged repo does not duplicate items. An id that was `resolved` or `deferred` is deliberately re-appended as a re-detection and returns to the open backlog; that is what makes `occurrences` a regression count (see the lifetime table in [technical-debt.md](technical-debt.md)). A finding whose `problem` text later changes is treated as a distinct record.
 - **Permissions.** The file is created `0600` (user read/write only) and the directory `0700`; the directory is created lazily on the first write, so a suppressed run creates nothing.
 - **Opt out per run.** Pass `--no-local-debt` to `atcr reconcile` to suppress persistence for a single run (mirroring `--no-scorecard`). It has no effect on reconcile's exit code or output; without it, reconcile persists by default.

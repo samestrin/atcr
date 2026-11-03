@@ -134,6 +134,7 @@ fail_on: HIGH
 | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
 | `consensus` | `strict` | Corroboration bar for the reconcile consensus filter, applied only once a panel has 3+ distinct reviewers. `strict` sidecars every singleton below `HIGH` confidence (the epic-14.2 behavior); `lenient` keeps `MEDIUM`-confidence singletons and sidecars only `LOW` ones; `off` makes the consensus filter inert — but note this is not a return to pre-14.2 output: epic 35.9's trust demotion still applies (it is gated only by the panel floor), so `off` output can contain `LOW`-confidence findings pre-14.2 output never did. Only the bar moves — the panel floor and every exemption (security-related, `HIGH`/`CRITICAL`, out-of-scope, high-trust reviewer) apply identically at all three levels. Case-insensitive; an unrecognized value is rejected. CLI override: `atcr reconcile --consensus <level>`. |
 | `context_prefetch` | *unset — semantic retrieval off* | Optional block whose only member today is `semantic`, the opt-in similarity-retrieval client (Epic 35.16.12). **Off unless every part of it is configured:** an absent, empty, or partially blank block resolves to disabled and the run makes no network call for it. See [Similarity retrieval (`context_prefetch.semantic`)](#similarity-retrieval-context_prefetchsemantic). Resolves at the registry and project tiers only (no CLI flag). |
+| `debt` | *unset — `<repo>/.atcr/debt`* | Optional block whose only member is `store`, the directory of the local technical-debt store. A project value must be a clean repo-relative path that stays inside the repository once symlinks are followed; an absolute path, or one containing `..`, is accepted only in the user registry or `--store`, where it may name a store outside the repository (a sibling private planning repo, for example). It has its own resolver and precedence, `--store` > project > user > `<repo>/.atcr/debt`, outside the settings chain below; an invalid value is an error, not a fall back. See [Where the store lives](technical-debt.md#where-the-store-lives). |
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
@@ -151,7 +152,7 @@ Most shared settings have an `atcr review` CLI override, but three flag names di
 | `max_parallel` | `--max-parallel` |
 
 `--timeout` takes bare seconds (no unit suffix, matching `timeout_secs`).
-`review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, `max_claim_bytes`, `max_prefetch_bytes`, `max_cache_bytes`, and `context_prefetch` resolve at the registry and project tiers only — there is no CLI flag for them.
+`review_strategy`, `on_overflow`, `max_sprint_plan_bytes`, `max_claim_bytes`, `max_prefetch_bytes`, `max_cache_bytes`, and `context_prefetch` resolve at the registry and project tiers only — there is no CLI flag for them. `debt.store` is not part of this chain: it resolves by its own rule, `--store` > project `.atcr/config.yaml` > user `registry.yaml` > `<repo>/.atcr/debt` ([Where the store lives](technical-debt.md#where-the-store-lives)).
 
 ## Deterministic SAST pre-filter (`sast`)
 
