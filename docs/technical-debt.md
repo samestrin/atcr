@@ -258,7 +258,7 @@ rather than a fabricated value that `resolve` could not match.
 |-------|------|---------|
 | `schema_version` | int | Record format version (currently `3`) |
 | `id` | string | Stable finding id; the join key |
-| `run_id` | string | Producing run; its `YYYY-MM` prefix selects the shard |
+| `run_id` | string | Producing run; its `YYYY-MM` prefix selects the record's month shard when the store uses month shards |
 | `ts` | string | RFC3339 UTC timestamp of the append |
 | `severity` | string | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` |
 | `file` | string | Path the finding is anchored to |
@@ -444,8 +444,8 @@ are required core data, and scrubbing an id would break the join contract).
 Three read-only views over the store, ported from the `llm-support` commands that
 read the technical-debt README. They write nothing: no store record, event file
 or README is created, changed or deleted. Each emits JSON by default (`--json`)
-or a token-dense TOON payload with `--axi`, and takes `--store <path>` (default
-`<repo root>/.atcr/debt`).
+or a token-dense TOON payload with `--axi`, and takes `--store <path>` (default:
+the resolved store, `<repo root>/.atcr/debt` unless `debt.store` sets another).
 
 | Command | Replaces | Output | Flags |
 |---------|----------|--------|-------|
@@ -558,7 +558,7 @@ or an empty `--reason` is a usage error (exit 2).
 ### `atcr debt compact`
 
 Folds the append-only store to one effective record per id and rewrites the
-shards atomically, carrying `occurrences` and `first_seen` forward so the
+month shards atomically, carrying `occurrences` and `first_seen` forward so the
 regression signal survives at O(1) size instead of O(history).
 
 Retention is bounded at **four records per id**: the effective record, at
@@ -713,6 +713,12 @@ pass reads a dir's summary only when a refused `review.md` in that dir made it a
 who owns the record, so `0` here does not prove no oversized summary exists — only
 that none was asked about (each skip is also logged at debug level, hidden by
 default).
+
+On a store holding event files, ids held there are counted on their own, not in
+the partition: `N left unrepaired (held in event files, which are never
+rewritten)`. An event file is written once and never changed, so replaying an
+excerpt into a shard would report a rewrite that never took effect; the whole id
+is skipped, and the clause is absent when no id is held in an event file.
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the
@@ -972,7 +978,7 @@ Contract for a downstream consumer:
 
 - Join on `id`; keep your own workflow state in your own store, keyed by that id.
 - Ignore unknown keys, so an additive schema bump stays non-breaking.
-- Read only. A consumer never writes into `.atcr/debt/`.
+- Read only. A consumer never writes into the store.
 
 ## How findings enter the store
 
