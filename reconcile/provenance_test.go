@@ -58,26 +58,34 @@ func TestMerge_CarriesEachFindingsQuote(t *testing.T) {
 
 // IsPanelWide over the findings and IsPanelWideQuotes over the quotes Merge
 // carries are one predicate, so a caller holding only a Merged decides
-// independence exactly as Merge did.
+// independence exactly as Merge did. IsPanelWide delegates to
+// IsPanelWideQuotes, so each group's expected result is pinned here rather
+// than compared between the two.
 func TestIsPanelWideQuotes_AgreesWithIsPanelWide(t *testing.T) {
-	groups := map[string][]Finding{
-		"panel-wide": fivePredicateFindings(),
-		"distinct files": {
+	groups := map[string]struct {
+		g    []Finding
+		want bool
+	}{
+		"panel-wide": {fivePredicateFindings(), true},
+		"distinct files": {[]Finding{
 			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
 			predicateFinding("kai", CategoryInvariant, "hash.go", siblingQuote),
-		},
-		"empty evidence": {
+		}, false},
+		"empty evidence": {[]Finding{
 			predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote),
 			predicateFinding("kai", CategoryInvariant, "key.go", ""),
-		},
-		"singleton": {predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote)},
+		}, false},
+		"singleton": {[]Finding{predicateFinding("bruce", CategoryInvariant, "key.go", siblingQuote)}, false},
 	}
-	for name, g := range groups {
-		m := Merge(g)
-		if got, want := IsPanelWideQuotes(m.SourceQuotes), IsPanelWide(g); got != want {
-			t.Errorf("%s: IsPanelWideQuotes = %v, IsPanelWide = %v", name, got, want)
+	for name, tc := range groups {
+		m := Merge(tc.g)
+		if got := IsPanelWide(tc.g); got != tc.want {
+			t.Errorf("%s: IsPanelWide = %v, want %v", name, got, tc.want)
 		}
-		conf, why := DiscountedConfidence(len(m.Reviewers), m.Category, !IsPanelWideQuotes(m.SourceQuotes))
+		if got := IsPanelWideQuotes(m.SourceQuotes); got != tc.want {
+			t.Errorf("%s: IsPanelWideQuotes = %v, want %v", name, got, tc.want)
+		}
+		conf, why := DiscountedConfidence(len(m.Reviewers), m.Category, !tc.want)
 		if m.Confidence != conf || m.ConfidenceDiscount != why {
 			t.Errorf("%s: Merge = (%q, %q), DiscountedConfidence = (%q, %q)", name, m.Confidence, m.ConfidenceDiscount, conf, why)
 		}
