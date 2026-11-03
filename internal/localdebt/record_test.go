@@ -81,21 +81,21 @@ func TestRecord_StampID_EmptyProblemDeterministic(t *testing.T) {
 	assert.Equal(t, history.FindingID("a.go", 10, ""), rec.ID)
 }
 
-// --- Schema version negotiation (Sprint 30.0 v1->v2, Plan 35.13 v2->v3) ----
+// --- Schema version negotiation (Sprint 30.0 v1->v2, Plan 35.13 v2->v3, epic 95 v3->v4) ----
 
-// TestRecord_SchemaVersionIsThree locks Plan 35.13 AC2/AC4: the package schema
-// constant is bumped 2 -> 3 to accommodate the origin, occurrences, and first_seen
-// fields. This is the versioning half of the forward/backward-compat contract — v3
-// records become readable (r.SchemaVersion <= SchemaVersion), v4+ stay
-// forward-incompatible.
+// TestRecord_SchemaVersionIsFour locks epic 95 T1: the package schema constant is
+// bumped 3 -> 4 to accommodate the attempts field (Plan 35.13 took it 2 -> 3 for
+// origin, occurrences and first_seen). This is the versioning half of the
+// forward/backward-compat contract — v4 records become readable
+// (r.SchemaVersion <= SchemaVersion), v5+ stay forward-incompatible.
 //
 // The literal here is deliberate and is NOT the same defect as a pinned literal in
 // a behavioral test: this assertion IS the tripwire. Bumping the constant without
 // consciously updating this test — and with it the doc block's version history and
 // the downgrade-visibility note — is the mistake it exists to catch.
-func TestRecord_SchemaVersionIsThree(t *testing.T) {
-	assert.Equal(t, 3, SchemaVersion,
-		"SchemaVersion must be 3 after the origin/occurrences/first_seen bump")
+func TestRecord_SchemaVersionIsFour(t *testing.T) {
+	assert.Equal(t, 4, SchemaVersion,
+		"SchemaVersion must be 4 after the attempts bump (epic 95 T1)")
 }
 
 // TestRecord_ModelFieldOmitempty locks AC 01-02: Record carries a Model string
