@@ -955,6 +955,11 @@ type Registry struct {
 	// from a configured one; nil means no fix generation runs.
 	Executor *ExecutorConfig `yaml:"executor,omitempty"`
 
+	// Debt is the user-level `debt` block (Epic 92 T4). Its store key may name
+	// a store outside the repository, such as a private planning repo; see
+	// LoadUserDebtStore and localdebt.StoreDir.
+	Debt *DebtConfig `yaml:"debt,omitempty"`
+
 	// ProviderSource and AgentSource record the tier (and defining file) each
 	// effective entry came from after the project overlay merge — user or
 	// project. Not serialized (yaml:"-"); populated by stampSource (user) and

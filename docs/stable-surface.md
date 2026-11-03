@@ -602,6 +602,8 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `debate.max_items` | *int |
 | `debate.max_parallel` | int |
 | `debate.triggers` | []string |
+| `debt` | *registry.DebtConfig |
+| `debt.store` | string |
 | `executor` | *registry.ExecutorConfig |
 | `executor.agent_mode` | bool |
 | `executor.fix_timeout` | *int, deprecated alias of `executor.fix_timeout_secs` |
@@ -671,6 +673,8 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `context_prefetch.semantic.enabled` | *bool |
 | `context_prefetch.semantic.endpoint` | string |
 | `context_prefetch.semantic.top_k` | *int |
+| `debt` | *registry.DebtConfig |
+| `debt.store` | string |
 | `fail_on` | string |
 | `max_cache_bytes` | *int64 |
 | `max_claim_bytes` | *int64 |

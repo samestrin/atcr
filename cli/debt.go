@@ -69,7 +69,7 @@ func newDebtCmd() *cobra.Command {
 // checked. Containment inside the repo root is deliberately NOT required:
 // pointing at another repo's store is --store's documented purpose.
 func addDebtStoreFlag(cmd *cobra.Command) {
-	cmd.Flags().String("store", defaultDebtResolveDir, "path to the local TD store; unset resolves to <repo root>/.atcr/debt")
+	cmd.Flags().String("store", defaultDebtResolveDir, "path to the local TD store; unset resolves debt.store from .atcr/config.yaml or ~/.config/atcr/registry.yaml, else <repo root>/.atcr/debt")
 	cmd.Flags().Lookup("store").DefValue = ""
 	cmd.Flags().String("dir", defaultDebtResolveDir, "deprecated alias for --store")
 	cmd.Flags().Lookup("dir").DefValue = ""
@@ -91,7 +91,7 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 			return nil
 		}
 		if strings.TrimSpace(dir) == "" {
-			return usageError(fmt.Errorf("--%s must not be empty; omit it to resolve <repo root>/.atcr/debt", name))
+			return usageError(fmt.Errorf("--%s must not be empty; omit it to resolve the configured store or <repo root>/.atcr/debt", name))
 		}
 		if err := validation.FilePath(dir); err != nil {
 			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
@@ -137,18 +137,29 @@ func debtStoreFlagValue(cmd *cobra.Command) (string, string) {
 //
 // repoRoot falls back to the working directory when it finds no marker, so a
 // caller outside a repo keeps exactly today's behavior.
-func debtStoreDir(cmd *cobra.Command) string {
+//
+// Below --store, the store under that root is whatever localdebt.StoreDir
+// resolves (Epic 92 T4): a debt.store setting in the project config, then the
+// user registry, then <root>/.atcr/debt. It is the same resolver reconcile
+// persistence, the quality signal and the next-step suggestions use, so a
+// configured store is read and written by all of them. An invalid setting is
+// an error here, not a quiet fall back to the default store.
+func debtStoreDir(cmd *cobra.Command) (string, error) {
 	_, dir := debtStoreFlagValue(cmd)
 	if cmd.Flags().Changed("store") || cmd.Flags().Changed("dir") {
-		return dir
+		return dir, nil
 	}
 	root, err := debtRepoRoot()
 	if err != nil {
 		// Getwd failed — there is no better root to offer than the relative
 		// default, which is what every caller used before this walk existed.
-		return defaultDebtResolveDir
+		root = "."
 	}
-	return localdebt.DefaultDir(root)
+	store, err := localdebt.StoreDir(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve the local debt store: %w", err)
+	}
+	return store, nil
 }
 
 // debtRepoRoot finds the repository root for the debt store, using the marker
@@ -199,7 +210,10 @@ func debtRepoRoot() (string, error) {
 // A missing store is not an error: localdebt.ReadAll reports the "no backlog
 // yet" state as an empty result, which renders as the empty-result message.
 func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return nil, err
+	}
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
@@ -235,7 +249,10 @@ var hydrateDebtListIDs = hydrateDebtIDs
 // limit ids BEFORE pass 2, so at most limit records are hydrated — the same
 // place selectOpenIDs applies `debt resolve --max`. 0 is no cap.
 func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit int) ([]localdebt.Record, error) {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return nil, err
+	}
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
 
 	// A pass-through filter selects every id, so pass 1 would fold the whole store
@@ -429,7 +446,8 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		// undifferentiated "nothing here" from the WRONG store reads exactly like
 		// an empty backlog, with exit code 0 either way — the silent failure
 		// debtStoreDir exists to prevent.
-		_, _ = fmt.Fprintf(out, "No matching technical-debt items in %s.\n", debtStoreDir(cmd))
+		dir, _ := debtStoreDir(cmd) // resolved without error by selectDebtForList above
+		_, _ = fmt.Fprintf(out, "No matching technical-debt items in %s.\n", dir)
 		return nil
 	}
 

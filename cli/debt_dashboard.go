@@ -103,7 +103,10 @@ func runDebtDashboard(cmd *cobra.Command, _ []string) error {
 	// Both passes warn through the same writer, so a malformed line in a shard
 	// pass 2 re-reads would print twice; the dedup writer drops the repeat while
 	// letting every distinct line through, the shortfall note included.
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 	diag := newLineDedupWriter(cmd.ErrOrStderr())
 	defer diag.Flush()
 	opts := localdebt.ReadOpts{Writer: diag}

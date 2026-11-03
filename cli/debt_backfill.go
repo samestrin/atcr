@@ -63,7 +63,10 @@ func newDebtBackfillCmd() *cobra.Command {
 }
 
 func runDebtBackfill(cmd *cobra.Command, _ []string) error {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	reviewRoot, _ := cmd.Flags().GetString("review-root")
 	if reviewRoot == "" {
