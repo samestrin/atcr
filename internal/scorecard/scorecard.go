@@ -945,9 +945,10 @@ func Emit(in EmitInput, opts EmitOpts) error {
 //     cannot launder phantoms out of its prior by anchoring them on doc-named
 //     tokens. So in the trust tally the shielded finding IS charged while its
 //     category is still withheld. That does not reopen the escape (TD-036): the
-//     fold makes the record a raiser, so opportunityDisposition counts it
-//     (dispCounted) rather than dropping it as out-of-remit, even when another
-//     reviewer raised a discriminating out-of-remit category on the same run.
+//     fold makes the record a raiser, so opportunityDisposition keeps it as
+//     dispUnscopeable (kept, charged, annotated no-recognized-category) rather
+//     than dropping it as out-of-remit, even when another reviewer raised a
+//     discriminating out-of-remit category on the same run.
 //     TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins that through
 //     keptForTrust for eras 3 and 4.
 //

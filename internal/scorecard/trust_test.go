@@ -3029,7 +3029,8 @@ func TestOutcomeEligible_StopReasonSalvageKeepsTheLensStanding(t *testing.T) {
 // (FindingsRaised 0, FindingsDocShielded 1) is KEPT beside a reviewer raising a
 // discriminating out-of-remit category on the same run. mergeRoutedEras folds
 // the shielded count into FindingsRaised, so opportunityDisposition sees a
-// raiser (dispCounted) and the phantom stays chargeable. The same record left
+// raiser with no recognized category (dispUnscopeable: kept, charged, annotated
+// no-recognized-category) and the phantom stays chargeable. The same record left
 // unfolded is dispOutOfRemit: zero raised, no category, an out-of-remit topic.
 func TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4(t *testing.T) {
 	union := map[string]struct{}{"naming": {}}
@@ -3061,6 +3062,10 @@ func TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4(t *testing.T) {
 			require.NotNil(t, got, "a doc-shielded-only lens must be kept, not dropped as out of remit")
 			assert.Equal(t, 1, got.FindingsRaised)
 			assert.Equal(t, 0, got.FindingsDocShielded)
+			// The folded record is a raiser with no category, so it is kept as
+			// unscopeable (charged, annotated no-recognized-category), not counted.
+			assert.Equal(t, dispUnscopeable, opportunityDisposition(*got, union),
+				"the folded doc-shielded-only record is unscopeable, not counted")
 		})
 	}
 }
