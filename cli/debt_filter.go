@@ -152,7 +152,11 @@ func splitFilterList(s string) []string {
 // severity filter drops, then rows the confidence filter drops; matched is what
 // survives all of them, before the --max cap.
 func summarizeDebtFilter(cmd *cobra.Command, f debtFilter) (debtFilterSummary, error) {
-	sums, err := localdebt.ReadSummaries(debtStoreDir(cmd), localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return debtFilterSummary{}, err
+	}
+	sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return debtFilterSummary{}, fmt.Errorf("read local debt store: %w", err)
 	}

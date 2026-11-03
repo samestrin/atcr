@@ -199,6 +199,11 @@ type ProjectConfig struct {
 	// disclosure into a hard outage. TestProjectConfig_TelemetryNoticeShownIsKnownField
 	// pins that.
 	TelemetryNoticeShown *bool `yaml:"telemetry_notice_shown,omitempty"`
+	// Debt is the optional `debt` block (Epic 92 T4). Its store key places the
+	// local debt store; at this tier it must be a clean repo-relative path,
+	// which localdebt.StoreDir enforces. Read through the permissive
+	// LoadProjectDebtStore; declared here so the strict roster load accepts it.
+	Debt *DebtConfig `yaml:"debt,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.

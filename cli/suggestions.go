@@ -162,11 +162,18 @@ func (s nextStep) render(inv invocation) string {
 	// A blank root asserts nothing (reconcile normalizes it to the CWD), so it
 	// derives no store. A relative root is made absolute, as persistence does:
 	// debt list refuses a --store containing "..".
+	//
+	// The store is the one localdebt.StoreDir resolves for that root, as
+	// persistence does, so a configured debt.store is the store suggested. An
+	// invalid setting suggests no --store rather than a wrong one: the bare
+	// `debt list` resolves the setting itself and reports the mistake.
 	if v, ok := inv.Flags[s.StoreFrom]; ok && strings.TrimSpace(v) != "" {
 		if abs, err := filepath.Abs(v); err == nil {
 			v = abs
 		}
-		parts = append(parts, "--store="+carryValue(localdebt.DefaultDir(v)))
+		if store, err := localdebt.StoreDir(v); err == nil {
+			parts = append(parts, "--store="+carryValue(store))
+		}
 	}
 	for _, name := range s.Carry {
 		v, ok := inv.Flags[name]

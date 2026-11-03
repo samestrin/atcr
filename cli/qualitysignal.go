@@ -126,7 +126,13 @@ const qualitySignalNotSentMarker = "Preview only — nothing was transmitted. Th
 // payload is a non-nil empty slice (marshals to []), so --preview on a fresh
 // checkout prints an empty payload rather than failing (AC 03-01 EC1).
 func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
-	records, err := localdebt.ReadAll(localdebt.DefaultDir(root), localdebt.ReadOpts{Writer: io.Discard})
+	// The store is where localdebt.StoreDir puts it — the same resolver the
+	// writer uses — so a configured debt.store is the store measured here.
+	dir, err := localdebt.StoreDir(root)
+	if err != nil {
+		return nil, err
+	}
+	records, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: io.Discard})
 	if err != nil {
 		return nil, err
 	}

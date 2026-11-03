@@ -49,7 +49,10 @@ func newDebtSyncOutcomesCmd() *cobra.Command {
 }
 
 func runDebtSyncOutcomes(cmd *cobra.Command, _ []string) error {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 	td := strings.TrimSpace(mustFlag(cmd, "td"))
 	report, _ := cmd.Flags().GetBool("report")
 	switch {

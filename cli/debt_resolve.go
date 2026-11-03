@@ -228,7 +228,10 @@ func newDebtResolveCmd() *cobra.Command {
 }
 
 func runDebtResolve(cmd *cobra.Command, args []string) error {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 
 	var id string
 	if len(args) > 0 {

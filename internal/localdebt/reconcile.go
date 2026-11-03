@@ -29,7 +29,7 @@ import (
 // ever need one, this struct is internal with two in-module callers and can gain it
 // without breaking anything outside the module.
 type PersistOpts struct {
-	Root        string        // resolved repo root; the store is DefaultDir(Root)
+	Root        string        // resolved repo root; the store is StoreDir(Root)
 	Diag        io.Writer     // best-effort diagnostics sink
 	AutoCompact CompactPolicy // automatic-compaction threshold; zero value = production defaults
 	// Context, when supplied, makes the persist abandonable at its phase
@@ -127,7 +127,15 @@ func PersistForReconcile(reviewDir string, res reconcile.Result, opts PersistOpt
 		return
 	}
 
-	dir := DefaultDir(opts.Root)
+	// The store is wherever StoreDir puts it (a configured debt.store, else
+	// DefaultDir). An invalid store setting is a no-persist, never a fall back
+	// to the default store: that would file this run's findings where nobody
+	// configured them to go.
+	dir, err := StoreDir(opts.Root)
+	if err != nil {
+		_, _ = fmt.Fprintf(diag, "localdebt: %v; skipping local debt persistence\n", err)
+		return
+	}
 	seen := make(map[string]bool)
 	// Records to persist, built first so the whole run appends under ONE lock
 	// acquisition (appendBatch) instead of a withLock cycle per finding.

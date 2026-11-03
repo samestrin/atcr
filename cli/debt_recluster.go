@@ -47,7 +47,10 @@ func newDebtReclusterCmd() *cobra.Command {
 }
 
 func runDebtRecluster(cmd *cobra.Command, args []string) error {
-	dir := debtStoreDir(cmd)
+	dir, err := debtStoreDir(cmd)
+	if err != nil {
+		return err
+	}
 	id := strings.TrimSpace(args[0])
 	if id == "" {
 		return usageError(fmt.Errorf("atcr debt recluster requires a non-empty id"))
