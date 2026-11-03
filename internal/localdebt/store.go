@@ -203,7 +203,7 @@ func appendBatch(dir string, recs []Record) (int, error) {
 // one buffer). Parsed records are materialized into a returned slice; at the
 // documented scale (~500 bytes/record) that is trivially cheap and intentional.
 func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
-	recs, _, err := scanShard(path, opts, nil)
+	recs, _, err := scanShard(path, opts, nil, nil)
 	return recs, err
 }
 
@@ -213,7 +213,9 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 // those lines through a rewrite instead of destroying them (see Compact). The copy
 // matters: frag aliases the bufio.Reader's internal buffer and is invalidated by
 // the next ReadSlice. Malformed lines are never handed to preserve — they are
-// corrupt, not merely unreadable by this version.
+// corrupt, not merely unreadable by this version. When onRecord is non-nil it is
+// called the same way with every line that decoded, in step with the returned
+// records, so `debt convert` can move a record's exact bytes (convert.go).
 //
 // The second return value reports what the scan learned about the shard's health.
 // unrepresentable means it holds a line longer than maxLineBytes, skipped by the
@@ -231,7 +233,7 @@ type shardHealth struct {
 	malformed       bool // a line that failed to decode
 }
 
-func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, shardHealth, error) {
+func scanShard(path string, opts ReadOpts, preserve, onRecord func([]byte)) ([]Record, shardHealth, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, shardHealth{}, err
@@ -276,6 +278,9 @@ func scanShard(path string, opts ReadOpts, preserve func([]byte)) ([]Record, sha
 			switch r, outcome := decodeRecord(line, shard, w); outcome {
 			case decodeOK:
 				recs = append(recs, r)
+				if onRecord != nil {
+					onRecord(bytes.Clone(line))
+				}
 			case decodeForwardIncompatible:
 				if preserve != nil {
 					preserve(bytes.Clone(line))
@@ -578,7 +583,7 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 			out.frozen[name] = true
 		}
 
-		recs, health, err := scanShard(filepath.Join(dir, name), opts, collect)
+		recs, health, err := scanShard(filepath.Join(dir, name), opts, collect, nil)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue

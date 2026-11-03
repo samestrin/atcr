@@ -14,6 +14,8 @@
 // its own file under <store>/items/ instead. Every read path reads both layouts
 // through one enumeration (RecordFiles: month shards, then event files), so a store
 // holding month shards, event files, or both folds the same way however it is read.
+// Convert (convert.go, `atcr debt convert`) moves a store's month shards to event
+// files, one way, and removes no shard unless the fold is unchanged.
 //
 // The append/tolerant-read mechanics are a direct structural copy of
 // internal/scorecard/store.go — a proven append-only ledger — differing only in
