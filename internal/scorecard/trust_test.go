@@ -3023,3 +3023,44 @@ func TestOutcomeEligible_StopReasonSalvageKeepsTheLensStanding(t *testing.T) {
 	require.Len(t, kept, 1)
 	assert.Equal(t, outcomeFindings, kept[0].Outcome)
 }
+
+// TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4 pins, through the whole
+// keptForTrust chain, that a mapped lens whose only findings were doc-shielded
+// (FindingsRaised 0, FindingsDocShielded 1) is KEPT beside a reviewer raising a
+// discriminating out-of-remit category on the same run. mergeRoutedEras folds
+// the shielded count into FindingsRaised, so opportunityDisposition sees a
+// raiser (dispCounted) and the phantom stays chargeable. The same record left
+// unfolded is dispOutOfRemit: zero raised, no category, an out-of-remit topic.
+func TestKeptForTrust_DocShieldedOnlyLensIsKeptInEras3And4(t *testing.T) {
+	union := map[string]struct{}{"naming": {}}
+	for _, tc := range []struct {
+		name string
+		era  int
+	}{
+		{"era3", raisedDenominatorRoutedExShield},
+		{"era4", raisedDenominatorAmbiguousCharged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mira := oppRecRaw("run-1", "mira", 0, nil)
+			mira.RaisedDenominator = tc.era
+			mira.FindingsDocShielded = 1
+			otto := oppRecRaw("run-1", "otto", 1, []string{reclib.CategoryNaming})
+			otto.RaisedDenominator = tc.era
+			otto.Outcome = outcomeFindings
+			// The union is otto's naming, outside mira's remit.
+			require.Equal(t, dispOutOfRemit, opportunityDisposition(mira, union),
+				"the unfolded record is out of remit")
+
+			kept := keptForTrust([]Record{mira, otto})
+			var got *Record
+			for i := range kept {
+				if kept[i].Reviewer == "mira" {
+					got = &kept[i]
+				}
+			}
+			require.NotNil(t, got, "a doc-shielded-only lens must be kept, not dropped as out of remit")
+			assert.Equal(t, 1, got.FindingsRaised)
+			assert.Equal(t, 0, got.FindingsDocShielded)
+		})
+	}
+}
