@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -397,9 +396,9 @@ func selectOpenIDs(sums []localdebt.Summary, severity string, limit int) []strin
 // hydrateOpenDebt is pass 2: walk the store shard by shard and retain full records
 // ONLY for the selected ids, then return them in the order pass 1 chose.
 //
-// Shards are enumerated with the same os.ReadDir + .jsonl filter, in the same
-// lexical order, that ReadAll uses, so pass 2 sees exactly the shard set pass 1
-// did. The retained records are re-folded, which is what preserves the documented
+// Record files (month shards, then event files) are enumerated by the same
+// localdebt.RecordFiles, in the same order, that ReadAll uses, so pass 2 sees
+// exactly the file set pass 1 did. The retained records are re-folded, which is what preserves the documented
 // display rule: the record shown is the effective occurrence FoldRecords keeps
 // (the last open one for the id), not the first one encountered.
 //
@@ -422,9 +421,9 @@ func hydrateOpenDebt(dir string, ids []string, opts localdebt.ReadOpts) ([]local
 }
 
 // collectDebtIDRecords is the shared shard-walk behind the two-pass debt reads:
-// it streams every shard in dir one file at a time and retains the RAW
-// (unfolded) records for the wanted ids, so peak memory is one shard plus the
-// wanted ids' own history rather than the whole store. hydrateDebtIDs folds
+// it streams every record file in dir (month shards and event files) one file at
+// a time and retains the RAW (unfolded) records for the wanted ids, so peak memory
+// is one file plus the wanted ids' own history rather than the whole store. hydrateDebtIDs folds
 // this for the worklist; markDebtResolved calls it directly for its single
 // target id.
 //
@@ -441,19 +440,13 @@ func collectDebtIDRecords(dir string, ids []string, opts localdebt.ReadOpts) ([]
 		wanted[id] = true
 	}
 
-	entries, err := os.ReadDir(dir)
+	files, err := localdebt.RecordFiles(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading localdebt dir: %w", localdebt.RedactPathErr(err))
+		return nil, err
 	}
 	var retained []localdebt.Record
-	for _, e := range entries {
-		if !localdebt.IsShardEntry(e) {
-			continue
-		}
-		recs, err := localdebt.ReadRecords(filepath.Join(dir, e.Name()), opts)
+	for _, f := range files {
+		recs, err := localdebt.ReadRecords(f, opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue

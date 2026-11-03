@@ -1,7 +1,10 @@
 package localdebt
 
 import (
+	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -36,4 +39,68 @@ const shardExt = ".jsonl"
 // that here would be a behaviour change smuggled into a de-duplication.
 func IsShardEntry(e fs.DirEntry) bool {
 	return !e.IsDir() && strings.HasSuffix(e.Name(), shardExt)
+}
+
+// RecordFiles lists every file of the store at dir that holds records, as paths, in
+// the order every read path reads them: month shards in lexical order, then the
+// event files of the event layout (events.go) in name order, which is by finding id
+// and then event time.
+//
+// It is the ONE enumeration of a store's record files, for the same reason
+// IsShardEntry is the one shard predicate: ReadAll, StreamSummaries, the compaction
+// read and cli/debt_resolve.go's hydration must see the same files in the same
+// order, or a store holding month shards, event files, or both folds differently
+// depending on which path read it. The order is load-bearing: the fold's full-tie
+// rule is "last append wins", which is positional.
+//
+// A missing store, or a store with no items directory, is not an error. Errors are
+// redacted through basePathErr like every other read path.
+func RecordFiles(dir string) ([]string, error) {
+	files, err := shardFilePaths(dir)
+	if err != nil {
+		return nil, err
+	}
+	events, err := eventFilePaths(dir)
+	if err != nil {
+		return nil, err
+	}
+	return append(files, events...), nil
+}
+
+// shardFilePaths lists the store's month shard files in lexical order. A missing
+// store is empty, not an error.
+func shardFilePaths(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
+	}
+	var files []string
+	for _, e := range entries {
+		if IsShardEntry(e) {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+	return files, nil
+}
+
+// eventFilePaths lists the store's event files in name order. A missing items
+// directory is empty, not an error.
+func eventFilePaths(dir string) ([]string, error) {
+	entries, err := os.ReadDir(ItemsDir(dir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading localdebt items dir: %w", basePathErr(err))
+	}
+	var files []string
+	for _, e := range entries {
+		if IsEventEntry(e) {
+			files = append(files, filepath.Join(ItemsDir(dir), e.Name()))
+		}
+	}
+	return files, nil
 }

@@ -10,6 +10,11 @@
 // files are 0600, so records are never group- or world-readable. .atcr/ is local,
 // uncommitted state; the store is intentionally outside version control.
 //
+// A store opted in to the event layout (events.go, Epic 92) writes each record as
+// its own file under <store>/items/ instead. Every read path reads both layouts
+// through one enumeration (RecordFiles: month shards, then event files), so a store
+// holding month shards, event files, or both folds the same way however it is read.
+//
 // The append/tolerant-read mechanics are a direct structural copy of
 // internal/scorecard/store.go — a proven append-only ledger — differing only in
 // root-path resolution (per-repo .atcr/debt/ instead of the global
@@ -221,6 +226,11 @@
 // live only on the record being skipped, while still dropping the sightings they
 // summarized. That is the same trade the protected shard itself gets: leaving it
 // whole costs disk, rewriting it costs data.
+//
+// Event files are protected the same way, always: compaction folds month shards
+// only and never rewrites or removes an event file, so an id with any event record
+// keeps its month-shard records as they are, and an event-only store compacts to a
+// no-op (CompactResult.EventRecords says why).
 //
 // It runs two ways. Manually, via `atcr debt compact`. Automatically, via
 // MaybeCompact, called once by PersistForReconcile AFTER its append loop and ONLY

@@ -249,3 +249,44 @@ func TestBackfillJustifications_LeavesEventFilesAlone(t *testing.T) {
 		assert.Equal(t, stale+"\n", string(b), "an event file is written once and never rewritten")
 	}
 }
+
+// An unreadable items directory or event file fails every read path, like an
+// unreadable shard, and the error never carries the absolute store path.
+func TestDualLayout_UnreadableEventsFailEveryReadPathRedacted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied read cannot be provoked as root")
+	}
+	reads := map[string]func(dir string) error{
+		"ReadAll": func(dir string) error { _, err := ReadAll(dir, ReadOpts{}); return err },
+		"ReadSummaries": func(dir string) error {
+			_, err := ReadSummaries(dir, ReadOpts{})
+			return err
+		},
+		"ReadEventRecords": func(dir string) error { _, err := ReadEventRecords(dir, ReadOpts{}); return err },
+		"CompactPlan":      func(dir string) error { _, err := CompactPlan(dir, ReadOpts{}); return err },
+		"Compact":          func(dir string) error { _, err := Compact(dir, ReadOpts{}); return err },
+		"Backfill": func(dir string) error {
+			_, err := BackfillJustifications(dir, t.TempDir(), true)
+			return err
+		},
+	}
+	lock := map[string]func(t *testing.T, dir string) string{
+		"items dir": func(t *testing.T, dir string) string { return ItemsDir(dir) },
+		"event file": func(t *testing.T, dir string) string {
+			return filepath.Join(ItemsDir(dir), eventFiles(t, dir)[0])
+		},
+	}
+	for what, target := range lock {
+		for name, read := range reads {
+			t.Run(what+"/"+name, func(t *testing.T) {
+				dir := buildStore(t, layoutMixed)
+				p := target(t, dir)
+				require.NoError(t, os.Chmod(p, 0o000))
+				t.Cleanup(func() { _ = os.Chmod(p, 0o700) })
+				err := read(dir)
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+			})
+		}
+	}
+}
