@@ -61,16 +61,22 @@ func UsesEventLayout(dir string) bool {
 // idempotent.
 func EnableEventLayout(dir string) error {
 	return withLock(dir, "enable-events", func() error {
-		items := ItemsDir(dir)
-		if err := os.MkdirAll(items, 0o700); err != nil {
-			return fmt.Errorf("creating localdebt items dir: %w", basePathErr(err))
-		}
-		f, err := os.OpenFile(filepath.Join(items, eventLayoutMarker), os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			return fmt.Errorf("writing localdebt event-layout marker: %w", basePathErr(err))
-		}
-		return basePathErr(f.Close())
+		return enableEventLayoutLocked(dir)
 	})
+}
+
+// enableEventLayoutLocked is EnableEventLayout's body without the lock: the caller
+// must already hold the store lock (withLock), as Convert does.
+func enableEventLayoutLocked(dir string) error {
+	items := ItemsDir(dir)
+	if err := os.MkdirAll(items, 0o700); err != nil {
+		return fmt.Errorf("creating localdebt items dir: %w", basePathErr(err))
+	}
+	f, err := os.OpenFile(filepath.Join(items, eventLayoutMarker), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("writing localdebt event-layout marker: %w", basePathErr(err))
+	}
+	return basePathErr(f.Close())
 }
 
 // IsEventEntry reports whether a directory entry in the items directory is an
