@@ -15,6 +15,9 @@ func newDebtCompactCmd() *cobra.Command {
 		Long: "atcr debt compact reads the public local technical-debt store (.atcr/debt/)\n" +
 			"and folds it by id, dropping superseded records atomically so that\n" +
 			"on-disk store size tracks live findings, not total history.\n\n" +
+			"It folds month shards only. Event files (items/, the opt-in event\n" +
+			"layout) are never rewritten or removed, so on an event-only store it\n" +
+			"is a no-op.\n\n" +
 			"It is the only irreversible subcommand in the namespace; run it with\n" +
 			"--dry-run first to see what a real run would drop.",
 		Args: usageArgs(cobra.NoArgs),
@@ -64,6 +67,16 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Nothing to compact: the store holds no readable records.")
 		return nil
 	}
+	// An event-only store (Epic 92 event layout) has nothing compaction may touch:
+	// each event file is written once and kept as the item's history. Say why the
+	// run did nothing, or it reads as a store with nothing superseded.
+	if res.EventRecords == res.RecordsBefore {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"Nothing to compact: all %d record(s) are event files (items/), which compaction never rewrites or removes; each event is kept as history.\n",
+			res.EventRecords)
+		reportPreservedRecords(cmd, res)
+		return nil
+	}
 	// Nothing superseded is a no-op too, in both modes. "Compacted N records into
 	// N (0 superseded dropped)" reads as a mutation that did not occur — and in the
 	// real-run case the rewrite it announces is one the user has no reason to want.
@@ -71,6 +84,7 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"Nothing to compact: %d record(s), none superseded.\n", res.RecordsBefore)
 		reportPreservedRecords(cmd, res)
+		reportEventRecords(cmd, res)
 		return nil
 	}
 
@@ -84,7 +98,19 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Dry run: the store was not modified.")
 	}
 	reportPreservedRecords(cmd, res)
+	reportEventRecords(cmd, res)
 	return nil
+}
+
+// reportEventRecords explains, on a store holding both layouts, that the counts
+// include event files compaction left as they were: it folds month shards only.
+func reportEventRecords(cmd *cobra.Command, res localdebt.CompactResult) {
+	if res.EventRecords == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"Left %d record(s) in event files untouched (items/); compaction folds month shards only.\n",
+		res.EventRecords)
 }
 
 // reportPreservedRecords explains any forward-incompatible lines carried through

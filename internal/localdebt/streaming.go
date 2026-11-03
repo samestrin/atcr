@@ -284,15 +284,16 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 	return nil
 }
 
-// StreamSummaries walks every *.jsonl month shard under dir and calls fn once per
-// decodable record, in ReadAll's exact order: shards in os.ReadDir (lexical) order,
-// lines in file order. That ordering is load-bearing, not incidental — the fold's
-// full-tie rule (equal timestamp, equal status rank) is "last append wins", which
-// is positional, so a map-ordered or concurrent walk would make FoldSummaries
-// non-deterministic for same-second records and let it disagree with FoldRecords.
+// StreamSummaries walks every record file of the store at dir (RecordFiles: month
+// shards, then event files) and calls fn once per decodable record, in ReadAll's
+// exact order: the files in RecordFiles order, lines in file order. That ordering
+// is load-bearing, not incidental — the fold's full-tie rule (equal timestamp,
+// equal status rank) is "last append wins", which is positional, so a map-ordered
+// or concurrent walk would make FoldSummaries non-deterministic for same-second
+// records and let it disagree with FoldRecords.
 //
 // A missing directory is empty (nil), not an error — the "no backlog yet" state,
-// matching ReadAll. Non-.jsonl entries are ignored. Errors are redacted through
+// matching ReadAll. Other files are ignored. Errors are redacted through
 // basePathErr per the package's path-disclosure contract (store.go SECURITY
 // block). An error returned by fn aborts the walk and is propagated as-is.
 //
@@ -300,27 +301,20 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 // nothing but that set. Use ReadSummaries when the whole set is genuinely needed
 // at once (the fold), and ReadAll when full records are needed (rendering).
 func StreamSummaries(dir string, opts ReadOpts, fn func(Summary) error) error {
-	entries, err := os.ReadDir(dir)
+	files, err := RecordFiles(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
+		return err
 	}
-	// One maxLineBytes buffer for the whole walk, reset per shard (see
+	// One maxLineBytes buffer for the whole walk, reset per file (see
 	// streamSummaryFile): a fresh 1 MiB buffer per month would dominate this path's
 	// allocation on a store with any real history. Allocated lazily, on the first
-	// entry that is actually a shard, so the "no backlog yet" and non-shard-entries
-	// cases pay nothing.
+	// record file, so the "no backlog yet" case pays nothing.
 	var br *bufio.Reader
-	for _, e := range entries {
-		if !IsShardEntry(e) {
-			continue
-		}
+	for _, f := range files {
 		if br == nil {
 			br = bufio.NewReaderSize(bytes.NewReader(nil), maxLineBytes)
 		}
-		if err := streamSummaryFile(filepath.Join(dir, e.Name()), br, opts, fn); err != nil {
+		if err := streamSummaryFile(f, br, opts, fn); err != nil {
 			// A caller's own error is neither a missing shard nor a path to redact:
 			// unwrap it and return it verbatim so it stays usable as an early-exit
 			// signal. Testing it with os.IsNotExist/basePathErr first would let a

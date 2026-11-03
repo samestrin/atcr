@@ -119,6 +119,16 @@ type BackfillResult struct {
 	// described the wrong set on the one command that rewrites the store in place.
 	SkippedRationaleBearing int
 
+	// SkippedEventFiles counts effective records whose id has at least one record in
+	// an event file (events.go). It sits outside the partition, like
+	// SkippedRationaleBearing. An event file is written once and never changed —
+	// its name is a hash of its bytes, and rewriting it in one clone is a merge
+	// conflict with every other — so this pass, which repairs in place, cannot
+	// repair it. The whole id is skipped, not just its event lines: replaying over
+	// the id's month-shard lines while the effective record sits unrepaired in an
+	// event file would report Rewritten with the stale excerpt still effective.
+	SkippedEventFiles int
+
 	// OversizedSummaries counts the review dirs' reconciled/summary.json files this
 	// pass ignored for being over maxSummaryBytes. Such a dir owns nothing, so a
 	// policy refusal in it counts under PolicyUnattributed, not PolicyUnrepairable; the slog.Debug
@@ -239,10 +249,21 @@ func defaultBackfillSeams() backfillSeams {
 func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillSeams) (BackfillResult, error) {
 	var res BackfillResult
 	err := withLock(dir, "backfill-justifications", func() error {
-		recs, err := ReadAll(dir, ReadOpts{})
+		// ReadAll's records, in ReadAll's order (shards, then events), read as two
+		// halves so the ids held in event files are known: see SkippedEventFiles.
+		recs, err := readShardRecords(dir, ReadOpts{})
 		if err != nil {
 			return err
 		}
+		events, err := ReadEventRecords(dir, ReadOpts{})
+		if err != nil {
+			return err
+		}
+		eventIDs := make(map[string]bool, len(events))
+		for _, rec := range events {
+			eventIDs[rec.ID] = true
+		}
+		recs = append(recs, events...)
 		// Fold first: the gate reads the EFFECTIVE record, so that is the excerpt
 		// whose staleness matters. An id's other rows are updated alongside it below,
 		// because they carry the same stamp.
@@ -327,6 +348,10 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 				// skip owes instead is VISIBILITY: counted below, so "0 scanned" is
 				// distinguishable from a scan that was suppressed.
 				res.SkippedRationaleBearing++
+				continue
+			}
+			if eventIDs[r.ID] {
+				res.SkippedEventFiles++
 				continue
 			}
 			sr := r.SourceReport

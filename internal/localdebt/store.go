@@ -351,36 +351,45 @@ func drainLine(br *bufio.Reader) error {
 	}
 }
 
-// ReadAll reads every *.jsonl month file under dir and returns the concatenated
-// records (malformed lines skipped per-file by ReadRecords). A missing directory is
-// empty (nil, nil), not an error — the "no backlog yet" state. Non-.jsonl files are
-// ignored. Shard files are read in os.ReadDir order (lexical), so month shards
-// aggregate chronologically.
+// ReadAll reads every record file of the store at dir (RecordFiles: the *.jsonl
+// month shards in lexical order, so they aggregate chronologically, then the event
+// files of the event layout) and returns the concatenated records (malformed lines
+// skipped per-file by ReadRecords). A missing directory is empty (nil, nil), not an
+// error — the "no backlog yet" state. Other files are ignored.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
-	entries, err := os.ReadDir(dir)
+	// A non-ENOENT ReadDir failure (e.g. a permission error) can carry an absolute
+	// dir path; RecordFiles reduces it to its base name so a username-bearing path is
+	// never embedded (matching the write path). The per-file ReadRecords error is
+	// redacted the same way in readRecordFiles.
+	files, err := RecordFiles(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		// A non-ENOENT ReadDir failure (e.g. a permission error) can carry an
-		// absolute dir path; reduce it to its base name so a username-bearing path is
-		// never embedded (matching the write path). The per-shard ReadRecords error is
-		// redacted the same way at the return below: basePathErr rewrites only
-		// *os.PathError.Path and preserves the underlying Err, and ReadAll's own ENOENT
-		// check runs on the raw error first, so os.IsNotExist stays usable there.
-		return nil, fmt.Errorf("reading localdebt dir: %w", basePathErr(err))
+		return nil, err
 	}
+	return readRecordFiles(files, opts)
+}
+
+// readShardRecords is ReadAll over the month shards alone, for the one caller that
+// must tell the layouts apart: the justification backfill rewrites shard lines in
+// place and leaves event files whole.
+func readShardRecords(dir string, opts ReadOpts) ([]Record, error) {
+	files, err := shardFilePaths(dir)
+	if err != nil {
+		return nil, err
+	}
+	return readRecordFiles(files, opts)
+}
+
+// readRecordFiles reads the given record files in order and concatenates their
+// records. A file removed since it was listed is skipped.
+func readRecordFiles(files []string, opts ReadOpts) ([]Record, error) {
 	var all []Record
-	for _, e := range entries {
-		if !IsShardEntry(e) {
-			continue
-		}
-		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
+	for _, f := range files {
+		recs, err := ReadRecords(f, opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			// Non-ENOENT (the missing-file case continued above): redact the shard
+			// Non-ENOENT (the missing-file case continued above): redact the file
 			// path so an EACCES open never leaks an absolute username-bearing path.
 			return all, basePathErr(err)
 		}
@@ -414,6 +423,8 @@ type shardRead struct {
 	// (over-long), and every non-month .jsonl file, which Compact never rewrites by
 	// construction (TD internal/localdebt/store.go:298).
 	frozen map[string]bool
+	// eventRecords counts the records read from event files, all of them frozen.
+	eventRecords int
 }
 
 // frozenIDs is the set of finding ids with at least one record sitting in a frozen
@@ -585,6 +596,36 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 		if health.unrepresentable || (health.malformed && len(recs) == 0 && len(out.preserved[month]) == 0) {
 			out.frozen[name] = true
 		}
+		for _, r := range recs {
+			out.records = append(out.records, r)
+			out.shards = append(out.shards, name)
+		}
+	}
+
+	// Event files (events.go) come last, matching ReadAll's order, and every one is
+	// FROZEN: an event is written once and never changed, so Compact neither rewrites
+	// nor removes it. Reading them still matters for the same reason a non-month
+	// .jsonl file is read: an id with any event record is then not compactable
+	// (frozenIDs), so its month-shard records are written back unchanged and the
+	// fold over both layouts stays exactly what it was. Only ids living wholly in
+	// month shards are folded.
+	events, err := eventFilePaths(dir)
+	if err != nil {
+		return out, err
+	}
+	for _, path := range events {
+		recs, err := ReadRecords(path, opts)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return out, basePathErr(err)
+		}
+		// The key carries the items/ prefix, so it can never be mistaken for a
+		// month shard ("2026-06.jsonl") by bucketByMonth's frozen-destination check.
+		name := itemsSubdir + "/" + filepath.Base(path)
+		out.frozen[name] = true
+		out.eventRecords += len(recs)
 		for _, r := range recs {
 			out.records = append(out.records, r)
 			out.shards = append(out.shards, name)
@@ -1485,29 +1526,32 @@ type CompactResult struct {
 	RecordsAfter  int
 	Dropped       int
 	Preserved     int
+	// EventRecords counts the records read from event files (events.go). They are
+	// included in RecordsBefore and RecordsAfter, and never rewritten or removed:
+	// compaction folds month shards only, so on an event-only store it is a no-op
+	// with EventRecords == RecordsBefore.
+	EventRecords int
 }
 
-// hasShardFiles reports whether dir holds at least one .jsonl shard. It answers
+// hasShardFiles reports whether dir holds at least one record file: a .jsonl shard
+// or an event file. It answers
 // CompactResult.StoreFound, so it deliberately does not parse anything: a shard
 // this binary cannot decode is still a store, and reporting otherwise is what let
 // a caller print "No local TD store" over records sitting on disk. A missing or
 // unreadable directory is simply not a store.
+//
+// An event file counts too: an event-only store is a store, and compacting it is an
+// explained no-op, not "no store".
 func hasShardFiles(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if IsShardEntry(e) {
-			return true
-		}
-	}
-	return false
+	files, err := RecordFiles(dir)
+	return err == nil && len(files) > 0
 }
 
 // Compact reads all records in dir, folds them by ID to keep only the effective
 // records (dropping superseded ones), and rewrites the sharded monthly JSONL
 // files atomically. Shards that no longer have any active records are deleted.
+// Event files (events.go) are read, so the fold is the store's whole fold, but never
+// rewritten or removed; an id with an event record is not compacted (readAllPreserving).
 // Compact runs within a cross-process lock to prevent races with concurrent Appends.
 //
 // # Forward-incompatible records are preserved, never destroyed
@@ -1592,6 +1636,7 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 		for _, lines := range read.preserved {
 			result.Preserved += len(lines)
 		}
+		result.EventRecords = read.eventRecords
 		if len(read.records) == 0 {
 			return nil
 		}
@@ -1728,8 +1773,9 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 
 		byMonth := bucketByMonth(planCompaction(read), frozenMonth, diagWriter(opts.Writer))
 		result = CompactResult{
-			StoreFound: storeFound,
-			Preserved:  preservedCount,
+			StoreFound:   storeFound,
+			Preserved:    preservedCount,
+			EventRecords: read.eventRecords,
 		}
 		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, filedCount(byMonth))
 
@@ -1907,7 +1953,10 @@ func (p CompactPolicy) maxBytes() int64 {
 }
 
 // shardPaths lists the store's *.jsonl shards and their total size on disk, using
-// the same filter and order as ReadAll. A missing directory is the "no backlog yet"
+// the same filter and order as ReadAll's month-shard half. Event files are left out
+// on purpose: this feeds the automatic-compaction trigger, which must measure only
+// what compaction can shrink, or an event-heavy store re-trips it on no-op runs. A
+// missing directory is the "no backlog yet"
 // state: no shards, no bytes, no error.
 func shardPaths(dir string) ([]string, int64, error) {
 	entries, err := os.ReadDir(dir)
@@ -1991,7 +2040,8 @@ func countLines(paths []string) (int, error) {
 }
 
 // StoreStats reports the store's size: the number of newline-terminated lines
-// across every *.jsonl shard, and their total bytes on disk.
+// across every *.jsonl shard, and their total bytes on disk. Event files are not
+// counted; see shardPaths.
 //
 // This is a SIZE HEURISTIC, not a semantic record count. It counts lines, so
 // malformed and forward-incompatible lines are included — which is what an

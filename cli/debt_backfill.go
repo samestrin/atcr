@@ -126,10 +126,11 @@ func runDebtBackfill(cmd *cobra.Command, _ []string) error {
 	// states when a summary is read rather than restricting the count ("only those
 	// checked"), which read as a contradiction on a 0 (TD cli/debt_backfill.go:124).
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored (summaries are read only for a policy refusal)\n",
+		"%s%d scanned, %d rewritten (%d %s), %d unchanged, %d unresolved (%d review tree pruned, %d declined by policy, %d policy refusal not tied to the record), %d ambiguous (candidates disagreed), %d skipped (carries a rationale: resolved, wontfix, unreproducible or attempts-exhausted), %d summary.json over 1 MiB ignored (summaries are read only for a policy refusal)%s\n",
 		prefix, res.Scanned, res.Rewritten, res.RewrittenLines, pluralLines(res.RewrittenLines),
 		res.Unchanged, res.Unresolved, res.Unresolved-res.PolicyUnrepairable-res.PolicyUnattributed,
-		res.PolicyUnrepairable, res.PolicyUnattributed, res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries)
+		res.PolicyUnrepairable, res.PolicyUnattributed, res.Ambiguous, res.SkippedRationaleBearing, res.OversizedSummaries,
+		eventSkipClause(res.SkippedEventFiles))
 
 	// A dry run shows the text, not just the count. It is documented as the step to
 	// run FIRST on the one subcommand that rewrites the store in place, and a bare
@@ -494,3 +495,16 @@ func collisionKey(shard string) string {
 // give up the property the header calls out: the suffix is derived from the raw name,
 // so the DERIVATION is stable across runs and independent of directory order.
 const locatorSuffixHexLen = 12
+
+// eventSkipClause is the report's trailing clause for ids held in event files
+// (localdebt.BackfillResult.SkippedEventFiles). It is empty when there are none, so
+// a month-shard store's report reads exactly as it always has. It deliberately does
+// not say "skipped (": that literal is the anchor
+// internal/reconcile/technical_debt_doc_drift_test.go uses to find the rationale
+// clause, and it must stay unique.
+func eventSkipClause(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d left unrepaired (held in event files, which are never rewritten)", n)
+}

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -130,30 +129,11 @@ func writeEventLocked(dir string, rec Record, line []byte) error {
 // ReadEventRecords reads every event file in the store's items directory, in name
 // order (by finding id, then event time), with the same malformed and
 // schema-version skips as a month shard. A missing items directory is empty, not
-// an error. It reads the event layout only; folding both layouts on every read path
-// is Epic 92 T2.
+// an error. It reads the event layout only; ReadAll reads both.
 func ReadEventRecords(dir string, opts ReadOpts) ([]Record, error) {
-	entries, err := os.ReadDir(ItemsDir(dir))
+	files, err := eventFilePaths(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading localdebt items dir: %w", basePathErr(err))
+		return nil, err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	var all []Record
-	for _, e := range entries {
-		if !IsEventEntry(e) {
-			continue
-		}
-		recs, err := ReadRecords(filepath.Join(ItemsDir(dir), e.Name()), opts)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return all, basePathErr(err)
-		}
-		all = append(all, recs...)
-	}
-	return all, nil
+	return readRecordFiles(files, opts)
 }
