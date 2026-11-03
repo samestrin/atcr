@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -66,6 +67,21 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 				"lens anchor, or a correct finding about an unchanged sibling branch is discarded "+
 				"by the grounding gate", path, predicateFilingAnchor)
 		}
+		if !strings.Contains(ruleLine, predicateSiblingAnchor) {
+			t.Errorf("built-in persona %s files the predicate-exhaustiveness finding on the edited line "+
+				"but never says where the defect is — %q must appear verbatim on the SAME ## Focus "+
+				"bullet as the lens anchor, or the finding is routed to the half of the predicate "+
+				"that was already fixed", path, predicateSiblingAnchor)
+		}
+		// Whole file, not just the rule line: the relocation coaching also lived
+		// in _base.md's Grounding paragraph, outside ## Focus.
+		for _, framing := range forbiddenRelocationFramings {
+			if loc := framing.FindString(string(body)); loc != "" {
+				t.Errorf("built-in persona %s justifies the edited-line anchor only by the grounding "+
+					"gate (%q) — that coaches a citation that passes the gate while pointing away from "+
+					"the defect; declare the sibling %s instead", path, loc, predicateSiblingAnchor)
+			}
+		}
 		return nil
 	})
 	require.NoError(t, err, "walking built-in personas")
@@ -73,6 +89,17 @@ func TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule(t *testing.T)
 	if checked == 0 {
 		t.Fatal("no embedded built-in persona files were checked — the walk found nothing to pin")
 	}
+}
+
+// forbiddenRelocationFramings are the wordings the built-ins used, before the
+// sibling marker, to justify filing on the edited line purely as a way past the
+// grounding gate (row personas/_base.md:12, Epic 108). Each matched shipped
+// prose: _base.md's rule bullet, the nine personas' rule bullets, and _base.md's
+// Grounding paragraph. Spaces are \s+ so a re-wrapped copy still matches.
+var forbiddenRelocationFramings = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)so\s+the\s+grounding\s+rule\b.*?\bdoes\s+not\s+discard\s+it`),
+	regexp.MustCompile(`(?i)changed-line\s+anchor\s+is\s+what\s+keeps\s+the\s+finding\s+inside\s+the\s+scope\s+rule`),
+	regexp.MustCompile(`(?i)so\s+the\s+citation\s+itself\s+stays\s+grounded`),
 }
 
 // stripTemplateActions removes any leading {{...}} template actions from line
@@ -165,15 +192,15 @@ func TestPredicateRuleLineUnderFocus_MessageClaimsOnlyWhatItChecks(t *testing.T)
 
 // TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice pins the heterogeneity
 // constraint the authoring guide states (docs/personas-authoring.md): word the
-// prose around the two anchors in your persona's own voice, not another
+// prose around the anchors in your persona's own voice, not another
 // persona's sentence. The anchor checks above cannot see a pasted bullet — an
 // identical rule line satisfies them in every file — so distinctness needs its
-// own guard. Strip both anchors from each file's rule line and fail if any
+// own guard. Strip all three anchors from each file's rule line and fail if any
 // two remainders are byte-identical: each pasted copy makes the next look like
 // house style, and correlated findings inflate the reconciler's CONFIDENCE =
 // HIGH (2+ distinct reviewers) without adding independent evidence.
 func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
-	remainders := map[string]string{} // file -> rule line with both anchors stripped
+	remainders := map[string]string{} // file -> rule line with every anchor stripped
 
 	err := fs.WalkDir(files, ".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -195,8 +222,11 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 				"TestEveryBuiltinPersona_CarriesThePredicateExhaustivenessRule should have failed already", path, ruleErr)
 			return nil
 		}
-		remainders[path] = strings.TrimSpace(
-			strings.ReplaceAll(strings.ReplaceAll(ruleLine, predicateRuleAnchor, ""), predicateFilingAnchor, ""))
+		remainder := ruleLine
+		for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor, predicateSiblingAnchor} {
+			remainder = strings.ReplaceAll(remainder, anchor, "")
+		}
+		remainders[path] = strings.TrimSpace(remainder)
 		return nil
 	})
 	require.NoError(t, err, "walking built-in personas")
@@ -205,7 +235,7 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 	for path, remainder := range remainders {
 		if first, dup := seen[remainder]; dup {
 			t.Errorf("built-in personas %s and %s carry a byte-identical predicate-exhaustiveness "+
-				"bullet outside the two anchors — the prose around the anchors must be each persona's "+
+				"bullet outside the anchors — the prose around the anchors must be each persona's "+
 				"own voice (docs/personas-authoring.md); pasted copies make reviewers converge and "+
 				"inflate reconcile CONFIDENCE without adding independent evidence", first, path)
 		} else {
@@ -215,7 +245,7 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 }
 
 // TestAuthoringDoc_QuotesTheEnforcedAnchors pins docs/personas-authoring.md
-// against the two constants above. The doc quotes both phrases verbatim — in the
+// against the three constants above. The doc quotes every phrase verbatim — in the
 // panel-wide rule paragraph and in the release checklist — as the contract
 // contributors must satisfy; a phrase edited in the constants leaves authoring
 // instructions that produce personas which fail the suite. The guard lives in
@@ -224,7 +254,7 @@ func TestEveryBuiltinPersona_PredicateRuleStaysInItsOwnVoice(t *testing.T) {
 func TestAuthoringDoc_QuotesTheEnforcedAnchors(t *testing.T) {
 	body, err := os.ReadFile("../docs/personas-authoring.md")
 	require.NoError(t, err, "docs/personas-authoring.md must exist")
-	for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor} {
+	for _, anchor := range []string{predicateRuleAnchor, predicateFilingAnchor, predicateSiblingAnchor} {
 		require.Containsf(t, string(body), anchor,
 			"docs/personas-authoring.md no longer quotes the enforced anchor %q — the "+
 				"authoring instructions now describe a contract the suite does not check; "+
@@ -292,6 +322,10 @@ func TestPredicateExhaustivenessRule_RendersWithToolsEitherWay(t *testing.T) {
 				"%s: %q absent from the rendered ## Focus rule line with ToolsEnabled=%v — the "+
 					"filing mechanic must travel on the same bullet as the lens",
 				file, predicateFilingAnchor, tools)
+			assert.Containsf(t, ruleLine, predicateSiblingAnchor,
+				"%s: %q absent from the rendered ## Focus rule line with ToolsEnabled=%v — the "+
+					"sibling marker must travel on the same bullet as the lens",
+				file, predicateSiblingAnchor, tools)
 		}
 	}
 }

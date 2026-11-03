@@ -80,6 +80,26 @@ func TestCarriesPredicateRule_AcceptsAnchorsOutsideFocus(t *testing.T) {
 		"the tier-agnostic predicate must not require the built-ins' section layout")
 }
 
+// The sibling marker (predicateSiblingAnchor) is held against the BUILT-INS by
+// the class guard only. CarriesPredicateRule feeds doctor's gap check and the
+// stamp-less staleness verdict for installed, community and project personas, so
+// a persona written to the pre-marker wording must stay a carrier: requiring the
+// third phrase here would report every such persona as missing a rule it still
+// carries. Pin both directions — the pre-marker bullet carries, and the marker
+// alone carries nothing.
+func TestCarriesPredicateRule_DoesNotRequireTheSiblingAnchor(t *testing.T) {
+	const surrounding = "You are a reviewer.\n\n## Focus\n1. Correctness\n"
+
+	preMarker := surrounding + "6. " + predicateRuleAnchor + " — " + predicateFilingAnchor + ".\n"
+	assert.False(t, strings.Contains(preMarker, predicateSiblingAnchor),
+		"precondition: the pre-marker bullet does not carry the sibling anchor")
+	assert.True(t, CarriesPredicateRule(preMarker),
+		"a persona carrying the lens and filing anchors without the sibling marker must stay a carrier")
+
+	assert.False(t, CarriesPredicateRule(surrounding+"6. "+predicateSiblingAnchor+".\n"),
+		"the sibling anchor alone is not the rule")
+}
+
 // predicateFilingAnchor's doc block explains the grounding gate by citing exact
 // line ranges in a file this package does not own, and those ranges are the first
 // thing an unrelated edit to internal/fanout/grounding.go invalidates. A stale
@@ -131,4 +151,14 @@ func TestPredicateFilingAnchorDoc_CitesTheRealGroundingArms(t *testing.T) {
 		"the doc must cite the PrefetchOnly arm where it actually sits")
 	assert.Contains(t, string(doc), bypassedCite,
 		"the doc must cite the two bypassed arms where they actually sit, not a range that excludes them")
+
+	// docs/personas-authoring.md repeats the PrefetchOnly citation in its "Why the
+	// filing anchor exists" paragraph, and it drifted (it cited :84-86) while this
+	// doc block stayed right — so it is held to the same resolved span.
+	authoring, err := os.ReadFile("../docs/personas-authoring.md")
+	if err != nil {
+		t.Fatalf("read docs/personas-authoring.md: %v", err)
+	}
+	assert.Contains(t, string(authoring), prefetchCite,
+		"docs/personas-authoring.md must cite the PrefetchOnly arm where it actually sits")
 }

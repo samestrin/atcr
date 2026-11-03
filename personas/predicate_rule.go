@@ -32,10 +32,37 @@ const predicateRuleAnchor = "enumerate every branch of that predicate and every 
 // alone has its finding deleted before it reaches the report — on exactly the
 // defect the rule was written for. Anchoring the finding on the edited branch
 // and quoting the sibling as EVIDENCE keeps it inside the gate and promotable.
+// The anchor is not where the defect lives, though: the sibling's real location
+// travels beside it as the sibling marker (predicateSiblingAnchor, below).
 //
 // Unlike the lens above, this is a mechanical citation instruction rather than a
 // judgement, so sharing its wording across the panel costs no independence.
 const predicateFilingAnchor = "file it on the edited branch's changed line"
+
+// predicateSiblingAnchor is the third phrase every BUILT-IN persona carries
+// verbatim on the rule bullet: it tells the reviewer to declare the unchanged
+// sibling arm's real location as the cross-branch routing marker
+// (stream.SiblingToken, read by stream.ParseSiblingLocation; Epic 35.16.15).
+//
+// The filing anchor above puts the finding on a line the gate can ground, but
+// that line is the half of the predicate that was fixed, not the half that is
+// still wrong. The marker carries the defect site: reconcile validates it and
+// emits it as sibling_location, verify reads the sibling arm, and the
+// repo-state benchmark matches the finding at the sibling instead of its
+// FILE:LINE. The grounding gate never consults it (isGrounded grounds a marked
+// finding on its edited-line FILE:LINE exactly like an unmarked one), so the
+// marker routes the finding without loosening the gate. Prose that justified the
+// edited-line anchor only by the gate ("so the grounding rule below does not
+// discard it") coached a citation that passes while pointing away from the
+// defect; the class guard rejects that framing (forbiddenRelocationFramings).
+//
+// Deliberately NOT part of CarriesPredicateRule. That predicate feeds doctor's
+// PredicateRuleGaps and the stamp-less staleness verdict for installed,
+// community and project personas; requiring this phrase there would turn every
+// persona written to the pre-marker wording into a gap overnight, though the rule
+// it carries still reaches the report. Only the embedded built-ins, whose prose
+// atcr owns, are held to it.
+const predicateSiblingAnchor = "in EVIDENCE as `sibling: <file>:<line>`"
 
 // CarriesPredicateRule reports whether a resolved persona prompt carries the
 // panel-wide predicate-exhaustiveness rule — both anchor phrases verbatim,
