@@ -169,6 +169,74 @@ func TestMergeJSONFindings_ReviewerlessMemberCountsInTheIndependenceTest(t *test
 	assert.Equal(t, PanelWideReason, m.ConfidenceDiscount)
 }
 
+// The record's category and its discount are read from one quote set (TD
+// merge.go:69). Here a discounted three-reviewer invariant record unions with
+// two one-finding records filed as correctness that quote the same code: the
+// quotes are three invariant to two correctness and all near-identical, the
+// panel-wide class, while the members are one invariant to two correctness. The
+// record must be the invariant, discounted record the quotes describe, as
+// reclib.Merge would decide over the five source findings.
+func TestMergeJSONFindings_CategoryAndDiscountReadOneQuoteSet(t *testing.T) {
+	trio := Reconcile(predicateSources("key.go", discountQuote, "bruce", "greta", "kai"), Options{}).JSONFindings()
+	require.Len(t, trio, 1)
+	require.Equal(t, PanelWideReason, trio[0].ConfidenceDiscount)
+	filedAs := func(reviewer string) JSONFinding {
+		f := predicateRecord(reviewer, "key.go", discountQuote)
+		f.Category = "correctness"
+		return f
+	}
+
+	m := MergeJSONFindings([]JSONFinding{trio[0], filedAs("mira"), filedAs("otto")})
+	assert.Equal(t, "invariant", m.Category, "the category is the quotes' modal category")
+	assert.Equal(t, ConfMedium, m.Confidence)
+	assert.Equal(t, PanelWideReason, m.ConfidenceDiscount)
+
+	// The reverse mix: the quotes are mostly correctness, so the record is not
+	// in the invariant class and carries no reason, whatever the members say.
+	correctness := Reconcile(predicateSources("key.go", discountQuote, "bruce", "greta", "kai"), Options{}).JSONFindings()
+	require.Len(t, correctness, 1)
+	for i := range correctness[0].SourceQuotes {
+		correctness[0].SourceQuotes[i].Category = "correctness"
+	}
+	m = MergeJSONFindings([]JSONFinding{correctness[0], predicateRecord("mira", "key.go", discountQuote), predicateRecord("otto", "key.go", discountQuote)})
+	assert.Equal(t, "correctness", m.Category)
+	assert.Equal(t, ConfHigh, m.Confidence)
+	assert.Empty(t, m.ConfidenceDiscount)
+}
+
+// A multi-reviewer record from a findings.json written before source_quotes
+// existed has no per-reviewer quotes, and its joined EVIDENCE cannot be split
+// back into them (EST-3970 Q1). It counts as non-independent, so a cluster
+// merge that includes it stays discounted even when the joined evidence matches
+// no other member's quote, and the merged record carries no source_quotes, so a
+// later merge of it reads it the same way.
+func TestMergeJSONFindings_LegacyMultiReviewerRecordIsNotIndependent(t *testing.T) {
+	legacy := predicateRecord("bruce", "key.go", "[bruce] "+discountQuote+" / [greta] "+discountQuote)
+	legacy.Reviewers = []string{"bruce", "greta"}
+	legacy.Confidence = ConfMedium
+	legacy.ConfidenceDiscount = PanelWideReason
+
+	m := MergeJSONFindings([]JSONFinding{legacy, predicateRecord("kai", "key.go", "x == y")})
+	assert.Equal(t, []string{"bruce", "greta", "kai"}, m.Reviewers)
+	assert.Equal(t, ConfMedium, m.Confidence, "a union with a legacy multi-reviewer record stays discounted")
+	assert.Equal(t, PanelWideReason, m.ConfidenceDiscount)
+	assert.Empty(t, m.SourceQuotes, "the merged record keeps the legacy reading")
+
+	again := MergeJSONFindings([]JSONFinding{m, predicateRecord("mira", "key.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }")})
+	assert.Equal(t, ConfMedium, again.Confidence, "a later merge of the result stays discounted")
+	assert.Equal(t, PanelWideReason, again.ConfidenceDiscount)
+
+	// A one-reviewer record with no source_quotes is a one-finding record, whose
+	// evidence is its only quote: it is read as before.
+	m = MergeJSONFindings([]JSONFinding{
+		predicateRecord("bruce", "key.go", discountQuote),
+		predicateRecord("kai", "key.go", "func (k Key) Hash() uint64 { return fnv(k.ID) }"),
+	})
+	assert.Equal(t, ConfHigh, m.Confidence)
+	assert.Empty(t, m.ConfidenceDiscount)
+	assert.Len(t, m.SourceQuotes, 2)
+}
+
 func TestRecomputeFallbackConfidence_KeepsTheDiscountWhileTwoVoicesRemain(t *testing.T) {
 	discounted := func(file string, fb map[string]string) JSONFinding {
 		f := predicateRecord("bruce", file, discountQuote)
