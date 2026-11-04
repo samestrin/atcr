@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -137,14 +138,27 @@ func GuardOutbound(ctx context.Context, policy, dest string, texts []OutboundTex
 		scanErr error
 		hits    = make([][]payload.SecretHit, len(texts))
 	)
+	// One scan of the joined text clears the common case; only a hit or a
+	// failed scan pays for a scan per text, which redaction and labels need.
+	joined := make([]string, len(texts))
 	for i, t := range texts {
-		h, err := payload.ScanPayloadContext(ctx, t.Text, nil)
-		if err != nil {
-			scanErr = err
-		}
-		hits[i] = h
-		for _, hit := range h {
-			found = append(found, secretFinding{kind: hit.Kind, file: t.Label})
+		joined[i] = t.Text
+	}
+	perText := len(texts) == 1
+	if !perText {
+		h, err := scanSecrets(ctx, strings.Join(joined, "\n\n"), nil)
+		perText = err != nil || len(h) > 0
+	}
+	if perText {
+		for i, t := range texts {
+			h, err := scanSecrets(ctx, t.Text, nil)
+			if err != nil {
+				scanErr = err
+			}
+			hits[i] = h
+			for _, hit := range h {
+				found = append(found, secretFinding{kind: hit.Kind, file: t.Label})
+			}
 		}
 	}
 	if scanErr != nil {
