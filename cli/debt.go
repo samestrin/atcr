@@ -36,7 +36,7 @@ func newDebtCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newDebtListCmd(), newDebtFilterCmd(), newDebtCleanCmd(), newDebtGroupCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtConvertCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
+	cmd.AddCommand(newDebtListCmd(), newDebtFilterCmd(), newDebtValidateCmd(), newDebtCleanCmd(), newDebtGroupCmd(), newDebtAddCmd(), newDebtDashboardCmd(), newDebtResolveCmd(), newDebtReclusterCmd(), newDebtCompactCmd(), newDebtConvertCmd(), newDebtBackfillCmd(), newDebtSyncOutcomesCmd())
 	return cmd
 }
 
