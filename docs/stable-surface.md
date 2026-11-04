@@ -217,6 +217,8 @@ No flags.
 | Flag | Type | Default | Status |
 |---|---|---|---|
 | `--axi` | bool | `false` |  |
+| `--coherence-percentile` | int | `20` |  |
+| `--coherence` | bool | `false` |  |
 | `--dir` | string | `` | deprecated alias |
 | `--json` | bool | `false` |  |
 | `--legacy-pipe` | bool | `false` | deprecated alias |
@@ -765,6 +767,6 @@ Every `ATCR_*` name read through `os.Getenv` or `os.LookupEnv` in non-test Go so
 | `ATCR_LOG_LEVEL` | `cli/main.go` |
 | `ATCR_PERSONAS_URL` | `internal/personas/client.go` |
 | `ATCR_QUALITY_SIGNAL` | `cli/qualitysignal.go` |
-| `ATCR_REGISTRY_URL` | `internal/registry/overlay.go` |
+| `ATCR_REGISTRY_URL` | `cli/debt_validate.go`, `internal/registry/overlay.go` |
 | `ATCR_TELEMETRY` | `cli/main.go` |
 | `ATCR_TIER4_INDEX_MAX_FILES` | `internal/reconcile/symbolindex.go` |
