@@ -96,51 +96,82 @@ type guardedRetriever struct {
 }
 
 func (g *guardedRetriever) Retrieve(ctx context.Context, queries []string, topK int) ([]semindex.Snippet, error) {
-	if g.policy == secretGuardOff {
-		return g.inner.Retrieve(ctx, queries, topK)
+	texts := make([]OutboundText, len(queries))
+	for i, q := range queries {
+		texts[i] = OutboundText{Label: secretQueryLabel, Text: q}
+	}
+	queries, err := GuardOutbound(ctx, g.policy, "the similarity index", texts)
+	if err != nil {
+		return nil, &semindex.Error{Class: semanticDegradeSecretGuard, Stage: "query", Err: errors.New("secret_guard=block: similarity queries not sent")}
+	}
+	return g.inner.Retrieve(ctx, queries, topK)
+}
+
+// ErrOutboundBlocked is GuardOutbound's refusal under secret_guard=block.
+var ErrOutboundBlocked = errors.New("secret_guard=block: text not sent")
+
+// OutboundText is one text bound for an outside endpoint. Label names it in a
+// secret_guard warning in place of the text itself.
+type OutboundText struct {
+	Label string
+	Text  string
+}
+
+// GuardOutbound scans each text under the secret_guard policy before it leaves
+// for dest, an outside endpoint named for the warnings ("the similarity
+// index"). It returns the texts to send, in order: off and warn send them
+// unchanged, redact sends payload.RedactSecrets output, and block returns
+// ErrOutboundBlocked and nothing, as does block on a scan that cannot be
+// trusted. "" is the registry default, warn. Warnings name labels and secret
+// kinds, never the text.
+func GuardOutbound(ctx context.Context, policy, dest string, texts []OutboundText) ([]string, error) {
+	out := make([]string, len(texts))
+	for i, t := range texts {
+		out[i] = t.Text
+	}
+	if policy == secretGuardOff {
+		return out, nil
 	}
 	var (
 		found   []secretFinding
 		scanErr error
-		hits    = make([][]payload.SecretHit, len(queries))
+		hits    = make([][]payload.SecretHit, len(texts))
 	)
-	for i, q := range queries {
-		h, err := payload.ScanPayloadContext(ctx, q, nil)
+	for i, t := range texts {
+		h, err := payload.ScanPayloadContext(ctx, t.Text, nil)
 		if err != nil {
 			scanErr = err
 		}
 		hits[i] = h
 		for _, hit := range h {
-			found = append(found, secretFinding{kind: hit.Kind, file: secretQueryLabel})
+			found = append(found, secretFinding{kind: hit.Kind, file: t.Label})
 		}
 	}
 	if scanErr != nil {
-		fmt.Fprintf(os.Stderr, "atcr: warning: similarity queries: secret scan: %v; using the built-in ruleset\n", scanErr)
+		fmt.Fprintf(os.Stderr, "atcr: warning: text for %s: secret scan: %v; using the built-in ruleset\n", dest, scanErr)
 	}
-	switch g.policy {
+	switch policy {
 	case secretGuardBlock:
 		if len(found) == 0 && scanErr == nil {
 			break
 		}
-		why := "the secret scan failed, so the queries could not be checked"
+		why := "the secret scan failed, so the text could not be checked"
 		if len(found) > 0 {
 			why = describeFindings(found)
 		}
-		fmt.Fprintf(os.Stderr, "atcr: warning: similarity retrieval skipped: %s (secret_guard: block)\n", why)
-		return nil, &semindex.Error{Class: semanticDegradeSecretGuard, Stage: "query", Err: errors.New("secret_guard=block: similarity queries not sent")}
+		fmt.Fprintf(os.Stderr, "atcr: warning: nothing sent to %s: %s (secret_guard: block)\n", dest, why)
+		return nil, ErrOutboundBlocked
 	case secretGuardRedact:
 		if len(found) > 0 {
-			redacted := make([]string, len(queries))
-			for i, q := range queries {
-				redacted[i] = payload.RedactSecrets(q, hits[i])
+			for i, t := range texts {
+				out[i] = payload.RedactSecrets(t.Text, hits[i])
 			}
-			queries = redacted
-			fmt.Fprintf(os.Stderr, "atcr: warning: redacted %s before similarity retrieval (secret_guard: redact)\n", describeFindings(found))
+			fmt.Fprintf(os.Stderr, "atcr: warning: redacted %s before sending to %s (secret_guard: redact)\n", describeFindings(found), dest)
 		}
 	default:
 		if len(found) > 0 {
-			fmt.Fprintf(os.Stderr, "atcr: warning: %s sent unchanged to the similarity index (secret_guard: warn); set secret_guard: redact or block to stop it\n", describeFindings(found))
+			fmt.Fprintf(os.Stderr, "atcr: warning: %s sent unchanged to %s (secret_guard: warn); set secret_guard: redact or block to stop it\n", describeFindings(found), dest)
 		}
 	}
-	return g.inner.Retrieve(ctx, queries, topK)
+	return out, nil
 }
