@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,4 +69,34 @@ func TestGuardOutbound_BlockFailsClosedOnAnUntrustedScan(t *testing.T) {
 	})
 	assert.True(t, errors.Is(err, ErrOutboundBlocked))
 	assert.True(t, strings.Contains(stderr, "could not be checked"))
+}
+
+// Clean text costs one scan however many texts there are: with gitleaks on
+// PATH each scan is a process, and a debt store has hundreds of rows.
+func TestGuardOutbound_CleanTextIsScannedOnce(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	var calls int
+	old := scanSecrets
+	t.Cleanup(func() { scanSecrets = old })
+	scanSecrets = func(ctx context.Context, text string, l *slog.Logger) ([]payload.SecretHit, error) {
+		calls++
+		return old(ctx, text, l)
+	}
+	texts := make([]OutboundText, 50)
+	for i := range texts {
+		texts[i] = OutboundText{Label: "x", Text: "clean text"}
+	}
+	_, err := GuardOutbound(context.Background(), secretGuardBlock, "dest", texts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+
+	calls = 0
+	texts[7].Text = "key " + guardAWSKey
+	var got []string
+	captureStderr(t, func() {
+		got, err = GuardOutbound(context.Background(), secretGuardRedact, "dest", texts)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1+len(texts), calls, "a hit rescans per text to redact each")
+	assert.Equal(t, "key "+payload.SecretPlaceholder, got[7])
 }
