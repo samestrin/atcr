@@ -50,10 +50,72 @@ func TestDebtValidate_Grounding(t *testing.T) {
 	assert.Contains(t, got["a.go:99:"].Reason, "past the end")
 	assert.Equal(t, validateValid, got["a.go:1:"].Status)
 	assert.Equal(t, validateFileMissing, got["../x.go:1:"].Status)
+}
 
-	axi, err := runDebt(t, "validate", "--dir", dir, "--root", root, "--legacy-pipe")
-	assert.Error(t, err)
-	_ = axi
+func debtValidateStore(t *testing.T) (dir, root string) {
+	t.Helper()
+	root = t.TempDir()
+	// Line 3 has no trailing newline; line 0 is "unknown line".
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.go"), []byte("a\nb\nc"), 0o644))
+	mk := func(line int) localdebt.Record {
+		r := localdebt.Record{
+			SchemaVersion: localdebt.SchemaVersion, RunID: "2026-10-01T10:00:00Z-x", Timestamp: "2026-10-01T10:00:00Z",
+			Severity: "HIGH", File: "a.go", Line: line, Problem: "p", Fix: "f", Category: "c", Confidence: "high",
+		}
+		r.StampID()
+		return r
+	}
+	return writeLocalDebt(t, mk(0), mk(3), mk(4)), root
+}
+
+func TestDebtValidate_LineBoundaries(t *testing.T) {
+	dir, root := debtValidateStore(t)
+	out, err := runDebt(t, "validate", "--dir", dir, "--root", root)
+	require.NoError(t, err)
+	var doc debtValidateDoc
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	got := map[int]string{}
+	for _, it := range doc.Items {
+		got[it.Line] = it.Status
+	}
+	assert.Equal(t, validateValid, got[0], "line 0 means unknown, not checked")
+	assert.Equal(t, validateValid, got[3], "last line without trailing newline counts")
+	assert.Equal(t, validateFileMissing, got[4])
+}
+
+func TestDebtValidate_InvalidStatus(t *testing.T) {
+	dir, root := debtValidateStore(t)
+	code, _, _ := execCmdSplit(t, "debt", "validate", "--dir", dir, "--root", root, "--status", "bogus")
+	assert.Equal(t, 2, code)
+}
+
+func TestDebtValidate_EmptyStoreDefaultRoot(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "none")
+	out, err := runDebt(t, "validate", "--dir", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, `"items": []`)
+}
+
+func TestDebtValidate_AXI(t *testing.T) {
+	dir, root := debtValidateStore(t)
+	code, stdout, _ := execCmdSplit(t, "debt", "validate", "--dir", dir, "--root", root, "--axi")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "items[3]{id,file,line,symbol,status,reason}:")
+	assert.Contains(t, stdout, "coherence:")
+	assert.Contains(t, stdout, "status: skipped")
+	assert.Contains(t, stdout, "reason: not-requested")
+}
+
+func TestDebtValidate_LegacyPipeRejected(t *testing.T) {
+	dir, root := debtValidateStore(t)
+	code, _, _ := execCmdSplit(t, "debt", "validate", "--dir", dir, "--root", root, "--axi", "--legacy-pipe")
+	assert.Equal(t, 2, code)
+
+	t.Setenv("ATCR_LEGACY_PIPE", "1")
+	code, stdout, stderr := execCmdSplit(t, "debt", "validate", "--dir", dir, "--root", root, "--axi")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, stdout, "items[")
+	assert.NotContains(t, stderr, "deprecated")
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
