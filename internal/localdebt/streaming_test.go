@@ -583,7 +583,7 @@ func BenchmarkDedupSeed_StreamSummaries(b *testing.B) {
 // TEXT necessarily differs (encoding/json names the target struct), so the
 // assertion is on the shared SKIP DECISION, which is the property that matters.
 func TestDecodeSummary_SkipsWrongTypedNumericField(t *testing.T) {
-	for _, field := range []string{"line", "est_minutes", "occurrences", "source_report.line"} {
+	for _, field := range []string{"line", "est_minutes", "occurrences", "attempts", "source_report.line"} {
 		t.Run(field, func(t *testing.T) {
 			rec := sampleRecord("2026-06-14T10:00:00Z-a")
 			rec.StampID()
