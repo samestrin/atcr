@@ -160,15 +160,14 @@ const (
 
 // Record is one persisted technical-debt finding occurrence. This struct and the
 // SchemaVersion doc block above are the authoritative specification of the JSONL
-// record. docs/technical-debt.md documents the .atcr/debt/ store's command surface
-// as of T2 but not yet its wire schema; T7 adds that section, at which point the
-// two must be kept in step. The schema is v4 as of epic 95, which added the
-// optional Attempts field on top of v3's Origin, Occurrences, FirstSeen and
-// ModelReviewers (Plan 35.13) and v2's Model. The
-// required block is always present; the optional block
-// (omitempty) is present only when the reconciled finding carried the
-// corresponding enrichment (Epic 18.3 justification/source_report), a resolved
-// model attribution, or a recorded resolution.
+// record. docs/technical-debt.md's "Record schema" section documents the same
+// wire schema, and the two must be kept in step. The schema is v4 as of epic 95,
+// which added the optional Attempts field on top of v3's Origin, Occurrences,
+// FirstSeen and ModelReviewers (Plan 35.13) and v2's Model. The required block
+// is always present; the optional block (omitempty) is present only when the
+// reconciled finding carried the corresponding enrichment (Epic 18.3
+// justification/source_report), a resolved model attribution, a recorded
+// resolution, or an attempts count `atcr debt import` read from a README table.
 type Record struct {
 	SchemaVersion int      `json:"schema_version"`
 	ID            string   `json:"id"`

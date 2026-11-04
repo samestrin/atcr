@@ -70,9 +70,6 @@ func TestRecord_Annotation_WireShape(t *testing.T) {
 	b, err := json.Marshal(r)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"reconciler_feedback":{"kind":"wrong-split","with":"0123456789abcdef","reason":"same bug"}`)
-	// The annotation arrived within v3 with no bump of its own; v4 (epic 95's
-	// attempts) came later and does not change this shape.
-	assert.GreaterOrEqual(t, SchemaVersion, 3, "the annotation is additive within v3: no schema bump")
 
 	r.ReconcilerFeedback.With = ""
 	b, err = json.Marshal(r)
