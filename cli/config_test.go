@@ -46,7 +46,7 @@ func TestConfig_NoSubcommandPrintsHelp(t *testing.T) {
 }
 
 // TestConfigCmd_ShortDoesNotAdvertiseRead guards the parent command's help
-// text against overpromising: the only registered child is `set` — there is no
+// text against overpromising: the children are `set` and `reset-install-id` — there is no
 // get/read subcommand — so the Short must not claim the command reads config.
 func TestConfigCmd_ShortDoesNotAdvertiseRead(t *testing.T) {
 	assert.NotContains(t, newConfigCmd().Short, "Read",
@@ -297,4 +297,13 @@ func TestConfigResetInstallID_RejectsArgs(t *testing.T) {
 	_, code, err := execConfig(t, "config", "reset-install-id", "extra")
 	require.Error(t, err)
 	assert.Equal(t, 2, code)
+}
+
+func TestConfigResetInstallID_RemoveErrorExits1(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "install_id", "sub"), 0o700))
+	_, code, err := execConfig(t, "config", "reset-install-id")
+	require.Error(t, err)
+	assert.Equal(t, 1, code)
 }

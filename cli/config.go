@@ -14,9 +14,10 @@ import (
 // newConfigCmd builds `atcr config`: a thin mutation namespace over the
 // project's .atcr/config.yaml. It follows the newDebtCmd subcommand-group
 // pattern (a parent whose RunE prints help, with the real work in children).
-// Its only child is `set`, whose settable keys are the telemetry opt-out
-// (Sprint 28.0) and the quality_signal opt-in (Sprint 30.0); the surface is
-// deliberately scoped to those two keys.
+// Its children are `set`, whose settable keys are the telemetry opt-out
+// (Sprint 28.0) and the quality_signal opt-in (Sprint 30.0), and
+// `reset-install-id` (Epic 109), which resets the quality signal's per-user
+// install ID.
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -24,12 +25,40 @@ func newConfigCmd() *cobra.Command {
 		Long: "atcr config edits the project-level configuration in .atcr/config.yaml.\n" +
 			"It exposes two mutations — the telemetry opt-out and the quality-signal\n" +
 			"opt-in — via `atcr config set <telemetry|quality_signal> <true|false>`;\n" +
-			"run that from the repo root.",
+			"run that from the repo root. `atcr config reset-install-id` resets the\n" +
+			"quality signal's anonymous install ID (stored per user in ~/.config/atcr/).",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newConfigSetCmd())
+	cmd.AddCommand(newConfigSetCmd(), newConfigResetInstallIDCmd())
 	return cmd
+}
+
+// newConfigResetInstallIDCmd builds `atcr config reset-install-id`. It removes
+// the stored install ID; the next opted-in quality-signal send makes a new one
+// and prints the first-use notice. It never makes an ID itself, so it is safe
+// to run with the quality signal off.
+func newConfigResetInstallIDCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reset-install-id",
+		Short: "Reset the quality signal's anonymous install ID",
+		Long: "atcr config reset-install-id removes the anonymous install ID the quality\n" +
+			"signal stores in ~/.config/atcr/install_id. The next opted-in run makes a new\n" +
+			"random ID, so later signals are not linked to earlier ones. Nothing is sent,\n" +
+			"and no ID is made while the quality signal is off.",
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dir, err := defaultInstallIDDir()
+			if err != nil {
+				return err
+			}
+			if err := resetInstallID(dir); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "install ID reset; a new one is made the next time the quality signal is sent")
+			return nil
+		},
+	}
 }
 
 // newConfigSetCmd builds `atcr config set <key> <value>`. The key is restricted

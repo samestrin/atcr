@@ -6,13 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1035,4 +1036,72 @@ func TestInstallID_SendPathMakesIDOnlyWhenSignalOn(t *testing.T) {
 	maybeSendQualitySignal(ctx, &again, "")
 	waitQualitySignalInFlight()
 	assert.Empty(t, again.String(), "a later opted-in run prints no notice")
+}
+
+// TestInstallID_NoHardLinksFallsBackToExclusiveCreate covers a filesystem
+// without hard links: the ID is still made once, 0600, and kept across runs.
+func TestInstallID_NoHardLinksFallsBackToExclusiveCreate(t *testing.T) {
+	prev := linkInstallIDFn
+	linkInstallIDFn = func(string, string) error {
+		return &os.LinkError{Op: "link", Err: errors.New("operation not supported")}
+	}
+	t.Cleanup(func() { linkInstallIDFn = prev })
+
+	dir := installIDDir(t)
+	var notice bytes.Buffer
+	first, err := ensureInstallID(context.Background(), &notice, dir)
+	require.NoError(t, err)
+	assert.Contains(t, notice.String(), first)
+	second, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, installIDFile))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the staged temp file must be removed")
+}
+
+// TestInstallID_StoreErrorsAreReturned covers the error paths: a config
+// directory that cannot be made, and an install_id name taken by a directory
+// (it cannot be read, linked over or replaced, nor removed by a reset).
+func TestInstallID_StoreErrorsAreReturned(t *testing.T) {
+	t.Run("dir is a file", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "atcr")
+		require.NoError(t, os.WriteFile(dir, []byte("x"), 0o600))
+		_, err := ensureInstallID(context.Background(), io.Discard, dir)
+		assert.Error(t, err)
+	})
+	t.Run("install_id is a directory", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, installIDFile, "sub"), 0o700))
+		var notice bytes.Buffer
+		_, err := ensureInstallID(context.Background(), &notice, dir)
+		assert.Error(t, err)
+		assert.Empty(t, notice.String(), "no notice when no ID was stored")
+		assert.Error(t, resetInstallID(dir))
+	})
+}
+
+// TestInstallID_SendPathFailsOpenOnStoreError: an ID store error never stops
+// the opted-in run's send path.
+func TestInstallID_SendPathFailsOpenOnStoreError(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "0")
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("HOME"), ".config"), []byte("x"), 0o600))
+
+	var built atomic.Bool
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) { built.Store(true); return nil, nil }
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+	ctx := telemetry.NewContext(context.Background(), telemetry.NewSingleDestination(qsEndpoint))
+
+	maybeSendQualitySignal(ctx, io.Discard, "")
+	waitQualitySignalInFlight()
+	assert.True(t, built.Load(), "the send path must continue after an ID store error")
 }
