@@ -150,22 +150,11 @@ type Client struct {
 // enforced per request (and per redirect hop) rather than here, so a refused
 // scheme is a counted Retrieve failure like any other.
 func New(cfg Config) (*Client, error) {
-	for _, ep := range []struct{ name, v string }{
-		{"embedding endpoint", cfg.EmbeddingEndpoint},
-		{"qdrant endpoint", cfg.QdrantEndpoint},
-	} {
-		if strings.TrimSpace(ep.v) == "" {
-			return nil, fmt.Errorf("semindex: %s is required", ep.name)
-		}
-		u, err := url.Parse(ep.v)
-		if err != nil {
-			return nil, fmt.Errorf("semindex: %s: %w", ep.name, err)
-		}
-		// A credential in a config-file URL is refused, not stripped: the user
-		// should learn the key does not belong there.
-		if u.User != nil || u.RawQuery != "" {
-			return nil, fmt.Errorf("semindex: %s must not carry credentials or a query string; set %s instead", ep.name, APIKeyEnv)
-		}
+	if err := checkEndpoint("embedding endpoint", cfg.EmbeddingEndpoint); err != nil {
+		return nil, err
+	}
+	if err := checkEndpoint("qdrant endpoint", cfg.QdrantEndpoint); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(cfg.Collection) == "" {
 		return nil, errors.New("semindex: collection is required")
@@ -173,8 +162,37 @@ func New(cfg Config) (*Client, error) {
 	if !filepath.IsAbs(cfg.RepoRoot) && !path.IsAbs(toSlash(cfg.RepoRoot)) {
 		return nil, fmt.Errorf("semindex: repo root %q must be an absolute path", cfg.RepoRoot)
 	}
+	cfg, err := withDefaults(cfg)
+	if err != nil {
+		return nil, err
+	}
+	c := newClient(cfg)
+	c.queryURL = strings.TrimRight(cfg.QdrantEndpoint, "/") + "/collections/" + url.PathEscape(cfg.Collection) + "/points/query"
+	c.apiKey = strings.TrimSpace(cfg.Getenv(APIKeyEnv))
+	return c, nil
+}
+
+// checkEndpoint requires a base URL with no credential and no query string.
+func checkEndpoint(name, v string) error {
+	if strings.TrimSpace(v) == "" {
+		return fmt.Errorf("semindex: %s is required", name)
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return fmt.Errorf("semindex: %s: %w", name, err)
+	}
+	// A credential in a config-file URL is refused, not stripped: the user
+	// should learn the key does not belong there.
+	if u.User != nil || u.RawQuery != "" {
+		return fmt.Errorf("semindex: %s must not carry credentials or a query string; set %s instead", name, APIKeyEnv)
+	}
+	return nil
+}
+
+// withDefaults rejects negative timeouts and fills every zero field.
+func withDefaults(cfg Config) (Config, error) {
 	if cfg.CallTimeout < 0 || cfg.TotalBudget < 0 {
-		return nil, errors.New("semindex: timeouts must not be negative")
+		return cfg, errors.New("semindex: timeouts must not be negative")
 	}
 	if cfg.CallTimeout == 0 {
 		cfg.CallTimeout = DefaultCallTimeout
@@ -188,12 +206,15 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Getenv == nil {
 		cfg.Getenv = os.Getenv
 	}
+	return cfg, nil
+}
+
+// newClient builds the embedding half of a Client from a defaulted cfg.
+func newClient(cfg Config) *Client {
 	insecure := cfg.AllowInsecureHTTP
 	return &Client{
 		cfg:      cfg,
 		embedURL: strings.TrimRight(cfg.EmbeddingEndpoint, "/") + embedPath,
-		queryURL: strings.TrimRight(cfg.QdrantEndpoint, "/") + "/collections/" + url.PathEscape(cfg.Collection) + "/points/query",
-		apiKey:   strings.TrimSpace(cfg.Getenv(APIKeyEnv)),
 		http: &http.Client{
 			// vetURL checks only the initial URL; re-vet every hop so a 307/308
 			// (which replays the POST body) cannot downgrade to plaintext.
@@ -213,7 +234,7 @@ func New(cfg Config) (*Client, error) {
 				return nil
 			},
 		},
-	}, nil
+	}
 }
 
 // vetURL reports whether raw may be sent to: https anywhere, http only to a
