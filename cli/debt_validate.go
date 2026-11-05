@@ -297,7 +297,7 @@ func debtCoherence(ctx context.Context, root string, recs []localdebt.Record, pc
 	if !configured || !sp.Enabled || sp.EmbeddingEndpoint == "" {
 		return skip("not-configured")
 	}
-	emb, err := semindex.NewEmbedder(semindex.Config{
+	emb, err := newCoherenceEmbedder(semindex.Config{
 		EmbeddingEndpoint: sp.EmbeddingEndpoint,
 		AllowInsecureHTTP: sp.AllowInsecureHTTP,
 		Metrics:           metrics.DefaultRegistry,
@@ -349,6 +349,11 @@ func debtCoherence(ctx context.Context, root string, recs []localdebt.Record, pc
 	out.Flagged = rows[:n]
 	return out
 }
+
+// newCoherenceEmbedder is semindex.NewEmbedder, a variable so a test can reach
+// the config-invalid skip: the registry loader already refuses every endpoint
+// NewEmbedder would.
+var newCoherenceEmbedder = semindex.NewEmbedder
 
 // loadCoherenceSettings resolves the user registry and project config tiers
 // the way a review does. configured is false when neither file exists, which
