@@ -3,6 +3,7 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -223,4 +224,49 @@ func TestDebtImport_Args(t *testing.T) {
 	require.Error(t, err)
 	_, err = runDebt(t, "import", filepath.Join(t.TempDir(), "missing.md"), "--store", t.TempDir())
 	require.Error(t, err)
+}
+
+// A row whose cells fit the parser but whose record does not fit the store is
+// rejected: every read path skips a line over MaxRecordBytes, so writing it
+// would file a record nobody could see.
+func TestDebtImport_RejectsOversizedRecord(t *testing.T) {
+	// Each backslash encodes as two bytes, so ~600 KB of cell is a ~1.2 MB record.
+	huge := strings.Repeat(`\`, localdebt.MaxRecordBytes*6/10)
+	body := "### [2026-10-01] From: x\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| g | [ ] | LOW | a.go:1 | too big | " + huge + " | c | 1 | s | 0 |\n"
+	readme := writeImportREADME(t, body)
+	dir := filepath.Join(t.TempDir(), "debt")
+
+	out, err := runDebt(t, "import", readme, "--store", dir)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "0 imported")
+	assert.Contains(t, out, "1 rejected")
+	assert.Contains(t, out, fmt.Sprintf("over the store's %d", localdebt.MaxRecordBytes))
+	_, statErr := os.Stat(dir)
+	assert.True(t, os.IsNotExist(statErr), "a rejected row must write nothing")
+}
+
+// A section dated in a year the store cannot shard is rejected for that reason,
+// not as undated, and does not fail the rest of the import.
+func TestDebtImport_RejectsUnshardableSectionYear(t *testing.T) {
+	body := "### [0000-01-01] From: x\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| g | [ ] | LOW | a.go:1 | year zero | f | c | 1 | s | 0 |\n\n" +
+		"### [2026-10-01] From: y\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| g | [ ] | LOW | a.go:2 | fine | f | c | 1 | s | 0 |\n"
+	readme := writeImportREADME(t, body)
+	dir := filepath.Join(t.TempDir(), "debt")
+
+	out, err := runDebt(t, "import", readme, "--store", dir)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "1 imported")
+	assert.Contains(t, out, "1 rejected")
+	assert.Contains(t, out, `section date "0000-01-01"`)
+	assert.NotContains(t, out, "no dated")
+	assert.Len(t, importedByProblem(t, dir), 1)
 }
