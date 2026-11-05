@@ -161,9 +161,9 @@ func importRecord(it localdebt.TDItem, source string) (localdebt.Record, string,
 	if !known {
 		return localdebt.Record{}, fmt.Sprintf("unknown marker %q", it.Marker), nil
 	}
-	ts, ok := importSectionTime(it.Section)
-	if !ok {
-		return localdebt.Record{}, "the row is under no dated `### [date]` section", nil
+	ts, reason := importSectionTime(it.Section)
+	if reason != "" {
+		return localdebt.Record{}, reason, nil
 	}
 	clean := func(s string) string { return strings.TrimSpace(stripTerminalDrivers(s)) }
 	rec := localdebt.Record{
@@ -215,21 +215,26 @@ func importRecord(it localdebt.TDItem, source string) (localdebt.Record, string,
 	return rec, "", nil
 }
 
-// importSectionTime reads a section heading's date as midnight UTC in RFC3339.
-func importSectionTime(section string) (string, bool) {
+// importSectionTime reads a section heading's date as midnight UTC in RFC3339,
+// or says why the row cannot be dated from it.
+func importSectionTime(section string) (ts, reason string) {
+	const undated = "the row is under no dated `### [date]` section"
 	m := importSectionDate.FindStringSubmatch(section)
 	if m == nil {
-		return "", false
+		return "", undated
 	}
+	date := strings.TrimSpace(m[1])
 	for _, layout := range importDateLayouts {
-		if t, err := time.Parse(layout, strings.TrimSpace(m[1])); err == nil {
+		if t, err := time.Parse(layout, date); err == nil {
+			// time.Parse accepts year 0000, which the store cannot shard; the row
+			// is rejected here rather than failing the whole import at Append.
 			if _, err := localdebt.ManualRunID(t); err != nil {
-				return "", false // a year the store cannot shard
+				return "", fmt.Sprintf("section date %q is outside the years the store can file (1-9999)", date)
 			}
-			return t.UTC().Format(time.RFC3339), true
+			return t.UTC().Format(time.RFC3339), ""
 		}
 	}
-	return "", false
+	return "", undated
 }
 
 // importSourcePath names the README in a record: relative to the repo root when
