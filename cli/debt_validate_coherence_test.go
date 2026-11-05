@@ -337,10 +337,17 @@ func TestDebtValidateCoherence_TiesOrderByIDAndZeroVectorsScoreZero(t *testing.T
 	emb := newFakeEmbedder(t)
 	coherenceEnv(t, emb.srv.URL, "warn")
 	root := t.TempDir()
-	a := coherenceRec("a.go", "slow loop", "cache the loop")
-	b := coherenceRec("b.go", "slow loop", "cache the loop")
-	b.Line = 2 // a different row with the same text, so the same score
-	b.StampID()
+	// Rows reach scoring sorted by file, so pick file names where the first
+	// file has the HIGHER id: only the comparator can then put the lower first.
+	var a, b localdebt.Record
+	for i := 0; ; i++ {
+		require.Less(t, i, 1000, "no file pair with descending ids")
+		a = coherenceRec(fmt.Sprintf("a%d.go", i), "slow loop", "cache the loop")
+		b = coherenceRec(fmt.Sprintf("b%d.go", i), "slow loop", "cache the loop")
+		if a.ID > b.ID {
+			break
+		}
+	}
 	z := coherenceRec("z.go", "!!!", "???")
 	dir := writeLocalDebt(t, a, b, z)
 
@@ -351,7 +358,7 @@ func TestDebtValidateCoherence_TiesOrderByIDAndZeroVectorsScoreZero(t *testing.T
 	assert.Equal(t, "z.go", f[0].File)
 	assert.Zero(t, f[0].Score, "a zero vector scores 0, not NaN")
 	assert.Equal(t, f[1].Score, f[2].Score, "PRECONDITION: a tie")
-	assert.Less(t, f[1].ID, f[2].ID, "ties order by ID")
+	assert.Equal(t, []string{b.ID, a.ID}, []string{f[1].ID, f[2].ID}, "ties order by ID, not by input order")
 }
 
 func TestDebtValidateCoherence_ConfigReadFailures(t *testing.T) {
