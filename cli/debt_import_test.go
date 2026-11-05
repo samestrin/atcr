@@ -28,7 +28,7 @@ const importREADME = "# Technical Debt\n\n" +
 	"| g | [x] | LOW | c.go | resolved problem | fix c | style | 1 | paperclip-builder | 1 |\n" +
 	"| g | [-] | LOW | d.go:4 | unreproducible \\| piped | fix d | bug | 1 | paperclip-builder | 0 |\n" +
 	"| g | [ ] | LOW | e.go:1 | broken | row | with | an | extra | cell | here |\n" +
-	"| g | [ ] | LOW | f.go:1 | bell\x07 and \x1b[31mred\x1b[0m‮ | fix f | bug | 1 | paperclip-builder | 0 |\n\n" +
+	"| g | [ ] | LOW | f.go:1 | bell\x07 and \x1b[31mred\x1b[0m\u202e | fix f | bug | 1 | paperclip-builder | 0 |\n\n" +
 	"### [November 17, 2026] From Sprint: 35.16.10\n\n" +
 	"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n" +
 	"|---|---|---|---|---|---|---|---|---|\n" +

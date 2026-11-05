@@ -166,6 +166,14 @@ No flags.
 | `--path-depth` | int | `2` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt import`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--dry-run` | bool | `false` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt list`
 
 | Flag | Type | Default | Status |
