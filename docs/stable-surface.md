@@ -212,6 +212,18 @@ No flags.
 | `--store` | string | `` |  |
 | `--td` | string | `` |  |
 
+### `atcr debt validate`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
+| `--root` | string | `` |  |
+| `--status` | string | `open` |  |
+| `--store` | string | `` |  |
+
 ### `atcr diff-smell`
 
 | Flag | Type | Default | Status |

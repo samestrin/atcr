@@ -21,6 +21,7 @@ var reportCommands = map[string]bool{
 	"atcr debt clean":     true,
 	"atcr debt dashboard": true,
 	"atcr debt filter":    true,
+	"atcr debt validate":  true,
 	"atcr debt group":     true,
 	"atcr debt list":      true,
 	"atcr debt resolve":   true,
