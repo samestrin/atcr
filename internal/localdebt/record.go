@@ -82,7 +82,16 @@ import (
 //     and skips records that may hold operator-typed text. An older binary's
 //     skip gate does not know `attempts-exhausted`, so it replays a review
 //     excerpt over that record's `--reason`.
-const SchemaVersion = 3
+//
+// v3 -> v4 (epic 95): adds the optional Attempts count, read from the Attempts
+// column of a technical-debt README table by `atcr debt import`. The bump is
+// backward-compatible on read — a v1-v3 record has no "attempts" key and decodes
+// with Attempts == 0, "none recorded" — and forward-compatible in the same
+// established sense: this reader accepts v1 through v4, while v5+ records stay
+// forward-incompatible and are skipped with a warning. The same downgrade
+// visibility applies: a v3 binary skips v4 records, and Compact carries them
+// through verbatim rather than deleting them.
+const SchemaVersion = 4
 
 // Diagnostic message substrings emitted on the read path, exported so tests assert
 // against the same literal the producer emits: a reword updates this one constant
@@ -151,15 +160,14 @@ const (
 
 // Record is one persisted technical-debt finding occurrence. This struct and the
 // SchemaVersion doc block above are the authoritative specification of the JSONL
-// record. docs/technical-debt.md documents the .atcr/debt/ store's command surface
-// as of T2 but not yet its wire schema; T7 adds that section, at which point the
-// two must be kept in step. The schema is v3 as of Plan 35.13, which added the
-// optional Origin, Occurrences, FirstSeen and ModelReviewers fields on top of
-// v2's Model. The
-// required block is always present; the optional block
-// (omitempty) is present only when the reconciled finding carried the
-// corresponding enrichment (Epic 18.3 justification/source_report), a resolved
-// model attribution, or a recorded resolution.
+// record. docs/technical-debt.md's "Record schema" section documents the same
+// wire schema, and the two must be kept in step. The schema is v4 as of epic 95,
+// which added the optional Attempts field on top of v3's Origin, Occurrences,
+// FirstSeen and ModelReviewers (Plan 35.13) and v2's Model. The required block
+// is always present; the optional block (omitempty) is present only when the
+// reconciled finding carried the corresponding enrichment (Epic 18.3
+// justification/source_report), a resolved model attribution, a recorded
+// resolution, or an attempts count `atcr debt import` read from a README table.
 type Record struct {
 	SchemaVersion int      `json:"schema_version"`
 	ID            string   `json:"id"`
@@ -320,6 +328,14 @@ type Record struct {
 	// an older v3 reader ignores the key, and omitempty keeps every unannotated
 	// record byte-identical to the pre-field wire shape.
 	ReconcilerFeedback *ReconcilerFeedback `json:"reconciler_feedback,omitempty"`
+
+	// Attempts is how many times a fix for this finding was tried, added in
+	// schema v4 (epic 95) for the Attempts column `atcr debt import` reads from a
+	// technical-debt README table. Never negative (Append's write gate).
+	// omitempty keeps it absent from every record with no attempt recorded, so
+	// such a record is byte-identical to its v3 wire shape apart from
+	// schema_version.
+	Attempts int `json:"attempts,omitempty"`
 
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`

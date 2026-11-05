@@ -690,13 +690,14 @@ func TestPersistForReconcile_CarriesTheConfidenceDiscountIntoTheTDRow(t *testing
 
 // An undiscounted finding carries no confidence_discount key, so its JSONL line
 // and its TD row are byte-identical to what they were before the field existed.
+// Only schema_version has moved since, 3 -> 4 with epic 95's attempts bump.
 func TestPersistForReconcile_UndiscountedRecordIsByteIdentical(t *testing.T) {
 	root := t.TempDir()
 	PersistForReconcile("review", oneFindingResult("a.go", 1, "leaks a handle"), PersistOpts{Root: root})
 
 	data := readStoreBytes(t, root)
 	assert.NotContains(t, data, "confidence_discount")
-	assert.Equal(t, `{"schema_version":3,"id":"`+history.FindingID("a.go", 1, "leaks a handle")+
+	assert.Equal(t, `{"schema_version":4,"id":"`+history.FindingID("a.go", 1, "leaks a handle")+
 		`","run_id":"2026-08-04T10:00:00Z-review","ts":"2026-08-04T10:00:00Z","severity":"HIGH","file":"a.go","line":1,`+
 		`"problem":"leaks a handle","fix":"fix it","category":"correctness","est_minutes":10,"evidence":"","reviewers":null,"confidence":""}`+"\n",
 		data, "the pre-35.16.17 wire shape, byte for byte")

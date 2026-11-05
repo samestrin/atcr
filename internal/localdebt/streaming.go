@@ -125,6 +125,7 @@ type summaryLine struct {
 	// (Line and EstMinutes were in this group until the list/dashboard selection
 	// path started reading them; they still type-check exactly as before.)
 	Occurrences  int `json:"occurrences"`
+	Attempts     int `json:"attempts"`
 	SourceReport struct {
 		Line    int        `json:"line"`
 		Path    jsonString `json:"path"`

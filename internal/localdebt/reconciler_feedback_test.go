@@ -49,7 +49,8 @@ func TestReconcilerFeedback_KindConstants(t *testing.T) {
 
 // TestRecord_NoAnnotation_WireShapeUnchanged pins the pre-field wire shape byte
 // for byte: the line below was marshaled from this record before the annotation
-// existed.
+// existed. Only schema_version has moved since, 3 -> 4 with epic 95's attempts
+// bump; a record with no attempts is otherwise byte-identical to its v3 shape.
 func TestRecord_NoAnnotation_WireShapeUnchanged(t *testing.T) {
 	r := sampleRecord("2026-06-14T10:00:00Z-abc123")
 	r.Model = "m"
@@ -58,7 +59,7 @@ func TestRecord_NoAnnotation_WireShapeUnchanged(t *testing.T) {
 	r.ResolvedAt = "2026-06-15T00:00:00Z"
 	b, err := json.Marshal(r)
 	require.NoError(t, err)
-	const pre = `{"schema_version":3,"id":"2cbd0d4955f36040","run_id":"2026-06-14T10:00:00Z-abc123","ts":"2026-06-14T10:00:00Z","severity":"HIGH","file":"internal/scorecard/store.go","line":89,"problem":"(Append) Concurrent writers may tear JSONL lines","fix":"Issue exactly one os.Write per record under O_APPEND","category":"correctness","est_minutes":30,"evidence":"Scorecard comment notes POSIX atomic-append guarantee","reviewers":["bruce","host"],"confidence":"HIGH","model":"m","model_reviewers":["bruce"],"justification":"One record marshaled and written in a single Write call.","source_report":{"path":"sources/bruce/review.md","line":42,"section":"Concurrency concerns"},"status":"resolved","resolved_at":"2026-06-15T00:00:00Z"}`
+	const pre = `{"schema_version":4,"id":"2cbd0d4955f36040","run_id":"2026-06-14T10:00:00Z-abc123","ts":"2026-06-14T10:00:00Z","severity":"HIGH","file":"internal/scorecard/store.go","line":89,"problem":"(Append) Concurrent writers may tear JSONL lines","fix":"Issue exactly one os.Write per record under O_APPEND","category":"correctness","est_minutes":30,"evidence":"Scorecard comment notes POSIX atomic-append guarantee","reviewers":["bruce","host"],"confidence":"HIGH","model":"m","model_reviewers":["bruce"],"justification":"One record marshaled and written in a single Write call.","source_report":{"path":"sources/bruce/review.md","line":42,"section":"Concurrency concerns"},"status":"resolved","resolved_at":"2026-06-15T00:00:00Z"}`
 	assert.Equal(t, pre, string(b))
 	assert.NotContains(t, string(b), "reconciler_feedback")
 }
@@ -69,7 +70,6 @@ func TestRecord_Annotation_WireShape(t *testing.T) {
 	b, err := json.Marshal(r)
 	require.NoError(t, err)
 	assert.Contains(t, string(b), `"reconciler_feedback":{"kind":"wrong-split","with":"0123456789abcdef","reason":"same bug"}`)
-	assert.Equal(t, SchemaVersion, 3, "the annotation is additive within v3: no schema bump")
 
 	r.ReconcilerFeedback.With = ""
 	b, err = json.Marshal(r)

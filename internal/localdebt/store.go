@@ -135,6 +135,10 @@ func appendLocked(dir string, rec Record) error {
 			return fmt.Errorf("appending localdebt record %q: invalid reconciler feedback: %w", rec.ID, err)
 		}
 	}
+	// A count below zero is not a count, and once appended it is permanent.
+	if rec.Attempts < 0 {
+		return fmt.Errorf("appending localdebt record %q: negative attempts %d", rec.ID, rec.Attempts)
+	}
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir: %w", err)
 	}
