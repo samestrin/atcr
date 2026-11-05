@@ -44,7 +44,7 @@ func writeReportStore(t *testing.T) string {
 
 	rec := localdebt.Record{
 		SchemaVersion: localdebt.SchemaVersion,
-		RunID:         "run-1",
+		RunID:         "2026-11-01-run1",
 		Timestamp:     "2026-11-01T00:00:00Z",
 		Severity:      "LOW",
 		File:          "c/reconciled.go",
@@ -135,7 +135,7 @@ func TestDebtReport_CheckFailsOnDrift(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := localdebt.Record{
-		SchemaVersion: localdebt.SchemaVersion, RunID: "run-2", Timestamp: "2026-11-02T00:00:00Z",
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-11-02-run2", Timestamp: "2026-11-02T00:00:00Z",
 		Severity: "HIGH", File: "d/later.go", Line: 1, Problem: "arrived after the report", Category: "correctness",
 	}
 	rec.StampID()
@@ -208,4 +208,34 @@ func TestDebtReport_EmptyStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, got, debtReportGeneratedMarker)
 	assert.Contains(t, got, "_No items._")
+}
+
+// Within a section, rows of one severity order by file, then line, then id,
+// so the render never depends on the order the store returned them in.
+func TestDebtReport_OrdersRowsBySeverityFileLineID(t *testing.T) {
+	sec := &localdebt.SourceReport{Path: "README.md", Section: "### [2026-10-01] From: epic 1"}
+	mk := func(id, sev, file string, line int) localdebt.Record {
+		return localdebt.Record{ID: id, Severity: sev, File: file, Line: line, Problem: id, SourceReport: sec}
+	}
+	recs := []localdebt.Record{
+		mk("z1", "LOW", "b.go", 1),
+		mk("y2", "LOW", "a.go", 9),
+		mk("x3", "LOW", "a.go", 2),
+		mk("b4", "LOW", "a.go", 2),
+		mk("a5", "HIGH", "z.go", 1),
+	}
+	want := renderDebtReport(recs)
+	var order []string
+	for _, line := range strings.Split(want, "\n") {
+		if strings.HasPrefix(line, "| ") && !strings.HasPrefix(line, "| ID") {
+			order = append(order, strings.TrimSpace(strings.Split(line, "|")[1]))
+		}
+	}
+	assert.Equal(t, []string{"a5", "b4", "x3", "y2", "z1"}, order)
+
+	reversed := make([]localdebt.Record, len(recs))
+	for i, r := range recs {
+		reversed[len(recs)-1-i] = r
+	}
+	assert.Equal(t, want, renderDebtReport(reversed), "input order does not change the bytes")
 }

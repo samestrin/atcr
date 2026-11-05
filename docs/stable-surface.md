@@ -199,6 +199,16 @@ No flags.
 | `--store` | string | `` |  |
 | `--with` | string | `` |  |
 
+### `atcr debt report`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--check` | bool | `false` |  |
+| `--dir` | string | `` | deprecated alias |
+| `--format` | string | `md` |  |
+| `--output` | string | `` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt resolve`
 
 | Flag | Type | Default | Status |

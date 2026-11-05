@@ -53,6 +53,7 @@ var jsonExemptions = map[string]string{
 var jsonConventionGaps = map[string]string{
 	"atcr audit-report":    "markdown compliance report; no machine-readable path yet",
 	"atcr benchmark fit":   "per persona+model verdict table; no machine-readable path yet",
+	"atcr debt report":     "markdown report (--format md); `debt list --json` is its machine-readable path",
 	"atcr personas search": "search-result table; no machine-readable path yet",
 }
 
