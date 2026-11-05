@@ -2,7 +2,7 @@
 
 `atcr debt` queries, captures, and reports on the project's technical debt. All
 of its subcommands — `list`, `add`, `dashboard`, `resolve`, `convert`, `compact`,
-and the read-only `filter`, `clean` and `group` views — read and write **one**
+and the read-only `filter`, `clean`, `group` and `validate` views — read and write **one**
 store: the append-only JSONL backlog under `.atcr/debt/` (or wherever
 `debt.store` / `--store` puts it) that `atcr reconcile` populates. An item filed
 by `atcr debt add` is therefore visible to `atcr debt list` and closeable by
@@ -328,6 +328,7 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt filter` | Select open items by severity, confidence, status and mode (replaces `llm-support td-filter`) |
 | `atcr debt clean` | Show what `llm-support td-clean` would leave: open, deferred and unreproducible items (read-only) |
 | `atcr debt group` | Group open items by path, category or file (replaces `llm-support group-td`; read-only) |
+| `atcr debt validate` | Check each row's file, line and named symbol against the working tree; optional coherence scoring (replaces `llm-support td_validate`; read-only) |
 | `atcr debt resolve` | List open items and record resolutions |
 | `atcr debt recluster` | Record feedback on how reconcile grouped a finding |
 | `atcr debt compact` | Fold the append-only store's month shards to their live records |
@@ -489,7 +490,8 @@ item gets its own group regardless of size.
 |------|-------------|
 | `td_dedupe` | `atcr reconcile`, which merges duplicate findings before they reach the store |
 | `td_stats` | `atcr debt dashboard` |
-| `td-matrix`, `td_validate` | Not covered by `atcr debt`; tracked as rows in the technical-debt list |
+| `td_validate` | `atcr debt validate` (the reranker and qdrant grounding of the original are deliberately dropped) |
+| `td-matrix` | Not covered by `atcr debt`; tracked as a row in the technical-debt list |
 
 ### `atcr debt resolve`
 
@@ -817,6 +819,50 @@ persona names trimmed and lower-cased). It then prints `GATE MET` when at least
 10 personas have 20 or more, the scorecard's `minConfirmationOutcomes` floor,
 and `GATE NOT MET: n of 10 personas at 20` otherwise. `--report` cannot be
 combined with `--td`.
+
+### `atcr debt validate`
+
+Checks every selected row against the working tree, read-only: nothing is
+appended to the store and no file is changed. Grounding runs on every call; the
+optional coherence pass is off unless `--coherence` is passed.
+
+```bash
+atcr debt validate                          # ground every open row
+atcr debt validate --status deferred        # another status selection
+atcr debt validate --coherence              # also score Fix against Problem
+atcr debt validate --coherence --coherence-percentile 10
+atcr debt validate --axi                    # TOON for agents (JSON is default)
+```
+
+Flags: `--store`, `--status` (exact, default `open`), `--root` (directory the
+rows' file paths are relative to; default the repository root), `--coherence`,
+`--coherence-percentile` (default `20`, 1–100), `--json`, `--axi`.
+
+**Grounding** reports one of four statuses per row: `valid` (the file exists
+and the line is inside it), `file_missing` (the file does not exist, or the
+line is past its end — the `reason` field says which half failed),
+`symbol_not_found` (the row's Problem names a symbol — a `(name) ` anchor or a
+backticked identifier — that the file does not contain), and `no_file` (the row
+carries no file). The symbol is checked only when the Problem text names one.
+
+**Coherence** (`--coherence`) scores each row's Fix against its Problem by the
+cosine of their embeddings from the `context_prefetch.semantic` embedding
+endpoint — the same endpoint the semantic prefetch uses; no qdrant collection
+is needed. The least coherent `--coherence-percentile` percent of scored rows
+is listed under `flagged`. Every Problem and Fix passes the `secret_guard` scan
+before it is sent: a blocked text skips the whole pass with reason
+`secret-guard-blocked`, and a redacted one is sent redacted.
+
+The coherence result is **`skipped`, never partially checked**: without
+`--coherence` it reports `{status: skipped, reason: not-requested}`, and with
+it, no configured endpoint, a guard block, or an endpoint failure at any point
+all yield `skipped` with a class-only reason (no URL, no row text). Plain HTTP
+is used only to a loopback endpoint unless `allow_insecure_http` permits
+otherwise.
+
+Flagged rows and failed groundings are advisory: the command always exits 0 on
+a completed run (usage errors exit 2). Output is `{items, coherence}` as JSON
+by default or a token-dense TOON payload with `--axi`.
 
 ## Ignoring false positives (`atcr ignore`)
 
