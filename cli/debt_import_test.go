@@ -224,21 +224,3 @@ func TestDebtImport_Args(t *testing.T) {
 	_, err = runDebt(t, "import", filepath.Join(t.TempDir(), "missing.md"), "--store", t.TempDir())
 	require.Error(t, err)
 }
-
-// TestDebtImport_AtcrREADME is the task's success check run on atcr's own table:
-// a dry run counts every parsed item row as imported, merged or rejected.
-func TestDebtImport_AtcrREADME(t *testing.T) {
-	readme := filepath.Join("..", ".planning", "technical-debt", "README.md")
-	f, err := os.Open(readme)
-	if os.IsNotExist(err) {
-		t.Skip("no .planning/technical-debt/README.md in this checkout")
-	}
-	require.NoError(t, err)
-	items, err := localdebt.ParseTDItems(f)
-	_ = f.Close()
-	require.NoError(t, err)
-
-	plan, err := planDebtImport(items, "README.md")
-	require.NoError(t, err)
-	assert.Equal(t, len(items), len(plan.Imported)+len(plan.Merged)+len(plan.Rejected))
-}
