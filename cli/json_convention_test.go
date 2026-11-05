@@ -71,6 +71,7 @@ var nonReportCommands = map[string]string{
 	"atcr debt backfill-justifications": "repairs stored justifications",
 	"atcr debt compact":                 "rewrites the local TD store",
 	"atcr debt convert":                 "converts the local TD store to the event layout",
+	"atcr debt import":                  "writes a TD README table into the local TD store",
 	"atcr debt recluster":               "appends reconciler-grouping feedback to the local TD store",
 	"atcr debt sync-outcomes":           "records TD README outcomes",
 	"atcr github":                       "posts a check run",

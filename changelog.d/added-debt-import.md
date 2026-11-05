@@ -1,0 +1,1 @@
+- `atcr debt import <README>` imports a technical-debt README table into the local debt store, keeping each row's status (`[ ]`, `[/]`, `[x]`, `[-]`) and attempts and dating it from its `### [date]` section, so a second import writes nothing. Duplicate rows are reported as merged and unusable rows as rejected; `--dry-run` changes nothing. (epic 95)
