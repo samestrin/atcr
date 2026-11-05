@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +69,9 @@ func newFakeEmbedder(t *testing.T) *fakeEmbedder {
 
 func bagOfWords(s string) []float64 {
 	v := make([]float64, semindex.VectorSize)
-	for _, w := range strings.Fields(strings.ToLower(s)) {
+	// Punctuation is not a word, so an all-punctuation text embeds to zeros.
+	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	for _, w := range words {
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(w))
 		v[h.Sum32()%uint32(semindex.VectorSize)]++
@@ -276,4 +279,95 @@ func TestDebtValidateCoherence_PercentileRange(t *testing.T) {
 		code, _, _ := execCmdSplit(t, "debt", "validate", "--dir", dir, "--root", root, "--coherence", "--coherence-percentile", bad)
 		assert.Equal(t, 2, code, bad)
 	}
+}
+
+func TestDebtValidateCoherence_DisabledBlockSendsNothing(t *testing.T) {
+	emb := newFakeEmbedder(t)
+	coherenceEnv(t, emb.srv.URL, "warn")
+	reg := filepath.Join(os.Getenv("HOME"), ".config", "atcr", "registry.yaml")
+	data, err := os.ReadFile(reg)
+	require.NoError(t, err)
+	off := strings.Replace(string(data), "enabled: true", "enabled: false", 1)
+	require.NotEqual(t, string(data), off, "PRECONDITION: the block was enabled")
+	require.NoError(t, os.WriteFile(reg, []byte(off), 0o644))
+	dir, root := coherenceStore(t)
+
+	code, doc, _, _ := runCoherence(t, dir, root)
+	require.Equal(t, 0, code)
+	assert.Equal(t, debtValidateCoherence{Status: "skipped", Reason: "not-configured"}, doc.Coherence)
+	assert.Zero(t, emb.calls, "a disabled block never sends row text")
+}
+
+func TestDebtValidateCoherence_NoRowsToScore(t *testing.T) {
+	emb := newFakeEmbedder(t)
+	coherenceEnv(t, emb.srv.URL, "warn")
+	root := t.TempDir()
+	dir := writeLocalDebt(t, coherenceRec("a.go", "p", " "), coherenceRec("b.go", " ", "f"))
+
+	code, doc, stdout, _ := runCoherence(t, dir, root)
+	require.Equal(t, 0, code)
+	assert.Equal(t, coherenceChecked, doc.Coherence.Status)
+	assert.Equal(t, "no-rows-to-score", doc.Coherence.Reason)
+	assert.Zero(t, doc.Coherence.Scored)
+	assert.Contains(t, stdout, `"flagged": []`, "a checked result lists flagged, never null")
+	assert.Zero(t, emb.calls)
+
+	code, _, stdout, _ = runCoherence(t, dir, root, "--axi")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "flagged[0]")
+}
+
+func TestDebtValidateCoherence_EmbedderConfigInvalid(t *testing.T) {
+	emb := newFakeEmbedder(t)
+	coherenceEnv(t, emb.srv.URL, "warn")
+	old := newCoherenceEmbedder
+	t.Cleanup(func() { newCoherenceEmbedder = old })
+	newCoherenceEmbedder = func(semindex.Config) (*semindex.Embedder, error) {
+		return nil, fmt.Errorf("semindex: embedding endpoint %s is bad", emb.srv.URL)
+	}
+	dir, root := coherenceStore(t)
+	code, doc, stdout, stderr := runCoherence(t, dir, root)
+	require.Equal(t, 0, code)
+	assert.Equal(t, debtValidateCoherence{Status: "skipped", Reason: "config-invalid"}, doc.Coherence)
+	assert.NotContains(t, stdout+stderr, strings.TrimPrefix(emb.srv.URL, "http://"))
+	assert.Zero(t, emb.calls)
+}
+
+func TestDebtValidateCoherence_TiesOrderByIDAndZeroVectorsScoreZero(t *testing.T) {
+	emb := newFakeEmbedder(t)
+	coherenceEnv(t, emb.srv.URL, "warn")
+	root := t.TempDir()
+	a := coherenceRec("a.go", "slow loop", "cache the loop")
+	b := coherenceRec("b.go", "slow loop", "cache the loop")
+	b.Line = 2 // a different row with the same text, so the same score
+	b.StampID()
+	z := coherenceRec("z.go", "!!!", "???")
+	dir := writeLocalDebt(t, a, b, z)
+
+	code, doc, _, _ := runCoherence(t, dir, root, "--coherence-percentile", "100")
+	require.Equal(t, 0, code)
+	f := doc.Coherence.Flagged
+	require.Len(t, f, 3)
+	assert.Equal(t, "z.go", f[0].File)
+	assert.Zero(t, f[0].Score, "a zero vector scores 0, not NaN")
+	assert.Equal(t, f[1].Score, f[2].Score, "PRECONDITION: a tie")
+	assert.Less(t, f[1].ID, f[2].ID, "ties order by ID")
+}
+
+func TestDebtValidateCoherence_ConfigReadFailures(t *testing.T) {
+	dir, root := coherenceStore(t)
+	t.Run("no home directory", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		code, doc, _, _ := runCoherence(t, dir, root)
+		require.Equal(t, 0, code)
+		assert.Equal(t, debtValidateCoherence{Status: "skipped", Reason: "config-unavailable"}, doc.Coherence)
+	})
+	t.Run("unreadable project config", func(t *testing.T) {
+		coherenceEnv(t, "", "warn")
+		proot := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(proot, ".atcr", "config.yaml"), 0o755))
+		code, doc, _, _ := runCoherence(t, dir, proot)
+		require.Equal(t, 0, code)
+		assert.Equal(t, debtValidateCoherence{Status: "skipped", Reason: "config-unavailable"}, doc.Coherence)
+	})
 }
