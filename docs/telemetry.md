@@ -95,14 +95,6 @@ The ping carries exactly four allowlisted fields and nothing else:
 | `lines`  | int    | `450`                      | Approximate line count of the change.    |
 | `status` | string | `success`                  | Run outcome.                             |
 
-The `install_id` is **pseudonymous, not identifying**: it is random, derived from
-nothing about you, your machine, or your repository, and is stored per user in
-`~/.config/atcr/install_id` (mode 0600). It exists so the same install can be
-recognized across runs, and it is made only on the first opted-in send; nothing is
-made while the signal is off. To discard it and start a new one, run
-`atcr config reset-install-id`; the next opted-in send makes a fresh ID unrelated
-to the old one.
-
 That is the whole payload. A field that is not in this allowlist cannot leak,
 because it is never placed into the event in the first place.
 
@@ -454,6 +446,15 @@ these eight keys and fails loudly on any future field addition. The backend
 validates the same set by **strict key-set equality** (see above): an extra or
 missing key is a `400`, so any change to this key set is a coordinated change
 with the atcr.dev ingest.
+
+The `install_id` is **pseudonymous, not identifying**: it is random, derived from
+nothing about you, your machine, or your repository, and is stored per user in
+`~/.config/atcr/install_id` (mode 0600). Only the quality signal carries it; the
+usage ping never does. It exists so the same install can be recognized across
+quality-signal sends, and it is made only on the first opted-in quality-signal
+send; nothing is made while the quality signal is off. To discard it and start a
+new one, run `atcr config reset-install-id`; the next opted-in quality-signal send
+makes a fresh ID unrelated to the old one.
 
 None of the eight fields carries `omitempty`, so **zero-value counts always
 serialize as `0`** — a maintainer can distinguish "zero dismissals" from "field
