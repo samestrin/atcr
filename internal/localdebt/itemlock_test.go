@@ -27,10 +27,10 @@ func itemLockGit(t *testing.T, dir string, args ...string) string {
 // remote's path and the clones' store directories (<clone>/.atcr/debt, created).
 func itemLockRemote(t *testing.T, n int) (string, []string) {
 	t.Helper()
-	remote := filepath.Join(t.TempDir(), "remote.git")
-	require.NoError(t, os.MkdirAll(remote, 0o755))
-	out, err := gitexec.FixtureCommandContext(context.Background(), remote, "init", "-q", "--bare").CombinedOutput()
-	require.NoErrorf(t, err, "init bare: %s", out)
+	// A non-bare remote: FixtureCommandContext pins GIT_WORK_TREE, which --bare
+	// refuses, and the locks touch only refs/atcr/, never a checked-out branch.
+	remote := t.TempDir()
+	itemLockGit(t, remote, "init", "-q")
 	var stores []string
 	for i := 0; i < n; i++ {
 		clone := t.TempDir()
