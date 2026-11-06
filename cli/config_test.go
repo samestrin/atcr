@@ -307,3 +307,18 @@ func TestConfigResetInstallID_RemoveErrorExits1(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 1, code)
 }
+
+// TestInstallIDDisclosure fails if the docs or the `config set` help stop
+// naming the install ID and the command that resets it.
+func TestInstallIDDisclosure(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "docs", "telemetry.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), "install_id")
+	assert.Contains(t, string(doc), "reset-install-id")
+
+	out, code, err := execConfig(t, "config", "set", "--help")
+	require.NoError(t, err)
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "install_id")
+	assert.Contains(t, out, "reset-install-id")
+}

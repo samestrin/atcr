@@ -87,6 +87,9 @@ func newConfigSetCmd() *cobra.Command {
 			"the ATCR_QUALITY_SIGNAL env var OR `quality_signal true` opts in — the exact\n" +
 			"inverse consent model. The two settings are fully independent: neither key's\n" +
 			"value has any bearing on the other.\n\n" +
+			"An opted-in quality signal also sends a random, pseudonymous install_id (see\n" +
+			"docs/telemetry.md). Run `atcr config reset-install-id` to discard it and start\n" +
+			"a new one.\n\n" +
 			"On I/O failure (missing/unwritable .atcr/config.yaml) the command returns exit 1.",
 		Args: usageArgs(cobra.ExactArgs(2)),
 		RunE: runConfigSet,

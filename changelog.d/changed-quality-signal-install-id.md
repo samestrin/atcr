@@ -1,0 +1,1 @@
+- The quality-signal payload gains an eighth key, `install_id`: a random, pseudonymous install ID (reset with `atcr config reset-install-id`). `docs/telemetry.md` and the `atcr config set` help now describe it. The atcr.dev ingest must be updated to accept the eighth key before this ships, since it validates the key set by strict equality. (epic 109)
