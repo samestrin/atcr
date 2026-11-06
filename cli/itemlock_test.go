@@ -44,7 +44,7 @@ func TestDebtLock_TwoClonesOneWinnerThenUnlock(t *testing.T) {
 	require.Contains(t, out, "alice")
 	require.Equal(t, localdebt.ItemLockRef(id), remoteLockRefs(t, remote))
 
-	out, err = runDebt(t, "lock", id, "--store", stores[1], "--holder", "bob")
+	_, err = runDebt(t, "lock", id, "--store", stores[1], "--holder", "bob")
 	require.ErrorIs(t, err, localdebt.ErrItemLocked)
 	require.Contains(t, err.Error(), "alice")
 
