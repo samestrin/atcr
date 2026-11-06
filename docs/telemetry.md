@@ -417,7 +417,7 @@ visibility into the service — a copy there could never be detected going stale
 ### Quality-signal payload schema
 
 The payload is a list of per-(persona, model) rows. Each row carries exactly
-seven allowlisted fields and nothing else:
+eight allowlisted fields and nothing else:
 
 | Field                  | Type   | Example                                                              | Meaning                                                      |
 |------------------------|--------|---------------------------------------------------------------------|-------------------------------------------------------------|
@@ -442,12 +442,21 @@ That is the whole payload. This is its **own separately-tested allowlist** — i
 does **not** embed or extend the usage-ping `event`, any scorecard struct, or a
 local-debt record, so no source code, file path, or finding text can structurally
 be placed into it. A dedicated regression test locks the wire schema to exactly
-these seven keys and fails loudly on any future field addition. The backend
+these eight keys and fails loudly on any future field addition. The backend
 validates the same set by **strict key-set equality** (see above): an extra or
 missing key is a `400`, so any change to this key set is a coordinated change
 with the atcr.dev ingest.
 
-None of the seven fields carries `omitempty`, so **zero-value counts always
+The `install_id` is **pseudonymous, not identifying**: it is random, derived from
+nothing about you, your machine, or your repository, and is stored per user in
+`~/.config/atcr/install_id` (mode 0600). Only the quality signal carries it; the
+usage ping never does. It exists so the same install can be recognized across
+quality-signal sends, and it is made only on the first opted-in quality-signal
+send; nothing is made while the quality signal is off. To discard it and start a
+new one, run `atcr config reset-install-id`; the next opted-in quality-signal send
+makes a fresh ID unrelated to the old one.
+
+None of the eight fields carries `omitempty`, so **zero-value counts always
 serialize as `0`** — a maintainer can distinguish "zero dismissals" from "field
 absent".
 
@@ -551,11 +560,11 @@ never be mistaken for confirmation that data was transmitted.
 
 ### No code, no finding content, ever
 
-The quality signal transmits **only** the seven allowlisted primitive fields above:
-a hashed persona identifier, a model slug, and five integer counts. It carries **no
+The quality signal transmits **only** the eight allowlisted primitive fields above:
+a hashed persona identifier, a model slug, five integer counts, and the anonymous install ID. It carries **no
 source code, no file path, no repository name, and no finding text, title, or
 excerpt** — not by policy but structurally: the payload type cannot embed or
-extend any struct that holds those, and the seven-key allowlist is locked by a
+extend any struct that holds those, and the eight-key allowlist is locked by a
 regression test. Nothing is sent by default, and `--dry-run` lets you inspect the
 exact bytes before you ever opt in.
 
