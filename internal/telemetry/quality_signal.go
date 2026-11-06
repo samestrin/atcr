@@ -28,7 +28,7 @@ func canonicalPersonaID(raw string) string {
 // and it deliberately does NOT embed or extend Event, any scorecard struct, or
 // localdebt.Record — so no source code, file path, or finding text can ever leak
 // beyond {persona_id_hash, model, dismissed_count, confirmed_count,
-// wrong_merge_count, wrong_split_count, wrong_category_count}. The persona
+// wrong_merge_count, wrong_split_count, wrong_category_count, install_id}. The persona
 // identifier is always the one-way HashPersonaID digest, never a raw persona
 // name. Adding any field here is a privacy regression that
 // TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys guards.
@@ -39,6 +39,12 @@ func canonicalPersonaID(raw string) string {
 // reviewer, so they are kept apart from dismissed_count (the reviewer-error
 // count). The atcr.dev backend validates this payload by strict key-set
 // equality, so changing the key set is a coordinated change with the ingest.
+//
+// InstallID (Epic 109) is the random, per-user install ID: 32 lowercase hex
+// characters, never derived from the machine, user, path or repo. It lets the
+// backend keep the newest running total per install instead of merging every
+// user of a built-in persona into one row. NewQualitySignal leaves it empty; the
+// caller sets it on the rows it sends. No other payload carries it.
 //
 // PersonaIDHash is pseudonymous, not anonymous: HashPersonaID is an UNSALTED
 // SHA-256 over a small, enumerable persona-name set, so it does not defend against
@@ -54,6 +60,8 @@ type QualitySignal struct {
 	WrongMergeCount    int `json:"wrong_merge_count"`
 	WrongSplitCount    int `json:"wrong_split_count"`
 	WrongCategoryCount int `json:"wrong_category_count"`
+
+	InstallID string `json:"install_id"`
 }
 
 // ReconcilerCounts carries a row's reconciler-error counts into NewQualitySignal,

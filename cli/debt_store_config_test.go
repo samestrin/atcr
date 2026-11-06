@@ -123,7 +123,7 @@ func TestDebtStoreConfig_QualitySignalReadsTheConfiguredStore(t *testing.T) {
 	rec.StampID()
 	require.NoError(t, localdebt.Append(ext, rec))
 
-	payload, err := buildQualitySignalPayload(root)
+	payload, err := buildQualitySignalPayload(root, testInstallID)
 	require.NoError(t, err)
 	require.Len(t, payload, 1)
 	assert.Equal(t, 1, payload[0].DismissedCount)

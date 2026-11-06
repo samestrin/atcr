@@ -34,9 +34,9 @@ func countingQualityBuilder(t *testing.T) *int32 {
 	t.Helper()
 	var n int32
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, installID string) ([]telemetry.QualitySignal, error) {
 		atomic.AddInt32(&n, 1)
-		return prev(root)
+		return prev(root, installID)
 	}
 	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
 	return &n
@@ -288,7 +288,7 @@ func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(string, string) ([]telemetry.QualitySignal, error) {
 		close(entered)
 		<-release // block until the test releases the builder
 		return nil, errors.New("forced build error")
@@ -646,7 +646,7 @@ func TestQualitySignalSend_PayloadBuildsFromRepoRoot(t *testing.T) {
 	var mu sync.Mutex
 	var gotRoot string
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, _ string) ([]telemetry.QualitySignal, error) {
 		mu.Lock()
 		gotRoot = root
 		mu.Unlock()
@@ -695,7 +695,7 @@ func TestQualitySignalSend_UsesThreadedStoreRoot(t *testing.T) {
 	var mu sync.Mutex
 	var gotRoot string
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, _ string) ([]telemetry.QualitySignal, error) {
 		mu.Lock()
 		gotRoot = root
 		mu.Unlock()

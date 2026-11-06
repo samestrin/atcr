@@ -130,7 +130,11 @@ const qualitySignalNotSentMarker = "Preview only — nothing was transmitted. Th
 // (AC 03-03). A missing store is not an error: ReadAll returns no records and the
 // payload is a non-nil empty slice (marshals to []), so --preview on a fresh
 // checkout prints an empty payload rather than failing (AC 03-01 EC1).
-func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
+//
+// installID is set on every row (Epic 109): the send path passes the stored ID
+// and --dry-run passes the stored ID or installIDPlaceholder. NewQualitySignal
+// stays ID-free, so the ID is set here, after the rows are folded.
+func buildQualitySignalPayload(root, installID string) ([]telemetry.QualitySignal, error) {
 	// The store is where localdebt.StoreDir puts it — the same resolver the
 	// writer uses — so a configured debt.store is the store measured here.
 	dir, err := localdebt.StoreDir(root)
@@ -191,7 +195,9 @@ func buildQualitySignalPayload(root string) ([]telemetry.QualitySignal, error) {
 
 	payload := make([]telemetry.QualitySignal, 0, len(order))
 	for _, k := range order {
-		payload = append(payload, *groups[k])
+		qs := *groups[k]
+		qs.InstallID = installID
+		payload = append(payload, qs)
 	}
 	return payload, nil
 }
@@ -292,11 +298,18 @@ func maybeSendQualitySignalFrom(ctx context.Context, errW io.Writer, storeRoot, 
 	}
 	// Make the anonymous install ID on the first opted-in run, synchronously so
 	// the one-time notice reaches the command's stderr. Fail-open: an ID store
-	// error is logged and never changes the run.
-	if dir, err := defaultInstallIDDir(); err != nil {
+	// error is logged and never changes the run, but nothing is sent, since a row
+	// with an empty install_id would merge this install with every other one
+	// that failed the same way.
+	dir, err := defaultInstallIDDir()
+	if err != nil {
 		log.FromContext(ctx).Debug("quality-signal: install ID directory", "err", err)
-	} else if _, err := ensureInstallID(ctx, errW, dir); err != nil {
+		return
+	}
+	installID, err := ensureInstallID(ctx, errW, dir)
+	if err != nil {
 		log.FromContext(ctx).Debug("quality-signal: install ID", "err", err)
+		return
 	}
 	// Resolve the root the payload build reads from. A threaded storeRoot (the
 	// reconcile call site's persistence-resolved root) always wins: it names the
@@ -328,7 +341,7 @@ func maybeSendQualitySignalFrom(ctx context.Context, errW io.Writer, storeRoot, 
 				log.FromContext(ctx).Debug("quality-signal: recovered from panic", "value", r)
 			}
 		}()
-		payload, err := buildQualitySignalPayloadFn(root)
+		payload, err := buildQualitySignalPayloadFn(root, installID)
 		if err != nil {
 			return // fail-open: a read error never surfaces on the send path
 		}
@@ -368,12 +381,16 @@ func maybeSendQualitySignalFrom(ctx context.Context, errW io.Writer, storeRoot, 
 // stderr on this path exactly as the gated send path warns via the command's
 // stderr. The resolved value is deliberately discarded — the preview renders
 // regardless of the gate outcome (AC 03-02).
+//
+// The install_id shown is the stored ID, read without making one, so the
+// preview matches the send byte for byte once an ID is stored. Before the first
+// opted-in send it shows installIDPlaceholder instead (Epic 109 T2).
 func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 	if !dryRunFlagSet(cmd) {
 		return false, nil
 	}
 	_ = qualitySignalEnabledFromEnv(cmd.ErrOrStderr())
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", previewInstallID())
 	if err != nil {
 		// Fail open like the send path (which silently no-ops on the identical
 		// error) so the two paths never diverge on a corrupt store — but keep the
@@ -383,6 +400,21 @@ func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 		payload = []telemetry.QualitySignal{}
 	}
 	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)
+}
+
+// previewInstallID is the install_id --dry-run shows: the stored ID, read
+// without making one, or installIDPlaceholder when none is stored (or the home
+// directory cannot be resolved). --dry-run runs before the opt-in gate, so it
+// must never make an ID (AC2).
+func previewInstallID() string {
+	dir, err := defaultInstallIDDir()
+	if err != nil {
+		return installIDPlaceholder
+	}
+	if id, ok := readInstallID(dir); ok {
+		return id
+	}
+	return installIDPlaceholder
 }
 
 // installIDFile is the per-user file holding the quality signal's anonymous

@@ -254,9 +254,13 @@ func expectedQualityPayload(t *testing.T) []telemetry.QualitySignal {
 		}
 	}
 
+	// The preview reads the stored install ID without making one, and these
+	// fixtures store none, so every row shows the placeholder (Epic 109 T2).
 	ps := make([]telemetry.QualitySignal, 0, len(order))
 	for _, k := range order {
-		ps = append(ps, *groups[k])
+		qs := *groups[k]
+		qs.InstallID = installIDPlaceholder
+		ps = append(ps, qs)
 	}
 	return ps
 }
@@ -456,7 +460,7 @@ func TestPreview_PrintsAllowlistedJSONPayload(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	assert.Equal(t, []string{"confirmed_count", "dismissed_count", "model", "persona_id_hash",
+	assert.Equal(t, []string{"confirmed_count", "dismissed_count", "install_id", "model", "persona_id_hash",
 		"wrong_category_count", "wrong_merge_count", "wrong_split_count"}, keys,
 		"preview must print only the allowlisted quality-signal fields")
 }
@@ -617,7 +621,7 @@ func TestBuildQualitySignalPayload_FoldsCaseVariants(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
 	seedQualityRecord(t, "Bruce", "claude-sonnet-4-6", "resolved", "b.go")
 
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", testInstallID)
 	require.NoError(t, err)
 	require.Len(t, payload, 1, "case variants of the same persona must fold to one payload entry")
 	assert.Equal(t, 1, payload[0].DismissedCount, "dismissed counts must sum")
@@ -713,7 +717,7 @@ func TestBuildQualitySignalPayload_NewStatusOnlyPairIsNotOnTheWire(t *testing.T)
 	seedQualityRecord(t, "vera", "claude-sonnet-4-6", "unreproducible", "a.go")
 	seedQualityRecord(t, "archer", "gpt-5", "attempts-exhausted", "b.go")
 
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", testInstallID)
 	require.NoError(t, err)
 	assert.Empty(t, payload,
 		"a pair whose only outcomes are the new statuses must not appear on the wire at all")
@@ -729,7 +733,7 @@ func TestBuildQualitySignalPayload_MixedPairKeepsItsRealCounts(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "resolved", "b.go")
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "unreproducible", "c.go")
 
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", testInstallID)
 	require.NoError(t, err)
 	require.Len(t, payload, 1)
 	assert.Equal(t, 1, payload[0].DismissedCount)
@@ -771,7 +775,7 @@ func TestBuildQualitySignalPayload_ReconcilerCountsApartFromDismissed(t *testing
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "hallucinated.go")
 	seedReconcilerAnnotation(t, "bruce", "claude-sonnet-4-6", "merged.go", localdebt.FeedbackWrongMerge)
 
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", testInstallID)
 	require.NoError(t, err)
 	sum := sha256.Sum256([]byte("bruce"))
 	assert.Equal(t, []telemetry.QualitySignal{{
@@ -779,6 +783,7 @@ func TestBuildQualitySignalPayload_ReconcilerCountsApartFromDismissed(t *testing
 		Model:           "claude-sonnet-4-6",
 		DismissedCount:  1,
 		WrongMergeCount: 1,
+		InstallID:       testInstallID,
 	}}, payload)
 }
 
@@ -792,7 +797,7 @@ func TestBuildQualitySignalPayload_ReconcilerOnlyPairIsOnTheWire(t *testing.T) {
 	seedReconcilerAnnotation(t, "Diana", "gpt-5", "b.go", localdebt.FeedbackWrongCategory)
 	seedReconcilerAnnotation(t, "diana", "gpt-5", "c.go", localdebt.FeedbackWrongCategory)
 
-	payload, err := buildQualitySignalPayload(".")
+	payload, err := buildQualitySignalPayload(".", testInstallID)
 	require.NoError(t, err)
 	require.Len(t, payload, 1)
 	assert.Zero(t, payload[0].DismissedCount)
@@ -1011,7 +1016,7 @@ func TestInstallID_SendPathMakesIDOnlyWhenSignalOn(t *testing.T) {
 	t.Setenv("ATCR_TELEMETRY", "0")
 
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) { return nil, nil }
+	buildQualitySignalPayloadFn = func(string, string) ([]telemetry.QualitySignal, error) { return nil, nil }
 	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
 	ctx := telemetry.NewContext(context.Background(), telemetry.NewSingleDestination(qsEndpoint))
 
@@ -1087,8 +1092,10 @@ func TestInstallID_StoreErrorsAreReturned(t *testing.T) {
 	})
 }
 
-// TestInstallID_SendPathFailsOpenOnStoreError: an ID store error never stops
-// the opted-in run's send path.
+// TestInstallID_SendPathFailsOpenOnStoreError: an ID store error never breaks
+// the opted-in run, but nothing is built or sent. Until Epic 109 T2 the payload
+// had no ID, so the send went on; now every row carries install_id, and a send
+// without one would put rows with an empty ID on the wire.
 func TestInstallID_SendPathFailsOpenOnStoreError(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "0")
@@ -1097,11 +1104,11 @@ func TestInstallID_SendPathFailsOpenOnStoreError(t *testing.T) {
 
 	var built atomic.Bool
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) { built.Store(true); return nil, nil }
+	buildQualitySignalPayloadFn = func(string, string) ([]telemetry.QualitySignal, error) { built.Store(true); return nil, nil }
 	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
 	ctx := telemetry.NewContext(context.Background(), telemetry.NewSingleDestination(qsEndpoint))
 
-	maybeSendQualitySignal(ctx, io.Discard, "")
+	assert.NotPanics(t, func() { maybeSendQualitySignal(ctx, io.Discard, "") })
 	waitQualitySignalInFlight()
-	assert.True(t, built.Load(), "the send path must continue after an ID store error")
+	assert.False(t, built.Load(), "no payload is built without an install ID")
 }
