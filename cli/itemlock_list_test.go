@@ -126,9 +126,8 @@ func TestDebtLocks_BadOlderThanIsUsageError(t *testing.T) {
 	isolate(t)
 	_, stores := itemLockClones(t, 1)
 	for _, v := range []string{"0", "-1h", "soon"} {
-		_, err := runDebt(t, "locks", "--store", stores[0], "--older-than", v)
-		require.Error(t, err, v)
-		require.Equal(t, 2, exitCode(err), v)
+		// Through the root command, which turns a flag parse error into exit 2.
+		require.Equal(t, 2, execCmd(t, "debt", "locks", "--store", stores[0], "--older-than", v), v)
 	}
 }
 
