@@ -73,14 +73,15 @@ func TestReviewAll_EndToEndWholeRepo(t *testing.T) {
 	assert.Contains(t, string(body), "package c", "internal/c.go must be in the baseline payload")
 	assert.Contains(t, string(body), "one", "a.txt must be in the baseline payload")
 
-	// Manifest records no base/head — gitrange.Resolve was never invoked.
+	// Manifest records no base (gitrange.Resolve was never invoked); the head is
+	// HEAD on a clean tree, so tool agents and verify can snapshot it (EST-5102).
 	mdata, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	require.NoError(t, err)
 	var m payload.Manifest
 	require.NoError(t, json.Unmarshal(mdata, &m))
 	assert.Equal(t, "files", m.PayloadMode)
 	assert.Empty(t, m.Base, "baseline scan has no base")
-	assert.Empty(t, m.Head, "baseline scan has no head")
+	assert.Equal(t, gitRevParse(t, "HEAD"), m.Head, "a clean baseline scan records HEAD")
 
 	// The reviewer produced a source under the standard pool layout.
 	assert.FileExists(t, filepath.Join(dir, "sources", "pool", "raw", "agent", "bruce", "findings.txt"))
@@ -987,7 +988,7 @@ func TestCommitBaselineWriteback_GuardsWriteNothing(t *testing.T) {
 // The baseline coverage lines name "unreviewed_chunks" beside the claim, but
 // `excluded > 0` is now reachable with EVERY slot StatusOK and UnreviewedChunks ==
 // 0: contributedNothing withholds coverage for a salvaged or think-suppressed
-// reply, which is a succeeded slot (TD cli/review.go:256). The operator then reads
+// reply, which is a succeeded slot (TD cli/review.go:268). The operator then reads
 // "no file was covered by a succeeded chunk" next to a counter saying zero chunks
 // were unreviewed, with the real cause named nowhere — and warnSalvaged's remedy
 // (turn off inline reasoning / repoint the model) is the opposite of raising a
@@ -1091,7 +1092,7 @@ func TestBaselineWithheldCause_ContributedNothingOutranksOtherCauses(t *testing.
 // the one the selector used to lack: a persona that failed WHOLLY leaves
 // ContributedNothingCount and UnreviewedChunks at zero (mergeResultGroup sets the
 // latter only for a MIX of succeeded and failed chunks), so it fell through to the
-// default and was reported as a re-pack it never did (TD cli/review.go:302).
+// default and was reported as a re-pack it never did (TD cli/review.go:314).
 func TestBaselineWithheldCause_EachArmNamesItsOwnCause(t *testing.T) {
 	t.Run("contributed nothing", func(t *testing.T) {
 		got := baselineWithheldCause(fanout.Summary{ContributedNothingCount: 1})

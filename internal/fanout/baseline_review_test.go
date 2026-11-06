@@ -55,7 +55,8 @@ func repoReq(dir, out string) ReviewRequest {
 }
 
 // AC 01-04 Happy Path 1: a valid repo produces a non-nil PreparedReview with slots
-// built from the payload and req.Range left zero-valued (manifest records no range).
+// built from the payload and no diff range (the manifest records no base; the head
+// is HEAD's SHA, EST-5102).
 func TestPrepareReviewFromRepo_ScaffoldsWithZeroRange(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
 	out := filepath.Join(t.TempDir(), "ext-review")
@@ -71,7 +72,7 @@ func TestPrepareReviewFromRepo_ScaffoldsWithZeroRange(t *testing.T) {
 	assert.Equal(t, out, prep.Dir)
 	assert.Equal(t, 2, prep.AgentCount(), "both roster agents become slots")
 
-	// Manifest: files mode for every agent, range fields empty (no git range).
+	// Manifest: files mode for every agent, no base (no git range).
 	mdata, err := os.ReadFile(filepath.Join(out, "manifest.json"))
 	require.NoError(t, err)
 	var m payload.Manifest
@@ -80,7 +81,9 @@ func TestPrepareReviewFromRepo_ScaffoldsWithZeroRange(t *testing.T) {
 	assert.Equal(t, "files", m.PerAgentPayload["greta"])
 	assert.Equal(t, "files", m.PerAgentPayload["kai"])
 	assert.Empty(t, m.Base, "a baseline scan has no base")
-	assert.Empty(t, m.Head, "a baseline scan has no head")
+	// The head is HEAD's SHA on a clean tree (EST-5102), so the tool harness and
+	// verify have a commit to snapshot; see baseline_head_test.go.
+	assert.Equal(t, fanoutGit(t, repo, "rev-parse", "HEAD"), m.Head, "a clean baseline scan records HEAD")
 	assert.ElementsMatch(t, []string{"greta", "kai"}, m.Roster)
 }
 
