@@ -286,6 +286,49 @@ func (l ItemLocker) Unlock(ctx context.Context, ids []string) ([]ItemLock, error
 	return locks, nil
 }
 
+// List reads every lock the store remote holds, oldest first, then by id. It
+// only reads: it checks no holder for liveness and never frees a lock (Epic 93
+// T2). Holder is not used. A ref under ItemLockRefPrefix whose name is not a
+// hex-encoded id, or whose tag is not a lock, is an error rather than skipped,
+// so a lock cannot drop out of the list unseen.
+func (l ItemLocker) List(ctx context.Context) ([]ItemLock, error) {
+	g, remote, err := l.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := g.run(ctx, "", "ls-remote", "--refs", remote, ItemLockRefPrefix+"*")
+	if err != nil {
+		return nil, fmt.Errorf("read locks from %s: %w", remote, err)
+	}
+	found := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		sha, ref, ok := strings.Cut(line, "\t")
+		if !ok || !strings.HasPrefix(ref, ItemLockRefPrefix) {
+			continue
+		}
+		raw, err := hex.DecodeString(strings.TrimPrefix(ref, ItemLockRefPrefix))
+		if err != nil || len(raw) == 0 {
+			return nil, fmt.Errorf("read locks from %s: %s is not an item lock ref (its name is not a hex-encoded id)", remote, ref)
+		}
+		found[string(raw)] = sha
+	}
+	read, err := fetchItemLocks(ctx, g, remote, found)
+	if err != nil {
+		return nil, err
+	}
+	locks := make([]ItemLock, 0, len(read))
+	for _, lk := range read {
+		locks = append(locks, lk.ItemLock)
+	}
+	slices.SortFunc(locks, func(a, b ItemLock) int {
+		if c := a.At.Compare(b.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return locks, nil
+}
+
 // remoteItemLock is a lock read from the remote, with the tag object it names.
 type remoteItemLock struct {
 	ItemLock
@@ -299,6 +342,12 @@ func readItemLocks(ctx context.Context, g itemLockRunner, remote string, ids []s
 	if err != nil {
 		return nil, err
 	}
+	return fetchItemLocks(ctx, g, remote, found)
+}
+
+// fetchItemLocks fetches and parses the tag each id's ref names; found maps id
+// to tag object as listItemLockRefs returns it.
+func fetchItemLocks(ctx context.Context, g itemLockRunner, remote string, found map[string]string) (map[string]remoteItemLock, error) {
 	fetch := make([]string, 0, len(found))
 	for id := range found {
 		fetch = append(fetch, ItemLockRef(id))
