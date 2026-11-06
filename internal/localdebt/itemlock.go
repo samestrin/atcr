@@ -307,8 +307,8 @@ func (l ItemLocker) List(ctx context.Context) ([]ItemLock, error) {
 			continue
 		}
 		raw, err := hex.DecodeString(strings.TrimPrefix(ref, ItemLockRefPrefix))
-		if err != nil || len(raw) == 0 {
-			return nil, fmt.Errorf("read locks from %s: %s is not an item lock ref (its name is not a hex-encoded id)", remote, ref)
+		if err != nil || len(raw) == 0 || ItemLockRef(string(raw)) != ref {
+			return nil, fmt.Errorf("read locks from %s: %s is not an item lock ref (its name is not an id in lowercase hex)", remote, ref)
 		}
 		found[string(raw)] = sha
 	}

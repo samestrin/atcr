@@ -393,7 +393,10 @@ func TestItemLockList_NoRemoteIsError(t *testing.T) {
 func TestItemLockList_ForeignRefNameIsError(t *testing.T) {
 	remote, stores := itemLockRemote(t, 1)
 	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
-	itemLockGit(t, remote, "update-ref", ItemLockRefPrefix+"not-hex", "HEAD")
-	_, err := ItemLocker{Dir: stores[0]}.List(context.Background())
-	require.ErrorContains(t, err, ItemLockRefPrefix+"not-hex")
+	for _, name := range []string{"not-hex", "5A44"} {
+		itemLockGit(t, remote, "update-ref", ItemLockRefPrefix+name, "HEAD")
+		_, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+		require.ErrorContains(t, err, ItemLockRefPrefix+name)
+		itemLockGit(t, remote, "update-ref", "-d", ItemLockRefPrefix+name)
+	}
 }
