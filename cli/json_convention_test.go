@@ -66,6 +66,7 @@ var nonReportCommands = map[string]string{
 	"atcr benchmark verify":             "validator: passes or fails a manifest and prints its hash, not a report",
 	"atcr config":                       "group: prints help",
 	"atcr config set":                   "writes .atcr/config.yaml",
+	"atcr config reset-install-id":      "removes the stored quality-signal install ID",
 	"atcr debate":                       "runs the debate stage",
 	"atcr debt":                         "group: prints help",
 	"atcr debt add":                     "writes a TD item",

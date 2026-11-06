@@ -64,6 +64,10 @@ No flags.
 
 No flags.
 
+### `atcr config reset-install-id`
+
+No flags.
+
 ### `atcr config set`
 
 No flags.

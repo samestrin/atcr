@@ -6,12 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -819,4 +822,286 @@ func TestPreview_PrintsReconcilerKeysWithoutRawPersona(t *testing.T) {
 	var got []telemetry.QualitySignal
 	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(jsonPart)), &got))
 	assert.Equal(t, expectedQualityPayload(t), got)
+}
+
+// installIDDir points the per-user install-ID store at a fresh directory for
+// one test, by sandboxing HOME (the store lives under ~/.config/atcr).
+func installIDDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return filepath.Join(home, ".config", "atcr")
+}
+
+func TestInstallID_Format(t *testing.T) {
+	dir := installIDDir(t)
+	id, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.True(t, validInstallID(id), "a made ID must be 32 lowercase hex characters, got %q", id)
+}
+
+func TestInstallID_TwoFreshDirsGetDifferentIDs(t *testing.T) {
+	a, err := ensureInstallID(context.Background(), io.Discard, t.TempDir())
+	require.NoError(t, err)
+	b, err := ensureInstallID(context.Background(), io.Discard, t.TempDir())
+	require.NoError(t, err)
+	assert.NotEqual(t, a, b, "two installs must not share an ID")
+}
+
+func TestInstallID_SameDirReturnsSameIDAcrossRuns(t *testing.T) {
+	dir := installIDDir(t)
+	first, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	second, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	got, ok := readInstallID(dir)
+	assert.True(t, ok)
+	assert.Equal(t, first, got, "reading must return the stored ID")
+}
+
+func TestInstallID_ResetGivesNewID(t *testing.T) {
+	dir := installIDDir(t)
+	before, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	require.NoError(t, resetInstallID(dir))
+	_, ok := readInstallID(dir)
+	assert.False(t, ok, "a reset must not leave the old ID stored")
+	after, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.NotEqual(t, before, after)
+}
+
+func TestInstallID_ResetWithNoStoredIDIsNotAnError(t *testing.T) {
+	dir := installIDDir(t)
+	require.NoError(t, resetInstallID(dir))
+	_, err := os.Stat(dir)
+	assert.True(t, os.IsNotExist(err), "a reset must not make the config directory or an ID")
+}
+
+func TestInstallID_InvalidFileIsReplacedAndLogged(t *testing.T) {
+	for name, content := range map[string]string{
+		"corrupt":      "not-an-id\n",
+		"short":        strings.Repeat("a", 31),
+		"long":         strings.Repeat("a", 33),
+		"uppercase":    strings.Repeat("A", 32),
+		"empty":        "",
+		"trailing nl":  strings.Repeat("b", 32) + "\n",
+		"non-hex char": strings.Repeat("g", 32),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := installIDDir(t)
+			require.NoError(t, os.MkdirAll(dir, 0o700))
+			path := filepath.Join(dir, installIDFile)
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+			var logBuf, errBuf bytes.Buffer
+			logger, err := log.New("info", "text", &logBuf)
+			require.NoError(t, err)
+			ctx := log.NewContext(context.Background(), logger)
+
+			id, err := ensureInstallID(ctx, &errBuf, dir)
+			require.NoError(t, err)
+			assert.True(t, validInstallID(id))
+			stored, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, id, string(stored), "the invalid file must be replaced with the new ID")
+			assert.Contains(t, logBuf.String(), "install ID", "the replacement must be logged")
+			if content != "" {
+				assert.NotContains(t, logBuf.String(), content, "the log must not echo the file contents")
+			}
+		})
+	}
+}
+
+func TestInstallID_FileModeIs0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	dir := installIDDir(t)
+	_, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	info, err := os.Stat(filepath.Join(dir, installIDFile))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	// A replaced (corrupt) file is 0600 too.
+	path := filepath.Join(dir, installIDFile)
+	require.NoError(t, os.WriteFile(path, []byte("bad"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+	_, err = ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	info, err = os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent writers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+func TestInstallID_ConcurrentFirstUsesEndWithOneID(t *testing.T) {
+	dir := installIDDir(t)
+	const n = 16
+	ids := make([]string, n)
+	errs := make([]error, n)
+	var notices syncBuffer
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			ids[i], errs[i] = ensureInstallID(context.Background(), &notices, dir)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		require.NoError(t, errs[i])
+		assert.Equal(t, ids[0], ids[i], "every concurrent first use must return the one stored ID")
+	}
+	stored, ok := readInstallID(dir)
+	require.True(t, ok)
+	assert.Equal(t, ids[0], stored)
+	assert.Equal(t, 1, strings.Count(notices.String(), "atcr config reset-install-id"),
+		"exactly one of the concurrent first uses prints the notice")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "no temp files may be left behind")
+}
+
+func TestInstallID_FirstUseNoticeOnceOnStderr(t *testing.T) {
+	dir := installIDDir(t)
+	var first bytes.Buffer
+	id, err := ensureInstallID(context.Background(), &first, dir)
+	require.NoError(t, err)
+	assert.Contains(t, first.String(), id, "the notice names the ID")
+	assert.Contains(t, first.String(), "anonymous")
+	assert.Contains(t, first.String(), "atcr config reset-install-id")
+
+	var later bytes.Buffer
+	_, err = ensureInstallID(context.Background(), &later, dir)
+	require.NoError(t, err)
+	assert.Empty(t, later.String(), "the notice must never print on a later run")
+}
+
+// TestInstallID_SendPathMakesIDOnlyWhenSignalOn drives the real send call site:
+// with the signal off no ID file is made; with it on the ID is made once and the
+// notice goes to the command's stderr.
+func TestInstallID_SendPathMakesIDOnlyWhenSignalOn(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	t.Setenv("ATCR_TELEMETRY", "0")
+
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) { return nil, nil }
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+	ctx := telemetry.NewContext(context.Background(), telemetry.NewSingleDestination(qsEndpoint))
+
+	unsetEnvForTest(t, "ATCR_QUALITY_SIGNAL")
+	var off bytes.Buffer
+	maybeSendQualitySignal(ctx, &off, "")
+	waitQualitySignalInFlight()
+	_, err := os.Stat(filepath.Join(dir, installIDFile))
+	assert.True(t, os.IsNotExist(err), "the ID must never be made while the signal is off")
+	assert.Empty(t, off.String())
+
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	var on bytes.Buffer
+	maybeSendQualitySignal(ctx, &on, "")
+	waitQualitySignalInFlight()
+	id, ok := readInstallID(dir)
+	require.True(t, ok, "the first opted-in run makes the ID")
+	assert.Contains(t, on.String(), id)
+	assert.Contains(t, on.String(), "atcr config reset-install-id")
+
+	var again bytes.Buffer
+	maybeSendQualitySignal(ctx, &again, "")
+	waitQualitySignalInFlight()
+	assert.Empty(t, again.String(), "a later opted-in run prints no notice")
+}
+
+// TestInstallID_NoHardLinksFallsBackToExclusiveCreate covers a filesystem
+// without hard links: the ID is still made once, 0600, and kept across runs.
+func TestInstallID_NoHardLinksFallsBackToExclusiveCreate(t *testing.T) {
+	prev := linkInstallIDFn
+	linkInstallIDFn = func(string, string) error {
+		return &os.LinkError{Op: "link", Err: errors.New("operation not supported")}
+	}
+	t.Cleanup(func() { linkInstallIDFn = prev })
+
+	dir := installIDDir(t)
+	var notice bytes.Buffer
+	first, err := ensureInstallID(context.Background(), &notice, dir)
+	require.NoError(t, err)
+	assert.Contains(t, notice.String(), first)
+	second, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(dir, installIDFile))
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the staged temp file must be removed")
+}
+
+// TestInstallID_StoreErrorsAreReturned covers the error paths: a config
+// directory that cannot be made, and an install_id name taken by a directory
+// (it cannot be read, linked over or replaced, nor removed by a reset).
+func TestInstallID_StoreErrorsAreReturned(t *testing.T) {
+	t.Run("dir is a file", func(t *testing.T) {
+		parent := t.TempDir()
+		dir := filepath.Join(parent, "atcr")
+		require.NoError(t, os.WriteFile(dir, []byte("x"), 0o600))
+		_, err := ensureInstallID(context.Background(), io.Discard, dir)
+		assert.Error(t, err)
+	})
+	t.Run("install_id is a directory", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, installIDFile, "sub"), 0o700))
+		var notice bytes.Buffer
+		_, err := ensureInstallID(context.Background(), &notice, dir)
+		assert.Error(t, err)
+		assert.Empty(t, notice.String(), "no notice when no ID was stored")
+		assert.Error(t, resetInstallID(dir))
+	})
+}
+
+// TestInstallID_SendPathFailsOpenOnStoreError: an ID store error never stops
+// the opted-in run's send path.
+func TestInstallID_SendPathFailsOpenOnStoreError(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "0")
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	require.NoError(t, os.WriteFile(filepath.Join(os.Getenv("HOME"), ".config"), []byte("x"), 0o600))
+
+	var built atomic.Bool
+	prev := buildQualitySignalPayloadFn
+	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) { built.Store(true); return nil, nil }
+	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
+	ctx := telemetry.NewContext(context.Background(), telemetry.NewSingleDestination(qsEndpoint))
+
+	maybeSendQualitySignal(ctx, io.Discard, "")
+	waitQualitySignalInFlight()
+	assert.True(t, built.Load(), "the send path must continue after an ID store error")
 }
