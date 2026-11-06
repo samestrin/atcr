@@ -201,6 +201,15 @@ No flags.
 | `--holder` | string | `` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt locks`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--json` | bool | `false` |  |
+| `--older-than` | duration | `12h0m0s` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt recluster`
 
 | Flag | Type | Default | Status |

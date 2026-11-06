@@ -24,6 +24,7 @@ var reportCommands = map[string]bool{
 	"atcr debt validate":  true,
 	"atcr debt group":     true,
 	"atcr debt list":      true,
+	"atcr debt locks":     true,
 	"atcr debt resolve":   true,
 	"atcr diff-smell":     true,
 	"atcr doctor":         true,
