@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +34,9 @@ func countingQualityBuilder(t *testing.T) *int32 {
 	t.Helper()
 	var n int32
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, installID string) ([]telemetry.QualitySignal, error) {
 		atomic.AddInt32(&n, 1)
-		return prev(root)
+		return prev(root, installID)
 	}
 	t.Cleanup(func() { buildQualitySignalPayloadFn = prev })
 	return &n
@@ -287,7 +288,7 @@ func TestQualitySignalSend_PayloadBuildRunsDetached(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(string, string) ([]telemetry.QualitySignal, error) {
 		close(entered)
 		<-release // block until the test releases the builder
 		return nil, errors.New("forced build error")
@@ -377,8 +378,8 @@ func TestQualitySignalSend_EnabledViaEnv_ExactlyOneRequest_CorrectCounts(t *test
 	assert.NotEmpty(t, got[0].PersonaIDHash)
 	assert.NotContains(t, q[0], "bruce", "the raw persona name must never reach the wire")
 
-	// Body carries exactly the allowlisted keys: Story 1's four plus the three
-	// Epic 36.1 reconciler-error counts, which T3 added deliberately.
+	// Body carries exactly the allowlisted keys: Story 1's four, the three
+	// Epic 36.1 reconciler-error counts and the Epic 109 install ID.
 	var raw []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(q[0]), &raw))
 	require.Len(t, raw, 1)
@@ -387,7 +388,7 @@ func TestQualitySignalSend_EnabledViaEnv_ExactlyOneRequest_CorrectCounts(t *test
 		keys = append(keys, k)
 	}
 	assert.ElementsMatch(t, []string{"persona_id_hash", "model", "dismissed_count", "confirmed_count",
-		"wrong_merge_count", "wrong_split_count", "wrong_category_count"}, keys,
+		"wrong_merge_count", "wrong_split_count", "wrong_category_count", "install_id"}, keys,
 		"the wire carries exactly the allowlisted keys")
 }
 
@@ -419,6 +420,9 @@ func TestQualitySignalSend_SentBytesEqualPreviewBytes(t *testing.T) {
 	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "resolved", "b.go")
 	seedQualityRecord(t, "diana", "gpt-5", "wontfix", "c.go")
 	reconcileFixture(t)
+	// Store the install ID first: --dry-run reads the stored ID without making
+	// one, so without it the preview shows the placeholder the send never does.
+	storeInstallIDForTest(t, testInstallID)
 
 	// Preview bytes (open fixture findings persisted by a reconcile run are
 	// non-terminal, so they never change the aggregation).
@@ -642,7 +646,7 @@ func TestQualitySignalSend_PayloadBuildsFromRepoRoot(t *testing.T) {
 	var mu sync.Mutex
 	var gotRoot string
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, _ string) ([]telemetry.QualitySignal, error) {
 		mu.Lock()
 		gotRoot = root
 		mu.Unlock()
@@ -691,7 +695,7 @@ func TestQualitySignalSend_UsesThreadedStoreRoot(t *testing.T) {
 	var mu sync.Mutex
 	var gotRoot string
 	prev := buildQualitySignalPayloadFn
-	buildQualitySignalPayloadFn = func(root string) ([]telemetry.QualitySignal, error) {
+	buildQualitySignalPayloadFn = func(root, _ string) ([]telemetry.QualitySignal, error) {
 		mu.Lock()
 		gotRoot = root
 		mu.Unlock()
@@ -712,4 +716,188 @@ func TestQualitySignalSend_UsesThreadedStoreRoot(t *testing.T) {
 	mu.Unlock()
 	assert.Equal(t, threaded, got,
 		"a threaded store root must win over repoRoot() discovery — the signal reads the store the run wrote")
+}
+
+// --- Epic 109 T2: install_id on the quality-signal payload -----------------
+
+const testInstallID = "0123456789abcdef0123456789abcdef"
+
+// storeInstallIDForTest writes id as the stored install ID under the isolated
+// HOME's ~/.config/atcr, the per-user directory the send path reads.
+func storeInstallIDForTest(t *testing.T, id string) {
+	t.Helper()
+	dir, err := defaultInstallIDDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, installIDFile), []byte(id), 0o600))
+}
+
+// qualitySignalRows decodes one quality-signal body into its raw rows.
+func qualitySignalRows(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	var rows []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &rows))
+	return rows
+}
+
+// TestQualitySignalSend_CarriesStoredInstallID proves every row of an opted-in
+// send carries install_id equal to the stored ID (AC1).
+func TestQualitySignalSend_CarriesStoredInstallID(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	seedQualityRecord(t, "diana", "gpt-5", "resolved", "b.go")
+	reconcileFixture(t)
+	storeInstallIDForTest(t, testInstallID)
+	bodies := captureSendBodies(t)
+
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
+
+	q := qualitySendBodies(*bodies)
+	require.Len(t, q, 1)
+	rows := qualitySignalRows(t, q[0])
+	require.Len(t, rows, 2)
+	for _, r := range rows {
+		assert.Equal(t, testInstallID, r["install_id"], "every row carries the stored install ID")
+	}
+}
+
+// TestQualitySignalSend_FirstSendCarriesTheIDItMakes proves a first opted-in
+// send, with no ID stored yet, makes one and sends that same ID (AC1).
+func TestQualitySignalSend_FirstSendCarriesTheIDItMakes(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	reconcileFixture(t)
+	bodies := captureSendBodies(t)
+
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
+
+	dir, err := defaultInstallIDDir()
+	require.NoError(t, err)
+	stored, ok := readInstallID(dir)
+	require.True(t, ok, "the first opted-in send stores an install ID")
+	q := qualitySendBodies(*bodies)
+	require.Len(t, q, 1)
+	rows := qualitySignalRows(t, q[0])
+	require.Len(t, rows, 1)
+	assert.Equal(t, stored, rows[0]["install_id"])
+}
+
+// TestQualitySignalSend_NoInstallIDNoSend proves a run that cannot get an
+// install ID sends nothing rather than rows with an empty ID, and its exit code
+// is the same as a run that does send. A directory where the ID file belongs
+// makes the ID store fail without touching anything else the run reads.
+func TestQualitySignalSend_NoInstallIDNoSend(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	t.Setenv("ATCR_TELEMETRY", "0")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	reconcileFixture(t)
+	bodies := captureSendBodies(t)
+	baseline := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
+	require.Len(t, qualitySendBodies(*bodies), 1, "the baseline run sends")
+
+	dir, err := defaultInstallIDDir()
+	require.NoError(t, err)
+	require.NoError(t, resetInstallID(dir))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, installIDFile), 0o700))
+	*bodies = (*bodies)[:0]
+
+	code := runReconcileSend(t, telemetry.NewSingleDestination(qsEndpoint), "r")
+
+	assert.Empty(t, qualitySendBodies(*bodies), "no install ID means no quality-signal send")
+	assert.Equal(t, baseline, code, "a failed ID store never changes the run's exit code")
+}
+
+// TestQualitySignalDryRun_NoStoredIDPrintsPlaceholderAndMakesNoFile proves
+// --dry-run with no stored ID reads without making one: no file appears and
+// every row shows the fixed placeholder.
+func TestQualitySignalDryRun_NoStoredIDPrintsPlaceholderAndMakesNoFile(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+
+	out, err := runPreview(t, newReviewCmd(), nil, "--dry-run")
+	require.NoError(t, err)
+
+	dir, derr := defaultInstallIDDir()
+	require.NoError(t, derr)
+	_, statErr := os.Stat(filepath.Join(dir, installIDFile))
+	assert.True(t, errors.Is(statErr, os.ErrNotExist), "--dry-run must not make an install ID file")
+
+	jsonPart, _ := splitPreview(out)
+	rows := qualitySignalRows(t, strings.TrimSpace(jsonPart))
+	require.Len(t, rows, 1)
+	assert.Equal(t, installIDPlaceholder, rows[0]["install_id"])
+}
+
+// TestQualitySignalDryRun_ShowsStoredID proves --dry-run prints the stored ID.
+func TestQualitySignalDryRun_ShowsStoredID(t *testing.T) {
+	isolate(t)
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	storeInstallIDForTest(t, testInstallID)
+
+	out, err := runPreview(t, newReviewCmd(), nil, "--dry-run")
+	require.NoError(t, err)
+	jsonPart, _ := splitPreview(out)
+	rows := qualitySignalRows(t, strings.TrimSpace(jsonPart))
+	require.Len(t, rows, 1)
+	assert.Equal(t, testInstallID, rows[0]["install_id"])
+}
+
+// TestQualitySignalSend_UsagePingDoesNotCarryInstallID proves the usage ping
+// sent by the same opted-in run carries neither the install_id key nor the
+// stored ID (AC3).
+func TestQualitySignalSend_UsagePingDoesNotCarryInstallID(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_QUALITY_SIGNAL", "1")
+	unsetEnvForTest(t, "ATCR_TELEMETRY")
+	seedQualityRecord(t, "bruce", "claude-sonnet-4-6", "wontfix", "a.go")
+	reconcileFixture(t)
+	storeInstallIDForTest(t, testInstallID)
+	bodies := captureSendBodies(t)
+
+	runReconcileGated(t, telemetry.NewSingleDestination(qsEndpoint), "r")
+
+	var pings []string
+	for _, b := range *bodies {
+		if strings.HasPrefix(strings.TrimSpace(b), "{") {
+			pings = append(pings, b)
+		}
+	}
+	require.NotEmpty(t, pings, "the usage ping must be sent so the test observes it")
+	require.Len(t, qualitySendBodies(*bodies), 1, "the quality signal is sent in the same run")
+	for _, p := range pings {
+		assert.NotContains(t, p, "install_id")
+		assert.NotContains(t, p, testInstallID)
+	}
+}
+
+// TestQualitySignalSend_CloudSyncDoesNotCarryInstallID proves the --sync-cloud
+// push carries neither the install_id key nor the stored ID (AC3).
+func TestQualitySignalSend_CloudSyncDoesNotCarryInstallID(t *testing.T) {
+	isolate(t)
+	storeInstallIDForTest(t, testInstallID)
+	var mu sync.Mutex
+	var pushed []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		pushed = append(pushed, string(b))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	plan := syncCloudPlan{enabled: true, endpoint: srv.URL, apiKey: "valid-key"}
+	require.NoError(t, runSyncCloud(context.Background(), io.Discard, plan, t.TempDir(), "success"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, pushed, 1)
+	assert.NotContains(t, pushed[0], "install_id")
+	assert.NotContains(t, pushed[0], testInstallID)
 }

@@ -428,6 +428,7 @@ seven allowlisted fields and nothing else:
 | `wrong_merge_count`    | int    | `1`                                                                  | How many of that pair's findings a developer annotated `wrong-merge` with `atcr debt recluster` — reconcile merged distinct issues into the finding. |
 | `wrong_split_count`    | int    | `0`                                                                  | The same for `wrong-split` — reconcile split one issue into two findings. |
 | `wrong_category_count` | int    | `2`                                                                  | The same for `wrong-category` — reconcile filed the finding under the wrong category. |
+| `install_id`           | string | `0123456789abcdef0123456789abcdef`                                   | The anonymous install ID: 32 random lowercase hex characters, the same on every row from one install. `--dry-run` shows `<made on the first opted-in send>` until the first opted-in send makes it. |
 
 The last three keys are **reconciler-error counts**: a verdict on how reconcile
 grouped the finding, recorded as a `reconciler_feedback` annotation in the local
@@ -525,7 +526,8 @@ human-readable marker on its own line:
     "confirmed_count": 1,
     "wrong_merge_count": 1,
     "wrong_split_count": 0,
-    "wrong_category_count": 2
+    "wrong_category_count": 2,
+    "install_id": "0123456789abcdef0123456789abcdef"
   }
 ]
 Preview only — nothing was transmitted. The quality signal is sent only after you explicitly opt in.

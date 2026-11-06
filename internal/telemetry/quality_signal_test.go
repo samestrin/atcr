@@ -14,12 +14,14 @@ import (
 )
 
 // qualitySignalKeys is the documented quality-signal wire key set: the four
-// Sprint 30.0 keys plus the three Epic 36.1 reconciler-error counts. The
+// Sprint 30.0 keys, the three Epic 36.1 reconciler-error counts and the Epic
+// 109 anonymous install ID. The
 // backend validates by strict set equality, so this list changes only on
 // purpose, in step with docs/telemetry.md and the atcr.dev ingest.
 var qualitySignalKeys = []string{
 	"persona_id_hash", "model", "dismissed_count", "confirmed_count",
 	"wrong_merge_count", "wrong_split_count", "wrong_category_count",
+	"install_id",
 }
 
 // TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys locks the quality-signal
@@ -28,11 +30,13 @@ var qualitySignalKeys = []string{
 // immediately (AC 01-05). Mirrors
 // TestClient_Send_PayloadHasExactlyFourAllowlistedKeys for Event. It was
 // TestQualitySignal_PayloadHasExactlyFourAllowlistedKeys until Epic 36.1 T3
-// added the three reconciler-error counts deliberately.
+// added the three reconciler-error counts deliberately; Epic 109 T2 added
+// install_id, the eighth key.
 func TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys(t *testing.T) {
 	cases := []QualitySignal{
 		{PersonaIDHash: "abc123", Model: "claude-sonnet-4-6", DismissedCount: 3, ConfirmedCount: 1,
-			WrongMergeCount: 2, WrongSplitCount: 1, WrongCategoryCount: 4},
+			WrongMergeCount: 2, WrongSplitCount: 1, WrongCategoryCount: 4,
+			InstallID: "0123456789abcdef0123456789abcdef"},
 		{}, // zero value: every key must still serialize (no omitempty)
 	}
 	allowed := qualitySignalKeys
@@ -44,6 +48,9 @@ func TestQualitySignal_PayloadHasExactlyTheAllowlistedKeys(t *testing.T) {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("unmarshal payload: %v", err)
+		}
+		if len(allowed) != 8 {
+			t.Fatalf("allowlist has %d keys, want exactly 8", len(allowed))
 		}
 		if len(m) != len(allowed) {
 			t.Fatalf("payload has %d keys, want exactly %d: %s", len(m), len(allowed), raw)
