@@ -1,0 +1,1 @@
+- `docs/technical-debt.md` documents `atcr debt lock`, `unlock` and `locks`: how a lock is held as a ref on the store repository's remote, that the holder name stored there is readable by anyone who can read that remote, and what `locks` flags and never does. (epic 93)

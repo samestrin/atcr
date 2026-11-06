@@ -337,6 +337,8 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 | `atcr debt convert` | Move month shards to the event layout (one way; checked by a fold comparison) |
 | `atcr debt backfill-justifications` | Replay stored justifications from their source `review.md` (one-off repair) |
 | `atcr debt sync-outcomes` | Record the outcomes of ticked technical-debt README rows that carry a `debt:<id>` token; `--report` shows whether the scorecard gate is met |
+| `atcr debt lock` / `unlock` | Take or release a per-item lock, held as a ref on the store repository's remote |
+| `atcr debt locks` | List item locks and flag old ones and ones on resolved items (read-only) |
 
 ### `atcr debt list`
 
@@ -972,6 +974,40 @@ does not answer within 30 seconds is an error; there is no local fallback.
 (pass that name with `--holder` to release it). In every refusal nothing is
 locked or released. Locks are advisory: `debt resolve` and `debt add` do not
 check them.
+
+The lock also lives only on the remote: it is not a file in the store, `atcr
+debt list` does not show it, and a clone sees another clone's lock only through
+`lock`, `unlock` or `locks`. It is not the store lock described in
+[What the lock does and does not cover](#what-the-lock-does-and-does-not-cover);
+that one guards writes to the store on one machine, this one says who is working
+on an item.
+
+### `atcr debt locks`
+
+Lists every item lock on the store repository's remote: the item, its holder,
+when it was taken, its age, and the item's status in the store (`-` when the
+store does not hold the id). It flags a lock for a second look when:
+
+- it was taken longer ago than `--older-than` (default `12h`, any Go duration
+  such as `30m` or `48h`), or
+- the item it locks is `resolved` in the store.
+
+```bash
+atcr debt locks                      # table, with a count of flagged locks
+atcr debt locks --older-than 48h     # flag only locks older than two days
+atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}]}
+```
+
+Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
+`older-than` and/or `item-resolved`, and is an empty list for a lock nothing
+flags.
+
+A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
+not check whether the holder is still working, and it never frees a lock. To
+release a lock someone else holds, name them:
+`atcr debt unlock --holder <holder> <id>`. Like `lock`, it needs the store in a
+git repository with a reachable remote. The holder names it prints come from
+the remote's refs, so anyone who can read that remote can read them too.
 
 ## Ignoring false positives (`atcr ignore`)
 
