@@ -345,3 +345,55 @@ func TestParseItemLockTag(t *testing.T) {
 func TestItemLockErrorsAreDistinct(t *testing.T) {
 	require.False(t, errors.Is(ErrItemLocked, ErrItemNotLocked))
 }
+
+// Epic 93 T2: List reads every lock on the remote, and only reads.
+func TestItemLockList_ReadsEveryLockAndFreesNone(t *testing.T) {
+	remote, stores := itemLockRemote(t, 2)
+	ctx := context.Background()
+	_, err := ItemLocker{Dir: stores[0], Holder: "alice", Now: fixedNow}.Lock(ctx, []string{"TD-001", "a/.. b"})
+	require.NoError(t, err)
+	_, err = ItemLocker{Dir: stores[1], Holder: "bob", Now: func() time.Time { return fixedNow().Add(time.Hour) }}.Lock(ctx, []string{"TD-002"})
+	require.NoError(t, err)
+	before := itemLockGit(t, remote, "for-each-ref", "refs/atcr/")
+
+	locks, err := ItemLocker{Dir: stores[1]}.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, locks, 3)
+	byID := map[string]ItemLock{}
+	for _, lk := range locks {
+		byID[lk.ID] = lk
+	}
+	require.Equal(t, "alice", byID["TD-001"].Holder)
+	require.Equal(t, "alice", byID["a/.. b"].Holder)
+	require.Equal(t, fixedNow(), byID["a/.. b"].At)
+	require.Equal(t, "bob", byID["TD-002"].Holder)
+	require.Equal(t, fixedNow().Add(time.Hour), byID["TD-002"].At)
+	require.Equal(t, ItemLockRef("TD-002"), byID["TD-002"].Ref)
+	require.Equal(t, "origin", byID["TD-002"].Remote)
+	// Oldest first, then by id.
+	require.Equal(t, []string{"TD-001", "a/.. b", "TD-002"}, []string{locks[0].ID, locks[1].ID, locks[2].ID})
+
+	require.Equal(t, before, itemLockGit(t, remote, "for-each-ref", "refs/atcr/"), "List must not change any lock")
+}
+
+func TestItemLockList_NoLocksIsEmpty(t *testing.T) {
+	_, stores := itemLockRemote(t, 1)
+	locks, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, locks)
+}
+
+func TestItemLockList_NoRemoteIsError(t *testing.T) {
+	clone := t.TempDir()
+	itemLockGit(t, clone, "init", "-q")
+	_, err := ItemLocker{Dir: DefaultDir(clone)}.List(context.Background())
+	require.ErrorContains(t, err, "no git remote")
+}
+
+func TestItemLockList_ForeignRefNameIsError(t *testing.T) {
+	remote, stores := itemLockRemote(t, 1)
+	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	itemLockGit(t, remote, "update-ref", ItemLockRefPrefix+"not-hex", "HEAD")
+	_, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.ErrorContains(t, err, ItemLockRefPrefix+"not-hex")
+}
