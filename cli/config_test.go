@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,7 +46,7 @@ func TestConfig_NoSubcommandPrintsHelp(t *testing.T) {
 }
 
 // TestConfigCmd_ShortDoesNotAdvertiseRead guards the parent command's help
-// text against overpromising: the only registered child is `set` — there is no
+// text against overpromising: the children are `set` and `reset-install-id` — there is no
 // get/read subcommand — so the Short must not claim the command reads config.
 func TestConfigCmd_ShortDoesNotAdvertiseRead(t *testing.T) {
 	assert.NotContains(t, newConfigCmd().Short, "Read",
@@ -263,4 +264,46 @@ func TestConfigSetQualitySignal_ResolvesRepoRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.True(t, *got, "quality_signal must be persisted at the discovered repo root")
+}
+
+func TestConfigResetInstallID_GivesNewID(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	before, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+
+	out, code, err := execConfig(t, "config", "reset-install-id")
+	require.NoError(t, err)
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "install ID")
+
+	after, err := ensureInstallID(context.Background(), io.Discard, dir)
+	require.NoError(t, err)
+	assert.NotEqual(t, before, after, "reset-install-id must give a new ID")
+}
+
+func TestConfigResetInstallID_NoStoredIDMakesNone(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	_, code, err := execConfig(t, "config", "reset-install-id")
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	_, ok := readInstallID(dir)
+	assert.False(t, ok, "a reset never makes an ID; the next opted-in send does")
+}
+
+func TestConfigResetInstallID_RejectsArgs(t *testing.T) {
+	isolate(t)
+	_, code, err := execConfig(t, "config", "reset-install-id", "extra")
+	require.Error(t, err)
+	assert.Equal(t, 2, code)
+}
+
+func TestConfigResetInstallID_RemoveErrorExits1(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "atcr")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "install_id", "sub"), 0o700))
+	_, code, err := execConfig(t, "config", "reset-install-id")
+	require.Error(t, err)
+	assert.Equal(t, 1, code)
 }

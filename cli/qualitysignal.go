@@ -2,10 +2,15 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -285,6 +290,14 @@ func maybeSendQualitySignalFrom(ctx context.Context, errW io.Writer, storeRoot, 
 	if !qualitySignalGateFrom(errW, configRoot) {
 		return
 	}
+	// Make the anonymous install ID on the first opted-in run, synchronously so
+	// the one-time notice reaches the command's stderr. Fail-open: an ID store
+	// error is logged and never changes the run.
+	if dir, err := defaultInstallIDDir(); err != nil {
+		log.FromContext(ctx).Debug("quality-signal: install ID directory", "err", err)
+	} else if _, err := ensureInstallID(ctx, errW, dir); err != nil {
+		log.FromContext(ctx).Debug("quality-signal: install ID", "err", err)
+	}
 	// Resolve the root the payload build reads from. A threaded storeRoot (the
 	// reconcile call site's persistence-resolved root) always wins: it names the
 	// store this run actually wrote. The empty fallback discovers the SAME repo
@@ -370,4 +383,172 @@ func maybePreviewQualitySignal(cmd *cobra.Command) (handled bool, err error) {
 		payload = []telemetry.QualitySignal{}
 	}
 	return true, renderQualitySignalPreview(cmd.OutOrStdout(), payload)
+}
+
+// installIDFile is the per-user file holding the quality signal's anonymous
+// install ID, under ~/.config/atcr/ (the directory registry.DefaultRegistryPath
+// uses). It is never in a repo's .atcr/ and never read from a --config-dir tree,
+// so a reviewed tree cannot choose or read the ID.
+const installIDFile = "install_id"
+
+// installIDResetHint names the command that resets the ID; the first-use notice
+// prints it.
+const installIDResetHint = "atcr config reset-install-id"
+
+// defaultInstallIDDir is ~/.config/atcr, the per-user directory the install ID
+// lives in.
+func defaultInstallIDDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "atcr"), nil
+}
+
+// validInstallID reports whether s is exactly 32 lowercase hex characters (128
+// bits). Anything else, even a trailing newline, is invalid and is replaced.
+func validInstallID(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// newInstallID returns a fresh random 128-bit ID as 32 lowercase hex
+// characters. It is never derived from the machine, user, path or repo.
+func newInstallID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// readInstallID returns the ID stored in dir without making one. ok is false
+// when no file is stored or its contents are not a valid ID.
+func readInstallID(dir string) (id string, ok bool) {
+	b, err := os.ReadFile(filepath.Join(dir, installIDFile))
+	if err != nil || !validInstallID(string(b)) {
+		return "", false
+	}
+	return string(b), true
+}
+
+// writeInstallIDTemp writes id to a new mode-0600 temp file in dir and returns
+// its path. The caller moves it into place and removes it on failure.
+func writeInstallIDTemp(dir, id string) (string, error) {
+	tmp, err := os.CreateTemp(dir, "."+installIDFile+".tmp-*")
+	if err != nil {
+		return "", err
+	}
+	name := tmp.Name() // os.CreateTemp makes it mode 0600
+	if _, err := tmp.WriteString(id); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+// linkInstallIDFn moves a staged ID into place, failing when the name exists.
+// Tests reassign it to stand in for a filesystem without hard links.
+var linkInstallIDFn = os.Link
+
+// createInstallIDExcl writes id to path with O_EXCL and mode 0600, failing with
+// fs.ErrExist when the file is already there.
+func createInstallIDExcl(path, id string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(id); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	return f.Close()
+}
+
+// ensureInstallID returns the install ID stored in dir, making it on first use.
+// Only the quality-signal send path calls it, after the opt-in gate, so no ID
+// is ever made while the signal is off.
+//
+// The first write is all-or-nothing: the ID goes to a 0600 temp file that is
+// hard-linked to the final name. A link fails when the name exists, like
+// O_EXCL, so of two concurrent first uses exactly one wins and the other reads
+// the winner's ID; and unlike an O_EXCL create followed by a write, a reader
+// never sees a half-written file. Only the winner prints the one-time notice to
+// errW (the command's stderr).
+//
+// A stored file that is not a valid ID is replaced by a temp file moved into
+// place. The event is logged (without the file's contents) and never sent.
+func ensureInstallID(ctx context.Context, errW io.Writer, dir string) (string, error) {
+	if id, ok := readInstallID(dir); ok {
+		return id, nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, installIDFile)
+	id, err := newInstallID()
+	if err != nil {
+		return "", err
+	}
+	tmp, err := writeInstallIDTemp(dir, id)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.Remove(tmp) }()
+
+	err = linkInstallIDFn(tmp, path)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		// The filesystem has no hard links: fall back to an O_EXCL create,
+		// which still lets exactly one concurrent first use win.
+		err = createInstallIDExcl(path, id)
+	}
+	if err == nil {
+		_, _ = fmt.Fprintf(errW,
+			"atcr: made an anonymous install ID %s for the quality signal. It is random, not derived from you or this machine, and links your own signals over time. Reset it with `%s`.\n",
+			id, installIDResetHint)
+		return id, nil
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		return "", err
+	}
+	// A file is already stored: another run won the race, or the file was
+	// there but invalid when read above.
+	if existing, ok := readInstallID(dir); ok {
+		return existing, nil
+	}
+	log.FromContext(ctx).Warn("quality-signal: stored install ID is invalid; replaced with a new ID", "path", path)
+	if err := os.Rename(tmp, path); err != nil {
+		return "", err
+	}
+	// Two runs replacing the same invalid file race on the move; return what
+	// was stored last so this run reports the ID on disk.
+	if stored, ok := readInstallID(dir); ok {
+		return stored, nil
+	}
+	return id, nil
+}
+
+// resetInstallID removes the stored install ID so the next opted-in send makes
+// a new one. It never makes an ID itself, so a reset while the signal is off
+// sends and stores nothing. A missing file is not an error.
+func resetInstallID(dir string) error {
+	err := os.Remove(filepath.Join(dir, installIDFile))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
