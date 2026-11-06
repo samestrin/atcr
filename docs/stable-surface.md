@@ -193,6 +193,14 @@ No flags.
 | `--status` | string | `` |  |
 | `--store` | string | `` |  |
 
+### `atcr debt lock`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--holder` | string | `` |  |
+| `--store` | string | `` |  |
+
 ### `atcr debt recluster`
 
 | Flag | Type | Default | Status |
@@ -233,6 +241,14 @@ No flags.
 | `--report` | bool | `false` |  |
 | `--store` | string | `` |  |
 | `--td` | string | `` |  |
+
+### `atcr debt unlock`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--dir` | string | `` | deprecated alias |
+| `--holder` | string | `` |  |
+| `--store` | string | `` |  |
 
 ### `atcr debt validate`
 
@@ -784,6 +800,7 @@ Every `ATCR_*` name read through `os.Getenv` or `os.LookupEnv` in non-test Go so
 | `ATCR_AXI_MAX_LINES` | `cli/main.go` |
 | `ATCR_CATALOG_SNAPSHOT` | `internal/personas/snapshot.go` |
 | `ATCR_CATALOG_URL` | `internal/personas/upgrade.go` |
+| `ATCR_DEBT_HOLDER` | `internal/localdebt/itemlock.go` |
 | `ATCR_DISABLE_AST_GROUPING` | `internal/reconcile/astgrouping.go` |
 | `ATCR_LEGACY_PIPE` | `cli/axi.go` |
 | `ATCR_LOG_LEVEL` | `cli/main.go` |

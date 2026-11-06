@@ -947,6 +947,32 @@ Flagged rows and failed groundings are advisory: the command always exits 0 on
 a completed run (usage errors exit 2). Output is `{items, coherence}` as JSON
 by default or a token-dense TOON payload with `--axi`.
 
+### `atcr debt lock` and `unlock`
+
+Marks an item as being worked on so another clone does not take it too. Each
+lock is one annotated git ref, `refs/atcr/debt-locks/<hex-encoded id>`, pushed
+to the remote of the git repository that holds the store. Pushing a ref that
+already exists fails, so when two clones lock one item, exactly one wins.
+
+```bash
+atcr debt lock <id>...                  # one atomic push; if any id is held, none is taken
+atcr debt lock <id> --holder alice      # record a holder other than the default
+atcr debt unlock <id>...                # delete the refs; only for the holder recorded in each
+```
+
+Flags: `--store`, `--holder`. The holder is `--holder`, else
+`$ATCR_DEBT_HOLDER`, else the OS user name alone (never `user@host`). **The
+holder name is stored in a ref on the remote, and is readable by anyone who
+can read that remote.**
+
+A store outside a git repository, a repository with no remote, or a remote that
+does not answer within 30 seconds is an error; there is no local fallback.
+`lock` refuses an id the store does not hold and an id that is already locked;
+`unlock` refuses an id that is not locked or is locked under another holder
+(pass that name with `--holder` to release it). In every refusal nothing is
+locked or released. Locks are advisory: `debt resolve` and `debt add` do not
+check them.
+
 ## Ignoring false positives (`atcr ignore`)
 
 `atcr debt resolve --status wontfix` closes a backlog item that is already in
