@@ -395,6 +395,11 @@ const installIDFile = "install_id"
 // prints it.
 const installIDResetHint = "atcr config reset-install-id"
 
+// installIDPlaceholder is the install_id --dry-run prints when no ID is stored:
+// the preview never makes an ID, and the first opted-in send replaces this with
+// the ID it makes.
+const installIDPlaceholder = "<made on the first opted-in send>"
+
 // defaultInstallIDDir is ~/.config/atcr, the per-user directory the install ID
 // lives in.
 func defaultInstallIDDir() (string, error) {
