@@ -239,7 +239,7 @@ func TestResolveRedactRoot_FailsOpenOnEvalSymlinksError(t *testing.T) {
 }
 
 // TestReviewIDSurvivesRedaction locks the AC9-vs-AC5/6 contract: binding
-// review_id BEFORE the redactor (review.go:162 then :172) stores it in the inner
+// review_id BEFORE the redactor (review.go:168 then :172) stores it in the inner
 // handler, so a correlation key that itself looks secret-shaped (sk-...) is NOT
 // scrubbed and stays greppable by review_id. Guards against a future reorder that
 // would bind review_id on top of the redactor and silently redact it.

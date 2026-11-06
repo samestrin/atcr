@@ -49,6 +49,12 @@ var ErrNoReviewableContent = errors.New("no reviewable content in range")
 // repo were empty.
 var ErrAllFilesUnchanged = errors.New("no files changed since last review")
 
+// ErrBaselineDirtyTree refuses a baseline (--all/--scope) scan that needs a
+// snapshot of HEAD (a tool-enabled reviewer, or --verify) while tracked files
+// under the scope have uncommitted changes: the reviewers would read the files
+// on disk while the tools and skeptics read HEAD.
+var ErrBaselineDirtyTree = errors.New("tracked files under the scan scope have uncommitted changes")
+
 // ReviewConfig bundles the loaded configuration a review needs. Built by
 // LoadReviewConfig so both the CLI and the MCP server discover config the same way.
 type ReviewConfig struct {
@@ -167,6 +173,12 @@ type ReviewRequest struct {
 	// skipped with a warning. Git-range reviews only: the baseline and
 	// --diff-file preparations reject it with ErrVisualNeedsRange.
 	Visual VisualReviewer
+	// Verify reports that the caller will run the verify stage on this review
+	// (--verify), whose skeptics read the code from a snapshot of the review
+	// head. Only the baseline preparation reads it: a dirty tree under the scope
+	// has no commit matching what was reviewed, so it refuses with
+	// ErrBaselineDirtyTree, as it does for a tool-enabled reviewer.
+	Verify bool
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -997,10 +1009,21 @@ func PrepareReviewFromRepo(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if scopeWarn != "" {
 		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
+	// The files reviewed are git-tracked, so on a clean tree they are HEAD's
+	// files: record HEAD as the review head, which wires the review's tool
+	// harness and lets a later verify snapshot the same commit. The base stays
+	// empty, so grounding still sees a range-less run.
+	head, dirty := baselineHead(ctx, req.Repo, req.Dir)
+	if len(dirty) == 0 {
+		req.Range.Head = head
+	}
 	filesMode := string(payload.ModeFiles)
 	slots, perAgentMode, err := buildBaselineSlots(ctx, cfg, payloads, req.Range, filesMode, scopeConstraint, true)
 	if err != nil {
 		return nil, err
+	}
+	if len(dirty) > 0 && (req.Verify || anyToolAgent(slots)) {
+		return nil, dirtyTreeError(req.Dir, dirty)
 	}
 	// No git range → no RangeBuilder: computeGroundingData's range-less early return
 	// disables grounding (not applicable to a baseline scan).
@@ -3417,7 +3440,7 @@ const (
 // One predicate, because three places need the same answer: the sizing above, the
 // zero-budget warnings, and renderAgent's reservation record. Two of them used to
 // derive it independently and the record did not derive it at all (TD
-// internal/fanout/review.go:3113).
+// internal/fanout/review.go:3136).
 func toolLoopAgent(ac registry.AgentConfig, rng ReviewRange) bool {
 	return ac.Tools && ac.SupportsFC && rng.Head != ""
 }
@@ -4101,7 +4124,7 @@ func buildFallbackAgent(ctx context.Context, cfg *ReviewConfig, primary Agent, n
 		fbReserved = fbMaxTokens
 	}
 	// Recorded UNCONDITIONALLY for a tool-loop fallback, mirroring the primary
-	// render (review.go:3175) and for the same reason: fbBudget is sized with
+	// render (review.go:3198) and for the same reason: fbBudget is sized with
 	// SizingOutputTokens(fbToolLoop, fbMaxTokens), so the reserve is exactly what
 	// closed a zero budget — the one record where it is the CAUSE of the
 	// degradation. Gating it left reasoning_reserve_tokens absent (omitempty) on that
@@ -4887,6 +4910,53 @@ func resolveHeadSHA(repo, ref string) (string, error) {
 		return "", fmt.Errorf("resolving %q: %w", ref, err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// baselineHead returns the full SHA of HEAD in repo and the tracked files under
+// scope ("" = the whole repository) whose content differs from HEAD, staged or
+// not. Untracked files are ignored: a baseline scan reviews tracked files only.
+// When HEAD cannot be resolved (a repository with no commit) or the check fails,
+// it returns no head and no dirty files, and the run degrades as a range-less
+// review did before: tool agents run single-shot and verify cannot snapshot.
+func baselineHead(ctx context.Context, repo, scope string) (string, []string) {
+	head, err := resolveHeadSHA(repo, "HEAD")
+	if err != nil {
+		log.FromContext(ctx).Warn("baseline scan: HEAD does not resolve; no review head is recorded", "err", err)
+		return "", nil
+	}
+	args := []string{"-C", repo, "diff", "--name-only", "-z", "HEAD", "--"}
+	if scope != "" {
+		args = append(args, scope)
+	}
+	out, err := gitexec.CommandContextFn(ctx, args...).Output()
+	if err != nil {
+		log.FromContext(ctx).Warn("baseline scan: could not check the tree for uncommitted changes; no review head is recorded", "err", err)
+		return "", nil
+	}
+	var dirty []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			dirty = append(dirty, p)
+		}
+	}
+	return head, dirty
+}
+
+// dirtyTreeError builds the ErrBaselineDirtyTree refusal, naming up to five of
+// the changed files and the remedy.
+func dirtyTreeError(scope string, dirty []string) error {
+	where := "the repository"
+	if scope != "" {
+		where = scope
+	}
+	shown := dirty
+	more := ""
+	if len(shown) > 5 {
+		shown = shown[:5]
+		more = fmt.Sprintf(" and %d more", len(dirty)-5)
+	}
+	return fmt.Errorf("%w: %s%s; a baseline scan with a tool-enabled reviewer or --verify reads HEAD, so commit or stash the changes in %s first",
+		ErrBaselineDirtyTree, strings.Join(shown, ", "), more, where)
 }
 
 // absRoot resolves a review root to a cleaned absolute path for Manifest.Root. It

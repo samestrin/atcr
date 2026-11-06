@@ -166,7 +166,7 @@ func TestMergeResultGroup_DoesNotOverwriteAnExistingTruncationRecord(t *testing.
 // truncated=false with files_dropped empty while whole files had been dropped.
 // On the BASELINE (--all / --dir) multi-chunk path the global byte budget sheds
 // nothing from the review: modePayload.Entries is the PRE-budget set
-// (PrepareReviewFromRepo, review.go:833) and the branch partitions THAT via
+// (PrepareReviewFromRepo, review.go:845) and the branch partitions THAT via
 // payload.PartitionByBudget, whose contract is never-split-never-dropped. The shed
 // recorded in mp.Truncation applies only to the concatenated AUDIT TEXT. review.go's
 // own TD-012 comment (:812-818) states it: "every enumerated file is still reviewed

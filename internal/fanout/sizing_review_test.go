@@ -145,7 +145,7 @@ func embeddedScopePlan(t *testing.T, prompt string) string {
 }
 
 // TestBuildSlots_ScopeConstraintFitsPerAgentWindow proves the HIGH TD fix
-// (review.go:1156): the SCOPE CONSTRAINT plan block is prepended UNCOUNTED against
+// (review.go:1179): the SCOPE CONSTRAINT plan block is prepended UNCOUNTED against
 // the per-agent window, so a large plan on a small-window agent must (B) be capped to
 // that agent's own budget and (A) have its bytes reserved from the diff budget, so
 // plan + diff together fit the window instead of reintroducing the dax overflow on
@@ -219,7 +219,7 @@ func overflowingSingleFile() map[string]modePayload {
 }
 
 // TestBuildSlots_OnOverflowFailHardFailsRun proves on_overflow=fail is wired into
-// dispatch (review.go:877 TD): when a payload overflows an agent's window, the policy
+// dispatch (review.go:889 TD): when a payload overflows an agent's window, the policy
 // propagates a typed error out of buildSlots, hard-failing the whole run pre-dispatch
 // rather than silently degrading.
 func TestBuildSlots_OnOverflowFailHardFailsRun(t *testing.T) {

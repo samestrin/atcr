@@ -473,6 +473,19 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		if err := ValidateResumeRange(m, req.Range); err != nil {
 			return nil, nil, err
 		}
+	} else if m.Head != "" {
+		// A baseline review that recorded HEAD (EST-5102) resumes at that head
+		// while the tree still matches it, so pending tool agents get the same
+		// snapshot the completed ones had. Editing files before a baseline
+		// resume is supported (the write-back drops what no reviewer read), but
+		// the payload is then rebuilt from disk, which HEAD no longer holds: the
+		// pending tool agents run single-shot, as on any range-less review.
+		if cur, dirty := baselineHead(ctx, req.Repo, m.Dir); cur == m.Head && len(dirty) == 0 {
+			req.Range.Head = m.Head
+		} else {
+			log.FromContext(ctx).Warn("baseline resume: the tree no longer matches the recorded head; tool agents degrade to single-shot",
+				"recorded_head", shortRef(m.Head), "head", shortRef(cur), "uncommitted_in_scope", len(dirty))
+		}
 	}
 	configured := reviewerRoster(cfg.Project)
 	if err := ValidateResumeRoster(m, configured); err != nil {

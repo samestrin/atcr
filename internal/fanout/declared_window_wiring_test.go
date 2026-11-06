@@ -133,7 +133,7 @@ func TestBuildSlots_ChunkedRecordsDeclaredLineBudget(t *testing.T) {
 }
 
 func TestBuildSlots_MaxContextLinesOutranksTheDeclaredWindowForTheLineBudget(t *testing.T) {
-	// This epic introduced a SECOND source for ml at review.go:1665-1678: an
+	// This epic introduced a SECOND source for ml at review.go:1688-1701: an
 	// explicit max_context_lines overrides the declaration-derived value, and a
 	// scope constraint shaves the derived one — but no test paired a declaration
 	// with either, leaving exactly the precedence a future change is most likely to
@@ -723,7 +723,7 @@ func TestBuildSlots_TinyDeclarationRecordsOverflowDegradation(t *testing.T) {
 }
 
 func TestBuildSlots_BaselineChunkedRecordsDeclaredWindow(t *testing.T) {
-	// The BASELINE chunked sizing record at review.go:1575-1576 is never reached
+	// The BASELINE chunked sizing record at review.go:1598-1599 is never reached
 	// by the existing tests because they all call the 6-arg buildSlots form
 	// (baseline defaults to false). This test exercises that path by calling
 	// buildSlots with baseline=true and enough entries to force multiple chunks.

@@ -276,7 +276,7 @@ func TestReconcile_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 // TestReview_TelemetryStatus_ReflectsGateOutcome proves the review telemetry event's
 // status mirrors the FINAL --fail-on gate outcome, not the pre-gate fanout result: a
 // run whose agents all succeed but whose findings survive the gate (exit 1) must
-// report status="failure", mirroring the reconcile path (TD-009, review.go:420).
+// report status="failure", mirroring the reconcile path (TD-009, review.go:432).
 func TestReview_TelemetryStatus_ReflectsGateOutcome(t *testing.T) {
 	isolate(t)
 	t.Setenv("ATCR_TELEMETRY", "1")

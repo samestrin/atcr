@@ -294,6 +294,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable -> %s\n",
 		res.FindingsProcessed, res.VerdictCounts.Confirmed, res.VerdictCounts.Refuted,
 		res.VerdictCounts.Unverifiable, filepath.Join(reviewDir, "reconciled"))
+	if herr := harnessUnavailableError(res); herr != nil {
+		return herr
+	}
 	writeNextSteps(cmd.ErrOrStderr(), suggestVerify, invocation{Flags: invocationFlags(cmd)})
 	return nil
 }
@@ -321,4 +324,17 @@ func verifyMinSeverity(cmd *cobra.Command) (string, error) {
 // Both still map to exit 2 via usageError.
 func verifyFailureError(err error) error {
 	return usageError(fmt.Errorf("verify failed: %w", err))
+}
+
+// harnessUnavailableError fails a verify run whose skeptics could not read the
+// code: when the tool harness could not be built, every finding sent to a
+// skeptic came back unverifiable, and a normal summary would read as a run that
+// checked them (EST-5102). A plain error (exit 1): the findings and verdicts
+// are written, but the check the operator asked for did not happen.
+func harnessUnavailableError(res verify.Result) error {
+	if res.HarnessUnavailable == 0 {
+		return nil
+	}
+	return fmt.Errorf("verification did not run: %d finding(s) came back unverifiable because the skeptics' tool harness could not be built: %s",
+		res.HarnessUnavailable, res.HarnessReason)
 }

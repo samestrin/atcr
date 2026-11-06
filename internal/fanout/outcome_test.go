@@ -248,7 +248,7 @@ func TestSummarizeStatuses_ContributedNothingCount(t *testing.T) {
 // the persona-wide bit. summarize() runs on MERGED results (artifacts.go runs after
 // mergeChunkResults), so tallying the RAW flag counts that persona as having
 // "contributed nothing" even though its other bins were parsed, reconciled and
-// shipped — and the operator warning at cli/review.go:268 tells them to turn off
+// shipped — and the operator warning at cli/review.go:280 tells them to turn off
 // inline reasoning for a slot that did contribute.
 //
 // The per-bin rule already exists as WholePersonaSalvaged / WholePersonaThinkSuppressed,

@@ -700,7 +700,7 @@ agents:
 // WriteManifest at finalization does not leave p.manifest in a mutated state.
 // If p.manifest is mutated before WriteManifest succeeds and the caller retries
 // with the same PreparedReview, it would observe stale snapshot/completion data
-// from the failed attempt (review.go:343).
+// from the failed attempt (review.go:355).
 //
 // Mechanism: Dir is chmod'd to 0555 after PrepareReview so atomicWriteFile
 // cannot create its temp file directly in Dir (write bit absent), while
