@@ -415,8 +415,8 @@ layout; columns are found by header name, so other orders read alike) and
 writes each one to the store, in whichever layout the store uses.
 
 ```bash
-atcr debt import .planning/technical-debt/README.md --dry-run   # what would be written; writes nothing
-atcr debt import .planning/technical-debt/README.md             # write it
+atcr debt import docs/technical-debt/README.md --dry-run   # what would be written; writes nothing
+atcr debt import docs/technical-debt/README.md             # write it
 ```
 
 Flags: `--store`, `--dry-run`.
