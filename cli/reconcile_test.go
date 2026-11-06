@@ -1245,7 +1245,7 @@ func TestResolveConsensusLevel_Precedence(t *testing.T) {
 // empty --consensus can inherit a WEAKER one, so `atcr reconcile --consensus
 // "$LEVEL"` with an unset shell variable must not silently disable the
 // corroboration filter. Mirrors outputDirFromFlags' "--output-dir must not be
-// empty" rejection (cli/review.go:115-117).
+// empty" rejection (cli/review.go:121-123).
 func TestConsensusFlagValue_ExplicitEmptyIsUsageError(t *testing.T) {
 	// Absent flag → unset, no error: the config/registry chain still decides.
 	got, err := consensusFlagValue(newReconcileCmd())
@@ -2122,7 +2122,7 @@ func TestReconcile_ValidatesAgainstResolvedStoreRoot(t *testing.T) {
 	assert.Equal(t, "a.go", recs[0].File)
 }
 
-// TestReview_OneShotPersistsLocalDebt pins the TD cli/review.go:747 fix: the
+// TestReview_OneShotPersistsLocalDebt pins the TD cli/review.go:759 fix: the
 // one-shot `atcr review --fail-on` path runs reconcile in-process and, before
 // the fix, persisted NOTHING to the local debt store — a user whose whole
 // workflow is the primary CI invocation accumulated an empty backlog forever.

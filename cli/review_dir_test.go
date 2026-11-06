@@ -47,7 +47,8 @@ func TestReviewDir_ScopesToSubtreeAndReconciles(t *testing.T) {
 	assert.Equal(t, "files", m.PayloadMode)
 	assert.Equal(t, "internal", m.Dir, "manifest must record the --dir scope for resume parity")
 	assert.Empty(t, m.Base, "a scoped baseline scan has no base")
-	assert.Empty(t, m.Head, "a scoped baseline scan has no head")
+	// A clean scoped scan records HEAD so tool agents and verify can snapshot it (EST-5102).
+	assert.Equal(t, gitRevParse(t, "HEAD"), m.Head, "a clean scoped baseline scan records HEAD")
 
 	// Reconcile (the step that populates reconciled/) works unmodified on the
 	// scoped output and produces the standard report.md + findings.json layout.

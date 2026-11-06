@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCloudSyncPushable_SkipsCodedInfraFailures covers the review.go:428 TD: the
+// TestCloudSyncPushable_SkipsCodedInfraFailures covers the review.go:440 TD: the
 // deferred --sync-cloud push must fire only for a finalized review outcome (success
 // or a plain exit-1 findings-gate / all-agents-failed error), NOT for an already-coded
 // exit-2 infra failure (usage/verify/debate I/O broke) — pushing then would make a

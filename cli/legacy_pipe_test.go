@@ -340,7 +340,7 @@ func TestLegacyPipeNoticeHonorsLogFormatJSON(t *testing.T) {
 // TestReviewCmd_LegacyPipeDryRunNoNotice pins that --dry-run --axi
 // --legacy-pipe exits 0 WITHOUT the deprecation notice: dry-run short-circuits
 // to the quality-signal JSON preview and no pipe payload is ever produced, so
-// the notice would describe output that never happens (TD: cli/review.go:283).
+// the notice would describe output that never happens (TD: cli/review.go:295).
 func TestReviewCmd_LegacyPipeDryRunNoNotice(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")

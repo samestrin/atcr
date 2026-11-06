@@ -100,7 +100,20 @@ type Result struct {
 	FindingsProcessed int
 	DurationMs        int
 	SmellRetries      int
+	// HarnessUnavailable counts the findings this run sent to a skeptic that
+	// came back unverifiable because the tool harness could not be built, and
+	// HarnessReason says why without the error detail (which can carry a path).
+	// When it is non-zero every finding selected this run is unverifiable, so
+	// the CLI fails the run instead of printing a normal summary (EST-5102).
+	HarnessUnavailable int
+	HarnessReason      string
 }
+
+// ErrNoManifestHead reports a review whose manifest records no head commit,
+// so the skeptics' snapshot cannot be taken: a review made from a diff file, a
+// baseline (--all/--scope) scan of a tree with uncommitted changes, or one made
+// before baseline scans recorded HEAD.
+var ErrNoManifestHead = errors.New("manifest has no head SHA")
 
 // ErrNoReconciledFindings is returned when reviewDir has no reconciled
 // findings.json — the caller renders the "run 'atcr reconcile' first" guidance.
@@ -232,10 +245,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// affected findings degrade to unverifiable rather than failing the run.
 	var disp Dispatcher
 	var cc fanout.ChatCompleter
+	var harnessReason string
 	if needTool {
 		c, d, cleanup, herr := newHarness()
 		if herr != nil {
 			log.FromContext(ctx).Warn("tool harness unavailable; skeptics degrade to unverifiable")
+			harnessReason = harnessUnavailableReason(herr)
 		} else {
 			cc = c
 			disp = d
@@ -579,18 +594,36 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
-	processed := 0
+	processed, harnessDown := 0, 0
 	for _, j := range jobs {
-		if len(j.skeptics) > 0 && disp != nil {
-			processed++
+		if len(j.skeptics) > 0 {
+			if disp != nil {
+				processed++
+			} else {
+				harnessDown++
+			}
 		}
 	}
-	return Result{
+	res := Result{
 		VerdictCounts:     counts,
 		FindingsProcessed: processed,
 		DurationMs:        int(time.Since(start).Milliseconds()),
 		SmellRetries:      smellRetries,
-	}, nil
+	}
+	if harnessDown > 0 {
+		res.HarnessUnavailable, res.HarnessReason = harnessDown, harnessReason
+	}
+	return res, nil
+}
+
+// harnessUnavailableReason names why the skeptics' harness could not be built,
+// in words safe to print: only the headless-manifest case is named, because
+// any other error's text can carry a repository path.
+func harnessUnavailableReason(err error) string {
+	if errors.Is(err, ErrNoManifestHead) {
+		return "the review recorded no head commit to snapshot (a --diff-file review, a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD)"
+	}
+	return "the repository snapshot at the review's head could not be built"
 }
 
 // faultVerification is the unverifiable verdict verifyFinding synthesises when
@@ -809,7 +842,7 @@ func buildDispatcher(repoRoot, reviewDir string, execBackend sandbox.Backend, ex
 		return nil, nil, err
 	}
 	if head == "" {
-		return nil, nil, errors.New("manifest has no head SHA")
+		return nil, nil, ErrNoManifestHead
 	}
 	root, cleanup, err := tools.NewSnapshotManager(repoRoot).SnapshotFor(head)
 	if err != nil {

@@ -285,7 +285,7 @@ func TestBaselineWriteback_ExcludesGloballyDroppedFiles(t *testing.T) {
 	assert.False(t, droppedRecorded, "a globally byte-budget-dropped file must NOT be recorded as reviewed")
 }
 
-// Scope normalization (review.go:263): filterByScope normalizes a scope
+// Scope normalization (review.go:275): filterByScope normalizes a scope
 // (backslash→slash, trailing-slash trim) before treating ""/"." as whole-repo,
 // but CommitBaselineIndex's self-trim gate must not disagree with it — a
 // non-CLI caller passing Dir="./" is effectively an --all scan, so the
@@ -317,7 +317,7 @@ func TestCommitBaselineIndex_NormalizesWholeRepoScope(t *testing.T) {
 	assert.True(t, okKept, "the reviewed file stays recorded")
 }
 
-// TD-009 companion (review.go:264): a nil tracked set signals a transient git
+// TD-009 companion (review.go:276): a nil tracked set signals a transient git
 // failure at the write-back's TrackedInScope walk (it degrades to nil). Trim's
 // nil-keep contract is "keep everything — a git hiccup must not wipe the index",
 // so CommitBaselineIndex must pass nil through rather than an empty-but-non-nil

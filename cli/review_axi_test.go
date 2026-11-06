@@ -193,14 +193,14 @@ func TestReviewCmd_AXIAutoFixResumeIsUsageError(t *testing.T) {
 // so the gate and regression tests assert against an identical, complete list and
 // cannot silently drift apart.
 var reviewHumanStdoutStrings = []string{
-	"agents succeeded (", // review.go:466 one-line outcome
+	"agents succeeded (", // review.go:478 one-line outcome
 	"Total elapsed:",     // review_summary.go
 	"Agents:",            // review_summary.go
 	"API calls:",         // review_summary.go
 	"Findings:",          // review_summary.go
-	"reconciled",         // review.go:590 one-shot reconcile line
-	"verified ",          // review.go:614 chained --verify line
-	"debated ",           // review.go:634 chained --debate line
+	"reconciled",         // review.go:602 one-shot reconcile line
+	"verified ",          // review.go:626 chained --verify line
+	"debated ",           // review.go:646 chained --debate line
 }
 
 // assertOrderedContains fails unless every fragment in frags appears in s in the

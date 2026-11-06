@@ -540,7 +540,7 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 				// AXI output is actually requested. --dry-run (or its --preview alias,
 				// via dryRunFlagSet) is skipped: it short-circuits to the quality-signal
 				// preview in runReview before any pipe renderer is selected, so the
-				// notice would describe output that never happens (TD: cli/review.go:283).
+				// notice would describe output that never happens (TD: cli/review.go:295).
 				// A command annotated noLegacyPipeAnnotation (debt filter) has no pipe
 				// encoder, so the notice would describe output that never happens.
 				if axi && legacy && !dryRunFlagSet(cmd) && cmd.Annotations[noLegacyPipeAnnotation] == "" {

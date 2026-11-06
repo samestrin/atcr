@@ -374,7 +374,7 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 // wording whenever excluded > 0, so a run whose exclusion came purely from failed
 // chunks, or from a slot that re-packed its payload and reviewed only a subset,
 // still told the operator to turn off inline reasoning — the opposite of the
-// comment's stated intent, and on every partial-coverage run (TD cli/review.go:269).
+// comment's stated intent, and on every partial-coverage run (TD cli/review.go:281).
 //
 // Ordered by the counter the caller publishes beside it: when a slot really did
 // contribute nothing the salvage remedy is right, and that wins over the others
@@ -382,7 +382,7 @@ func commitBaselineWriteback(ctx context.Context, baseline bool, prep *fanout.Pr
 // counts only a persona with a MIX of succeeded and failed chunks, so a persona that
 // failed WHOLLY reaches this selector with both counters at zero; Summary.Failed is
 // the counter that names it, and it must be read before the default, or a failed
-// slot is reported as a re-pack (TD cli/review.go:302). DeferredFiles names the
+// slot is reported as a re-pack (TD cli/review.go:314). DeferredFiles names the
 // maxChunksPerAgent ceiling (Epic 35.16.13 T6): every dispatched slot can report ok
 // while the deferred files went to no slot at all. With none of the four set,
 // every slot reported ok, which leaves the re-packed subset as the only reason a
@@ -745,6 +745,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		ThreatMapper: threatMapper,
 		// --preview-url (Epic 36.0.2): nil unless felix is in the roster and the flag is set.
 		Visual: visual,
+		// --verify snapshots the review head for its skeptics, so a baseline
+		// scan refuses a dirty tree under its scope (EST-5102).
+		Verify: verifyFlag,
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
@@ -1044,7 +1047,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		writeSuppressedNotice(cmd.ErrOrStderr(), len(rec.Suppressed))
 		// Persist the inline reconcile's findings to the local TD store, mirroring
 		// `atcr reconcile`'s persistLocalDebt through the same shared bridge (TD
-		// cli/review.go:747): this one-shot --fail-on/--verify/--debate/--auto-fix
+		// cli/review.go:759): this one-shot --fail-on/--verify/--debate/--auto-fix
 		// path is the primary CI invocation, and before the fix it persisted
 		// nothing — a user whose whole workflow is this path accumulated an empty
 		// backlog forever. No suppression flag exists on this command (the same
@@ -1075,7 +1078,7 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// the on-disk findings, so the one-shot gate runs LAST, on the post-chain
 		// findings — a refuted or overturned finding never blocks the gate.
 		if verifyFlag {
-			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
+			vres, verr := verifyRun(ctx, ".", result.Dir, cfg.Registry, verify.Options{
 				Fresh:             reviewReverifyRequested(cmd),
 				Thorough:          boolFlag(cmd, "thorough"),
 				MinSeverity:       verifyMinSev,
@@ -1095,6 +1098,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 					"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
 					vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
 					vres.VerdictCounts.Unverifiable)
+			}
+			if herr := harnessUnavailableError(vres); herr != nil {
+				return herr
 			}
 		}
 		// A debate failure here intentionally leaves the verify findings already

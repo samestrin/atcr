@@ -58,7 +58,7 @@ type Summary struct {
 	// write-back's operator signal can NAME that cause: `excluded > 0` with every
 	// slot OK and UnreviewedChunks == 0 is a shape this path produces, and before
 	// this the two warning lines left the operator reading an unreviewed-chunk
-	// counter that said zero (TD cli/review.go:256).
+	// counter that said zero (TD cli/review.go:268).
 	ContributedNothingCount int
 }
 

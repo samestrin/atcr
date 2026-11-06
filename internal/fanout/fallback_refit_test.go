@@ -735,7 +735,7 @@ func TestBuildFallbackAgent_RefitRecordsOneChunkAndBulkSizing(t *testing.T) {
 	// T4: the sizing record must describe the payload actually sent. A re-fit ships
 	// ONE payload, so inheriting the primary's ChunkTotal would scale the per-call
 	// deadline (timeout.go) and the diff-cache sizing token by a split it does not
-	// follow. Driven from the baseline multi-chunk branch (review.go:1600-1656):
+	// follow. Driven from the baseline multi-chunk branch (review.go:1623-1679):
 	// greta's 404992-byte budget partitions the 500 KB payload into two chunks, so
 	// each primary REALLY carries ChunkTotal 2 — the only configuration where the
 	// T4 override matters. (The previous fixture never passed baseline=true, so the
