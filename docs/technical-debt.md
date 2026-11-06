@@ -1,8 +1,8 @@
 # Technical-Debt Tooling (`atcr debt`)
 
 `atcr debt` queries, captures, and reports on the project's technical debt. All
-of its subcommands — `list`, `add`, `dashboard`, `resolve`, `convert`, `compact`,
-and the read-only `filter`, `clean`, `group` and `validate` views — read and write **one**
+of its subcommands — `list`, `add`, `import`, `dashboard`, `report`, `resolve`,
+`convert`, `compact`, and the read-only `filter`, `clean`, `group` and `validate` views — read and write **one**
 store: the append-only JSONL backlog under `.atcr/debt/` (or wherever
 `debt.store` / `--store` puts it) that `atcr reconcile` populates. An item filed
 by `atcr debt add` is therefore visible to `atcr debt list` and closeable by
@@ -324,7 +324,9 @@ place of a typed `--reason`) — which is why the three mandatory ones sit above
 |---------|---------|
 | `atcr debt list` | Print debt items as a table or JSON, with filtering and sorting |
 | `atcr debt add` | File a new item into the store |
+| `atcr debt import` | Import every row of a technical-debt README table into the store, with its status and attempts |
 | `atcr debt dashboard` | Render an aggregated Markdown dashboard |
+| `atcr debt report` | Render every item as a Markdown report, one table per README section |
 | `atcr debt filter` | Select open items by severity, confidence, status and mode (replaces `llm-support td-filter`) |
 | `atcr debt clean` | Show what `llm-support td-clean` would leave: open, deferred and unreproducible items (read-only) |
 | `atcr debt group` | Group open items by path, category or file (replaces `llm-support group-td`; read-only) |
@@ -405,6 +407,60 @@ Omit the required flags on an interactive terminal to be walked through a
 prompt instead. In a non-interactive context (CI, a pipe) with required flags
 missing, the command exits with a usage error rather than blocking on input.
 
+### `atcr debt import`
+
+Reads every item row of a technical-debt README table (the
+`| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |`
+layout; columns are found by header name, so other orders read alike) and
+writes each one to the store, in whichever layout the store uses.
+
+```bash
+atcr debt import docs/technical-debt/README.md --dry-run   # what would be written; writes nothing
+atcr debt import docs/technical-debt/README.md             # write it
+```
+
+Flags: `--store`, `--dry-run`.
+
+Each row keeps its status and attempts. The marker in the second column sets
+the status:
+
+| Marker | Status |
+|--------|--------|
+| `[ ]` | `open` |
+| `[/]` | `deferred` |
+| `[x]` | `resolved` |
+| `[-]` | `unreproducible` |
+
+A row's time and `run_id` come from the date of the `### [date] From: ...`
+section it sits under (`2026-11-06` or `November 6, 2026`), never from the
+clock. Running the import again on the same table therefore writes nothing,
+and a run that stopped part way writes only what is missing. Each record is
+filed with `origin: manual`, a `run_id` ending in `-import`, and a
+`source_report` holding the README path (relative to the repo root) and the
+section heading, which `atcr debt report` groups by.
+
+Every item row ends up in exactly one of three lists, and the first line of the
+output counts them:
+
+- **imported**: written to the store, or already there from an earlier run.
+- **merged**: the row has the same finding id as another row. The row from the
+  newest section is kept (the later row in the file on a tie), and the output
+  names the line it was merged into.
+- **rejected**: the row cannot be imported as written, with the reason printed:
+  it is under no dated section, its marker or severity is unknown, its File or
+  Problem cell is empty, its Est Minutes is too large, or the record would be
+  too large for the store.
+
+```text
+42 item rows: 39 imported, 2 merged, 1 rejected.
+Import: wrote 39 records (0 already in the store).
+  merged   line 88: id 338d98c562925e37, kept line 17
+  rejected line 120: the row is under no dated `### [date]` section
+```
+
+Control characters in a cell are stripped before the record is written. The
+README itself is never changed.
+
 ### `atcr debt dashboard`
 
 Renders an aggregated rollup — totals, by-severity, by-component, by-age (by
@@ -446,6 +502,33 @@ Secret-shaped tokens (bearer / `sk-` API keys) accidentally pasted into finding
 text are scrubbed from the output; file paths and finding ids are preserved (both
 are required core data, and scrubbing an id would break the join contract).
 
+### `atcr debt report`
+
+Renders every item in the store, in every status, as a Markdown report for
+people to read: one table per README section that `atcr debt import` read the
+items from. Dated sections come newest first, then undated ones; items that came
+from no README section (filed by `atcr reconcile` or `atcr debt add`) come last,
+under **Not from a README section**. Within a table the most severe items come
+first, then by file and line.
+
+```bash
+atcr debt report                                         # print the report
+atcr debt report --output docs/technical-debt-report.md  # write it to a file
+atcr debt report --output docs/technical-debt-report.md --check   # exit 4 if stale
+```
+
+Flags: `--store`, `--format` (`md`, the default and only format), `--output`,
+`--check`.
+
+Each table has the columns `ID`, `Status`, `Severity`, `File`, `Problem`,
+`Fix`, `Category`, `Est Minutes` and `Attempts`. The second line of the report
+marks it as generated. `--output` refuses to overwrite a file that does not
+carry that line, so a hand-written file is never lost. Like the dashboard, the
+report has no timestamp, so a rerun on an unchanged store is byte-identical and
+`--check` flags only real changes. `--check` needs `--output`, and exits 4 when
+the file is missing or out of date. Secret-shaped tokens in item text are
+scrubbed.
+
 ### `atcr debt filter`, `clean` and `group`
 
 Three read-only views over the store, ported from the `llm-support` commands that
@@ -476,8 +559,8 @@ item gets its own group regardless of size.
 #### Intended differences from the originals
 
 - They read the store, not the README table, so a README row without a
-  `debt:<id>` record is not seen. Run `atcr debt sync-outcomes` first to bring
-  ticked rows into the store.
+  `debt:<id>` record is not seen. Run `atcr debt import` to bring a whole
+  table into the store, or `atcr debt sync-outcomes` to record ticked rows.
 - `filter` does not offer the attempts, group or focus filters. Group is not a
   record field (see [the seam](#ownership-model-and-the-seam)).
 - `clean` never rewrites or deletes anything.
