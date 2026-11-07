@@ -1,0 +1,1 @@
+- atcr is now released under the MIT License; see `LICENSE` at the repository root. (EST-5157, 2026-11-06)

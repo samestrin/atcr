@@ -85,7 +85,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 
 | Command | Purpose |
 |---------|---------|
-| `atcr review` | Resolve the git range (or scan the whole repo with `--all` / a subtree with `--dir`), build payloads, fan out to the reviewer pool, write per-agent + merged findings; `--auto-fix` applies sandboxed fixes and opens a PR |
+| `atcr review` | Resolve the git range (or scan the whole repo with `--all` / a subtree with `--scope`), build payloads, fan out to the reviewer pool, write per-agent + merged findings; `--auto-fix` applies sandboxed fixes and opens a PR |
 | `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts; a trust-aware consensus filter uses scorecard history to keep high-trust reviewers' singletons and demote low-trust ones, with `--consensus strict\|lenient\|off` tuning how tolerant it is |
 | `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
 | `atcr diff-smell` | Scan a unified diff for over-simplification ("reward-hack") fingerprints — a deleted or skipped test, a weakened assertion, a lint suppression. Deterministic and model-free (no provider, no API key, no network) — see [docs/diff-smell.md](docs/diff-smell.md). Promoted from `atcr verify diff`, which stays a hidden deprecated alias for one minor version |
@@ -335,3 +335,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 > **Pro-Tip:** Use `git worktree` to work on multiple branches without disturbing your main checkout — e.g. `git worktree add ../atcr-feature-x feature-x` checks out `feature-x` into a sibling directory you can build/test in isolation, then `git worktree remove ../atcr-feature-x` cleans it up when done.
 
 Go 1.25+. Direct dependencies are listed in `go.mod`; beyond `spf13/cobra`, `gopkg.in/yaml.v3`, and `modelcontextprotocol/go-sdk` they include `tetratelabs/wazero` (WASM parsers), `github.com/cli/go-gh` (PR resolution), and others.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
