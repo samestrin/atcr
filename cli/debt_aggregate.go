@@ -439,7 +439,10 @@ func summarizeDebt(sums []localdebt.Summary, now time.Time, topN int) debtSummar
 	return s
 }
 
-// dashboardGeneratedMarker is stamped into every render as the second line. It
+// dashboardGeneratedMarker is stamped into every render under the title, after a
+// blank line (unlike the report's, it is not on line 2: no reader looks for it
+// there, and moving it would make every committed dashboard drift under --check
+// and rewrite the pre-35.21 synthetic golden). It
 // tells a human not to hand-edit the file, and it is also the dashboard's proof
 // of AUTHORSHIP: --output refuses to truncate an existing file that does not
 // carry it (runDebtDashboard), so a mistyped or model-supplied path cannot
@@ -733,15 +736,16 @@ func debtMonthHistogram(sums []localdebt.Summary) []debtMonthCount {
 }
 
 // debtMarkdownCell makes a value safe to embed in a Markdown table cell:
-// newlines collapse to spaces and literal pipes become "/", so a crafted or
-// hand-edited field cannot break the table's column count. It is distinct from
+// newlines collapse to spaces and literal pipes are escaped as `\|`, so a crafted
+// or hand-edited field cannot break the table's column count, yet the cell still
+// renders a pipe and `debt import` reads it back as one. It is distinct from
 // this package's sanitizeCell (which strips terminal control sequences for the
 // scorecard's plain-text tables) because the hazard is different: here it is
 // Markdown structure, not ANSI injection.
 func debtMarkdownCell(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "|", "/")
+	s = strings.ReplaceAll(s, "|", `\|`)
 	// The two hazards compose rather than compete. sanitizeCell strips ESC/C0/C1,
 	// DEL and U+2028/U+2029: the dashboard writes to the TERMINAL by default, so a
 	// finding carrying an ANSI sequence would erase or overwrite the rows above it

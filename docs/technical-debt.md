@@ -529,7 +529,8 @@ carry that line, so a hand-written file is never lost. Like the dashboard, the
 report has no timestamp, so a rerun on an unchanged store is byte-identical and
 `--check` flags only real changes. `--check` needs `--output`, and exits 4 when
 the file is missing or out of date. Secret-shaped tokens in item text are
-scrubbed.
+scrubbed. A `|` in item text is written as `\|`, so it renders as a pipe and
+`atcr debt import` reads it back as one.
 
 ### `atcr debt filter`, `clean` and `group`
 
