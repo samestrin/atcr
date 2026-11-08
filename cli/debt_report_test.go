@@ -77,7 +77,8 @@ func TestDebtReport_GroupsBySectionNewestFirst(t *testing.T) {
 	lines := strings.Split(got, "\n")
 	require.GreaterOrEqual(t, len(lines), 3)
 	assert.Equal(t, "# Technical Debt Report", lines[0])
-	assert.Equal(t, debtReportGeneratedMarker, lines[2], "the generated marker is the report's second line of text")
+	assert.Equal(t, debtReportGeneratedMarker, lines[1], "the generated marker is the report's literal second line")
+	assert.Equal(t, "", lines[2], "a blank line after the marker keeps it a paragraph of its own")
 
 	newer := strings.Index(got, "## [2026-10-28] From: epic 85.0")
 	older := strings.Index(got, "## [2026-09-01] From: epic 10")
@@ -98,8 +99,9 @@ func TestDebtReport_GroupsBySectionNewestFirst(t *testing.T) {
 	assert.Less(t, strings.Index(oldSec, "HIGH"), strings.Index(oldSec, "LOW"))
 	assert.Contains(t, looseSec, "| open | LOW | c/reconciled.go:4 |")
 
-	// Cells are Markdown-safe: a pipe cannot add a column, HTML is escaped.
-	assert.Contains(t, oldSec, "old open problem with a / pipe")
+	// Cells are Markdown-safe: a pipe is escaped rather than rewritten, so it
+	// cannot add a column and still reads as a pipe; HTML is escaped.
+	assert.Contains(t, oldSec, `old open problem with a \| pipe`)
 	assert.Contains(t, newSec, "&lt;b&gt;problem&lt;/b&gt;")
 	assert.NotContains(t, got, "<b>")
 
@@ -206,7 +208,7 @@ func TestDebtReport_EmptyStore(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".atcr", "debt")
 	got, err := runDebt(t, "report", "--store", dir)
 	require.NoError(t, err)
-	assert.Contains(t, got, debtReportGeneratedMarker)
+	assert.Equal(t, debtReportGeneratedMarker, strings.Split(got, "\n")[1], "an empty report has the marker on line 2 too")
 	assert.Contains(t, got, "_No items._")
 }
 
@@ -238,4 +240,62 @@ func TestDebtReport_OrdersRowsBySeverityFileLineID(t *testing.T) {
 		reversed[len(recs)-1-i] = r
 	}
 	assert.Equal(t, want, renderDebtReport(reversed), "input order does not change the bytes")
+}
+
+// A pipe in item text is written as `\|`, the escape `debt import` reads back,
+// so the report's text is the store's text: a row with `a|b` in it, read by the
+// import's own table parser, yields `a|b` again rather than `a/b`.
+func TestDebtReport_PipeInTextRoundTripsThroughImportParser(t *testing.T) {
+	sec := &localdebt.SourceReport{Path: "README.md", Section: "### [2026-10-01] From: epic 1"}
+	rec := localdebt.Record{
+		ID: "p1", Severity: "HIGH", File: "a|b.go", Line: 3, Problem: "O_NONBLOCK|O_NOFOLLOW",
+		Fix: "go build ./... | tee build.log", Category: "a|b", EstMinutes: 5, SourceReport: sec,
+	}
+	got := renderDebtReport([]localdebt.Record{rec})
+	assert.Contains(t, got, `| O_NONBLOCK\|O_NOFOLLOW | go build ./... \| tee build.log |`)
+
+	// Give the report's table the checkbox column an item table has, and parse it
+	// as `debt import` does.
+	var table []string
+	for _, line := range strings.Split(got, "\n") {
+		switch {
+		case strings.HasPrefix(line, "| ID "):
+			table = append(table, "| |"+strings.TrimPrefix(line, "|"))
+		case strings.HasPrefix(line, "|----"):
+			table = append(table, "|---"+line)
+		case strings.HasPrefix(line, "| p1 "):
+			table = append(table, "| [ ] "+line)
+		}
+	}
+	require.Len(t, table, 3, "the report has a header, a separator and one row:\n%s", got)
+	items, err := localdebt.ParseTDItems(strings.NewReader(strings.Join(table, "\n") + "\n"))
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	it := items[0]
+	assert.Empty(t, it.Invalid, "the escaped pipes add no column")
+	assert.Equal(t, "O_NONBLOCK|O_NOFOLLOW", it.Problem)
+	assert.Equal(t, "go build ./... | tee build.log", it.Fix)
+	assert.Equal(t, "a|b", it.Category)
+	assert.Equal(t, "a|b.go", it.File)
+	assert.Equal(t, 3, it.FileLine)
+}
+
+// A report written before the marker moved to line 2 (title, blank line, marker)
+// still carries the marker in its head, so --output recognises it as generated
+// and replaces it with the new layout rather than refusing.
+func TestDebtReport_OverwritesReportWithTheOldHeaderLayout(t *testing.T) {
+	dir := writeReportStore(t)
+	out := filepath.Join(t.TempDir(), "DEBT.md")
+	old := "# Technical Debt Report\n\n" + debtReportGeneratedMarker + "\n\n_No items._\n"
+	require.NoError(t, os.WriteFile(out, []byte(old), 0o644))
+
+	_, err := runDebt(t, "report", "--store", dir, "--output", out, "--check")
+	require.Error(t, err, "the old layout is out of date")
+	assert.Equal(t, exitDrift, exitCode(err))
+
+	_, err = runDebt(t, "report", "--store", dir, "--output", out)
+	require.NoError(t, err, "a report in the old layout is still the report's own file")
+	got, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Equal(t, debtReportGeneratedMarker, strings.Split(string(got), "\n")[1])
 }
