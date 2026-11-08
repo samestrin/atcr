@@ -506,3 +506,21 @@ func TestDiscountMarker(t *testing.T) {
 	r := Record{Problem: "p", ConfidenceDiscount: "because"}
 	assert.Equal(t, "p"+DiscountMarker("because"), r.RowProblem())
 }
+
+// TestRecord_ReportedByIsAdditiveWithinV4: reported_by is absent from a record
+// that names no reporter, so such a record keeps its wire shape, and a record
+// written before the field existed reads with ReportedBy "".
+func TestRecord_ReportedByIsAdditiveWithinV4(t *testing.T) {
+	b, err := json.Marshal(Record{SchemaVersion: SchemaVersion, ID: "id1"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "reported_by")
+
+	b, err = json.Marshal(Record{SchemaVersion: SchemaVersion, ID: "id1", ReportedBy: "paperclip-cto"})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"reported_by":"paperclip-cto"`)
+
+	var old Record
+	require.NoError(t, json.Unmarshal([]byte(`{"schema_version":4,"id":"id1","origin":"manual","attempts":2}`), &old))
+	assert.Equal(t, "", old.ReportedBy)
+	assert.Equal(t, 2, old.Attempts)
+}

@@ -270,3 +270,31 @@ func TestDebtImport_RejectsUnshardableSectionYear(t *testing.T) {
 	assert.NotContains(t, out, "no dated")
 	assert.Len(t, importedByProblem(t, dir), 1)
 }
+
+// TestDebtImport_CarriesTheSourceCellAsReportedBy: a row's Source cell (the seat
+// that reported it) is kept on the record as ReportedBy, separate from an
+// 11-column table's Reviewers cell, and a rerun still writes nothing.
+func TestDebtImport_CarriesTheSourceCellAsReportedBy(t *testing.T) {
+	body := importREADME + "\n### [2026-10-05] From: wide\n\n" +
+		"| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| g | [ ] | LOW | w.go:2 | wide row | fix w | bug | 1 | atcr\x07 | vera, kai | high |\n"
+	readme := writeImportREADME(t, body)
+	dir := filepath.Join(t.TempDir(), "debt")
+
+	out, err := runDebt(t, "import", readme, "--store", dir)
+	require.NoError(t, err, out)
+	got := importedByProblem(t, dir)
+
+	assert.Equal(t, "paperclip-builder", got["deferred problem"].ReportedBy)
+	assert.Equal(t, "paperclip-reviewer", got["open problem"].ReportedBy, "a merged id keeps the newest row's Source")
+	wide := got["wide row"]
+	assert.Equal(t, "atcr", wide.ReportedBy, "the Source cell is stripped of control characters")
+	assert.Equal(t, []string{"vera", "kai"}, wide.Reviewers, "Reviewers stays its own cell")
+
+	before := storeSnapshot(t, dir)
+	out, err = runDebt(t, "import", readme, "--store", dir)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "wrote 0")
+	assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")
+}

@@ -844,3 +844,15 @@ func TestDebtAdd_OverBoundEstIsRejectedAndNotWritten(t *testing.T) {
 	require.NoError(t, err, "an est exactly at the bound is not rejected")
 	require.Len(t, readDebtStore(t, dir2), 1)
 }
+
+func TestDebtAdd_ReportedBy(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f",
+		"--category", "bug", "--reported-by", "  paperclip-builder ",
+	)
+	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "paperclip-builder", recs[0].ReportedBy, "the seat is trimmed and kept")
+}
