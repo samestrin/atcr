@@ -423,11 +423,12 @@ func TestRenderDebtDashboard_SanitizesFileAndComponent(t *testing.T) {
 	rec.StampID()
 
 	out := renderDashboardOf(t, []localdebt.Record{rec}, 10)
-	// A literal pipe in the File cell would break the Markdown table column count.
+	// A literal pipe in the File cell would break the Markdown table column count,
+	// so it is escaped as `\|`: one column, and it still renders as a pipe.
 	assert.NotContains(t, out, "| internal/x | y.go:1 |")
-	assert.Contains(t, out, "| internal/x / y.go:1 |")
+	assert.Contains(t, out, `| internal/x \| y.go:1 |`)
 	// The By Component rollup must sanitize the component label as well.
-	assert.Contains(t, out, "| internal/x / y.go | 1 |")
+	assert.Contains(t, out, `| internal/x \| y.go | 1 |`)
 }
 
 // Epic 35.16.17 T4: a Top Priority row states that reconcile discounted the
