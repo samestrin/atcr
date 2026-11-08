@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -161,18 +162,31 @@ func renderDebtReport(recs []localdebt.Record) string {
 		b.WriteString("_No items._\n")
 		return b.String()
 	}
+	// The Source column (who reported each item) appears only when some record
+	// names a reporter, so a store with none, such as every store imported before
+	// reported_by existed, renders exactly as it did and `--check` still passes.
+	withSource := slices.ContainsFunc(recs, func(r localdebt.Record) bool { return r.ReportedBy != "" })
+	header := "| ID | Status | Severity | File | Problem | Fix | Category | Est Minutes | Attempts |\n" +
+		"|----|--------|----------|------|---------|-----|----------|-------------|----------|\n"
+	if withSource {
+		header = "| ID | Status | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+			"|----|--------|----------|------|---------|-----|----------|-------------|--------|----------|\n"
+	}
 	fmt.Fprintf(&b, "**Items:** %d in %d sections\n", len(recs), len(sections))
 	for _, sec := range sections {
 		sortDebtReportRecords(sec.recs)
 		fmt.Fprintf(&b, "\n## %s\n\n", sec.heading)
-		b.WriteString("| ID | Status | Severity | File | Problem | Fix | Category | Est Minutes | Attempts |\n")
-		b.WriteString("|----|--------|----------|------|---------|-----|----------|-------------|----------|\n")
+		b.WriteString(header)
 		for _, r := range sec.recs {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %d | %d |\n",
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %d |",
 				debtMarkdownCell(debtIDCell(r.ID)), debtReportStatus(r.Status),
 				debtMarkdownCell(r.Severity), debtMarkdownCell(red.Redact(debtLocation(r))),
 				debtMarkdownCell(red.Redact(r.RowProblem())), debtMarkdownCell(red.Redact(r.Fix)),
-				debtMarkdownCell(r.Category), r.EstMinutes, r.Attempts)
+				debtMarkdownCell(r.Category), r.EstMinutes)
+			if withSource {
+				fmt.Fprintf(&b, " %s |", debtMarkdownCell(red.Redact(r.ReportedBy)))
+			}
+			fmt.Fprintf(&b, " %d |\n", r.Attempts)
 		}
 	}
 	return b.String()

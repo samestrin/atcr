@@ -92,6 +92,7 @@ No flags.
 | `--file` | string | `` |  |
 | `--fix` | string | `` |  |
 | `--problem` | string | `` |  |
+| `--reported-by` | string | `` |  |
 | `--severity` | string | `` |  |
 | `--status` | string | `open` |  |
 | `--store` | string | `` |  |

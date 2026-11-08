@@ -106,6 +106,7 @@ func newDebtAddCmd() *cobra.Command {
 	cmd.Flags().String("fix", "", "recommended fix (required in flag mode)")
 	cmd.Flags().String("category", "", "category label (required in flag mode)")
 	cmd.Flags().Int("est", 0, "estimated minutes")
+	cmd.Flags().String("reported-by", "", "who filed the item, e.g. a reviewer seat (shown in the report's Source column)")
 	return cmd
 }
 
@@ -220,6 +221,7 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("missing required flags (%s); provide them or run on an interactive terminal", strings.Join(missing, ", ")))
 	}
 
+	rec.ReportedBy = mustFlag(cmd, "reported-by")
 	if err := finalizeDebtRecord(&rec); err != nil {
 		return err
 	}
@@ -293,6 +295,7 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	rec.Problem = strings.TrimSpace(rec.Problem)
 	rec.Fix = strings.TrimSpace(rec.Fix)
 	rec.Category = strings.TrimSpace(rec.Category)
+	rec.ReportedBy = strings.TrimSpace(rec.ReportedBy)
 	for _, req := range []struct{ flag, val string }{
 		{"--file", rec.File}, {"--problem", rec.Problem}, {"--fix", rec.Fix}, {"--category", rec.Category},
 	} {

@@ -337,6 +337,14 @@ type Record struct {
 	// schema_version.
 	Attempts int `json:"attempts,omitempty"`
 
+	// ReportedBy names who filed the finding: the Source cell of a
+	// technical-debt README table `atcr debt import` read it from (a seat such as
+	// "paperclip-reviewer"), or `atcr debt add --reported-by`. It is a review fact
+	// like Reviewers, not workflow state. Additive within v4 like Attempts' own
+	// omitempty: an older v4 reader ignores the key, and omitempty keeps every
+	// record that names no reporter byte-identical to its pre-field wire shape.
+	ReportedBy string `json:"reported_by,omitempty"`
+
 	Justification string        `json:"justification,omitempty"`
 	SourceReport  *SourceReport `json:"source_report,omitempty"`
 	Status        string        `json:"status,omitempty"`

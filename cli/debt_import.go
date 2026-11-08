@@ -180,6 +180,7 @@ func importRecord(it localdebt.TDItem, source string) (localdebt.Record, string,
 		Confidence:    clean(it.Confidence),
 		Origin:        localdebt.OriginManual,
 		Attempts:      it.Attempts,
+		ReportedBy:    clean(it.Source),
 		Status:        status,
 		// The README path and section are kept so a report can group by section.
 		// The row's line is not: inserting a row above it would change every

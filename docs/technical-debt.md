@@ -231,7 +231,8 @@ resolution. A downstream tool's view holds **workflow state**: sprint, epic,
 group, quick-win versus backlog, checkbox state. That is the seam. Fields
 meaningful only inside someone else's process do not enter this schema — `group`
 and `source_label` are deliberately absent, because atcr does not know what a
-sprint is.
+sprint is. `reported_by` is not such a label: who filed a finding is a review
+fact, like which reviewers raised it.
 
 A consumer keys its own overlay by `Record.ID` and reads through
 `atcr debt list --json` rather than co-mingling fields into the store.
@@ -287,6 +288,7 @@ rather than a fabricated value that `resolve` could not match.
 | `confidence_discount` | string | **v3** — why reconcile lowered `confidence` below what the reviewer count earns (today only the panel-wide-instruction reason); absent when it did not. `atcr debt dashboard` appends it to the Top Priority problem cell as `(confidence discounted: …)` |
 | `reconciler_feedback` | object | **v3** — a verdict on how reconcile grouped the finding, not on the finding: `{"kind": …, "with": …, "reason": …}`, where `kind` is `wrong-merge`, `wrong-split` or `wrong-category` and `with` (only on `wrong-split`, optional) is the partner finding's id. It never changes `status`, and a record carrying it is not counted as a sighting in `occurrences`; absent on every unannotated record |
 | `attempts` | int | **v4** — how many times a fix was tried, from the `Attempts` column of a technical-debt README table; never negative, absent when none was recorded |
+| `reported_by` | string | **v4** — who filed the finding: the `Source` column of a technical-debt README table (a seat such as `paperclip-reviewer`) or `atcr debt add --reported-by`; absent when none was recorded |
 
 Reads are tolerant in one direction only: a v1, v2 or v3 record decodes cleanly, with
 zero values for fields that did not exist yet, and a record with no `origin`
@@ -396,7 +398,9 @@ atcr debt add \
 ```
 
 Required in flag mode: `--severity`, `--file`, `--problem`, `--fix`,
-`--category`. Optional: `--store`, `--status` (default `open`), `--est`.
+`--category`. Optional: `--store`, `--status` (default `open`), `--est`,
+`--reported-by` (who filed the item, such as a reviewer seat; `atcr debt report`
+shows it in its `Source` column).
 
 `--file` takes a `path:line` location; a purely numeric suffix is parsed into
 the record's line number, and anything else is kept verbatim as the path.
@@ -423,7 +427,8 @@ atcr debt import docs/technical-debt/README.md             # write it
 
 Flags: `--store`, `--dry-run`.
 
-Each row keeps its status and attempts. The marker in the second column sets
+Each row keeps its status, its attempts and its `Source` cell (the seat that
+reported it), which is stored as `reported_by`. The marker in the second column sets
 the status:
 
 | Marker | Status |
@@ -523,7 +528,10 @@ Flags: `--store`, `--format` (`md`, the default and only format), `--output`,
 `--check`.
 
 Each table has the columns `ID`, `Status`, `Severity`, `File`, `Problem`,
-`Fix`, `Category`, `Est Minutes` and `Attempts`. The second line of the report
+`Fix`, `Category`, `Est Minutes`, `Source` and `Attempts`. `Source` is the
+record's `reported_by`. It appears only when at least one item in the store
+names a reporter, so a store that has none renders without the column, just as
+it did before the column existed. The second line of the report
 marks it as generated. `--output` refuses to overwrite a file that does not
 carry that line, so a hand-written file is never lost. Like the dashboard, the
 report has no timestamp, so a rerun on an unchanged store is byte-identical and
