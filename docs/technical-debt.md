@@ -220,8 +220,8 @@ converted first.
 
 A repo that keeps its technical debt as a hand-edited README table moves it into
 a store once. After the move the store is the one source of truth and the README
-is generated from it. The steps below use `.planning/technical-debt/`; put your
-repo's folder in its place (some repos keep it at `technical-debt/`). Pass
+is generated from it. The steps below use `docs/technical-debt/`; put your
+repo's folder in its place (for example `technical-debt/`). Pass
 `--store` to every command, so the move needs no edit to `.atcr/config.yaml`.
 
 1. Move the table out of the way. `atcr debt report --output` refuses to
@@ -229,7 +229,7 @@ repo's folder in its place (some repos keep it at `technical-debt/`). Pass
    cannot stay where the new one goes:
 
    ```bash
-   git mv .planning/technical-debt/README.md .planning/technical-debt/README.import.md
+   git mv docs/technical-debt/README.md docs/technical-debt/README.import.md
    ```
 
 2. Dry-run the import and fix every row it rejects in `README.import.md`
@@ -240,15 +240,15 @@ repo's folder in its place (some repos keep it at `technical-debt/`). Pass
    to that layout first.
 
    ```bash
-   atcr debt import .planning/technical-debt/README.import.md --store .planning/technical-debt/store --dry-run
+   atcr debt import docs/technical-debt/README.import.md --store docs/technical-debt/store --dry-run
    ```
 
 3. Import, then convert the new store to the [event
    layout](#event-layout-one-file-per-item) so clones can share it:
 
    ```bash
-   atcr debt import .planning/technical-debt/README.import.md --store .planning/technical-debt/store
-   atcr debt convert --store .planning/technical-debt/store
+   atcr debt import docs/technical-debt/README.import.md --store docs/technical-debt/store
+   atcr debt convert --store docs/technical-debt/store
    ```
 
    Running the import a second time writes nothing; that shows the first run
@@ -257,8 +257,8 @@ repo's folder in its place (some repos keep it at `technical-debt/`). Pass
 4. Generate the new README and delete the old table:
 
    ```bash
-   atcr debt report --format md --output .planning/technical-debt/README.md --store .planning/technical-debt/store
-   rm .planning/technical-debt/README.import.md
+   atcr debt report --format md --output docs/technical-debt/README.md --store docs/technical-debt/store
+   rm docs/technical-debt/README.import.md
    ```
 
 5. Commit the store (its `items/` directory and `.event-layout` marker
