@@ -1292,6 +1292,38 @@ func TestFoldRecords_CarriesOccurrencesAndFirstSeen(t *testing.T) {
 	assert.Equal(t, "2026-06-03T00:00:00Z", folded[0].Timestamp, "the winning record is still the latest")
 }
 
+// TestFoldRecords_CarriesTheNewestReporterOfTheGroup: who filed a finding is a
+// fact about the id, not about one record, so the folded record names the
+// group's newest reporter even when the record that wins the fold names none:
+// an untagged copy that ties a tagged one and is appended after it, or a later
+// resolution written without a reporter.
+func TestFoldRecords_CarriesTheNewestReporterOfTheGroup(t *testing.T) {
+	tagged := detection("filed by a seat", "2026-06-01T00:00:00Z")
+	tagged.ReportedBy = "paperclip-cto"
+	untagged := tagged
+	untagged.ReportedBy = ""
+
+	folded := FoldRecords([]Record{tagged, untagged})
+	require.Len(t, folded, 1)
+	assert.Equal(t, "paperclip-cto", folded[0].ReportedBy, "a full tie keeps the reporter in either order")
+
+	resolved := untagged
+	resolved.Timestamp = "2026-06-02T00:00:00Z"
+	resolved.Status = "resolved"
+	folded = FoldRecords([]Record{tagged, resolved})
+	require.Len(t, folded, 1)
+	assert.Equal(t, "resolved", folded[0].Status, "the reporter never moves the fold")
+	assert.Equal(t, "paperclip-cto", folded[0].ReportedBy, "a later resolution keeps the reporter")
+
+	later := resolved
+	later.ReportedBy = "paperclip-reviewer"
+	folded = FoldRecords([]Record{tagged, later})
+	assert.Equal(t, "paperclip-reviewer", folded[0].ReportedBy, "a newer reporter replaces an older one")
+
+	folded = FoldRecords([]Record{untagged})
+	assert.Equal(t, "", folded[0].ReportedBy, "no reporter is invented")
+}
+
 func TestFoldRecords_ResolutionRecordDoesNotInflateOccurrences(t *testing.T) {
 	open := detection("fixed once", "2026-06-01T00:00:00Z")
 	resolved := open

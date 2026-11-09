@@ -298,3 +298,37 @@ func TestDebtImport_CarriesTheSourceCellAsReportedBy(t *testing.T) {
 	assert.Contains(t, out, "wrote 0")
 	assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")
 }
+
+// TestDebtImport_RestoresReportedByOnAnEventStore: a store imported before
+// reported_by existed is restored by importing the same table again. Each row
+// then has two records that tie on id, time and status, and an event store breaks
+// that tie by the hash in the file name, so the fold must keep the reporter
+// whichever of the two it picks.
+func TestDebtImport_RestoresReportedByOnAnEventStore(t *testing.T) {
+	var noSource []string
+	for _, line := range strings.Split(importREADME, "\n") {
+		noSource = append(noSource, strings.ReplaceAll(line, "| paperclip-builder |", "|  |"))
+	}
+	old := writeImportREADME(t, strings.ReplaceAll(strings.Join(noSource, "\n"), "| paperclip-reviewer |", "|  |"))
+	readme := writeImportREADME(t, importREADME)
+	dir := filepath.Join(t.TempDir(), "debt")
+	require.NoError(t, localdebt.EnableEventLayout(dir))
+
+	out, err := runDebt(t, "import", old, "--store", dir)
+	require.NoError(t, err, out)
+	out, err = runDebt(t, "import", readme, "--store", dir)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "wrote 5 records (0 already in the store)")
+
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	folded := localdebt.FoldRecords(recs)
+	require.Len(t, folded, 5)
+	for _, r := range folded {
+		want := "paperclip-builder"
+		if r.Problem == "open problem" {
+			want = "paperclip-reviewer"
+		}
+		assert.Equal(t, want, r.ReportedBy, "%s keeps its reporter", r.Problem)
+	}
+}

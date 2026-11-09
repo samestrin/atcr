@@ -381,7 +381,7 @@ rather than a fabricated value that `resolve` could not match.
 | `confidence_discount` | string | **v3** — why reconcile lowered `confidence` below what the reviewer count earns (today only the panel-wide-instruction reason); absent when it did not. `atcr debt dashboard` appends it to the Top Priority problem cell as `(confidence discounted: …)` |
 | `reconciler_feedback` | object | **v3** — a verdict on how reconcile grouped the finding, not on the finding: `{"kind": …, "with": …, "reason": …}`, where `kind` is `wrong-merge`, `wrong-split` or `wrong-category` and `with` (only on `wrong-split`, optional) is the partner finding's id. It never changes `status`, and a record carrying it is not counted as a sighting in `occurrences`; absent on every unannotated record |
 | `attempts` | int | **v4** — how many times a fix was tried, from the `Attempts` column of a technical-debt README table; never negative, absent when none was recorded |
-| `reported_by` | string | **v4** — who filed the finding: the `Source` column of a technical-debt README table (a seat such as `paperclip-reviewer`) or `atcr debt add --reported-by`; absent when none was recorded |
+| `reported_by` | string | **v4** — who filed the finding: the `Source` column of a technical-debt README table (a seat such as `paperclip-reviewer`) or `atcr debt add --reported-by`; absent when none was recorded. It belongs to the finding, not to one record: the fold gives the effective record the newest reporter any record of the id names, so a resolution written without one keeps it |
 
 Reads are tolerant in one direction only: a v1, v2 or v3 record decodes cleanly, with
 zero values for fields that did not exist yet, and a record with no `origin`
@@ -560,6 +560,12 @@ Import: wrote 39 records (0 already in the store).
 
 Control characters in a cell are stripped before the record is written. The
 README itself is never changed.
+
+Importing the same table again restores the `Source` of items imported before
+`reported_by` existed: each such row differs from its stored record only by the
+reporter, so it is written once more, and every read takes the reporter from it
+(see `reported_by` in the [record schema](#record-schema-v4)). A row with no
+`Source` is still skipped as already in the store.
 
 ### `atcr debt dashboard`
 
