@@ -695,7 +695,8 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 // WHOLE id group, so the regression signal that re-openable resolution creates
 // survives compaction at O(1) size instead of O(history). See aggregateCounters
 // for the rule and why it is idempotent. It carries the group's newest
-// ReconcilerFeedback annotation the same way; see newestAnnotatedIndex.
+// ReconcilerFeedback annotation the same way; see newestAnnotatedIndex, and
+// the group's newest ReportedBy.
 func FoldRecords(recs []Record) []Record {
 	folded, _ := foldWithGroups(recs)
 	return folded
@@ -717,6 +718,14 @@ func foldWithGroups(recs []Record) ([]Record, map[string][]Record) {
 		aggregateCounters(&folded[i], group)
 		if j := newestAnnotatedIndex(group, func(r Record) bool { return r.ReconcilerFeedback != nil }); j >= 0 {
 			folded[i].ReconcilerFeedback = group[j].ReconcilerFeedback
+		}
+		// Who filed the finding is a fact about the id, like the annotation, so
+		// the newest record naming a reporter names it for the whole group: a
+		// resolution written without one keeps it, and so does the winner of a
+		// tie with a tagged copy of itself, which an event store breaks by the
+		// hash in the file name.
+		if j := newestAnnotatedIndex(group, func(r Record) bool { return r.ReportedBy != "" }); j >= 0 {
+			folded[i].ReportedBy = group[j].ReportedBy
 		}
 	}
 	return folded, byID
