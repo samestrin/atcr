@@ -142,6 +142,7 @@ type summaryLine struct {
 	Evidence       jsonString `json:"evidence"`
 	Model          jsonString `json:"model"`
 	Justification  jsonString `json:"justification"`
+	ReportedBy     jsonString `json:"reported_by"`
 	ResolvedAt     jsonString `json:"resolved_at"`
 	CountedThrough jsonString `json:"counted_through"`
 	FirstSeen      jsonString `json:"first_seen"`

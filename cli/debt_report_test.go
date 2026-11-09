@@ -105,8 +105,10 @@ func TestDebtReport_GroupsBySectionNewestFirst(t *testing.T) {
 	assert.Contains(t, newSec, "&lt;b&gt;problem&lt;/b&gt;")
 	assert.NotContains(t, got, "<b>")
 
-	// Attempts are reported.
-	assert.Contains(t, newSec, "| design | 20 | 2 |")
+	// The reporting seat and Attempts are reported, in the README's column order.
+	assert.Contains(t, got, "| ID | Status | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |")
+	assert.Contains(t, newSec, "| design | 20 | me | 2 |")
+	assert.Contains(t, looseSec, "| maintainability | 5 |  | 0 |", "a record with no reporter has an empty Source cell")
 }
 
 func TestDebtReport_RerunIsByteIdenticalAndCheckPasses(t *testing.T) {
@@ -298,4 +300,50 @@ func TestDebtReport_OverwritesReportWithTheOldHeaderLayout(t *testing.T) {
 	got, err := os.ReadFile(out)
 	require.NoError(t, err)
 	assert.Equal(t, debtReportGeneratedMarker, strings.Split(string(got), "\n")[1])
+}
+
+// A store in which no record names a reporter (every store imported before
+// reported_by existed) renders without a Source column, byte for byte as it did
+// before, so `report --check` keeps passing on an already-generated README.
+func TestDebtReport_NoReporterKeepsTheLayoutWithoutSource(t *testing.T) {
+	sec := &localdebt.SourceReport{Path: "README.md", Section: "### [2026-10-01] From: epic 1"}
+	rec := localdebt.Record{
+		ID: "p1", Severity: "HIGH", File: "a.go", Line: 3, Problem: "p",
+		Fix: "f", Category: "bug", EstMinutes: 5, Attempts: 1, SourceReport: sec,
+	}
+	want := "# Technical Debt Report\n" + debtReportGeneratedMarker + "\n\n" +
+		"**Items:** 1 in 1 sections\n\n## [2026-10-01] From: epic 1\n\n" +
+		"| ID | Status | Severity | File | Problem | Fix | Category | Est Minutes | Attempts |\n" +
+		"|----|--------|----------|------|---------|-----|----------|-------------|----------|\n" +
+		"| p1 | open | HIGH | a.go:3 | p | f | bug | 5 | 1 |\n"
+	assert.Equal(t, want, renderDebtReport([]localdebt.Record{rec}))
+}
+
+// The Source cell a report writes reads back as the row's Source, so a README
+// regenerated from the store and imported again keeps the reporting seat.
+func TestDebtReport_SourceRoundTripsThroughImportParser(t *testing.T) {
+	sec := &localdebt.SourceReport{Path: "README.md", Section: "### [2026-10-01] From: epic 1"}
+	rec := localdebt.Record{
+		ID: "p1", Severity: "HIGH", File: "a.go", Line: 3, Problem: "p",
+		Fix: "f", Category: "bug", EstMinutes: 5, Attempts: 2, ReportedBy: "paperclip-cto", SourceReport: sec,
+	}
+	got := renderDebtReport([]localdebt.Record{rec})
+	var table []string
+	for _, line := range strings.Split(got, "\n") {
+		switch {
+		case strings.HasPrefix(line, "| ID "):
+			table = append(table, "| |"+strings.TrimPrefix(line, "|"))
+		case strings.HasPrefix(line, "|----"):
+			table = append(table, "|---"+line)
+		case strings.HasPrefix(line, "| p1 "):
+			table = append(table, "| [ ] "+line)
+		}
+	}
+	require.Len(t, table, 3, got)
+	items, err := localdebt.ParseTDItems(strings.NewReader(strings.Join(table, "\n") + "\n"))
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Empty(t, items[0].Invalid)
+	assert.Equal(t, "paperclip-cto", items[0].Source)
+	assert.Equal(t, 2, items[0].Attempts)
 }
