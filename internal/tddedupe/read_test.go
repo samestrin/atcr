@@ -210,10 +210,17 @@ func TestReadStreamShortFormatFallsBackToWidth(t *testing.T) {
 }
 
 func TestReadStreamEstMinutes(t *testing.T) {
-	data := "HIGH|a.go:1|p|f|c|2.6|e|r\nHIGH|a.go:2|p|f|c|-4|e|r\nHIGH|a.go:3|p|f|c|soon|e|r\n"
+	data := "HIGH|a.go:1|p|f|c|2.6|e|r\nHIGH|a.go:2|p|f|c|-4|e|r\nHIGH|a.go:3|p|f|c|soon|e|r\n" +
+		"HIGH|a.go:4|p|f|c|1e300|e|r\n"
 	got, _, _ := mustRead(t, "e", data)
-	if got[0].EstMinutes != 3 || got[1].EstMinutes != 0 || got[2].EstMinutes != 0 {
-		t.Fatalf("est minutes = %d, %d, %d; want 3, 0, 0", got[0].EstMinutes, got[1].EstMinutes, got[2].EstMinutes)
+	// 1e300 clamps to one week, the bound stream.ParseSource applies to v1 rows.
+	if got[0].EstMinutes != 3 || got[1].EstMinutes != 0 || got[2].EstMinutes != 0 || got[3].EstMinutes != 7*24*60 {
+		t.Fatalf("est minutes = %d, %d, %d, %d; want 3, 0, 0, 10080",
+			got[0].EstMinutes, got[1].EstMinutes, got[2].EstMinutes, got[3].EstMinutes)
+	}
+	v1, _, _ := mustRead(t, "e", "# atcr-findings/v1\nHIGH|a.go:1|p|f|c|999999|e|r\n")
+	if v1[0].EstMinutes != got[3].EstMinutes {
+		t.Fatalf("v1 clamps to %d, legacy to %d; want the same bound", v1[0].EstMinutes, got[3].EstMinutes)
 	}
 }
 
