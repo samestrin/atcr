@@ -1,1 +1,0 @@
-- A PR comment posted by the webhook no longer pings a user or links an issue when a finding title holds `@name` or `#12`: the GitHub reply breaks each mention and issue reference with a zero-width space. (technical debt, 2026-11-02)

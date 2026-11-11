@@ -1,1 +1,0 @@
-- `atcr review --auto-fix` without `--auto-fix-base` now opens the fix pull request against the bare default branch (`main`) instead of the remote-tracking ref `origin/main`, which GitHub refused with a 422. (epic 104)

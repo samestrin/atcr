@@ -1,1 +1,0 @@
-- A similarity (semantic prefetch) client that cannot be built now logs "client could not be built" and records only the `config-invalid` class, so a configured endpoint URL no longer reaches the manifest or logs. (epic 90)

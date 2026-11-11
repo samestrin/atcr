@@ -1,1 +1,0 @@
-- Under `atcr review --config-dir`, the one-time telemetry notice now reads the `telemetry` opt-out and notice marker from the config directory and writes the marker there, not into the reviewed tree. An invalid `--config-dir`, including one with no `.atcr/config.yaml`, skips the notice. (technical debt, 2026-11-02)

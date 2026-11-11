@@ -1,1 +1,0 @@
-- The chunk byte-budget warning no longer reports a newline-terminated chunk as all preamble and 0 diff bytes when the preamble line count is exactly one past the chunk's lines; that count is now treated as a clamp like any larger one. (epic 102.0)

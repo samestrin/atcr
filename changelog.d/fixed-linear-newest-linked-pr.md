@@ -1,1 +1,0 @@
-- A Linear-triggered review of an issue with more than one linked GitHub pull request now reviews the newest one, by when it was attached. Before, it reviewed whichever the Linear API listed first. (epic 100)

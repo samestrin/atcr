@@ -1,1 +1,0 @@
-- The path-validation metrics no longer double count: a root that cannot be resolved is counted once per finding across its file and sibling checks, and one check never raises both the root-unresolved and indeterminate counters. (epic 99.0)
