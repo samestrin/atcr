@@ -112,3 +112,8 @@ func TestClusterWithin_NoLineFindingKeepsItsOwnPerFileCluster(t *testing.T) {
 	eq(t, clusters[1][0].Line, 1, "line finding alone")
 	eq(t, clusters[2][0].File, "g.go", "g.go no-line cluster")
 }
+
+func TestClusterWithin_NegativeToleranceIsZero(t *testing.T) {
+	in := []Finding{fnd("f.go", 10, "a", "x"), fnd("f.go", 10, "b", "y"), fnd("f.go", 11, "c", "z")}
+	deepEq(t, ClusterWithin(in, -1), ClusterWithin(in, 0), "negative tolerance behaves as 0")
+}

@@ -17,8 +17,9 @@
 // (Categories, CategoryMerges, plus the Category* constants). The building-block
 // group is an umbrella over the exported cluster/merge/confidence/attribution
 // helpers and their tuning constants (MergeThreshold, LineProximity,
-// EvidenceSep, FixAttributionPrefix); every other exported group above is named
-// in full. Path-validation fields, the findings.json schema, the disagreement
+// EvidenceSep, FixAttributionPrefix), and includes ClusterWithin (Cluster with a
+// caller-chosen line tolerance) and PoolText (lossless " // " pooling of text
+// values); every other exported group above is named in full. Path-validation fields, the findings.json schema, the disagreement
 // radar, and adjudication stay ATCR-internal by design.
 //
 // This paragraph is the contract external embedders read, so a group that names
