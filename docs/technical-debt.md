@@ -1385,7 +1385,7 @@ commands went with it.
 
 | Retired | Replaced by | Why |
 |---------|-------------|-----|
-| `--items` (shard directory) and `--readme` (table file) on `list`/`add`/`dashboard` | `--dir` | That store is no longer read or written by any atcr code |
+| `--items` (shard directory) and `--readme` (table file) on `list`/`add`/`dashboard` | `--store` (`--dir` remains a deprecated hidden alias) | That store is no longer read or written by any atcr code |
 | `--sync` on `add` | — | Nothing to synchronize: there is one store |
 | `--group`, `--label`, `--source-type`, `--source`, `--date` on `add` | — | Consumer workflow vocabulary, excluded by the seam |
 | `--group` on `list` | — | Same seam: group is not a record field, so there is nothing to filter on |
