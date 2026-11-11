@@ -74,15 +74,15 @@ func ClusterWith(findings []Finding, g Grouper) [][]Finding {
 		for _, k := range keyOrder {
 			clusters = append(clusters, keyed[k])
 		}
-		clusters = append(clusters, proximityClusters(unkeyed)...)
+		clusters = append(clusters, proximityClusters(unkeyed, LineProximity)...)
 	}
 	return clusters
 }
 
 // proximityClusters groups already-line-sorted findings by single-linkage on line
-// number (a gap greater than LineProximity starts a new cluster). It is the
-// shared core of Cluster and the ClusterWith fallback.
-func proximityClusters(lined []Finding) [][]Finding {
+// number (a gap greater than tolerance starts a new cluster). It is the shared
+// core of ClusterWithin and the ClusterWith fallback.
+func proximityClusters(lined []Finding, tolerance int) [][]Finding {
 	var clusters [][]Finding
 	var cur []Finding
 	prevLine := 0
@@ -90,7 +90,7 @@ func proximityClusters(lined []Finding) [][]Finding {
 		switch {
 		case len(cur) == 0:
 			cur = []Finding{f}
-		case f.Line-prevLine <= LineProximity:
+		case f.Line-prevLine <= tolerance:
 			cur = append(cur, f)
 		default:
 			clusters = append(clusters, cur)

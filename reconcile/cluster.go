@@ -8,7 +8,8 @@ import "sort"
 // instead of duplicating the literal, keeping the two constants in lockstep.
 const LineProximity = 3
 
-// Cluster groups findings into location clusters. Findings on the same file are
+// Cluster groups findings into location clusters with the default tolerance:
+// it is ClusterWithin(findings, LineProximity). Findings on the same file are
 // clustered by single-linkage on line number: sorted ascending, a gap of more
 // than LineProximity from the PREVIOUS finding starts a new cluster. This
 // satisfies the pairwise boundary (two findings at N and N+3 cluster; N and N+4
@@ -24,6 +25,18 @@ const LineProximity = 3
 // kept separate from line-specific clusters. Files are processed in sorted order
 // for deterministic cluster ordering.
 func Cluster(findings []Finding) [][]Finding {
+	return ClusterWithin(findings, LineProximity)
+}
+
+// ClusterWithin is Cluster with a caller-chosen line tolerance: on one file, a
+// line gap of at most tolerance from the previous finding joins its cluster
+// (tolerance 0 joins only findings on the same line; 5 joins N and N+5). A
+// negative tolerance is treated as 0. File-level findings (Line <= 0) still form
+// one cluster per file whatever the tolerance.
+func ClusterWithin(findings []Finding, tolerance int) [][]Finding {
+	if tolerance < 0 {
+		tolerance = 0
+	}
 	byFile := map[string][]Finding{}
 	for _, f := range findings {
 		byFile[f.File] = append(byFile[f.File], f)
@@ -42,7 +55,7 @@ func Cluster(findings []Finding) [][]Finding {
 		}
 		// Stable sort by line so equal lines keep input order (deterministic).
 		sort.SliceStable(lined, func(i, j int) bool { return lined[i].Line < lined[j].Line })
-		clusters = append(clusters, proximityClusters(lined)...)
+		clusters = append(clusters, proximityClusters(lined, tolerance)...)
 	}
 	return clusters
 }

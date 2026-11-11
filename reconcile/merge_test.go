@@ -397,3 +397,28 @@ func TestPromoteByAuthority_InvariantSingletonStillPromoted(t *testing.T) {
 		t.Fatalf("authority-promoted invariant singleton: confidence = %q, want %q", m.Confidence, ConfHigh)
 	}
 }
+
+func TestPoolText_RepeatedRemedyGivesOneValue(t *testing.T) {
+	eq(t, PoolText([]string{"Use a mutex.", "use a MUTEX.", "Use a mutex."}), "Use a mutex.", "repeated remedy ignoring case")
+}
+
+func TestPoolText_DifferentRemediesJoinedInOrder(t *testing.T) {
+	eq(t, PoolText([]string{"Close the file.", "Check the error."}), "Close the file. // Check the error.", "both remedies, input order")
+}
+
+func TestPoolText_DropsEmptyValues(t *testing.T) {
+	eq(t, PoolText([]string{"", "Close the file.", "  ", ""}), "Close the file.", "empty and blank values dropped")
+	eq(t, PoolText(nil), "", "no values")
+	eq(t, PoolText([]string{"", " "}), "", "only empty values")
+}
+
+func TestPoolText_ContainedValueKeepsTheLonger(t *testing.T) {
+	// A later value contained in a kept one is dropped.
+	eq(t, PoolText([]string{"Close the file before return.", "close the file"}), "Close the file before return.", "shorter later value dropped")
+	// A later value that contains a kept one replaces it in place.
+	eq(t, PoolText([]string{"Check the error.", "close the file", "Close the file before return."}),
+		"Check the error. // Close the file before return.", "longer later value replaces the kept one in its slot")
+	// A later value that contains two kept ones replaces both, once.
+	eq(t, PoolText([]string{"Close the file.", "Check the error.", "check the error. close the file."}),
+		"check the error. close the file.", "one value covering two kept ones replaces both, once")
+}

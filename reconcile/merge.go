@@ -346,3 +346,44 @@ func ConfidenceForCategory(reviewerCount int, category string, independent bool)
 	confidence, _ := DiscountedConfidence(reviewerCount, category, independent)
 	return confidence
 }
+
+// PoolText pools text values losslessly, so no distinct remedy is dropped. It
+// trims each value and drops empty ones; drops a value equal to or contained in
+// (ignoring case) one already kept; and when a value contains kept ones, keeps
+// it in the first such slot and drops the rest, so the longer wins. Survivors
+// keep input order and are joined with " // ". Shared building block.
+func PoolText(vals []string) string {
+	var kept []string
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		lv := strings.ToLower(v)
+		covered := false
+		for _, k := range kept {
+			if strings.Contains(strings.ToLower(k), lv) {
+				covered = true
+				break
+			}
+		}
+		if covered {
+			continue
+		}
+		next := kept[:0:0]
+		placed := false
+		for _, k := range kept {
+			if !strings.Contains(lv, strings.ToLower(k)) {
+				next = append(next, k)
+			} else if !placed {
+				next = append(next, v)
+				placed = true
+			}
+		}
+		if !placed {
+			next = append(next, v)
+		}
+		kept = next
+	}
+	return strings.Join(kept, " // ")
+}
