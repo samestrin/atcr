@@ -1,1 +1,0 @@
-- `atcr personas list --scores --detail <name>` now strips control characters from the run id and reason cells, so a tab or newline in either no longer breaks the two-column table. The `--json` output is unchanged. (epic 104)

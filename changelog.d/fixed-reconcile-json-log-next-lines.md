@@ -1,1 +1,0 @@
-- `atcr reconcile --log-format json` now writes only NDJSON on stderr: the closing `Next:` suggestions and the ignore-rule suppressed-findings notice are logged as structured records instead of raw text lines. Text mode output is unchanged. (epic 104)
