@@ -593,6 +593,7 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 	root.AddCommand(
 		newReviewCmd(),
 		newReconcileCmd(),
+		newDedupeCmd(),
 		newVerifyCmd(),
 		newDiffSmellCmd(),
 		newDebateCmd(),

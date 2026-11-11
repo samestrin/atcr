@@ -19,6 +19,7 @@ import (
 // state for a reader. Each must accept --json.
 var reportCommands = map[string]bool{
 	"atcr debt clean":     true,
+	"atcr dedupe":         true,
 	"atcr debt dashboard": true,
 	"atcr debt filter":    true,
 	"atcr debt validate":  true,

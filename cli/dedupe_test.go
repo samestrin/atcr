@@ -81,6 +81,15 @@ func TestDedupe_ShortSourceTagsFallBackToTheDirectory(t *testing.T) {
 	assert.Equal(t, "a,gpt", dedupeRowAt(t, res, "internal/store/store.go:42").Reviewers)
 }
 
+// An empty --source-tags entry keeps its position: the later tag stays on its
+// own stream.
+func TestDedupe_EmptySourceTagKeepsItsPosition(t *testing.T) {
+	res := runDedupeJSON(t, "--streams", dedupeStreams, "--source-tags", ",b")
+	r := dedupeRowAt(t, res, "internal/store/store.go:42")
+	assert.Equal(t, "b,claude", r.Reviewers)
+	assert.Equal(t, "claude", r.Source)
+}
+
 func TestDedupe_ToleranceZeroSplitsAdjacentLines(t *testing.T) {
 	res := runDedupeJSON(t, "--streams", dedupeStreams, "--tolerance", "0")
 	assert.Len(t, res.Merged, 3)

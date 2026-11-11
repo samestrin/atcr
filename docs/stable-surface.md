@@ -274,6 +274,16 @@ No flags.
 | `--status` | string | `open` |  |
 | `--store` | string | `` |  |
 
+### `atcr dedupe`
+
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--json` | bool | `true` |  |
+| `--source-tags` | string | `` |  |
+| `--streams` | string | `` |  |
+| `--tolerance` | int | `3` |  |
+| `--untrusted` | string | `` |  |
+
 ### `atcr diff-smell`
 
 | Flag | Type | Default | Status |
