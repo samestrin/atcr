@@ -255,8 +255,47 @@ func canonicalSelectors(t *testing.T, fset *token.FileSet, path string, src any)
 	return hits
 }
 
+// sanctionedCanonicalConsumers lists the files a later epic's decision lets call
+// the canonicalizer, by module-relative path. Each needs its own decision; a
+// new caller still fails the test below.
+var sanctionedCanonicalConsumers = map[string]string{
+	// Epic 110 D2 (board answer on EST-5476, 2026-11-09): ReadStream folds a
+	// td-stream row's category with stream.CanonicalCategory before
+	// reconcile.Merge. It calls the function; it never reads the field.
+	"internal/tddedupe/read.go": "epic 110 D2",
+}
+
+// canonicalFieldSelectors is canonicalSelectors minus calls of the package
+// function `stream.CanonicalCategory(...)`: what a sanctioned consumer may
+// still not do is read or write the Finding field.
+func canonicalFieldSelectors(t *testing.T, fset *token.FileSet, path string, src any) []string {
+	t.Helper()
+	file, err := parser.ParseFile(fset, path, src, 0)
+	require.NoError(t, err)
+	calls := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "stream" {
+					calls[sel] = true
+				}
+			}
+		}
+		return true
+	})
+	var hits []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "CanonicalCategory" && !calls[sel] {
+			hits = append(hits, fset.Position(sel.Pos()).String())
+		}
+		return true
+	})
+	return hits
+}
+
 // AC4: the canonical field has zero non-test consumers in this epic. Stated as
-// a property, not a census, so it cannot drift.
+// a property, not a census, so it cannot drift. Only the files in
+// sanctionedCanonicalConsumers are exempt.
 func TestCanonicalCategory_ZeroNonTestConsumers(t *testing.T) {
 	root := moduleRoot(t)
 	fset := token.NewFileSet()
@@ -277,6 +316,14 @@ func TestCanonicalCategory_ZeroNonTestConsumers(t *testing.T) {
 			return nil
 		}
 		scanned++
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if _, ok := sanctionedCanonicalConsumers[filepath.ToSlash(rel)]; ok {
+			hits = append(hits, canonicalFieldSelectors(t, fset, path, nil)...)
+			return nil
+		}
 		hits = append(hits, canonicalSelectors(t, fset, path, nil)...)
 		return nil
 	})
@@ -295,4 +342,9 @@ func d() string { return CanonicalCategory("x") }
 `
 	hits := canonicalSelectors(t, token.NewFileSet(), "p.go", src)
 	assert.Len(t, hits, 3)
+
+	// A sanctioned consumer is exempt for the call in b only: the field read in
+	// a and the field write in c still count.
+	fieldHits := canonicalFieldSelectors(t, token.NewFileSet(), "p.go", src)
+	assert.Len(t, fieldHits, 2)
 }
