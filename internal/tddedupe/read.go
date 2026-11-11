@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/reconcile/adapter"
 	"github.com/samestrin/atcr/internal/stream"
 	reconcile "github.com/samestrin/atcr/reconcile"
 )
@@ -82,26 +83,9 @@ func readVersioned(tag string, data []byte) ([]reconcile.Finding, int, string, e
 			skipped++
 			continue
 		}
-		out = append(out, finish(fromStream(sf), sf.Category, tag))
+		out = append(out, finish(adapter.ToFinding(sf), sf.Category, tag))
 	}
 	return out, skipped, "", nil
-}
-
-// fromStream copies a per-source stream finding's wire fields. It is the same
-// map as adapter.ToFinding, kept here so this package does not import
-// internal/reconcile.
-func fromStream(f stream.Finding) reconcile.Finding {
-	return reconcile.Finding{
-		Severity:   f.Severity,
-		File:       f.File,
-		Line:       f.Line,
-		Problem:    f.Problem,
-		Fix:        f.Fix,
-		Category:   f.Category,
-		EstMinutes: f.EstMinutes,
-		Evidence:   f.Evidence,
-		Reviewer:   f.Reviewer,
-	}
 }
 
 // finish canonicalizes the category and fills an empty reviewer with the tag.
