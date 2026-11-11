@@ -230,3 +230,41 @@ func TestReadStreamEmpty(t *testing.T) {
 		t.Fatalf("got %+v skipped=%d warn=%q", got, skipped, warn)
 	}
 }
+
+// By name, a row shorter than 5 columns or with no severity is skipped, as it
+// is by width.
+func TestReadStreamByNameSkipsShortAndNoSeverity(t *testing.T) {
+	data := "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY\n" +
+		"HIGH|a.go:1\n" +
+		"|a.go:2|p|f|c\n" +
+		"HIGH|a.go:3|p|f|c\n"
+	got, skipped, _ := mustRead(t, "n", data)
+	if skipped != 2 || len(got) != 1 || got[0].Line != 3 {
+		t.Fatalf("skipped=%d findings=%+v, want 2 skipped and the a.go:3 row", skipped, got)
+	}
+}
+
+// The canonical `# Format:` line names EVIDENCE; by name it lands in Evidence.
+func TestReadStreamByNameEvidence(t *testing.T) {
+	data := "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER\n" +
+		"LOW|a.go:1|p|f|style|2|the evidence|ann\n"
+	got, _, _ := mustRead(t, "n", data)
+	wantFindings(t, got, []reconcile.Finding{
+		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "style", EstMinutes: 2, Evidence: "the evidence", Reviewer: "ann"},
+	})
+}
+
+// A bare trailing colon drops the colon; a non-numeric suffix keeps the whole
+// column as the file. Both give line 0, by width and by name.
+func TestReadStreamFileLineEdges(t *testing.T) {
+	rows := "HIGH|a.go:|p|f|c\nHIGH|C:/x/a.go:12x|p|f|c\n"
+	for name, data := range map[string]string{
+		"width": rows,
+		"name":  "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY\n" + rows,
+	} {
+		got, _, _ := mustRead(t, "e", data)
+		if len(got) != 2 || got[0].File != "a.go" || got[0].Line != 0 || got[1].File != "C:/x/a.go:12x" || got[1].Line != 0 {
+			t.Fatalf("%s: got %+v, want a.go:0 and C:/x/a.go:12x:0", name, got)
+		}
+	}
+}
