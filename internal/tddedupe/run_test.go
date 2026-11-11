@@ -53,7 +53,7 @@ func TestRunTwoReviewersOnOneLineGiveOneHighRowNeedingReview(t *testing.T) {
 	if !reflect.DeepEqual(r.Members, want) {
 		t.Fatalf("members:\n got  %+v\n want %+v", r.Members, want)
 	}
-	if res.Summary != (Summary{InputRows: 2, Sources: 2, Clusters: 1, MergedRows: 1, NeedsReviewCount: 1}) {
+	if !reflect.DeepEqual(res.Summary, Summary{InputRows: 2, Sources: 2, Clusters: 1, MergedRows: 1, NeedsReviewCount: 1}) {
 		t.Fatalf("summary = %+v", res.Summary)
 	}
 }
