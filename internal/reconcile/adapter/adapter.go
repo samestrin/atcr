@@ -5,7 +5,8 @@
 // fields are stamped back onto the reconciled wire record — keeping that
 // ATCR-specific machinery out of the stdlib-only public library.
 //
-// Boundary note: this package has zero non-test callers today. RunReconcile
+// Boundary note: its one non-test caller is internal/tddedupe (epic 110), which
+// converts td-stream rows; the reconcile pipeline does not use it. RunReconcile
 // (gate.go) reaches lib.go's Reconcile wrapper, which inlines the
 // stream.Finding→Finding field map because adapter imports internal/reconcile,
 // creating an import cycle that prevents the reverse import. Epic 8.0
@@ -13,9 +14,8 @@
 // Phase-3 step: routing through adapter.ToFinding instead would require moving
 // JSONFinding/Verification out of internal/reconcile, which stays out of scope
 // by design (see .planning/technical-debt/README.md for the tracked, still-open
-// structural fix). The absence of live callers does not mean this package is
-// unused or safe to delete — it is the intended boundary, just not reachable
-// from lib.go's inline copy under the current package layout.
+// structural fix). It is the intended boundary, just not reachable from
+// lib.go's inline copy under the current package layout.
 package adapter
 
 import (
