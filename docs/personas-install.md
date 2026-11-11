@@ -12,7 +12,7 @@ Installed community personas are written to your per-user config directory:
 ~/.config/atcr/personas/
 ```
 
-(More precisely, `os.UserConfigDir()/atcr/personas` — `~/.config/atcr/personas/` on Linux, `~/Library/Application Support/atcr/personas/` on macOS.)
+(More precisely, the directory beside the user registry: `~/.config/atcr/personas/` on every OS, macOS included. It is derived from the registry path, not `os.UserConfigDir()`, so an installed persona always lands on the resolver's search chain.)
 
 A persona installed here is picked up by the reviewer panel on your **next review** — no restart or re-init step is needed. Built-in personas are always available regardless of this directory.
 
