@@ -1843,6 +1843,9 @@ func markdownFences(md string) []mdFence {
 	return out
 }
 
+// withoutDebtTableRows returns md unchanged (stub).
+func withoutDebtTableRows(md string) string { return md }
+
 // envVarRef matches an atcr-owned environment variable name in prose or code.
 var envVarRef = regexp.MustCompile(`\bATCR_[A-Z0-9_]*[A-Z0-9]\b`)
 
@@ -1926,6 +1929,49 @@ func TestUndocumentedEnvVarsCatchesAFakeName(t *testing.T) {
 	fake := "ATCR_" + "NO_SUCH_KNOB"
 	errs := undocumentedEnvVars("docs/x.md", "set `ATCR_TELEMETRY=0`\nor `"+fake+"=1`\n", known)
 	require.Equal(t, []string{"docs/x.md:2 names environment variable " + fake + ", but atcr never reads or sets it"}, errs)
+
+	// A technical-debt row records what is wrong, so it may name a variable
+	// atcr lacks; prose on the same page still may not.
+	page := debtTableHeader + "| G | [ ] | LOW | a.go:1 | the comment says `" + fake + "=1` | rename it | docs | 5 | paperclip-builder | 0 |\n" +
+		"\nThen set `" + fake + "=1`.\n"
+	require.Equal(t, []string{"docs/x.md:5 names environment variable " + fake + ", but atcr never reads or sets it"},
+		undocumentedEnvVars("docs/x.md", page, known))
+}
+
+// debtTableHeader is the technical-debt table layout the company rules fix,
+// header and separator, as the test pages below write it.
+const debtTableHeader = "| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+	"|---|---|---|---|---|---|---|---|---|---|\n"
+
+// TestDebtTableRowsAreNotDocsClaims is the known-good half of the command,
+// flag and config-key guards: a technical-debt row quotes the wrong command,
+// flag or key it records, and is not reported, while the same names in prose
+// or in a config block on that page still are.
+func TestDebtTableRowsAreNotDocsClaims(t *testing.T) {
+	cmds, groups := canonicalCommands(), commandGroups()
+	page := debtTableHeader +
+		"| G | [ ] | LOW | docs/x.md:3 | names `atcr frobnicate` and `atcr debt list --no-such-flag` | drop them | docs | 5 | paperclip-builder | 0 |\n" +
+		"\nRun `atcr frobnicate`.\n"
+	var errs []string
+	for _, tokens := range atcrInvocations(withoutDebtTableRows(page), cmds) {
+		errs = append(errs, validateInvocationTokens(tokens, "docs/x.md", cmds, groups)...)
+	}
+	require.Equal(t, []string{"docs/x.md references `atcr frobnicate` but \"frobnicate\" is not a real command"}, errs)
+
+	s := loadConfigSchema()
+	page = debtTableHeader +
+		"| G | [ ] | LOW | docs/x.md:1 | the block names `providers.<name>.no_such_key` | drop it | docs | 5 | paperclip-builder | 0 |\n" +
+		"\n```yaml\nproviders:\n  my-llm:\n    no_such_key: 1\n```\n"
+	require.Equal(t, []string{`docs/x.md:4: config block names key "providers.<name>.no_such_key", which no atcr config file has`},
+		configBlockErrors("docs/x.md", page, s))
+
+	// Only a table with the debt layout is exempt: an ordinary doc table that
+	// names a command atcr lacks is still a claim.
+	errs = nil
+	for _, tokens := range atcrInvocations(withoutDebtTableRows("| Command | Use |\n|---|---|\n| `atcr frobnicate` | x |\n"), cmds) {
+		errs = append(errs, validateInvocationTokens(tokens, "docs/x.md", cmds, groups)...)
+	}
+	require.Len(t, errs, 1)
 }
 
 // configSchema is the set of documented-config key paths the binary accepts:
