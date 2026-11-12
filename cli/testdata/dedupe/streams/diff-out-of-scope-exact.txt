@@ -1,0 +1,1 @@
+HIGH|p5.go:1|Out of reach|Note it|out-of-scope|5|e|bruce

@@ -1,0 +1,70 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "p1.go:1",
+      "problem": "Slow",
+      "fix": "Add index",
+      "category": "performance",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "p2.go:1",
+      "problem": "No comment",
+      "fix": "Add one",
+      "category": "docs",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "p3.go:1",
+      "problem": "No test",
+      "fix": "Add one",
+      "category": "testing",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "p4.go:1",
+      "problem": "Some problem",
+      "fix": "Some fix",
+      "category": "cross-cutting",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 4,
+    "sources": 4,
+    "clusters": 4,
+    "merged_rows": 4,
+    "needs_review_count": 0,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+HIGH|auth.go:45|Missing validation|Add zod schema|security|15|user input unsanitized|bruce
+LOW|util.go:10|Unused var|Remove it|maintainability|5|x unused|greta

@@ -1,0 +1,1 @@
+HIGH|impl|correctness|auth.go:45|Missing validation|Add zod|security|15|ev|code-review

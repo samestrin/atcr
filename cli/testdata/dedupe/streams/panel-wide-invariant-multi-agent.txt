@@ -1,0 +1,1 @@
+HIGH|handler.go:47|Assumes user is set|Add a nil check|invariant|5|handler assumes request user is set|kai

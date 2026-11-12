@@ -1,0 +1,3 @@
+# TD_STREAM
+# Format: SEVERITY|FILE_LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|SOURCE|BLOCKING
+HIGH|auth.go:45|Missing validation|Add a zod schema|security|15|post-review|no

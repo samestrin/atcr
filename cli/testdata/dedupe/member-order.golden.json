@@ -1,0 +1,49 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "auth.go:45",
+      "problem": "earlier // later",
+      "fix": "fix early // fix late",
+      "category": "security",
+      "est_minutes": 5,
+      "source": "b",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "auth.go:45",
+          "problem": "earlier",
+          "fix": "fix early",
+          "category": "security",
+          "est_minutes": 5
+        },
+        {
+          "reviewer": "kai",
+          "severity": "HIGH",
+          "file_line": "auth.go:47",
+          "problem": "later",
+          "fix": "fix late",
+          "category": "security",
+          "est_minutes": 5
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "input_rows": 2,
+    "sources": 2,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 1,
+    "skipped": 0,
+    "warnings": [
+      "stream \"a\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"b\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "auth.go:45",
+      "problem": "Missing validation // Something else here",
+      "fix": "Add zod schema",
+      "category": "security",
+      "est_minutes": 0,
+      "source": "a",
+      "reviewers": "a,b",
+      "confidence": "HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "a",
+          "severity": "HIGH",
+          "file_line": "auth.go:45",
+          "problem": "Missing validation",
+          "fix": "Add zod schema",
+          "category": "security",
+          "est_minutes": 0
+        },
+        {
+          "reviewer": "b",
+          "severity": "HIGH",
+          "file_line": "auth.go:46",
+          "problem": "Something else here",
+          "fix": "",
+          "category": "security",
+          "est_minutes": 0
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "input_rows": 2,
+    "sources": 2,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 1,
+    "skipped": 0,
+    "warnings": [
+      "stream \"a\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"b\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

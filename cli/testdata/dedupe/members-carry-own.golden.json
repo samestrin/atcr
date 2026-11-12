@@ -1,0 +1,50 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "auth.go:45",
+      "problem": "Missing validation // No input validation on userId",
+      "fix": "Add zod schema // Validate userId before query",
+      "category": "security",
+      "est_minutes": 20,
+      "source": "claude",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "disagreement": "MEDIUM vs HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "auth.go:45",
+          "problem": "Missing validation",
+          "fix": "Add zod schema",
+          "category": "security",
+          "est_minutes": 15
+        },
+        {
+          "reviewer": "kai",
+          "severity": "MEDIUM",
+          "file_line": "auth.go:47",
+          "problem": "No input validation on userId",
+          "fix": "Validate userId before query",
+          "category": "security",
+          "est_minutes": 20
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "input_rows": 2,
+    "sources": 2,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 1,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"multi-agent\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

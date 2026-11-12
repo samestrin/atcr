@@ -1,0 +1,25 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "auth.go:45",
+      "problem": "Missing validation",
+      "fix": "Add a zod schema",
+      "category": "security",
+      "est_minutes": 15,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 1,
+    "sources": 1,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 0,
+    "skipped": 0
+  }
+}

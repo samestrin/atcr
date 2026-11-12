@@ -1,0 +1,1 @@
+HIGH|db.go:11|Slow scan|Add index|ERROR_HANDLING|10|e|kai

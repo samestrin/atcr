@@ -1,0 +1,4 @@
+
+# TD_STREAM - Technical Debt Items
+# Format: SEVERITY|ORIGIN|RISK_CLASS|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+MEDIUM|sprint|anticipated_missed|app/src/components/GridDimensionControl.tsx:38|Input type mismatch|Use parseFloat|correctness|15|line 38

@@ -1,0 +1,2 @@
+MEDIUM|auth.go:47|No input validation on userId|Validate userId before query|security|20|userId to query|kai
+HIGH|db.go:88|N+1 query in loop|Batch the lookups|performance|30|loop query|mira

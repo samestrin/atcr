@@ -1,0 +1,76 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "auth.go:45",
+      "problem": "Missing validation // No input validation on userId",
+      "fix": "Add zod schema // Validate userId before query",
+      "category": "security",
+      "est_minutes": 20,
+      "source": "claude",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "disagreement": "MEDIUM vs HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "auth.go:45",
+          "problem": "Missing validation",
+          "fix": "Add zod schema",
+          "category": "security",
+          "est_minutes": 15
+        },
+        {
+          "reviewer": "kai",
+          "severity": "MEDIUM",
+          "file_line": "auth.go:47",
+          "problem": "No input validation on userId",
+          "fix": "Validate userId before query",
+          "category": "security",
+          "est_minutes": 20
+        }
+      ]
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "db.go:88",
+      "problem": "N+1 query in loop",
+      "fix": "Batch the lookups",
+      "category": "performance",
+      "est_minutes": 30,
+      "source": "multi-agent",
+      "reviewers": "mira",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    },
+    {
+      "severity": "LOW",
+      "file_line": "util.go:10",
+      "problem": "Unused var",
+      "fix": "Remove it",
+      "category": "maintainability",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "greta",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 4,
+    "sources": 2,
+    "clusters": 3,
+    "merged_rows": 3,
+    "needs_review_count": 1,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"multi-agent\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+HIGH|auth.go:45|Missing validation|Add a zod schema|security|15|e|bruce

@@ -1,0 +1,15 @@
+{
+  "merged": [],
+  "summary": {
+    "input_rows": 0,
+    "sources": 2,
+    "clusters": 0,
+    "merged_rows": 0,
+    "needs_review_count": 0,
+    "skipped": 0,
+    "warnings": [
+      "stream \"a\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"b\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}
