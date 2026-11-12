@@ -1,0 +1,3 @@
+- `docs/registry.md`: the SAST pre-filter section now names the range-less modes that actually skip it — `--all`/`--scope` baseline scans and `atcr benchmark run` diff ingestion — instead of a `--diff-file` flag that no command has, and baseline-scan guidance uses the canonical `--scope` rather than the deprecated `--dir` alias. (epic 111)
+- `docs/personas-install.md`: the community-personas directory is documented as `~/.config/atcr/personas/` on every OS, macOS included (it is derived from the registry path, not `os.UserConfigDir()`). (epic 111)
+- `docs/code-review-backend.md`: the output-tree comment names a multi-chunk `--all / --scope` run, matching the canonical flag. (epic 111)

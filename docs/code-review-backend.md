@@ -56,7 +56,7 @@ ${OUT_DIR}/
   sources/
     pool/
       raw/agent/<agent>/         # per-agent review.md, findings.txt, findings.toon, status.json
-                                 #   plus chunks.json on a multi-chunk --all / --dir run
+                                 #   plus chunks.json on a multi-chunk --all / --scope run
                                  #   (read back for the summary's coverage line and --require-coverage)
       findings.txt               # merged pool stream — 8 columns, REVIEWER per row
       findings.toon              # the same findings, lossless v2 (atcr-findings/v2)
