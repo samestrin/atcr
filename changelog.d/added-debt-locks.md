@@ -1,1 +1,0 @@
-- `atcr debt locks` lists every item lock on the store repository's remote and flags a lock older than 12 hours (`--older-than` changes the age) or on an item that is resolved. It only reads: it checks no holder and never frees a lock. (epic 93)

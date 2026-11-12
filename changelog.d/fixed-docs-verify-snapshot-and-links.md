@@ -1,3 +1,0 @@
-- `docs/verification.md` no longer names a `--diff-file` review mode that atcr does not have: the skeptics have no snapshot to read when a baseline scan runs on a tree with uncommitted changes, or when the review directory was written before baseline scans recorded HEAD. (epic 111)
-- Two documentation links now open the section they name: the grounding gate in `docs/payload-modes.md`, and language scope and skeptic routing in `docs/personas-authoring.md`. (epic 111)
-- `docs/technical-debt.md`'s retired-flag table names `--store` as the replacement for `--items`/`--readme`, instead of the deprecated hidden alias `--dir`. (epic 111)

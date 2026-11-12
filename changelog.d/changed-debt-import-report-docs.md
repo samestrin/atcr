@@ -1,1 +1,0 @@
-- `docs/technical-debt.md` documents `atcr debt import` and `atcr debt report`: how a README row's marker becomes a status, why a second import writes nothing, what merged and rejected rows mean, and how the report groups items by README section. (epic 95)
