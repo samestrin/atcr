@@ -2513,7 +2513,9 @@ func fullCoverageRunResult(t *testing.T, suitePath string) string {
 
 // copyChangelogModule gives the release-process example a module of its own
 // holding cmd/changelog, its one internal import, and the repo's changelog, so
-// assembling a release writes there and never to this checkout.
+// assembling a release writes there and never to this checkout. It adds one
+// fragment of its own, since right after a release the repo's changelog.d holds
+// only its README and assemble refuses to run with no fragments.
 func copyChangelogModule(t *testing.T, w exampleWorkspace) {
 	t.Helper()
 	root := repoRootDir(t)
@@ -2534,6 +2536,8 @@ func copyChangelogModule(t *testing.T, w exampleWorkspace) {
 			writeFile(t, filepath.Join(w.repo, dir, e.Name()), string(b))
 		}
 	}
+	writeFile(t, filepath.Join(w.repo, "changelog.d", "added-docs-example-fragment.md"),
+		"- A fragment the release-process example assembles. (docs audit)\n")
 }
 
 // copyWorkspace copies the fixture for one example; cp -a keeps the symlinks
