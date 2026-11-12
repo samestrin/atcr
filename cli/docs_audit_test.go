@@ -13,22 +13,37 @@ package cli
 // mentions the fictional "atcr.yaml" or "Reconciler v2" will fail CI.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/telemetry"
+	"github.com/samestrin/atcr/internal/telemetrytest"
 	"github.com/samestrin/atcr/internal/verify"
 	reclib "github.com/samestrin/atcr/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // repoRootDir ascends from the test working directory (the package dir,
@@ -52,16 +67,25 @@ func repoRootDir(t *testing.T) string {
 }
 
 // auditedMarkdown returns the set of markdown files this epic owns as the
-// documentation source of truth: every docs/*.md plus the root README.md.
-// testdata fixtures and READMEs elsewhere in the tree are intentionally out of
-// scope (epic 15.0 clarifications).
+// documentation source of truth: every .md under docs/ (decision records in
+// docs/decisions/ included, epic 111) plus the root README.md. testdata
+// fixtures and READMEs elsewhere in the tree are intentionally out of scope
+// (epic 15.0 clarifications). CHANGELOG.md is out of scope too: it is a
+// historical record, and an entry that says a flag was removed must keep
+// naming it.
 func auditedMarkdown(t *testing.T) map[string]string {
 	t.Helper()
 	root := repoRootDir(t)
 	out := map[string]string{}
-	docs, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	var docs []string
+	err := filepath.WalkDir(filepath.Join(root, "docs"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".md") {
+			docs = append(docs, p)
+		}
+		return err
+	})
 	if err != nil {
-		t.Fatalf("glob docs: %v", err)
+		t.Fatalf("walk docs: %v", err)
 	}
 	paths := append(docs, filepath.Join(root, "README.md"))
 	for _, p := range paths {
@@ -399,7 +423,7 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
 	for path, content := range auditedMarkdown(t) {
-		for _, tokens := range atcrInvocations(content, cmds) {
+		for _, tokens := range atcrInvocations(withoutDebtTableRows(content), cmds) {
 			for _, err := range validateInvocationTokens(tokens, path, cmds, groups) {
 				t.Errorf("%s", err)
 			}
@@ -1777,4 +1801,933 @@ func TestDocsShowLeaderboardExportOnlyAsDeprecatedAlias(t *testing.T) {
 		}
 	}
 	walk(NewRootCmd())
+}
+
+// mdFence is one fenced code block of a markdown page: its info-string
+// language, the 1-based line of the opening fence, and its body with the
+// fence's own indentation removed (a fence nested in a list item is indented).
+type mdFence struct {
+	lang string
+	line int
+	body string
+}
+
+// markdownFences returns every ``` or ~~~ fenced block in md, in order. A fence
+// closes only on a line holding the same marker, so a ~~~ block may quote ```.
+func markdownFences(md string) []mdFence {
+	var out []mdFence
+	var cur *mdFence
+	var marker, indent string
+	var body []string
+	for i, ln := range strings.Split(md, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if cur != nil {
+			if trimmed == marker {
+				cur.body = strings.Join(body, "\n")
+				out = append(out, *cur)
+				cur, body = nil, nil
+				continue
+			}
+			body = append(body, strings.TrimPrefix(ln, indent))
+			continue
+		}
+		for _, m := range []string{"```", "~~~"} {
+			if strings.HasPrefix(trimmed, m) {
+				marker = m
+				indent = ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
+				cur = &mdFence{lang: strings.TrimSpace(strings.TrimPrefix(trimmed, m)), line: i + 1}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// debtTableHeaderCells are the cells that mark a markdown table as a
+// technical-debt list (the layout `atcr debt report` writes and the company
+// rules fix: Group, Severity, File, Problem, Fix, ...).
+var debtTableHeaderCells = []string{"Severity", "File", "Problem", "Fix"}
+
+// withoutDebtTableRows blanks every line of a technical-debt table in md,
+// keeping the line count so reported line numbers still point at the page. A
+// debt row records what is wrong, so it quotes the command, flag, key or
+// variable the binary lacks on purpose: it is known-good input, like a
+// CHANGELOG entry naming a removed flag. Only a table whose header carries the
+// debt layout is exempt; every other doc table is still a claim.
+func withoutDebtTableRows(md string) string {
+	lines := strings.Split(md, "\n")
+	inDebt := false
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if !strings.HasPrefix(trimmed, "|") {
+			inDebt = false
+			continue
+		}
+		if !inDebt {
+			cells := map[string]bool{}
+			for _, c := range strings.Split(trimmed, "|") {
+				cells[strings.TrimSpace(c)] = true
+			}
+			inDebt = true
+			for _, want := range debtTableHeaderCells {
+				if !cells[want] {
+					inDebt = false
+					break
+				}
+			}
+		}
+		if inDebt {
+			lines[i] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// envVarRef matches an atcr-owned environment variable name in prose or code.
+var envVarRef = regexp.MustCompile(`\bATCR_[A-Z0-9_]*[A-Z0-9]\b`)
+
+// knownEnvVars returns every ATCR_* name that appears inside a Go string
+// literal anywhere in the module, tests included. String literals rather than
+// os.Getenv calls, because atcr also HANDS variables to child processes
+// (ATCR_PREVIEW_URL is set for a Playwright spec, never read), and tests
+// included because docs name developer knobs that only a test reads
+// (ATCR_REPLAY, ATCR_REDTEAM_RUNS). Comments are excluded: a variable that
+// survives only in a comment is gone from the binary.
+func knownEnvVars(t *testing.T) map[string]bool {
+	t.Helper()
+	root := repoRootDir(t)
+	known := map[string]bool{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); n == ".git" || n == ".paperclip" || n == "node_modules" || n == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				for _, v := range envVarRef.FindAllString(lit.Value, -1) {
+					known[v] = true
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	require.NoError(t, err)
+	return known
+}
+
+// undocumentedEnvVars returns, for one page, each ATCR_* name it mentions that
+// the module never spells in a string literal.
+func undocumentedEnvVars(path, md string, known map[string]bool) []string {
+	var errs []string
+	seen := map[string]bool{}
+	for i, ln := range strings.Split(withoutDebtTableRows(md), "\n") {
+		for _, v := range envVarRef.FindAllString(ln, -1) {
+			if !known[v] && !seen[v] {
+				seen[v] = true
+				errs = append(errs, fmt.Sprintf("%s:%d names environment variable %s, but atcr never reads or sets it", path, i+1, v))
+			}
+		}
+	}
+	return errs
+}
+
+// TestDocsNameOnlyRealEnvVars (epic 111 T6) fails when a docs page or the
+// README names an ATCR_* environment variable that no Go source spells.
+func TestDocsNameOnlyRealEnvVars(t *testing.T) {
+	known := knownEnvVars(t)
+	require.True(t, known["ATCR_TELEMETRY"], "the env-var scan found no ATCR_TELEMETRY; the scan itself is broken")
+	for path, content := range auditedMarkdown(t) {
+		for _, e := range undocumentedEnvVars(path, content, known) {
+			t.Error(e)
+		}
+	}
+}
+
+// TestUndocumentedEnvVarsCatchesAFakeName is the deliberate break for the guard
+// above: a page naming a variable atcr lacks is reported, a real one is not.
+func TestUndocumentedEnvVarsCatchesAFakeName(t *testing.T) {
+	known := knownEnvVars(t)
+	// Built by concatenation: spelled whole, this literal would itself make the
+	// name "known" to the scan above.
+	fake := "ATCR_" + "NO_SUCH_KNOB"
+	errs := undocumentedEnvVars("docs/x.md", "set `ATCR_TELEMETRY=0`\nor `"+fake+"=1`\n", known)
+	require.Equal(t, []string{"docs/x.md:2 names environment variable " + fake + ", but atcr never reads or sets it"}, errs)
+
+	// A technical-debt row records what is wrong, so it may name a variable
+	// atcr lacks; prose on the same page still may not.
+	page := debtTableHeader + "| G | [ ] | LOW | a.go:1 | the comment says `" + fake + "=1` | rename it | docs | 5 | paperclip-builder | 0 |\n" +
+		"\nThen set `" + fake + "=1`.\n"
+	require.Equal(t, []string{"docs/x.md:5 names environment variable " + fake + ", but atcr never reads or sets it"},
+		undocumentedEnvVars("docs/x.md", page, known))
+}
+
+// debtTableHeader is the technical-debt table layout the company rules fix,
+// header and separator, as the test pages below write it.
+const debtTableHeader = "| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Attempts |\n" +
+	"|---|---|---|---|---|---|---|---|---|---|\n"
+
+// TestDebtTableRowsAreNotDocsClaims is the known-good half of the command,
+// flag and config-key guards: a technical-debt row quotes the wrong command,
+// flag or key it records, and is not reported, while the same names in prose
+// or in a config block on that page still are.
+func TestDebtTableRowsAreNotDocsClaims(t *testing.T) {
+	cmds, groups := canonicalCommands(), commandGroups()
+	page := debtTableHeader +
+		"| G | [ ] | LOW | docs/x.md:3 | names `atcr frobnicate` and `atcr debt list --no-such-flag` | drop them | docs | 5 | paperclip-builder | 0 |\n" +
+		"\nRun `atcr frobnicate`.\n"
+	var errs []string
+	for _, tokens := range atcrInvocations(withoutDebtTableRows(page), cmds) {
+		errs = append(errs, validateInvocationTokens(tokens, "docs/x.md", cmds, groups)...)
+	}
+	require.Equal(t, []string{"docs/x.md references `atcr frobnicate` but \"frobnicate\" is not a real command"}, errs)
+
+	s := loadConfigSchema()
+	page = debtTableHeader +
+		"| G | [ ] | LOW | docs/x.md:1 | the block names `providers.<name>.no_such_key` | drop it | docs | 5 | paperclip-builder | 0 |\n" +
+		"\n```yaml\nproviders:\n  my-llm:\n    no_such_key: 1\n```\n"
+	require.Equal(t, []string{`docs/x.md:5: config block names key "providers.<name>.no_such_key", which no atcr config file has`},
+		configBlockErrors("docs/x.md", page, s))
+
+	// Only a table with the debt layout is exempt: an ordinary doc table that
+	// names a command atcr lacks is still a claim.
+	errs = nil
+	for _, tokens := range atcrInvocations(withoutDebtTableRows("| Command | Use |\n|---|---|\n| `atcr frobnicate` | x |\n"), cmds) {
+		errs = append(errs, validateInvocationTokens(tokens, "docs/x.md", cmds, groups)...)
+	}
+	require.Len(t, errs, 1)
+}
+
+// configSchema is the set of documented-config key paths the binary accepts:
+// the user registry, the project config and the project registry overlay, as
+// collectConfigKeys renders them (`<name>` for a user-chosen map key). freeform
+// holds the paths whose value is a map of scalars or an untyped value, under
+// which any key is accepted.
+type configSchema struct {
+	paths    map[string]bool
+	freeform map[string]bool
+	top      map[string]bool
+}
+
+func loadConfigSchema() configSchema {
+	s := configSchema{paths: map[string]bool{}, freeform: map[string]bool{}, top: map[string]bool{}}
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(registry.Registry{}),
+		reflect.TypeOf(registry.ProjectConfig{}),
+		reflect.TypeOf(registry.ProjectRegistry{}),
+	} {
+		keys := map[string]string{}
+		collectConfigKeys(typ, "", keys)
+		for k, typ := range keys {
+			s.paths[k] = true
+			if !strings.Contains(k, ".") {
+				s.top[k] = true
+			}
+			typ = strings.SplitN(typ, ",", 2)[0]
+			if strings.HasPrefix(typ, "map[") && !strings.Contains(typ, "registry.") {
+				s.freeform[k] = true
+			}
+			if typ == "interface {}" || typ == "yaml.Node" || typ == "*yaml.Node" {
+				s.freeform[k] = true
+			}
+		}
+	}
+	return s
+}
+
+// has reports whether path is a key, or the parent of a key, in the schema.
+func (s configSchema) has(path string) bool {
+	if s.paths[path] {
+		return true
+	}
+	for k := range s.paths {
+		if strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// unknownKeys walks a YAML node and returns each mapping key path the schema
+// does not have. A key unknown at its own name may still be a user-chosen map
+// key, so `<name>` is tried before the key is reported.
+func (s configSchema) unknownKeys(n *yaml.Node, prefix string) []string {
+	var out []string
+	switch n.Kind {
+	case yaml.DocumentNode, yaml.SequenceNode:
+		for _, c := range n.Content {
+			out = append(out, s.unknownKeys(c, prefix)...)
+		}
+	case yaml.MappingNode:
+		parent := strings.TrimSuffix(prefix, ".")
+		if parent != "" && s.freeform[parent] {
+			return nil
+		}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i].Value
+			switch {
+			case s.has(prefix + k):
+				out = append(out, s.unknownKeys(n.Content[i+1], prefix+k+".")...)
+			case s.has(prefix + "<name>"):
+				out = append(out, s.unknownKeys(n.Content[i+1], prefix+"<name>.")...)
+			default:
+				out = append(out, prefix+k)
+			}
+		}
+	}
+	return out
+}
+
+// configBlockErrors checks every YAML fence on a page that is an atcr config
+// block: one whose top-level keys include an atcr config key. Other YAML on the
+// page (a GitHub workflow, an ignore.yaml, a LiteLLM config) has none and is
+// left alone. A config block must parse, and every key in it must exist.
+func configBlockErrors(path, md string, s configSchema) []string {
+	var errs []string
+	for _, f := range markdownFences(md) {
+		if f.lang != "yaml" && f.lang != "yml" {
+			continue
+		}
+		var probe map[string]any
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(f.body), &doc); err != nil || yaml.Unmarshal([]byte(f.body), &probe) != nil {
+			for _, ln := range strings.Split(f.body, "\n") {
+				if k, _, ok := strings.Cut(ln, ":"); ok && s.top[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d: atcr config block does not parse as YAML: %v", path, f.line, err))
+					break
+				}
+			}
+			continue
+		}
+		isConfig := false
+		for k := range probe {
+			if s.top[k] {
+				isConfig = true
+			}
+		}
+		if !isConfig {
+			continue
+		}
+		for _, k := range s.unknownKeys(&doc, "") {
+			errs = append(errs, fmt.Sprintf("%s:%d: config block names key %q, which no atcr config file has", path, f.line, k))
+		}
+	}
+	return errs
+}
+
+// TestDocsConfigBlocksNameOnlyRealKeys (epic 111 T6) fails when a docs page or
+// the README shows a registry.yaml or .atcr/config.yaml block with a key the
+// binary's config schema lacks.
+func TestDocsConfigBlocksNameOnlyRealKeys(t *testing.T) {
+	s := loadConfigSchema()
+	for path, content := range auditedMarkdown(t) {
+		for _, e := range configBlockErrors(path, content, s) {
+			t.Error(e)
+		}
+	}
+}
+
+// TestConfigBlockErrorsCatchesAFakeKey is the deliberate break for the guard
+// above: an unknown nested key and an unknown top-level key beside a real one
+// are reported; user-chosen map keys and non-atcr YAML are not.
+func TestConfigBlockErrorsCatchesAFakeKey(t *testing.T) {
+	s := loadConfigSchema()
+	md := "```yaml\nproviders:\n  my-llm:\n    base_url: http://x\n    no_such_key: 1\nfail_on: high\nbogus_top: 1\n```\n\n" +
+		"```yaml\non: push\njobs:\n  x:\n    runs-on: ubuntu\n```\n"
+	require.Equal(t, []string{
+		`docs/x.md:1: config block names key "providers.<name>.no_such_key", which no atcr config file has`,
+		`docs/x.md:1: config block names key "bogus_top", which no atcr config file has`,
+	}, configBlockErrors("docs/x.md", md, s))
+}
+
+// --- Documented examples (epic 111 T6) --------------------------------------
+//
+// The examples docs-audit/inventory.md classifies hermetic run here, each in a
+// fresh copy of one fixture workspace: a git repository with a bare `origin`, an
+// `atcr init --offline` roster, a reconciled review with two findings, the debt
+// store and scorecard records that reconcile writes, and the files individual
+// examples name. Each fence runs as one bash script under `set -eo pipefail`, so
+// any command that exits non-zero fails the example and names the command.
+//
+// `atcr` inside an example is this test binary: the shim on PATH re-executes it
+// with docsExampleAsAtcrEnv set, and init() below hands that process straight to
+// Main, so an example runs the same command tree the static guards read, with no
+// separate build. The child keeps the telemetry transport guard and the consent
+// env pinned off, as every test in this package does.
+
+// docsExampleAsAtcrEnv turns the test binary into the atcr CLI (see init).
+const docsExampleAsAtcrEnv = "ATCR_DOCS_EXAMPLE_AS_ATCR"
+
+// docsExampleEscapeExit is the exit code a child uses when a telemetry send
+// escaped the test-host allowlist, so the example fails rather than phoning home.
+const docsExampleEscapeExit = 97
+
+func init() {
+	if os.Getenv(docsExampleAsAtcrEnv) != "1" {
+		return
+	}
+	telemetry.SetDoRequestForTest(telemetrytest.GuardHosts)
+	code := Main(context.Background(), os.Stdout, os.Stderr)
+	if escapes := telemetrytest.Escapes(); len(escapes) > 0 {
+		fmt.Fprintf(os.Stderr, "docs example: telemetry send escaped the test-host allowlist: %v\n", escapes)
+		code = docsExampleEscapeExit
+	}
+	os.Exit(code)
+}
+
+// docExample names one documented fence and how to run it. A fence is found by
+// anchor, a substring that must occur in exactly one fence on the page, so a
+// line-number drift does not lose it and an edit that removes it fails loudly.
+type docExample struct {
+	page   string
+	anchor string
+	// then lists anchors of later fences on the same page that continue the
+	// same procedure; they run in order in the same workspace.
+	then []string
+	// subst replaces documentation placeholders with fixture values, in order.
+	// Values may use {{id}}, {{finding}}, {{run}}, {{ws}} and {{cloud}}.
+	subst []string
+	// setup prepares the workspace beyond the shared fixture.
+	setup func(t *testing.T, w exampleWorkspace)
+	// skip is why the fence cannot run without a provider, network or an
+	// external tool. A skip is reported as SKIP, never as a pass.
+	skip string
+	// ownFixture builds the fixture in place instead of copying it. A
+	// scorecard run id hashes the review directory's absolute path
+	// (scorecard.RunIDForReviewDir), so a copy cannot look its records up by
+	// path.
+	ownFixture bool
+}
+
+// exampleWorkspace is one example's copy of the fixture.
+type exampleWorkspace struct {
+	dir  string // holds home/, repo/, origin.git/ and tmp/
+	repo string
+	home string
+	env  []string // exampleEnv for this workspace
+}
+
+// documentedExamples is every fence docs-audit/inventory.md classifies hermetic.
+var documentedExamples = []docExample{
+	{page: "docs/agentic-consumption.md", anchor: "atcr diff-smell --staged --json > smell.json"},
+	{page: "docs/agentic-consumption.md", anchor: "ATCR_AXI_MAX_LINES=5000 atcr report --format axi"},
+	{page: "docs/agentic-consumption.md", anchor: "atcr report --format axi > findings.toon 2> report.log"},
+	{page: "docs/auto-fix.md", anchor: `GOMODCACHE="$(go env GOMODCACHE)"`,
+		subst: []string{"/path/to/repo", "{{ws}}/gomod", "<atcr cache path>", "{{ws}}/tmp/atcr-modcache"},
+		setup: func(t *testing.T, w exampleWorkspace) {
+			writeFile(t, filepath.Join(w.dir, "gomod", "go.mod"), "module example.test/x\n\ngo 1.21\n")
+		}},
+	{page: "docs/benchmark.md", anchor: "atcr benchmark verify --suite-path ./my-suite"},
+	{page: "docs/benchmark.md", anchor: "atcr benchmark export --in run.json\n",
+		subst: []string{"/tmp/", "{{ws}}/tmp/"}},
+	{page: "docs/diff-smell.md", anchor: "atcr diff-smell                             # scan HEAD"},
+	{page: "docs/diff-smell.md", anchor: `echo "warning: atcr is too old for the diff-smell gate; skipping it" >&2`},
+	{page: "docs/diff-smell.md", anchor: "# .git/hooks/pre-commit"},
+	{page: "docs/history.md", anchor: "install -d -m 700 .atcr/history"},
+	{page: "docs/history.md", anchor: "atcr history                                   # last 90 days"},
+	{page: "docs/history.md", anchor: "atcr history --prune 365d"},
+	{page: "docs/payload-modes.md", anchor: "ATCR_REPLAY=1 ATCR_REPLAY_REF=main",
+		skip: "a developer measurement: it runs internal/payload's own opt-in test over the atcr checkout's `main` history, not an atcr command"},
+	{page: "docs/personas-install.md", anchor: "atcr personas list\n# NAME"},
+	{page: "docs/personas-install.md", anchor: "atcr personas list --scores\n"},
+	{page: "docs/personas-install.md", anchor: "atcr personas remove security/owasp\n# Removed",
+		setup: func(t *testing.T, w exampleWorkspace) {
+			writeFile(t, filepath.Join(w.home, ".config", "atcr", "personas", "security", "owasp.yaml"), cmdValidPersonaYAML)
+		}},
+	{page: "docs/personas-install.md", anchor: "atcr personas test delia\n# PASS"},
+	{page: "docs/registry.md", anchor: "atcr trust                 # list project providers"},
+	{page: "docs/release-process.md", anchor: "go run ./cmd/changelog assemble --version 0.6.0",
+		setup: copyChangelogModule},
+	{page: "docs/release-process.md", anchor: "golangci-lint run --timeout 5m --config ../.golangci.yml",
+		skip: "needs the external golangci-lint binary and reruns the reconcile module's whole race suite, which CI's reconcile job already runs"},
+	{page: "docs/scorecard.md", anchor: "# By run_id", ownFixture: true,
+		subst: []string{"2026-06-14T10:00:00Z-abc123", "{{run}}"}},
+	{page: "docs/scorecard.md", anchor: "# Default: last 30 days"},
+	{page: "docs/scorecard.md", anchor: "# Anonymized JSON to stdout",
+		subst: []string{"/tmp/", "{{ws}}/tmp/"}},
+	{page: "docs/scorecard.md", anchor: "atcr personas list --pairs"},
+	{page: "docs/scorecard.md", anchor: "atcr personas list --scores --detail bruce"},
+	{page: "docs/scorecard.md", anchor: "atcr reconcile --no-scorecard"},
+	{page: "docs/skill-usage.md", anchor: "atcr skill export                 # -> .claude/skills/atcr/"},
+	{page: "docs/skill-usage.md", anchor: "atcr skill export --dest ~/.someagent/skills/atcr"},
+	{page: "docs/skill-usage.md", anchor: "atcr debt resolve                        # preview open items",
+		subst: []string{"<id>", "{{id}}"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt convert --dry-run   # see what would move"},
+	{page: "docs/technical-debt.md", anchor: "git mv docs/technical-debt/README.md docs/technical-debt/README.import.md",
+		then: []string{
+			"atcr debt import docs/technical-debt/README.import.md --store docs/technical-debt/store --dry-run",
+			"atcr debt import docs/technical-debt/README.import.md --store docs/technical-debt/store\n",
+			"atcr debt report --format md --output docs/technical-debt/README.md --store docs/technical-debt/store",
+		}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt locks --json --store <store>",
+		subst: []string{"<store>", ".atcr/debt", "<your name>", "alice", "<README>", "docs/technical-debt/README.md", "<id>", "{{finding}}"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt list                                  # everything"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt add \\\n"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt import docs/technical-debt/README.md --dry-run"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt dashboard                                   # print the dashboard"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt report                                         # print the report"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt resolve                              # open items",
+		subst: []string{"<id>", "{{id}}"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt recluster <id> --kind wrong-merge",
+		subst: []string{"<finding-id>", "{{finding}}", "<id>", "{{id}}"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt compact --dry-run"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt convert --dry-run   # report what a real run would move"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt backfill-justifications --dry-run  # reports"},
+	{page: "docs/technical-debt.md", anchor: "$ atcr debt backfill-justifications --dry-run"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt sync-outcomes --td path/to/technical-debt/README.md",
+		subst: []string{"path/to/technical-debt/README.md", "docs/technical-debt/README.md"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt validate                          # ground every open row"},
+	{page: "docs/technical-debt.md", anchor: "atcr debt lock <id>...",
+		// Three alternative usages, not one sequence: lock and unlock one item,
+		// and lock the other under an explicit holder.
+		subst: []string{"lock <id>...", "lock {{finding}}", "unlock <id>...", "unlock {{finding}}", "<id> --holder", "{{id}} --holder"}},
+	{page: "docs/technical-debt.md", anchor: "atcr debt locks                      # table"},
+	{page: "docs/technical-debt.md", anchor: "atcr ignore 8421025ce7cde4d3",
+		subst: []string{"8421025ce7cde4d3", "{{id}}", "2026-10-20-abcdef", "abc123"}},
+	{page: "docs/technical-debt.md", anchor: "$ atcr debt add --severity HIGH --file internal/x/y.go:12"},
+	{page: "docs/technical-debt.md", anchor: "#!/usr/bin/env bash",
+		setup: func(t *testing.T, w exampleWorkspace) {
+			out, err := runDocExample(w.repo, w.env, "atcr debt dashboard --output docs/debt-report.md")
+			require.NoError(t, err, "%s", out)
+		}},
+	{page: "docs/telemetry.md", anchor: "atcr config set telemetry false   # disable"},
+	{page: "docs/telemetry.md", anchor: "export ATCR_API_KEY=<your-key>",
+		subst: []string{"<your-key>", "docs-example-key", "--sync-cloud ...", "--sync-cloud --cloud-endpoint {{cloud}}"}},
+	{page: "docs/telemetry.md", anchor: "atcr config set quality_signal true"},
+	{page: "docs/verification.md", anchor: "atcr diff-smell --staged --fail-on hard"},
+}
+
+// locateFence returns the single fence on md that contains anchor. When more
+// than one does, a fence whose whole body is the anchor wins.
+func locateFence(md, anchor string) (mdFence, error) {
+	var hits []mdFence
+	for _, f := range markdownFences(md) {
+		if strings.Contains(f.body+"\n", anchor) {
+			hits = append(hits, f)
+		}
+	}
+	if len(hits) > 1 {
+		var exact []mdFence
+		for _, f := range hits {
+			if strings.TrimSpace(f.body) == strings.TrimSpace(anchor) {
+				exact = append(exact, f)
+			}
+		}
+		if len(exact) == 1 {
+			return exact[0], nil
+		}
+	}
+	if len(hits) != 1 {
+		return mdFence{}, fmt.Errorf("anchor %q matches %d fences, want exactly 1", anchor, len(hits))
+	}
+	return hits[0], nil
+}
+
+// exampleScript turns a fence into the script that runs it. A console fence
+// keeps only its `$ ` prompt lines and their continuations; the rest is output.
+func exampleScript(f mdFence) string {
+	if f.lang != "console" {
+		return f.body
+	}
+	var out []string
+	cont := false
+	for _, ln := range strings.Split(f.body, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "$ "):
+			ln = strings.TrimPrefix(ln, "$ ")
+		case !cont:
+			continue
+		}
+		out = append(out, ln)
+		cont = strings.HasSuffix(ln, "\\")
+	}
+	return strings.Join(out, "\n")
+}
+
+// unfilledPlaceholder matches a `<placeholder>` left in a script after
+// substitution; running one would hand atcr a literal "<id>".
+var unfilledPlaceholder = regexp.MustCompile(`<[a-z][a-z -]*>`)
+
+// runDocExample runs script under bash in dir with env and returns its
+// combined output. A non-zero exit is an error naming the failing command.
+// env must set HOME: an empty env would inherit the developer's own, and the
+// example would write to their real ~/.config/atcr.
+func runDocExample(dir string, env []string, script string) (string, error) {
+	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "HOME=") }) {
+		return "", fmt.Errorf("refusing to run a docs example without a fixture HOME in its environment")
+	}
+	if m := unfilledPlaceholder.FindString(script); m != "" {
+		return "", fmt.Errorf("placeholder %s has no fixture value", m)
+	}
+	prelude := "set -eo pipefail\ntrap 'echo \"docs example: command failed (exit $?): $BASH_COMMAND\" >&2' ERR\n"
+	cmd := exec.Command("bash", "-c", prelude+script)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("%v\n%s", err, out)
+	}
+	return string(out), nil
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+}
+
+// goEnvValue reads one `go env` value from the developer's toolchain, so an
+// example that runs go reuses the warm module and build caches under its own
+// fixture HOME instead of reaching for the network.
+func goEnvValue(t *testing.T, key string) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", key).Output()
+	require.NoError(t, err, "go env %s", key)
+	return strings.TrimSpace(string(out))
+}
+
+// exampleEnv is the whole environment an example runs with: nothing is
+// inherited but PATH (behind the atcr shim) and the go caches.
+func exampleEnv(t *testing.T, w exampleWorkspace, shimDir string) []string {
+	return []string{
+		"PATH=" + shimDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"HOME=" + w.home,
+		"TMPDIR=" + filepath.Join(w.dir, "tmp"),
+		"USER=docs",
+		"ATCR_TELEMETRY=0",
+		"ATCR_QUALITY_SIGNAL=0",
+		"GIT_AUTHOR_NAME=" + gitexec.FixtureName, "GIT_AUTHOR_EMAIL=" + gitexec.FixtureEmail,
+		"GIT_COMMITTER_NAME=" + gitexec.FixtureName, "GIT_COMMITTER_EMAIL=" + gitexec.FixtureEmail,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GOPROXY=off", "GOTOOLCHAIN=local", "GOFLAGS=",
+		"GOCACHE=" + goEnvValue(t, "GOCACHE"),
+		"GOMODCACHE=" + goEnvValue(t, "GOMODCACHE"),
+	}
+}
+
+// writeAtcrShim writes the `atcr` on PATH that re-executes this test binary as
+// the CLI and returns its directory.
+func writeAtcrShim(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	shim := fmt.Sprintf("#!/bin/sh\n%s=1 exec %s \"$@\"\n", docsExampleAsAtcrEnv, strconv.Quote(self))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "atcr"), []byte(shim), 0o755))
+	return dir
+}
+
+// buildExampleFixture builds the shared workspace every example copies.
+func buildExampleFixture(t *testing.T, shimDir string) exampleWorkspace {
+	t.Helper()
+	root := repoRootDir(t)
+	dir := t.TempDir()
+	w := exampleWorkspace{dir: dir, repo: filepath.Join(dir, "repo"), home: filepath.Join(dir, "home")}
+	for _, d := range []string{w.repo, w.home, filepath.Join(dir, "tmp")} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+	}
+	w.env = exampleEnv(t, w, shimDir)
+	sh := func(script string) {
+		t.Helper()
+		out, err := runDocExample(w.repo, w.env, script)
+		require.NoError(t, err, "fixture step failed:\n%s\n%s", script, out)
+	}
+
+	writeFile(t, filepath.Join(w.repo, "a.go"), "package x\n")
+	sh("git init -q -b main && git add -A && git commit -qm one")
+	writeFile(t, filepath.Join(w.repo, "internal", "x", "y.go"), "package x\n\nfunc f() {\n\tfor {\n\t}\n}\n")
+	sh("git add -A && git commit -qm two && git diff HEAD~1 HEAD > patch.diff")
+	sh("git init -q --bare ../origin.git && git remote add origin ../origin.git && git push -q origin main")
+	sh("atcr init --offline </dev/null >/dev/null")
+
+	// A review with the same two findings from two reviewers, reconciled: the
+	// debt store, the scorecard store and .atcr/latest all come from it. Both
+	// sit below the roster's `fail_on: high`, so the reconcile examples pass
+	// the gate.
+	for _, p := range []string{"bruce", "sasha"} {
+		writeFile(t, filepath.Join(w.repo, ".atcr", "reviews", "abc123", "sources", p, "findings.txt"),
+			"# atcr-findings/v1\n"+
+				"MEDIUM|internal/x/y.go:4|unbounded retry loop|cap retries|correctness|30|for {} never exits|"+p+"\n"+
+				"LOW|a.go:1|style nit|rename|style|5|exported name|"+p+"\n")
+	}
+	writeFile(t, filepath.Join(w.repo, ".atcr", "reviews", "abc123", "sources", "pool", "summary.json"),
+		`{"agents":[{"agent":"bruce","status":"ok","model":"claude-sonnet-4-6","findings_count":2},`+
+			`{"agent":"sasha","status":"ok","model":"claude-sonnet-4-6","findings_count":2}],"total":2,"succeeded":2}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(w.repo, ".atcr", "reviews", "abc123", "reconciled"), 0o755))
+	writeFile(t, filepath.Join(w.repo, ".atcr", "latest"), "abc123\n")
+	sh("atcr reconcile >/dev/null 2>&1")
+
+	// The files individual examples name.
+	sh("mkdir -p docs/technical-debt && atcr debt report --format md --output docs/technical-debt/README.md >/dev/null")
+	writeFile(t, filepath.Join(w.repo, ".planning", "history", "2026-06.jsonl"), "{}\n")
+	writeFile(t, filepath.Join(w.repo, ".atcr", "registry.yaml"),
+		"providers:\n  team-llm:\n    base_url: https://llm.example.test/v1\n    api_key_env: TEAM_LLM_KEY\n")
+	require.NoError(t, os.Symlink(filepath.Join(root, "benchmarks"), filepath.Join(w.repo, "benchmarks")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "benchmarks", "standard-v1"), filepath.Join(w.repo, "my-suite")))
+	writeFile(t, filepath.Join(w.repo, "run.json"), fullCoverageRunResult(t, filepath.Join(root, "benchmarks", "standard-v1", "suite.json")))
+	sh("git add -A && git commit -qm fixtures && git push -q origin main")
+	return w
+}
+
+// fullCoverageRunResult writes a run-result in which one reviewer scored every
+// case the suite declares, the shape `atcr benchmark export` accepts.
+func fullCoverageRunResult(t *testing.T, suitePath string) string {
+	t.Helper()
+	raw, err := os.ReadFile(suitePath)
+	require.NoError(t, err)
+	var suite struct {
+		Suite        string `json:"suite"`
+		SuiteVersion string `json:"suite_version"`
+		Cases        []struct {
+			ID string `json:"id"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &suite))
+	ids := make([]string, 0, len(suite.Cases))
+	for _, c := range suite.Cases {
+		ids = append(ids, c.ID)
+	}
+	body, err := json.Marshal(map[string]any{
+		"suite": suite.Suite, "suite_version": suite.SuiteVersion, "generated_at": "2026-06-24T12:00:00Z",
+		"suite_case_ids":    ids,
+		"reviewer_coverage": []any{map[string]any{"model": "m-primary", "persona": "bruce", "case_ids": ids}},
+		"reviewers": []any{map[string]any{"model": "m-primary", "persona": "bruce", "runs": len(ids),
+			"findings_raised_avg": 1.0, "corroboration_rate": 0.5, "latency_p50_ms": 10}},
+	})
+	require.NoError(t, err)
+	return string(body)
+}
+
+// copyChangelogModule gives the release-process example a module of its own
+// holding cmd/changelog, its one internal import, and the repo's changelog, so
+// assembling a release writes there and never to this checkout.
+func copyChangelogModule(t *testing.T, w exampleWorkspace) {
+	t.Helper()
+	root := repoRootDir(t)
+	for _, rel := range []string{"go.mod", "go.sum", "CHANGELOG.md"} {
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		require.NoError(t, err)
+		writeFile(t, filepath.Join(w.repo, rel), string(b))
+	}
+	for _, dir := range []string{"cmd/changelog", "internal/gitexec", "changelog.d"} {
+		entries, err := os.ReadDir(filepath.Join(root, dir))
+		require.NoError(t, err)
+		for _, e := range entries {
+			if e.IsDir() || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, dir, e.Name()))
+			require.NoError(t, err)
+			writeFile(t, filepath.Join(w.repo, dir, e.Name()), string(b))
+		}
+	}
+}
+
+// copyWorkspace copies the fixture for one example; cp -a keeps the symlinks
+// and the relative `origin` remote intact.
+func copyWorkspace(t *testing.T, src exampleWorkspace) exampleWorkspace {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "ws")
+	out, err := exec.Command("cp", "-a", src.dir, dst).CombinedOutput()
+	require.NoError(t, err, "copy fixture: %s", out)
+	return exampleWorkspace{dir: dst, repo: filepath.Join(dst, "repo"), home: filepath.Join(dst, "home")}
+}
+
+// fixtureIDs reads the ids examples substitute for <id> and friends: the MEDIUM
+// and LOW debt items, and the scorecard run id of the reconciled review.
+func fixtureIDs(t *testing.T, w exampleWorkspace) (id, finding, run string) {
+	t.Helper()
+	out, err := runDocExample(w.repo, w.env, "atcr debt list --json")
+	require.NoError(t, err)
+	var items []struct {
+		ID       string `json:"id"`
+		Severity string `json:"severity"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &items), "debt list --json: %s", out)
+	for _, it := range items {
+		switch it.Severity {
+		case "MEDIUM":
+			id = it.ID
+		case "LOW":
+			finding = it.ID
+		}
+	}
+	require.NotEmpty(t, id, "fixture has no MEDIUM debt item")
+	require.NotEmpty(t, finding, "fixture has no LOW debt item")
+	out, err = runDocExample(w.repo, w.env, "atcr scorecard ./.atcr/reviews/abc123 --json")
+	require.NoError(t, err)
+	var sc struct {
+		RunID string `json:"run_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &sc), "scorecard --json: %s", out)
+	require.NotEmpty(t, sc.RunID, "fixture review has no scorecard run id")
+	return id, finding, sc.RunID
+}
+
+// TestDocsHermeticExamplesRun (epic 111 T6) runs every documented example the
+// inventory classifies hermetic and fails when one exits non-zero.
+func TestDocsHermeticExamplesRun(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Fatal("bash is required to run the documented examples")
+	}
+	shim := writeAtcrShim(t)
+	fixture := buildExampleFixture(t, shim)
+	id, finding, run := fixtureIDs(t, fixture)
+
+	var cloudPosts atomic.Int32
+	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.Header.Get("Authorization") == "Bearer docs-example-key" {
+			cloudPosts.Add(1)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer cloud.Close()
+
+	pages := auditedMarkdown(t)
+	for _, ex := range documentedExamples {
+		md, ok := pages[ex.page]
+		require.True(t, ok, "%s is not an audited page", ex.page)
+		var scripts []string
+		line := 0
+		for _, a := range append([]string{ex.anchor}, ex.then...) {
+			f, err := locateFence(md, a)
+			require.NoError(t, err, "%s", ex.page)
+			if line == 0 {
+				line = f.line
+			}
+			scripts = append(scripts, exampleScript(f))
+		}
+		// page:line names the subtest: a bare name keeps shell metacharacters
+		// out of the t.TempDir paths an example's commands are handed.
+		t.Run(fmt.Sprintf("%s:%d", strings.TrimPrefix(ex.page, "docs/"), line), func(t *testing.T) {
+			if ex.skip != "" {
+				t.Skipf("not hermetic: %s", ex.skip)
+			}
+			var w exampleWorkspace
+			id, finding, run := id, finding, run
+			if ex.ownFixture {
+				w = buildExampleFixture(t, shim)
+				id, finding, run = fixtureIDs(t, w)
+			} else {
+				w = copyWorkspace(t, fixture)
+				w.env = exampleEnv(t, w, shim)
+			}
+			if ex.setup != nil {
+				ex.setup(t, w)
+			}
+			fill := strings.NewReplacer("{{id}}", id, "{{finding}}", finding, "{{run}}", run,
+				"{{ws}}", w.dir, "{{cloud}}", cloud.URL)
+			for _, s := range scripts {
+				for i := 0; i+1 < len(ex.subst); i += 2 {
+					s = strings.ReplaceAll(s, ex.subst[i], fill.Replace(ex.subst[i+1]))
+				}
+				out, err := runDocExample(w.repo, w.env, s)
+				require.NoError(t, err, "%s example failed:\n%s", ex.page, s)
+				t.Logf("%s", out)
+			}
+		})
+	}
+	require.Positive(t, cloudPosts.Load(), "the --sync-cloud example never reached the fake cloud endpoint with its documented key")
+}
+
+// TestDocsReferenceOnlyRealCommandsCatchesAFakeCommandAndFlag is the deliberate
+// break for the command and flag guard: a page naming a command and a flag the
+// binary lacks is reported for both.
+func TestDocsReferenceOnlyRealCommandsCatchesAFakeCommandAndFlag(t *testing.T) {
+	cmds, groups := canonicalCommands(), commandGroups()
+	md := "Run `atcr frobnicate` first.\n\n```bash\natcr debt list --no-such-flag\natcr debt list --json\n```\n"
+	var errs []string
+	for _, tokens := range atcrInvocations(md, cmds) {
+		errs = append(errs, validateInvocationTokens(tokens, "docs/x.md", cmds, groups)...)
+	}
+	require.Equal(t, []string{
+		"docs/x.md references `atcr frobnicate` but \"frobnicate\" is not a real command",
+		"docs/x.md references `--no-such-flag` on an `atcr debt` command, but no such flag exists",
+	}, errs)
+}
+
+// TestLocateFenceRequiresExactlyOne pins the anchor lookup: an anchor that no
+// fence holds, or that two fences hold equally, is an error rather than a
+// silently skipped or arbitrarily chosen example.
+func TestLocateFenceRequiresExactlyOne(t *testing.T) {
+	md := "```bash\natcr debt list\n```\n\n```bash\natcr debt list\natcr debt list --json\n```\n\n```bash\natcr history\natcr history --since 30d\n```\n"
+	f, err := locateFence(md, "atcr debt list")
+	require.NoError(t, err, "a fence whose whole body is the anchor wins over one that merely contains it")
+	require.Equal(t, 1, f.line)
+	_, err = locateFence(md, "atcr history --since 30d")
+	require.NoError(t, err)
+	_, err = locateFence(md, "atcr leaderboard")
+	require.ErrorContains(t, err, "matches 0 fences")
+	_, err = locateFence(md+"```bash\natcr history\natcr history --since 30d\n```\n", "atcr history --since 30d")
+	require.ErrorContains(t, err, "matches 2 fences, want exactly 1")
+}
+
+// TestExampleScriptKeepsOnlyConsolePrompts pins that a console fence runs its
+// prompt lines (with continuations) and never its printed output.
+func TestExampleScriptKeepsOnlyConsolePrompts(t *testing.T) {
+	f := mdFence{lang: "console", body: "$ atcr debt add --severity HIGH \\\n    --file a.go:1\nAdded HIGH item 1234.\n$ atcr debt list\nID  SEVERITY"}
+	require.Equal(t, "atcr debt add --severity HIGH \\\n    --file a.go:1\natcr debt list", exampleScript(f))
+	f.lang = "bash"
+	require.Equal(t, f.body, exampleScript(f))
+}
+
+// TestRunDocExampleFailsABrokenExample is the deliberate break for the
+// example runner: a documented command that exits non-zero, a placeholder with
+// no fixture value, and an environment without a fixture HOME all fail, and
+// the failure names the command.
+func TestRunDocExampleFailsABrokenExample(t *testing.T) {
+	shim := writeAtcrShim(t)
+	dir := t.TempDir()
+	w := exampleWorkspace{dir: dir, repo: dir, home: filepath.Join(dir, "home")}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o755))
+	env := exampleEnv(t, w, shim)
+
+	out, err := runDocExample(dir, env, "atcr debt list --help >/dev/null")
+	require.NoError(t, err, "a working example passes: %s", out)
+
+	_, err = runDocExample(dir, env, "atcr debt list --help >/dev/null\natcr debt list --no-such-flag\natcr debt list --help")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "command failed (exit 2): atcr debt list --no-such-flag")
+
+	_, err = runDocExample(dir, env, "atcr debt list --help | atcr frobnicate")
+	require.Error(t, err, "pipefail: a failure on the right of a pipe still fails the example")
+
+	_, err = runDocExample(dir, env, "atcr debt resolve <id>")
+	require.ErrorContains(t, err, "placeholder <id> has no fixture value")
+
+	_, err = runDocExample(dir, nil, "true")
+	require.ErrorContains(t, err, "without a fixture HOME")
+}
+
+// TestDocExampleTelemetryEscapeFails pins the hermeticity of the example
+// runner: a child that sends the usage ping to a real host is intercepted by
+// the transport guard and exits docsExampleEscapeExit, failing the example.
+func TestDocExampleTelemetryEscapeFails(t *testing.T) {
+	shim := writeAtcrShim(t)
+	dir := t.TempDir()
+	w := exampleWorkspace{dir: dir, repo: dir, home: filepath.Join(dir, "home")}
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tmp"), 0o755))
+	writeFile(t, filepath.Join(dir, ".atcr", "reviews", "r", "sources", "bruce", "findings.txt"),
+		"# atcr-findings/v1\nLOW|a.go:1|x|f|style|1|ev|bruce\n")
+	writeFile(t, filepath.Join(dir, ".atcr", "latest"), "r\n")
+	writeFile(t, filepath.Join(dir, "a.go"), "package x\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".atcr", "reviews", "r", "reconciled"), 0o755))
+
+	_, err := runDocExample(dir, exampleEnv(t, w, shim), "git init -q && atcr init --offline </dev/null >/dev/null && ATCR_TELEMETRY=1 atcr reconcile")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fmt.Sprintf("exit %d", docsExampleEscapeExit))
+	require.Contains(t, err.Error(), "telemetry send escaped the test-host allowlist")
 }
