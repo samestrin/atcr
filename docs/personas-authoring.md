@@ -35,7 +35,7 @@ language: ["go"]                # canonical: dotless, lowercased; omit for a gen
 
 ### The `language` scope field
 
-`language` declares the file extensions a persona specializes in. When a finding's file extension matches a persona's `language` scope, that persona is **preferred** over an unscoped one during skeptic selection (see [registry.md](registry.md#language-scope-and-skeptic-routing) for the routing algorithm).
+`language` declares the file extensions a persona specializes in. When a finding's file extension matches a persona's `language` scope, that persona is **preferred** over an unscoped one during skeptic selection (see [registry.md](registry.md#language-scope-and-skeptic-routing-language-active-in-90) for the routing algorithm).
 
 **Canonical format — no leading dot, lowercased:**
 
