@@ -1,1 +1,0 @@
-- Debt store records are now `schema_version` 4, which adds an optional `attempts` count: how many times a fix was tried, read from the `Attempts` column of a technical-debt README table. (epic 95)

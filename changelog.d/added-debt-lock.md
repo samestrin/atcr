@@ -1,1 +1,0 @@
-- `atcr debt lock <id>...` and `atcr debt unlock <id>...` take and release a per-item lock as a ref on the store repository's remote, so when two clones lock one item, exactly one wins. The holder (`--holder`, `ATCR_DEBT_HOLDER`, else the OS user name) is stored on the remote and readable by anyone who can read it. (epic 93)
