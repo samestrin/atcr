@@ -34,6 +34,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/samestrin/atcr/internal/telemetrytest"
@@ -2325,8 +2326,8 @@ func exampleEnv(t *testing.T, w exampleWorkspace, shimDir string) []string {
 		"USER=docs",
 		"ATCR_TELEMETRY=0",
 		"ATCR_QUALITY_SIGNAL=0",
-		"GIT_AUTHOR_NAME=docs", "GIT_AUTHOR_EMAIL=docs@example.test",
-		"GIT_COMMITTER_NAME=docs", "GIT_COMMITTER_EMAIL=docs@example.test",
+		"GIT_AUTHOR_NAME=" + gitexec.FixtureName, "GIT_AUTHOR_EMAIL=" + gitexec.FixtureEmail,
+		"GIT_COMMITTER_NAME=" + gitexec.FixtureName, "GIT_COMMITTER_EMAIL=" + gitexec.FixtureEmail,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GOPROXY=off", "GOTOOLCHAIN=local", "GOFLAGS=",
 		"GOCACHE=" + goEnvValue(t, "GOCACHE"),
