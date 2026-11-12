@@ -423,7 +423,7 @@ func TestDocsReferenceOnlyRealCommands(t *testing.T) {
 	cmds := canonicalCommands()
 	groups := commandGroups()
 	for path, content := range auditedMarkdown(t) {
-		for _, tokens := range atcrInvocations(content, cmds) {
+		for _, tokens := range atcrInvocations(withoutDebtTableRows(content), cmds) {
 			for _, err := range validateInvocationTokens(tokens, path, cmds, groups) {
 				t.Errorf("%s", err)
 			}
@@ -1843,8 +1843,45 @@ func markdownFences(md string) []mdFence {
 	return out
 }
 
-// withoutDebtTableRows returns md unchanged (stub).
-func withoutDebtTableRows(md string) string { return md }
+// debtTableHeaderCells are the cells that mark a markdown table as a
+// technical-debt list (the layout `atcr debt report` writes and the company
+// rules fix: Group, Severity, File, Problem, Fix, ...).
+var debtTableHeaderCells = []string{"Severity", "File", "Problem", "Fix"}
+
+// withoutDebtTableRows blanks every line of a technical-debt table in md,
+// keeping the line count so reported line numbers still point at the page. A
+// debt row records what is wrong, so it quotes the command, flag, key or
+// variable the binary lacks on purpose: it is known-good input, like a
+// CHANGELOG entry naming a removed flag. Only a table whose header carries the
+// debt layout is exempt; every other doc table is still a claim.
+func withoutDebtTableRows(md string) string {
+	lines := strings.Split(md, "\n")
+	inDebt := false
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if !strings.HasPrefix(trimmed, "|") {
+			inDebt = false
+			continue
+		}
+		if !inDebt {
+			cells := map[string]bool{}
+			for _, c := range strings.Split(trimmed, "|") {
+				cells[strings.TrimSpace(c)] = true
+			}
+			inDebt = true
+			for _, want := range debtTableHeaderCells {
+				if !cells[want] {
+					inDebt = false
+					break
+				}
+			}
+		}
+		if inDebt {
+			lines[i] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 // envVarRef matches an atcr-owned environment variable name in prose or code.
 var envVarRef = regexp.MustCompile(`\bATCR_[A-Z0-9_]*[A-Z0-9]\b`)
@@ -1897,7 +1934,7 @@ func knownEnvVars(t *testing.T) map[string]bool {
 func undocumentedEnvVars(path, md string, known map[string]bool) []string {
 	var errs []string
 	seen := map[string]bool{}
-	for i, ln := range strings.Split(md, "\n") {
+	for i, ln := range strings.Split(withoutDebtTableRows(md), "\n") {
 		for _, v := range envVarRef.FindAllString(ln, -1) {
 			if !known[v] && !seen[v] {
 				seen[v] = true
@@ -1962,7 +1999,7 @@ func TestDebtTableRowsAreNotDocsClaims(t *testing.T) {
 	page = debtTableHeader +
 		"| G | [ ] | LOW | docs/x.md:1 | the block names `providers.<name>.no_such_key` | drop it | docs | 5 | paperclip-builder | 0 |\n" +
 		"\n```yaml\nproviders:\n  my-llm:\n    no_such_key: 1\n```\n"
-	require.Equal(t, []string{`docs/x.md:4: config block names key "providers.<name>.no_such_key", which no atcr config file has`},
+	require.Equal(t, []string{`docs/x.md:5: config block names key "providers.<name>.no_such_key", which no atcr config file has`},
 		configBlockErrors("docs/x.md", page, s))
 
 	// Only a table with the debt layout is exempt: an ordinary doc table that
