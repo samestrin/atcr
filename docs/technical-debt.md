@@ -1397,9 +1397,9 @@ building the binary:
 set -euo pipefail
 
 # Fail the commit if the technical-debt dashboard is out of date.
-if ! go run ./cmd/atcr debt dashboard --output docs/debt-report.md --check; then
+if ! atcr debt dashboard --output docs/debt-report.md --check; then
   echo "The technical-debt dashboard is stale."
-  echo "Regenerate and stage it:  go run ./cmd/atcr debt dashboard --output docs/debt-report.md && git add docs/debt-report.md"
+  echo "Regenerate and stage it:  atcr debt dashboard --output docs/debt-report.md && git add docs/debt-report.md"
   exit 1
 fi
 ```
