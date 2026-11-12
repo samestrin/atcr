@@ -15,8 +15,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // repoRootDir ascends from the test working directory (the package dir,
@@ -52,16 +58,25 @@ func repoRootDir(t *testing.T) string {
 }
 
 // auditedMarkdown returns the set of markdown files this epic owns as the
-// documentation source of truth: every docs/*.md plus the root README.md.
-// testdata fixtures and READMEs elsewhere in the tree are intentionally out of
-// scope (epic 15.0 clarifications).
+// documentation source of truth: every .md under docs/ (decision records in
+// docs/decisions/ included, epic 111) plus the root README.md. testdata
+// fixtures and READMEs elsewhere in the tree are intentionally out of scope
+// (epic 15.0 clarifications). CHANGELOG.md is out of scope too: it is a
+// historical record, and an entry that says a flag was removed must keep
+// naming it.
 func auditedMarkdown(t *testing.T) map[string]string {
 	t.Helper()
 	root := repoRootDir(t)
 	out := map[string]string{}
-	docs, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	var docs []string
+	err := filepath.WalkDir(filepath.Join(root, "docs"), func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".md") {
+			docs = append(docs, p)
+		}
+		return err
+	})
 	if err != nil {
-		t.Fatalf("glob docs: %v", err)
+		t.Fatalf("walk docs: %v", err)
 	}
 	paths := append(docs, filepath.Join(root, "README.md"))
 	for _, p := range paths {
@@ -1777,4 +1792,271 @@ func TestDocsShowLeaderboardExportOnlyAsDeprecatedAlias(t *testing.T) {
 		}
 	}
 	walk(NewRootCmd())
+}
+
+// mdFence is one fenced code block of a markdown page: its info-string
+// language, the 1-based line of the opening fence, and its body with the
+// fence's own indentation removed (a fence nested in a list item is indented).
+type mdFence struct {
+	lang string
+	line int
+	body string
+}
+
+// markdownFences returns every ``` or ~~~ fenced block in md, in order. A fence
+// closes only on a line holding the same marker, so a ~~~ block may quote ```.
+func markdownFences(md string) []mdFence {
+	var out []mdFence
+	var cur *mdFence
+	var marker, indent string
+	var body []string
+	for i, ln := range strings.Split(md, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if cur != nil {
+			if trimmed == marker {
+				cur.body = strings.Join(body, "\n")
+				out = append(out, *cur)
+				cur, body = nil, nil
+				continue
+			}
+			body = append(body, strings.TrimPrefix(ln, indent))
+			continue
+		}
+		for _, m := range []string{"```", "~~~"} {
+			if strings.HasPrefix(trimmed, m) {
+				marker = m
+				indent = ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
+				cur = &mdFence{lang: strings.TrimSpace(strings.TrimPrefix(trimmed, m)), line: i + 1}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// envVarRef matches an atcr-owned environment variable name in prose or code.
+var envVarRef = regexp.MustCompile(`\bATCR_[A-Z0-9_]*[A-Z0-9]\b`)
+
+// knownEnvVars returns every ATCR_* name that appears inside a Go string
+// literal anywhere in the module, tests included. String literals rather than
+// os.Getenv calls, because atcr also HANDS variables to child processes
+// (ATCR_PREVIEW_URL is set for a Playwright spec, never read), and tests
+// included because docs name developer knobs that only a test reads
+// (ATCR_REPLAY, ATCR_REDTEAM_RUNS). Comments are excluded: a variable that
+// survives only in a comment is gone from the binary.
+func knownEnvVars(t *testing.T) map[string]bool {
+	t.Helper()
+	root := repoRootDir(t)
+	known := map[string]bool{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if n := d.Name(); n == ".git" || n == ".paperclip" || n == "node_modules" || n == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				for _, v := range envVarRef.FindAllString(lit.Value, -1) {
+					known[v] = true
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	require.NoError(t, err)
+	return known
+}
+
+// undocumentedEnvVars returns, for one page, each ATCR_* name it mentions that
+// the module never spells in a string literal.
+func undocumentedEnvVars(path, md string, known map[string]bool) []string {
+	var errs []string
+	seen := map[string]bool{}
+	for i, ln := range strings.Split(md, "\n") {
+		for _, v := range envVarRef.FindAllString(ln, -1) {
+			if !known[v] && !seen[v] {
+				seen[v] = true
+				errs = append(errs, fmt.Sprintf("%s:%d names environment variable %s, but atcr never reads or sets it", path, i+1, v))
+			}
+		}
+	}
+	return errs
+}
+
+// TestDocsNameOnlyRealEnvVars (epic 111 T6) fails when a docs page or the
+// README names an ATCR_* environment variable that no Go source spells.
+func TestDocsNameOnlyRealEnvVars(t *testing.T) {
+	known := knownEnvVars(t)
+	require.True(t, known["ATCR_TELEMETRY"], "the env-var scan found no ATCR_TELEMETRY; the scan itself is broken")
+	for path, content := range auditedMarkdown(t) {
+		for _, e := range undocumentedEnvVars(path, content, known) {
+			t.Error(e)
+		}
+	}
+}
+
+// TestUndocumentedEnvVarsCatchesAFakeName is the deliberate break for the guard
+// above: a page naming a variable atcr lacks is reported, a real one is not.
+func TestUndocumentedEnvVarsCatchesAFakeName(t *testing.T) {
+	known := knownEnvVars(t)
+	// Built by concatenation: spelled whole, this literal would itself make the
+	// name "known" to the scan above.
+	fake := "ATCR_" + "NO_SUCH_KNOB"
+	errs := undocumentedEnvVars("docs/x.md", "set `ATCR_TELEMETRY=0`\nor `"+fake+"=1`\n", known)
+	require.Equal(t, []string{"docs/x.md:2 names environment variable " + fake + ", but atcr never reads or sets it"}, errs)
+}
+
+// configSchema is the set of documented-config key paths the binary accepts:
+// the user registry, the project config and the project registry overlay, as
+// collectConfigKeys renders them (`<name>` for a user-chosen map key). freeform
+// holds the paths whose value is a map of scalars or an untyped value, under
+// which any key is accepted.
+type configSchema struct {
+	paths    map[string]bool
+	freeform map[string]bool
+	top      map[string]bool
+}
+
+func loadConfigSchema() configSchema {
+	s := configSchema{paths: map[string]bool{}, freeform: map[string]bool{}, top: map[string]bool{}}
+	for _, typ := range []reflect.Type{
+		reflect.TypeOf(registry.Registry{}),
+		reflect.TypeOf(registry.ProjectConfig{}),
+		reflect.TypeOf(registry.ProjectRegistry{}),
+	} {
+		keys := map[string]string{}
+		collectConfigKeys(typ, "", keys)
+		for k, typ := range keys {
+			s.paths[k] = true
+			if !strings.Contains(k, ".") {
+				s.top[k] = true
+			}
+			typ = strings.SplitN(typ, ",", 2)[0]
+			if strings.HasPrefix(typ, "map[") && !strings.Contains(typ, "registry.") {
+				s.freeform[k] = true
+			}
+			if typ == "interface {}" || typ == "yaml.Node" || typ == "*yaml.Node" {
+				s.freeform[k] = true
+			}
+		}
+	}
+	return s
+}
+
+// has reports whether path is a key, or the parent of a key, in the schema.
+func (s configSchema) has(path string) bool {
+	if s.paths[path] {
+		return true
+	}
+	for k := range s.paths {
+		if strings.HasPrefix(k, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// unknownKeys walks a YAML node and returns each mapping key path the schema
+// does not have. A key unknown at its own name may still be a user-chosen map
+// key, so `<name>` is tried before the key is reported.
+func (s configSchema) unknownKeys(n *yaml.Node, prefix string) []string {
+	var out []string
+	switch n.Kind {
+	case yaml.DocumentNode, yaml.SequenceNode:
+		for _, c := range n.Content {
+			out = append(out, s.unknownKeys(c, prefix)...)
+		}
+	case yaml.MappingNode:
+		parent := strings.TrimSuffix(prefix, ".")
+		if parent != "" && s.freeform[parent] {
+			return nil
+		}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i].Value
+			switch {
+			case s.has(prefix + k):
+				out = append(out, s.unknownKeys(n.Content[i+1], prefix+k+".")...)
+			case s.has(prefix + "<name>"):
+				out = append(out, s.unknownKeys(n.Content[i+1], prefix+"<name>.")...)
+			default:
+				out = append(out, prefix+k)
+			}
+		}
+	}
+	return out
+}
+
+// configBlockErrors checks every YAML fence on a page that is an atcr config
+// block: one whose top-level keys include an atcr config key. Other YAML on the
+// page (a GitHub workflow, an ignore.yaml, a LiteLLM config) has none and is
+// left alone. A config block must parse, and every key in it must exist.
+func configBlockErrors(path, md string, s configSchema) []string {
+	var errs []string
+	for _, f := range markdownFences(md) {
+		if f.lang != "yaml" && f.lang != "yml" {
+			continue
+		}
+		var probe map[string]any
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(f.body), &doc); err != nil || yaml.Unmarshal([]byte(f.body), &probe) != nil {
+			for _, ln := range strings.Split(f.body, "\n") {
+				if k, _, ok := strings.Cut(ln, ":"); ok && s.top[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d: atcr config block does not parse as YAML: %v", path, f.line, err))
+					break
+				}
+			}
+			continue
+		}
+		isConfig := false
+		for k := range probe {
+			if s.top[k] {
+				isConfig = true
+			}
+		}
+		if !isConfig {
+			continue
+		}
+		for _, k := range s.unknownKeys(&doc, "") {
+			errs = append(errs, fmt.Sprintf("%s:%d: config block names key %q, which no atcr config file has", path, f.line, k))
+		}
+	}
+	return errs
+}
+
+// TestDocsConfigBlocksNameOnlyRealKeys (epic 111 T6) fails when a docs page or
+// the README shows a registry.yaml or .atcr/config.yaml block with a key the
+// binary's config schema lacks.
+func TestDocsConfigBlocksNameOnlyRealKeys(t *testing.T) {
+	s := loadConfigSchema()
+	for path, content := range auditedMarkdown(t) {
+		for _, e := range configBlockErrors(path, content, s) {
+			t.Error(e)
+		}
+	}
+}
+
+// TestConfigBlockErrorsCatchesAFakeKey is the deliberate break for the guard
+// above: an unknown nested key and an unknown top-level key beside a real one
+// are reported; user-chosen map keys and non-atcr YAML are not.
+func TestConfigBlockErrorsCatchesAFakeKey(t *testing.T) {
+	s := loadConfigSchema()
+	md := "```yaml\nproviders:\n  my-llm:\n    base_url: http://x\n    no_such_key: 1\nfail_on: high\nbogus_top: 1\n```\n\n" +
+		"```yaml\non: push\njobs:\n  x:\n    runs-on: ubuntu\n```\n"
+	require.Equal(t, []string{
+		`docs/x.md:1: config block names key "providers.<name>.no_such_key", which no atcr config file has`,
+		`docs/x.md:1: config block names key "bogus_top", which no atcr config file has`,
+	}, configBlockErrors("docs/x.md", md, s))
 }
