@@ -340,4 +340,4 @@ Go 1.25+. Direct dependencies are listed in `go.mod`; beyond `spf13/cobra`, `gop
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+ATCR's own code is MIT-licensed ([LICENSE](LICENSE)); the binary includes the Apache-2.0-licensed reconcile module ([reconcile/LICENSE](reconcile/LICENSE)).
