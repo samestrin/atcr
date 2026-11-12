@@ -11,7 +11,9 @@ package cli
 // differ are the rows of the "Allowed deviations" table in
 // testdata/dedupe/DIFFERENCES.md, which the test READS rather than duplicating:
 // a new deviation cannot land without a documented row, and a documented row
-// that no longer matches a golden fails as stale. That is deliberate — the
+// that no longer matches a golden fails as stale — checked row by row, so a
+// stale row cannot hide behind a still-applying sibling in the same case. That
+// is deliberate — the
 // issue's contract is "DIFFERENCES.md is the only allowed deviation", and a
 // second, hand-kept list in Go would be free to drift from it.
 
@@ -221,9 +223,23 @@ func dedupeParityCases() []dedupeParityCase {
 
 // dedupeDeviation is one allowed difference, read from DIFFERENCES.md.
 type dedupeDeviation struct {
+	index int    // position within its case's rows, the stale-row guard's key
 	field string // category, member category, confidence or source
 	from  string // the td-dedupe value in the golden
 	to    string // the atcr dedupe value
+}
+
+// staleDedupeDeviations returns the rows that applyDedupeDeviations did not
+// use. A row whose "from" value appears nowhere in its case's golden is
+// documentation that has outlived its deviation.
+func staleDedupeDeviations(rows []dedupeDeviation, applied map[int]bool) []dedupeDeviation {
+	var stale []dedupeDeviation
+	for _, d := range rows {
+		if !applied[d.index] {
+			stale = append(stale, d)
+		}
+	}
+	return stale
 }
 
 // TestDedupeParityWithTdDedupe is the parity claim itself.
@@ -232,7 +248,10 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 	cases := dedupeParityCases()
 
 	ran := map[string]bool{}
-	usedDeviation := map[string]bool{}
+	// usedDeviation is keyed by case and then by the row's index within that
+	// case, so a case with several rows cannot hide one stale row behind its
+	// siblings.
+	usedDeviation := map[string]map[int]bool{}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,8 +269,11 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &golden), "%s.golden.json must be valid JSON", tc.name)
 
 			applied := applyDedupeDeviations(golden, deviations[tc.name])
-			if len(applied) > 0 {
-				usedDeviation[tc.name] = true
+			if usedDeviation[tc.name] == nil {
+				usedDeviation[tc.name] = map[int]bool{}
+			}
+			for i := range applied {
+				usedDeviation[tc.name][i] = true
 			}
 
 			assert.Equal(t, golden, actual,
@@ -266,7 +288,11 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 		if !ran[name] {
 			continue
 		}
-		assert.True(t, usedDeviation[name], "DIFFERENCES.md has a deviation row for case %q that matches no value in its golden; drop the row or restore the fixture", name)
+		for _, d := range staleDedupeDeviations(deviations[name], usedDeviation[name]) {
+			assert.Failf(t, "stale deviation row",
+				"DIFFERENCES.md: case %q field %q row %q->%q matches no value in its golden; drop the row or restore the fixture",
+				name, d.field, d.from, d.to)
+		}
 	}
 
 	// And the reverse: no golden left unverified.
@@ -280,6 +306,57 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(m), ".golden.json")
 		assert.True(t, known[name], "golden %q has no parity case; add it to dedupeParityCases or delete the file", name)
 	}
+}
+
+// TestDedupeParityStaleRowFailsDespiteSiblings is the reverse-direction guard:
+// a row whose value no longer appears in its golden must be reported as stale
+// even when other rows for the same case still apply. Without per-row tracking,
+// a case with three rows would let one retired row ride along on its siblings.
+func TestDedupeParityStaleRowFailsDespiteSiblings(t *testing.T) {
+	rows := readDedupeDeviations(t)["member-category-normalized"]
+	require.Len(t, rows, 3, "this guard pins a case with sibling rows plus one stale row")
+
+	load := func() map[string]any {
+		raw, err := os.ReadFile(filepath.Join(dedupeParityDir, "member-category-normalized.golden.json"))
+		require.NoError(t, err)
+		var golden map[string]any
+		require.NoError(t, json.Unmarshal(raw, &golden))
+		return golden
+	}
+
+	// Sanity: every row applies to the pristine golden, so nothing is stale yet.
+	applied := applyDedupeDeviations(load(), rows)
+	assert.Empty(t, staleDedupeDeviations(rows, applied), "the committed golden must still satisfy every row")
+
+	// Mutate only the golden's `error-handling` member category to `other`, the
+	// same mutation the reviewer used to show the old guard was blind: that row's
+	// `from` no longer exists, while the two `performance` rows still apply.
+	golden := load()
+	merged, ok := golden["merged"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, merged)
+	row, ok := merged[0].(map[string]any)
+	require.True(t, ok)
+	members, ok := row["members"].([]any)
+	require.True(t, ok)
+	mutated := false
+	for _, m := range members {
+		member, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		if member["category"] == "error-handling" {
+			member["category"] = "other"
+			mutated = true
+		}
+	}
+	require.True(t, mutated, "the fixture must still carry the `error-handling` member category")
+
+	applied = applyDedupeDeviations(golden, rows)
+	stale := staleDedupeDeviations(rows, applied)
+	require.Len(t, stale, 1, "only the row whose value disappeared may be stale")
+	assert.Equal(t, "member category", stale[0].field)
+	assert.Equal(t, "error-handling", stale[0].from)
 }
 
 // TestDedupeParityPanelWideDiscountIsDocumented proves the confidence deviation
@@ -353,11 +430,11 @@ func dedupeParityPaths(tc dedupeParityCase) string {
 }
 
 // applyDedupeDeviations rewrites the golden's category/source/confidence values
-// through the documented deviations and returns the set of "from" values it
-// used, so the caller can detect a stale row. Fields without a deviation are
-// left alone, so the comparison stays exact.
-func applyDedupeDeviations(golden map[string]any, deviations []dedupeDeviation) map[string]bool {
-	applied := map[string]bool{}
+// through the documented deviations and returns the indexes of the rows it
+// used, so the caller can detect a stale row at the row level. Fields without a
+// deviation are left alone, so the comparison stays exact.
+func applyDedupeDeviations(golden map[string]any, deviations []dedupeDeviation) map[int]bool {
+	applied := map[int]bool{}
 	rows, ok := golden["merged"].([]any)
 	if !ok {
 		return applied
@@ -382,7 +459,7 @@ func applyDedupeDeviations(golden map[string]any, deviations []dedupeDeviation) 
 	return applied
 }
 
-func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, field string, applied map[string]bool) {
+func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, field string, applied map[int]bool) {
 	// "member category" is the JSON field "category" on a member row; the field
 	// name in DIFFERENCES.md carries the row it applies to.
 	key := field
@@ -396,7 +473,7 @@ func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, fi
 	for _, d := range deviations {
 		if d.field == field && d.from == got {
 			value[key] = d.to
-			applied[field+"\x00"+d.from] = true
+			applied[d.index] = true
 			return
 		}
 	}
@@ -442,7 +519,7 @@ func readDedupeDeviations(t *testing.T) map[string][]dedupeDeviation {
 		require.Containsf(t, []string{"category", "member category", "confidence", "source"}, field,
 			"%s: row %q names field %q; only category, member category, confidence and source may differ", dedupeParityDiffDoc, name, field)
 		// cells[4] is the human "Why" column; it is prose, not test input.
-		out[name] = append(out[name], dedupeDeviation{field: field, from: from, to: to})
+		out[name] = append(out[name], dedupeDeviation{index: len(out[name]), field: field, from: from, to: to})
 	}
 	require.NotEmpty(t, out, "%s must list the allowed deviations", dedupeParityDiffDoc)
 	return out

@@ -10,7 +10,9 @@ The goldens are the `td-dedupe` output **verbatim**. The test reads the
 "Allowed deviations" table below and applies it to the golden before comparing,
 so a difference that is not a row in that table fails the test, and a row whose
 value never appears in its case's golden also fails it (a stale row cannot
-outlive the deviation it describes).
+outlive the deviation it describes). Rows are checked one by one, so in a case
+with several rows a retired row cannot ride along on its still-applying
+siblings.
 
 ## Provenance
 
