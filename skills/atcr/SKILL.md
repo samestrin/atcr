@@ -66,6 +66,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 |---------|--------------|
 | `atcr review` | Fan a code change out to the reviewer pool |
 | `atcr reconcile` | Merge findings from all sources into reconciled artifacts |
+| `atcr dedupe` | Cluster and merge reviewer td-streams (`--streams a,b`) into `{merged, summary}` JSON for adjudication; every cluster of 2+ is `needs_review` with its members (replaces `llm-support td-dedupe`) |
 | `atcr verify` | Run adversarial skeptics over reconciled findings |
 | `atcr diff-smell` | Scan a unified diff for over-simplification (reward-hack) fingerprints; deterministic and model-free |
 | `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge) |

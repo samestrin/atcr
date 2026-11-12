@@ -1,0 +1,4 @@
+# atcr-findings/v1
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+HIGH|internal/store/store.go:42|nil map write on first insert|initialize the map in New|correctness|15|store.go:42 writes s.items[k] before make|
+LOW|cli/main.go:10|unused import|remove the import|style|2|main.go:10 imports os|

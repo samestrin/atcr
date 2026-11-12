@@ -1,0 +1,3 @@
+# atcr-findings/v1
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+LOW|internal/store/store.go:43|map may be nil|make the map before use|correctness|10|store.go:43 assigns into a nil map|
