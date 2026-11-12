@@ -1,0 +1,59 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "db.go:10",
+      "problem": "N+1 query",
+      "fix": "Batch it",
+      "category": "performance",
+      "est_minutes": 30,
+      "source": "a",
+      "reviewers": "bruce,kai,mira",
+      "confidence": "HIGH",
+      "cluster_size": 3,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "db.go:10",
+          "problem": "N+1 query",
+          "fix": "Batch it",
+          "category": "security",
+          "est_minutes": 30
+        },
+        {
+          "reviewer": "kai",
+          "severity": "HIGH",
+          "file_line": "db.go:11",
+          "problem": "N+1 query",
+          "fix": "Batch it",
+          "category": "performance",
+          "est_minutes": 30
+        },
+        {
+          "reviewer": "mira",
+          "severity": "HIGH",
+          "file_line": "db.go:12",
+          "problem": "N+1 query",
+          "fix": "Batch it",
+          "category": "performance",
+          "est_minutes": 30
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "input_rows": 3,
+    "sources": 3,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 1,
+    "skipped": 0,
+    "warnings": [
+      "stream \"a\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"b\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"c\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

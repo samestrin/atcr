@@ -681,7 +681,7 @@ item gets its own group regardless of size.
 
 | Tool | Replacement |
 |------|-------------|
-| `td_dedupe` | `atcr reconcile`, which merges duplicate findings before they reach the store |
+| `td_dedupe` | `atcr dedupe` for reviewer streams (the cadence `reconcile-code-review` skill); `atcr reconcile` for atcr's own reviews, which merges duplicate findings before they reach the store |
 | `td_stats` | `atcr debt dashboard` |
 | `td_validate` | `atcr debt validate` (the reranker and qdrant grounding of the original are deliberately dropped) |
 | `td-matrix` | Not covered by `atcr debt`; tracked as a row in the technical-debt list |
@@ -1116,6 +1116,57 @@ release a lock someone else holds, name them:
 `atcr debt unlock --holder <holder> <id>`. Like `lock`, it needs the store in a
 git repository with a reachable remote. The holder names it prints come from
 the remote's refs, so anyone who can read that remote can read them too.
+
+### `atcr dedupe`
+
+`atcr reconcile` merges the sources inside ONE review directory that atcr itself
+produced (`sources/pool/findings.txt`). `atcr dedupe` answers the other half of
+what `llm-support td-dedupe` did: it merges N reviewer streams written by
+different agents — the `td-stream.txt` files the cadence `reconcile-code-review`
+skill collects — into one set of location clusters **before** a model
+adjudicates them. Pick the command by what is being merged: `atcr reconcile` for
+atcr's own review directories, `atcr dedupe` for reviewer streams from anywhere
+else.
+
+```bash
+atcr dedupe --streams a/td-stream.txt,b/td-stream.txt,c/td-stream.txt \
+            --source-tags claude,gpt,kai --tolerance 3 --untrusted sketchy
+```
+
+It reads local files and writes nothing. Each merged row keeps `td-dedupe`'s
+keys and meaning: REVIEWERS union, SEVERITY max with a `<lo> vs <hi>`
+`disagreement`, CATEGORY modal, EST_MINUTES max, PROBLEM and FIX **pooled** with
+` // ` (so a second reviewer's remedy is never dropped), and CONFIDENCE `HIGH`
+for two or more reviewers, `LOW` when every row comes from an `--untrusted`
+source, else `MEDIUM`. Every cluster of two or more is `needs_review` with its
+`members`, each carrying its own severity, problem, fix, category, estimate and
+`file_line`, so the "same issue?" decision stays with the model — `atcr dedupe`
+never guesses that two nearby findings are the same defect.
+
+Input layouts: `# atcr-findings/v1` and `/v2`, a `# Format:` comment that names
+the columns (`FILE:LINE`, `PROBLEM`, `FIX`, `EST_MINUTES`, `REVIEWER`, …; a
+column with no home in a finding, such as `ORIGIN`, `RISK_CLASS` or `BLOCKING`,
+is dropped rather than shifted), and a headerless 5, 6, 8 or 10 column stream,
+which is accepted with a warning naming the stream. A row with fewer than 5
+columns or no severity/file counts in `summary.skipped`. An unknown version
+header is an error, never a silent parse.
+
+Flags: `--streams` (required, comma-separated), `--source-tags` (parallel to
+`--streams`; defaults to each stream's parent directory name), `--tolerance`
+(default `3`, the inclusive line window that clusters same-file findings),
+`--untrusted` (source tags whose findings alone are `LOW`), `--json` (default
+`true`; `--json=false` prints a one-line count). `td-dedupe`'s `--min` is not
+carried: no caller used it.
+
+Some output values can differ from `td-dedupe`, and
+[`cli/testdata/dedupe/DIFFERENCES.md`](../cli/testdata/dedupe/DIFFERENCES.md)
+lists every one of them beside the parity test that enforces it: a CATEGORY is
+canonicalized to atcr's vocabulary, so an alias (`perf`, `tests`), a
+`_`-joined word, a casing variant of `out-of-scope`, or any word outside the
+vocabulary arrives as `other`; and a `HIGH` cluster of two or more reviewers in
+the panel-wide-instruction class is discounted to `MEDIUM` by
+`reconcile.Merge`, which `atcr dedupe` reuses. `source` names the stream (the
+`--source-tags` tag), not a row's `SOURCE` column.
 
 ## Ignoring false positives (`atcr ignore`)
 

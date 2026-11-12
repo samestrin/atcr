@@ -1,0 +1,1 @@
+MEDIUM|auth.go:47|No input validation on userId|Validate userId before query|security|20|e|kai

@@ -1,0 +1,1 @@
+HIGH|solo.go:1|p|f|security|5|e|bruce

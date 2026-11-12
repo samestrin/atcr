@@ -1,0 +1,28 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "p5.go:1",
+      "problem": "Out of reach",
+      "fix": "Note it",
+      "category": "out-of-scope",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 1,
+    "sources": 1,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 0,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

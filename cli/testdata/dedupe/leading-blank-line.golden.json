@@ -1,0 +1,28 @@
+{
+  "merged": [
+    {
+      "severity": "MEDIUM",
+      "file_line": "app/src/components/GridDimensionControl.tsx:38",
+      "problem": "Input type mismatch",
+      "fix": "Use parseFloat",
+      "category": "correctness",
+      "est_minutes": 15,
+      "source": "claude",
+      "reviewers": "claude",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 1,
+    "sources": 1,
+    "clusters": 1,
+    "merged_rows": 1,
+    "needs_review_count": 0,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

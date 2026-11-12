@@ -1,0 +1,119 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "a.go:10",
+      "problem": "prob one // prob two",
+      "fix": "Add a bounds check",
+      "category": "correctness",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "a.go:10",
+          "problem": "prob one",
+          "fix": "Add a bounds check",
+          "category": "correctness",
+          "est_minutes": 5
+        },
+        {
+          "reviewer": "kai",
+          "severity": "HIGH",
+          "file_line": "a.go:11",
+          "problem": "prob two",
+          "fix": "Add a bounds check",
+          "category": "correctness",
+          "est_minutes": 5
+        }
+      ]
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "b.go:10",
+      "problem": "prob one // prob two",
+      "fix": "Add a bounds check before the loop",
+      "category": "correctness",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "b.go:10",
+          "problem": "prob one",
+          "fix": "Add a bounds check",
+          "category": "correctness",
+          "est_minutes": 5
+        },
+        {
+          "reviewer": "kai",
+          "severity": "HIGH",
+          "file_line": "b.go:11",
+          "problem": "prob two",
+          "fix": "Add a bounds check before the loop",
+          "category": "correctness",
+          "est_minutes": 5
+        }
+      ]
+    },
+    {
+      "severity": "HIGH",
+      "file_line": "c.go:10",
+      "problem": "prob one // prob two",
+      "fix": "Add a bounds check // Type it as a Literal instead",
+      "category": "correctness",
+      "est_minutes": 5,
+      "source": "claude",
+      "reviewers": "bruce,kai",
+      "confidence": "HIGH",
+      "cluster_size": 2,
+      "needs_review": true,
+      "members": [
+        {
+          "reviewer": "bruce",
+          "severity": "HIGH",
+          "file_line": "c.go:10",
+          "problem": "prob one",
+          "fix": "Add a bounds check",
+          "category": "correctness",
+          "est_minutes": 5
+        },
+        {
+          "reviewer": "kai",
+          "severity": "HIGH",
+          "file_line": "c.go:11",
+          "problem": "prob two",
+          "fix": "Type it as a Literal instead",
+          "category": "correctness",
+          "est_minutes": 5
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "input_rows": 6,
+    "sources": 6,
+    "clusters": 3,
+    "merged_rows": 3,
+    "needs_review_count": 3,
+    "skipped": 0,
+    "warnings": [
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"multi-agent\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"multi-agent\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"claude\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data.",
+      "stream \"multi-agent\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}

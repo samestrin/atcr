@@ -1,0 +1,1 @@
+MEDIUM|auth.go:47|No userId validation|Validate userId before query|performance|20|e|kai

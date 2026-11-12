@@ -1,0 +1,41 @@
+{
+  "merged": [
+    {
+      "severity": "HIGH",
+      "file_line": "big.go:10",
+      "problem": "issue one",
+      "fix": "fix",
+      "category": "security",
+      "est_minutes": 5,
+      "source": "c",
+      "reviewers": "bruce",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    },
+    {
+      "severity": "LOW",
+      "file_line": "big.go:500",
+      "problem": "issue two",
+      "fix": "fix",
+      "category": "style",
+      "est_minutes": 5,
+      "source": "c",
+      "reviewers": "kai",
+      "confidence": "MEDIUM",
+      "cluster_size": 1,
+      "needs_review": false
+    }
+  ],
+  "summary": {
+    "input_rows": 2,
+    "sources": 1,
+    "clusters": 2,
+    "merged_rows": 2,
+    "needs_review_count": 0,
+    "skipped": 0,
+    "warnings": [
+      "stream \"c\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
+    ]
+  }
+}
