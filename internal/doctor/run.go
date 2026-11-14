@@ -33,7 +33,12 @@ const (
 	StatusTimeout       = "timeout"        // per-call deadline exceeded
 	StatusMissingKey    = "missing_key"    // API key env var unset (no network call)
 	StatusInvalidConfig = "invalid_config" // base_url empty/malformed (no network call)
+	StatusShortReply    = "short_reply"    // review-shaped probe reply under SmokeTokenFloor
 )
+
+// SmokeTokenFloor is the fewest completion tokens the review-shaped probe's reply
+// may carry.
+const SmokeTokenFloor = 16
 
 // defaultConcurrency bounds simultaneous target probes when Options leaves it
 // unset. Targets are independent; a small pool keeps a large roster civil to
