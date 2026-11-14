@@ -330,6 +330,26 @@ func TestBuildRunResult_DoesNotAliasAccumulatorState(t *testing.T) {
 	assert.Equal(t, 1, rr.Coverage[0].Outcomes[benchmark.OutcomeFindings])
 }
 
+// Epic 113 AC3: the standard-tier run-result carries the per-reviewer false-alarm
+// figure, built from the same folded cases Score reads.
+func TestBuildRunResult_CarriesFalseAlarms(t *testing.T) {
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+		model: "m", persona: "p", caseID: "case-01",
+		expected: []string{"correctness"}, raised: []string{"correctness", "performance"},
+		outcome: benchmark.OutcomeFindings,
+	}))
+	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
+
+	rr, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Len(t, rr.FalseAlarms, 1)
+	assert.Equal(t, "m", rr.FalseAlarms[0].Model)
+	assert.Equal(t, 2, rr.FalseAlarms[0].Findings)
+	assert.Equal(t, 1, rr.FalseAlarms[0].Unmatched)
+}
+
 // scrubField is NOT injective: it deletes whole path-, home- and credential-shaped
 // tokens, so two distinct realized identities can collapse to the same public one
 // (an email-shaped model id strips to empty, matching a genuinely empty one). Left
