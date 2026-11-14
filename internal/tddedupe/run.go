@@ -2,6 +2,7 @@ package tddedupe
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,7 @@ type Member struct {
 	Fix        string `json:"fix"`
 	Category   string `json:"category"`
 	EstMinutes int    `json:"est_minutes"`
+	Evidence   string `json:"evidence"`
 }
 
 // Row is one merged cluster, in td-dedupe's shape.
@@ -50,6 +52,7 @@ type Row struct {
 	ClusterSize  int      `json:"cluster_size"`
 	NeedsReview  bool     `json:"needs_review"`
 	Members      []Member `json:"members,omitempty"`
+	Evidence     string   `json:"evidence"`
 }
 
 // Summary is td-dedupe's summary, key for key. Warnings names each stream read
@@ -77,7 +80,7 @@ var clusterWithin = reconcile.ClusterWithin
 // Run reads each stream with ReadStream, clusters the rows with
 // reconcile.ClusterWithin and merges each cluster with reconcile.Merge.
 // PROBLEM and FIX are pooled with reconcile.PoolText rather than Merge's
-// longest value, so no remedy is dropped. A cluster whose distinct reviewers
+// longest value, so no remedy is dropped. EVIDENCE is kept by mergeEvidence. A cluster whose distinct reviewers
 // are fewer than two and whose every row comes from an Untrusted source is LOW,
 // as td-dedupe ranks it. Every cluster of 2+ is needs_review with its members:
 // the "same issue?" call stays with the model. A clustering that does not
@@ -191,6 +194,7 @@ func mergeRow(group []reconcile.Finding, source string, allUntrusted bool) Row {
 		Disagreement: m.Disagreement,
 		ClusterSize:  len(group),
 		NeedsReview:  len(group) >= 2,
+		Evidence:     mergeEvidence(group),
 	}
 	if allUntrusted && len(m.Reviewers) < 2 {
 		row.Confidence = reconcile.ConfLow
@@ -205,10 +209,41 @@ func mergeRow(group []reconcile.Finding, source string, allUntrusted bool) Row {
 				Fix:        f.Fix,
 				Category:   f.Category,
 				EstMinutes: f.EstMinutes,
+				Evidence:   f.Evidence,
 			})
 		}
 	}
 	return row
+}
+
+// mergeEvidence is the cluster's EVIDENCE: the highest-severity member's,
+// followed by each other distinct one in severity order (ties keep group
+// order), joined by " / ". An empty EVIDENCE adds nothing, so a cluster with
+// none stays empty. Unlike reconcile.Merge's evidence it carries no reviewer
+// prefix: the members already name their reviewers.
+func mergeEvidence(group []reconcile.Finding) string {
+	order := make([]int, len(group))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return severityRank(group[order[a]]) > severityRank(group[order[b]])
+	})
+	seen := map[string]bool{}
+	var parts []string
+	for _, i := range order {
+		e := strings.TrimSpace(group[i].Evidence)
+		if e == "" || seen[e] {
+			continue
+		}
+		seen[e] = true
+		parts = append(parts, e)
+	}
+	return strings.Join(parts, " / ")
+}
+
+func severityRank(f reconcile.Finding) int {
+	return reconcile.SeverityRank[reconcile.NormalizeSeverity(f.Severity)]
 }
 
 // fileLine is FILE:LINE, or the bare file for a finding with no line.

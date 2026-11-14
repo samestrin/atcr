@@ -48,6 +48,18 @@ siblings.
 | `format-evidence-source` | source | `execute-epic` | `epic` | same: `source` names the stream, not the skill that wrote the row |
 | `panel-wide-confidence` | confidence | `HIGH` | `MEDIUM` | `atcr dedupe` merges through `reconcile.Merge`, whose panel-wide-instruction discount lowers `HIGH` to `MEDIUM` for a 2+ reviewer `invariant` cluster whose quotes are not independent |
 
+## Added fields
+
+Keys `atcr dedupe` prints that `td-dedupe` never did. The test reads this table
+too: it removes each listed key from atcr's output before comparing, fails when
+a golden already carries the key (then it is not an added field), and fails when
+no case's output carries it (a stale row).
+
+| Added field | Where | Why |
+|---|---|---|
+| `evidence` | row | epic 97.7 T5: the merged row keeps EVIDENCE (the highest-severity member's first, each other distinct one joined with ` / `), so the merged stream `reconcile-code-review` writes keeps the column; `td-dedupe` dropped it |
+| `evidence` | member | epic 97.7 T5: each member keeps its own EVIDENCE, so a split cluster stays cited |
+
 ## The two families, in prose
 
 **Category spelling (D2).** `atcr dedupe` canonicalizes every row's CATEGORY at
