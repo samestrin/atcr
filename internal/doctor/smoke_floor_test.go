@@ -170,3 +170,32 @@ func TestSmokeFloor_AWorkingFallbackCoversAShortPrimary(t *testing.T) {
 
 	assert.Equal(t, 0, rep.ExitCode)
 }
+
+// A salvaged marker is judged as a found marker by the zero-budget verdict, which
+// rewrites the status of a healthy row. A short_reply row is not healthy, and
+// that rewrite must not turn it back into ok_warning while the exit code says 1.
+func TestSmokeFloor_SurvivesTheZeroBudgetVerdictOnASalvagedMarker(t *testing.T) {
+	t.Setenv(rfDoctorEnvK, rfDoctorKey)
+	tiny := 1
+	reg := regWith(
+		map[string]registry.Provider{"p": {APIKeyEnv: rfDoctorEnvK, BaseURL: "https://api.example/v1"}},
+		map[string]registry.AgentConfig{"a": {
+			Provider: "p", Model: "gemma4:31b", ContextWindowTokens: &tiny,
+			ResponseFormat: registry.ResponseFormatJSONObject,
+		}},
+	)
+	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
+	require.NoError(t, err)
+	fake := newFake(nil)
+	fake.metaFn = func(llmclient.Invocation) (llmclient.Completion, error) {
+		return llmclient.Completion{Content: Marker(testNonce), Salvaged: true}, nil
+	}
+	fake.chatFn = usageReply(gemma4ShortReply, llmclient.UsageData{CompletionTokens: 4}, false)
+
+	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+
+	require.Len(t, rep.Agents, 1)
+	assert.Equal(t, 1, rep.ExitCode)
+	assert.Equal(t, StatusShortReply, rep.Agents[0].Status, "the row must agree with the exit code")
+	assert.Contains(t, rep.Agents[0].Hint, "gemma4:31b")
+}

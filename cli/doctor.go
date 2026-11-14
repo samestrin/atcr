@@ -312,6 +312,18 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 				"(persona could not be resolved for: %s)",
 				strings.Join(rep.PersonaResolutionErrors, ", "))
 		}
+		// A short_reply row answered, so "no working endpoint" alone would send the
+		// operator to the key and base_url. Name the model, which is what failed.
+		var short []string
+		for _, a := range rep.Agents {
+			if a.Status == doctor.StatusShortReply {
+				short = append(short, a.Agent+" ("+a.Model+")")
+			}
+		}
+		if len(short) > 0 {
+			return fmt.Errorf("one or more agents have no working endpoint (a review-shaped reply was under the %d-token floor for: %s)",
+				doctor.SmokeTokenFloor, strings.Join(short, ", "))
+		}
 		return fmt.Errorf("one or more agents have no working endpoint")
 	}
 	return nil
