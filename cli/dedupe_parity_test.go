@@ -19,6 +19,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -272,7 +273,7 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 			var golden map[string]any
 			require.NoError(t, json.Unmarshal(raw, &golden), "%s.golden.json must be valid JSON", tc.name)
 
-			for f := range stripDedupeAddedFields(golden, added) {
+			for _, f := range dedupeAddedFieldsInGolden(golden, added) {
 				assert.Failf(t, "added field in golden",
 					"DIFFERENCES.md lists %q on a %s as added, but the td-dedupe golden carries it", f.field, f.where)
 			}
@@ -309,8 +310,9 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 
 	// Only a full run sees every case, so a filtered run skips this guard.
 	if len(ran) == len(cases) {
-		for _, f := range added {
-			assert.Truef(t, seenAdded[f], "DIFFERENCES.md: added field %q on a %s appears in no case's output; drop the row", f.field, f.where)
+		for _, f := range unseenDedupeAddedFields(added, seenAdded) {
+			assert.Failf(t, "stale added field",
+				"DIFFERENCES.md: added field %q on a %s appears in no case's output; drop the row", f.field, f.where)
 		}
 	}
 
@@ -376,6 +378,62 @@ func TestDedupeParityStaleRowFailsDespiteSiblings(t *testing.T) {
 	require.Len(t, stale, 1, "only the row whose value disappeared may be stale")
 	assert.Equal(t, "member category", stale[0].field)
 	assert.Equal(t, "error-handling", stale[0].from)
+}
+
+// TestDedupeParityAddedFieldGuardsFire proves each "Added fields" guard both
+// ways, on fakes: a listed key a golden carries, a listed key no output
+// carries, and a row on anything but a row or member each fail, and the
+// committed table and goldens pass.
+func TestDedupeParityAddedFieldGuardsFire(t *testing.T) {
+	evidenceRow := dedupeAddedField{field: "evidence", where: "row"}
+	evidenceMember := dedupeAddedField{field: "evidence", where: "member"}
+	severityMember := dedupeAddedField{field: "severity", where: "member"}
+	doc := func() map[string]any {
+		return map[string]any{"merged": []any{map[string]any{
+			"severity": "HIGH", "evidence": "e",
+			"members": []any{map[string]any{"severity": "HIGH", "evidence": "e"}},
+		}}}
+	}
+	table := "| Added field | Where | Why |\n|---|---|---|\n"
+
+	t.Run("a listed key the golden carries fails", func(t *testing.T) {
+		got := dedupeAddedFieldsInGolden(doc(), []dedupeAddedField{evidenceRow, severityMember})
+		assert.Equal(t, []dedupeAddedField{evidenceRow, severityMember}, got)
+	})
+	t.Run("a golden without the listed keys passes", func(t *testing.T) {
+		golden := map[string]any{"merged": []any{map[string]any{
+			"severity": "HIGH", "members": []any{map[string]any{"severity": "HIGH"}},
+		}}}
+		assert.Empty(t, dedupeAddedFieldsInGolden(golden, []dedupeAddedField{evidenceRow, evidenceMember}))
+	})
+	t.Run("a listed key no output carries is stale", func(t *testing.T) {
+		seen := stripDedupeAddedFields(doc(), []dedupeAddedField{evidenceRow, evidenceMember})
+		bogus := dedupeAddedField{field: "bogus", where: "member"}
+		assert.Equal(t, []dedupeAddedField{bogus},
+			unseenDedupeAddedFields([]dedupeAddedField{evidenceRow, bogus, evidenceMember}, seen))
+	})
+	t.Run("strip removes only the listed key on its own level", func(t *testing.T) {
+		d := doc()
+		stripDedupeAddedFields(d, []dedupeAddedField{evidenceMember})
+		row := d["merged"].([]any)[0].(map[string]any)
+		member := row["members"].([]any)[0].(map[string]any)
+		assert.Equal(t, "e", row["evidence"], "a member row must not strip the merged row's key")
+		assert.NotContains(t, member, "evidence")
+		assert.Equal(t, "HIGH", member["severity"])
+	})
+	t.Run("a row on anything but row or member is an error", func(t *testing.T) {
+		_, err := parseDedupeAddedFields(table + "| `input_rows` | summary | x |\n")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"summary"`)
+	})
+	t.Run("a well-formed table parses", func(t *testing.T) {
+		got, err := parseDedupeAddedFields(table + "| `evidence` | row | x |\n| `evidence` | member | y |\n")
+		require.NoError(t, err)
+		assert.Equal(t, []dedupeAddedField{evidenceRow, evidenceMember}, got)
+	})
+	t.Run("the committed table passes", func(t *testing.T) {
+		assert.Equal(t, []dedupeAddedField{evidenceRow, evidenceMember}, readDedupeAddedFields(t))
+	})
 }
 
 // TestDedupeParityPanelWideDiscountIsDocumented proves the confidence deviation
@@ -534,15 +592,47 @@ func stripDedupeAddedFields(doc map[string]any, added []dedupeAddedField) map[de
 	return found
 }
 
+// dedupeAddedFieldsInGolden strips the added keys from a td-dedupe golden and
+// returns the ones it carried. Any is a misdocumented row: a key td-dedupe also
+// printed is not added, and listing it would remove it from the comparison.
+func dedupeAddedFieldsInGolden(golden map[string]any, added []dedupeAddedField) []dedupeAddedField {
+	var out []dedupeAddedField
+	for _, f := range added {
+		if stripDedupeAddedFields(golden, []dedupeAddedField{f})[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// unseenDedupeAddedFields returns the added fields no case's output carried:
+// stale rows.
+func unseenDedupeAddedFields(added []dedupeAddedField, seen map[dedupeAddedField]bool) []dedupeAddedField {
+	var out []dedupeAddedField
+	for _, f := range added {
+		if !seen[f] {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // readDedupeAddedFields parses the "Added fields" table in DIFFERENCES.md.
 func readDedupeAddedFields(t *testing.T) []dedupeAddedField {
 	t.Helper()
 	raw, err := os.ReadFile(dedupeParityDiffDoc)
 	require.NoError(t, err, "the parity differences file must be readable")
+	out, err := parseDedupeAddedFields(string(raw))
+	require.NoError(t, err, dedupeParityDiffDoc)
+	return out
+}
 
+// parseDedupeAddedFields reads the "Added fields" table out of a
+// DIFFERENCES.md body. A row whose Where is not row or member is an error.
+func parseDedupeAddedFields(raw string) ([]dedupeAddedField, error) {
 	var out []dedupeAddedField
 	inTable := false
-	for _, line := range strings.Split(string(raw), "\n") {
+	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") {
 			inTable = false
@@ -558,11 +648,12 @@ func readDedupeAddedFields(t *testing.T) []dedupeAddedField {
 		case strings.Trim(cells[0], "-: ") == "", !inTable:
 			continue
 		}
-		require.Containsf(t, []string{"row", "member"}, cells[1],
-			"%s: added field %q is on %q; only row and member are allowed", dedupeParityDiffDoc, cells[0], cells[1])
+		if cells[1] != "row" && cells[1] != "member" {
+			return nil, fmt.Errorf("added field %q is on %q; only row and member are allowed", cells[0], cells[1])
+		}
 		out = append(out, dedupeAddedField{field: cells[0], where: cells[1]})
 	}
-	return out
+	return out, nil
 }
 
 // readDedupeDeviations parses the "Allowed deviations" table in
