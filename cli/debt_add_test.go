@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -855,4 +857,238 @@ func TestDebtAdd_ReportedBy(t *testing.T) {
 	recs := readDebtStore(t, dir)
 	require.Len(t, recs, 1)
 	assert.Equal(t, "paperclip-builder", recs[0].ReportedBy, "the seat is trimmed and kept")
+}
+
+// readDebtStoreLines returns every stored JSONL line verbatim, in shard order.
+// The byte-identical pin needs the bytes on disk rather than a decoded Record:
+// re-marshaling a decoded record hides exactly the wire changes it must catch
+// (a new key, an omitempty that drops one, null becoming []).
+func readDebtStoreLines(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		b, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		require.NoError(t, rerr)
+		for _, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+			if l != "" {
+				lines = append(lines, l)
+			}
+		}
+	}
+	return lines
+}
+
+// Epic 97.7 T4: the three review facts a merged reviewer stream carries —
+// who raised the finding, the panel's confidence and the supporting excerpt —
+// must survive `debt add` and come back out of `debt list --json` unchanged.
+// This is the task's first "Done when" clause, asserted on the WIRE keys (not
+// only the Go fields) because a consumer reads the JSON, not the struct.
+func TestDebtAdd_ReviewerFieldsRoundTripThroughListJSON(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "HIGH", "--file", "internal/x/y.go:12",
+		"--problem", "boom", "--fix", "guard it", "--category", "correctness",
+		"--reviewers", "bruce,clark",
+		"--confidence", "HIGH",
+		"--evidence", "retry() loops on 5xx with no ceiling",
+	)
+	require.NoError(t, err)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--json")
+	require.NoError(t, err)
+
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &items), "list --json emits an array of records")
+	require.Len(t, items, 1)
+	assert.Equal(t, []any{"bruce", "clark"}, items[0]["reviewers"], "reviewers comes back as the same list, in order")
+	assert.Equal(t, "HIGH", items[0]["confidence"], "confidence comes back unchanged")
+	assert.Equal(t, "retry() loops on 5xx with no ceiling", items[0]["evidence"], "evidence comes back unchanged")
+
+	// The same facts are on the stored record, so a later fold or compaction
+	// reads them rather than only the list renderer.
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, []string{"bruce", "clark"}, recs[0].Reviewers)
+	assert.Equal(t, "HIGH", recs[0].Confidence)
+	assert.Equal(t, "retry() loops on 5xx with no ceiling", recs[0].Evidence)
+}
+
+// debtAddBareWire is the exact JSONL line `atcr debt add` wrote before epic 97.7
+// T4, captured from the pre-change binary. Only the three clock/hash-derived
+// values are substituted; every other byte — key order, the empty evidence and
+// confidence strings, and reviewers as null rather than [] — is pinned.
+const debtAddBareWire = `{"schema_version":4,"id":%q,"run_id":%q,"ts":%q,"severity":"HIGH","file":"internal/x/y.go","line":12,"problem":"boom","fix":"guard it","category":"correctness","est_minutes":0,"evidence":"","reviewers":null,"confidence":"","origin":"manual"}`
+
+// The task's second "Done when" clause: a row added WITHOUT the three flags is
+// byte-identical to today's. The flags are additive, so an existing script's
+// output must not move by one byte — including reviewers staying null (an empty
+// []string{} would marshal as [] and change every stored line).
+func TestDebtAdd_WithoutReviewerFieldsIsByteIdentical(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "flags absent"},
+		{name: "flags explicitly empty", args: []string{"--reviewers", "", "--confidence", "", "--evidence", ""}},
+		{name: "reviewers only blanks", args: []string{"--reviewers", " , , ", "--confidence", "   ", "--evidence", "   "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := emptyDebtStore(t)
+			args := append([]string{"add", "--dir", dir,
+				"--severity", "HIGH", "--file", "internal/x/y.go:12",
+				"--problem", "boom", "--fix", "guard it", "--category", "correctness"}, tc.args...)
+			_, err := runDebt(t, args...)
+			require.NoError(t, err)
+
+			recs := readDebtStore(t, dir)
+			require.Len(t, recs, 1)
+			lines := readDebtStoreLines(t, dir)
+			require.Len(t, lines, 1)
+			want := fmt.Sprintf(debtAddBareWire, recs[0].ID, recs[0].RunID, recs[0].Timestamp)
+			assert.Equal(t, want, lines[0], "the stored line is byte-identical to the pre-flag record")
+			assert.Nil(t, recs[0].Reviewers, "no reviewers stays nil, so the wire keeps null")
+		})
+	}
+}
+
+// A comma list is trimmed entry by entry and blank entries are dropped, the same
+// way `debt filter --severity/--confidence` read their lists. Order is kept: the
+// caller's list is the record's list.
+func TestDebtAdd_ReviewersCommaListIsTrimmedAndDropsBlanks(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+		"--reviewers", " bruce , ,clark, ",
+	)
+	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, []string{"bruce", "clark"}, recs[0].Reviewers)
+}
+
+// Confidence is stored in the canonical upper-case spelling the reconcile module
+// defines, so a hand-filed row and a reviewed one are the same value to every
+// reader (debt filter compares case-insensitively, the dashboard groups on it).
+func TestDebtAdd_ConfidenceIsCanonicalized(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"high", "HIGH"},
+		{" Medium ", "MEDIUM"},
+		{"LOW", "LOW"},
+		{"verified", "VERIFIED"},
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			dir := emptyDebtStore(t)
+			_, err := runDebt(t, "add", "--dir", dir,
+				"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+				"--confidence", tc.in,
+			)
+			require.NoError(t, err)
+			recs := readDebtStore(t, dir)
+			require.Len(t, recs, 1)
+			assert.Equal(t, tc.want, recs[0].Confidence)
+		})
+	}
+}
+
+// An off-enum confidence is the same class of silent failure the status enum
+// guards against: localdebt.Append does no schema validation, so a typo would be
+// filed and then match no `debt filter --confidence` selection. It is rejected
+// before anything is written.
+func TestDebtAdd_UnknownConfidenceIsRejectedAndNotWritten(t *testing.T) {
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+		"--confidence", "kinda-sure",
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err), "an unknown confidence is a usage error (exit 2)")
+	assert.Contains(t, out+err.Error(), "--confidence")
+	assert.Contains(t, out+err.Error(), "LOW|MEDIUM|HIGH|VERIFIED", "the error names the accepted tiers")
+	assert.Empty(t, readDebtStore(t, dir), "the rejected record is not appended")
+}
+
+func TestDebtAdd_EvidenceIsTrimmed(t *testing.T) {
+	dir := emptyDebtStore(t)
+	_, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+		"--evidence", "  the excerpt  ",
+	)
+	require.NoError(t, err)
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, "the excerpt", recs[0].Evidence)
+}
+
+// Confidence is flag-only: the wizard has no prompt for it, so there is nothing
+// to re-ask. A value the finalizer would reject must therefore be refused BEFORE
+// the wizard runs, not after all seven answers — the same discarded-answers
+// failure validDebtEst was added to prevent for a typed est.
+func TestDebtAdd_InvalidConfidenceFailsBeforeTheWizardPrompts(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(strings.Join([]string{"LOW", "z.go:3", "p", "f", "docs", "5", "open"}, "\n") + "\n"))
+	cmd.SetArgs([]string{"add", "--dir", dir, "--confidence", "kinda-sure"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--confidence")
+	assert.NotContains(t, out.String(), "Severity", "the bad flag is refused before the first prompt is printed")
+	assert.Empty(t, readDebtStore(t, dir))
+}
+
+// The wizard is not a flag bypass: --reported-by already applies to both paths,
+// and the three new fields are applied at the same point, so a partial-flag
+// interactive add keeps them too.
+func TestDebtAdd_ReviewerFlagsCarryThroughTheWizard(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	answers := strings.Join([]string{"LOW", "z.go:3", "typo", "fix typo", "docs", "5", "open"}, "\n") + "\n"
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(answers))
+	cmd.SetArgs([]string{"add", "--dir", dir,
+		"--reviewers", "bruce,clark", "--confidence", "medium", "--evidence", "excerpt"})
+	require.NoError(t, cmd.Execute())
+
+	recs := readDebtStore(t, dir)
+	require.Len(t, recs, 1)
+	assert.Equal(t, []string{"bruce", "clark"}, recs[0].Reviewers)
+	assert.Equal(t, "MEDIUM", recs[0].Confidence)
+	assert.Equal(t, "excerpt", recs[0].Evidence)
+}
+
+// The encoded-record cap already protects the store from a line every reader
+// would skip. --evidence is a new way to reach it, so the rejection must name it
+// and still write nothing.
+func TestDebtAdd_OversizeEvidenceIsRejectedAndNotWritten(t *testing.T) {
+	dir := emptyDebtStore(t)
+	out, err := runDebt(t, "add", "--dir", dir,
+		"--severity", "LOW", "--file", "a.go:1", "--problem", "p", "--fix", "f", "--category", "c",
+		"--evidence", strings.Repeat("e", localdebt.MaxRecordBytes),
+	)
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, out+err.Error(), "too large to store")
+	assert.Contains(t, out+err.Error(), "--evidence", "the size hint names the field that can now overflow it")
+	assert.Empty(t, readDebtStore(t, dir))
 }
