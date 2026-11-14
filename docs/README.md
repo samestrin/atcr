@@ -92,6 +92,9 @@ single source of truth the website build consumes, so it links every doc in
 
 - [Benchmark Suite](benchmark.md) — the standard benchmark tooling behind the
   public leaderboard.
+- [Local Model Benchmark](local-models-benchmark.md) — the operator procedure
+  and unfilled results sheet for comparing pinned local-model candidates on the
+  32 GB GPU and 64 GB unified-memory tiers.
 - [Scorecard](scorecard.md) — the per-reviewer scorecard for a reconcile run.
 - [Finding History (`atcr history`)](history.md) — the per-repo trend ledger under
   `.atcr/history/`: the record schema, the two read locations, how a `--since`
