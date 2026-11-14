@@ -24,6 +24,15 @@
 #                   (docs/registry.md). A thinking model runs with thinking on
 #                   at its best-practice level and max_tokens >= 16384 (refine
 #                   answer Q5): the 8192 default starves a thinking model.
+#   response_format json_object for every candidate. `atcr doctor` runs its
+#                   review-shaped probe, which carries the 16-token short-reply
+#                   floor, only for an agent that declares response_format
+#                   (docs/registry.md, response_format verification detail).
+#                   Without it doctor never checks the reply length, and a
+#                   near-empty model like bench36's 4-token gemma4 goes on to
+#                   scoring. The floor runs even when doctor reports the field
+#                   not_honored, so a declaration the endpoint ignores still
+#                   gets checked.
 #
 # Ollama's /v1/chat/completions reads reasoning_effort for every thinking
 # model (docs/api/openai-compatibility in ollama/ollama), so every thinking
@@ -53,6 +62,7 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       Thinking is on by default. bench36 scored it 0.6 findings per case at
       the 8192 default cap, which fits thinking-token starvation, not model
@@ -79,6 +89,7 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       bench36 got about 4 tokens per reply. The bare manifest template makes
       a missing renderer the first thing to rule out; the smoke check (T2)
@@ -106,6 +117,7 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       Same template risk as gemma4-31b.
 
@@ -129,6 +141,7 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       The manifest sets presence_penalty 1.5; Ollama applies it unless the
       request overrides it.
@@ -155,6 +168,7 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       Thinking cannot be turned off: Ollama sends "none" as low. Ships only
       in MXFP4, so there is no Q4_K_M tag.
@@ -178,10 +192,14 @@ candidates:
     thinking: "on"
     thinking_level: high
     max_tokens: 32768
+    response_format: json_object
     notes: >-
       Writes a reasoning trace before every answer. A low reasoning level is
       not a safe saving: nemotron-3-super stopped reviewing at low
-      (docs/registry.md, Thinking and max_tokens).
+      (docs/registry.md, Thinking and max_tokens). nemotron-3-nano did not
+      honor response_format behind the litellm proxy (docs/registry.md); it
+      is declared anyway so doctor's floor runs. A not_honored verdict is a
+      warning, not a failure: record it beside the result.
 
   - name: gemma3-27b
     ollama_tag: gemma3:27b-it-q4_K_M
@@ -199,6 +217,7 @@ candidates:
     stop_tokens: <end_of_turn>, from the manifest's stop parameter.
     thinking_model: false
     max_tokens: 8192
+    response_format: json_object
     notes: >-
       The baseline: today's gerald binding. No thinking mode, so it runs at
       the review default cap. bench36 scored it 6.5 findings per case.
