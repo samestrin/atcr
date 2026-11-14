@@ -1,0 +1,1 @@
+- Added an operator guide and unfilled results sheet for benchmarking the seven pinned local-model candidates on 32 GB GPU and 64 GB unified-memory hardware. (epic 113)
