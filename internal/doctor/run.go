@@ -33,7 +33,17 @@ const (
 	StatusTimeout       = "timeout"        // per-call deadline exceeded
 	StatusMissingKey    = "missing_key"    // API key env var unset (no network call)
 	StatusInvalidConfig = "invalid_config" // base_url empty/malformed (no network call)
+	StatusShortReply    = "short_reply"    // review-shaped probe reply under SmokeTokenFloor
 )
+
+// SmokeTokenFloor is the fewest completion tokens the review-shaped probe's reply
+// may carry (epic 113 T2). That probe plants a defect, so a reviewer that finds it
+// writes one finding of seven keys, well over the floor; a bare {"findings":[]} is
+// about five. Under the floor is the near-empty reply of a chat-template or
+// stop-token fault (gemma4:31b answered reviews in about 4 tokens), and a model in
+// that state scores its setup, not its reviewing. The marker probe has no floor: a
+// correct echo of the marker is only a few tokens.
+const SmokeTokenFloor = 16
 
 // defaultConcurrency bounds simultaneous target probes when Options leaves it
 // unset. Targets are independent; a small pool keeps a large roster civil to
@@ -293,6 +303,9 @@ type probeResult struct {
 	// outcome; empty when the target declares none or the endpoint probe failed.
 	responseFormatStatus string
 	responseFormatDetail string
+	// shortReply is the hint for a review-shaped probe reply under
+	// SmokeTokenFloor; empty when the reply met it or no count was reported.
+	shortReply string
 	// called reports that the marker call was placed, and comp/callErr are its
 	// result: the thinking verdict reads the declared call's reasoning signal.
 	called  bool
@@ -339,7 +352,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// Only a working endpoint is worth a JSON-mode probe: against a failed
 			// one it can only fail the same way and bury the real cause.
 			if res.Targets[i].ResponseFormat != "" && healthy(pr.status) {
-				pr.responseFormatStatus, pr.responseFormatDetail = probeResponseFormat(ctx, c, res.Targets[i], opts, pr.maxTokens)
+				pr.responseFormatStatus, pr.responseFormatDetail, pr.shortReply = probeResponseFormat(ctx, c, res.Targets[i], opts, pr.maxTokens)
 			}
 			// Unlike response_format, a failed call still gets a verdict (unverified):
 			// the marker call IS the declared thinking call, and its failure is the
@@ -370,6 +383,12 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			// zero tokens — see probeThinking), and a per-run call budget would
 			// thread new state through the probe plumbing, so the bound is
 			// documented here rather than restructured.
+
+			// The floor fails the row, so it is applied after the thinking verdict,
+			// which reads the marker call and gates on the endpoint status.
+			if pr.shortReply != "" {
+				pr.status, pr.hint = StatusShortReply, pr.shortReply
+			}
 			results[i] = pr
 		}(i)
 	}
@@ -384,8 +403,11 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 		// zeroBudgetVerdict reads StatusOKWarning as "marker absent". A marker found only
 		// in salvaged reasoning is not that, so it is judged as a found marker and the
 		// salvage hint is kept alongside the budget one rather than replaced by it.
+		// Only on a healthy row: a short_reply row keeps markerInReasoning from its
+		// marker call, and judging it as StatusOK would let the verdict below rewrite
+		// a failed row into ok_warning.
 		zbStatus := status
-		if pr.markerInReasoning {
+		if pr.markerInReasoning && healthy(status) {
 			zbStatus = StatusOK
 		}
 		if s, h, ok := zeroBudgetVerdict(tgt.Model, at.ContextWindowTokens, reviewCap, pr.maxTokens, zbStatus, at.ToolLoop); ok {
@@ -873,8 +895,10 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 // responseFormatPrompt is the fixed prompt of the response_format probes. It names
 // JSON, because some providers reject json_object when no message does, and plants
 // one defect (a division by a count that can be zero) so a healthy model is expected
-// to report one finding. An empty {"findings":[]} still passes: it is the required
-// object, just a less attentive answer.
+// to report one finding. An empty {"findings":[]} still passes response_format: it
+// is the required object, just a less attentive answer. It is under
+// SmokeTokenFloor, though, so a provider that reports its token count fails the
+// row as short_reply.
 const responseFormatPrompt = `Review this two-line Go function for bugs. Reply with exactly one JSON object and nothing else: {"findings":[...]}. The object has only that one key. Each finding has exactly these keys: "severity" (one of CRITICAL, HIGH, MEDIUM, LOW), "file_line" (a string such as "probe.go:2"), "problem", "fix", "category" (one lowercase word), "est_minutes" (an integer), "evidence" (all other values are strings). If nothing is wrong, reply {"findings":[]}.
 
 probe.go:1: func percent(hits, total int) int {
@@ -900,24 +924,27 @@ var probeToolDef = llmclient.ToolDef{
 // ran at (0 = uncapped). It never changes the marker probe's verdict; a mismatch is
 // a warning, returned as ResponseFormatNotHonored with every failed probe's detail.
 // A probe that reached no verdict yields ResponseFormatUnverified, unless another
-// probe did fail.
+// probe did fail. short is the plain probe's floor verdict (see replyFloor).
 //
 // A pass is strong evidence, not proof: a model that returns a bare object without
 // JSON mode looks the same as one under it. What the probe does catch is a provider
 // that rejects the field, or ignores it and lets the model drift into a fence or prose.
-func probeResponseFormat(ctx context.Context, c Completer, tgt Target, opts Options, budget int) (string, string) {
+func probeResponseFormat(ctx context.Context, c Completer, tgt Target, opts Options, budget int) (outcome, detail, short string) {
 	calls := [][]llmclient.ToolDef{nil}
 	if tgt.Tools {
 		calls = append(calls, []llmclient.ToolDef{probeToolDef})
 	}
 	byOutcome := map[string][]string{}
 	for _, toolDefs := range calls {
-		outcome, detail := responseFormatCall(ctx, c, tgt, opts, budget, toolDefs)
-		byOutcome[outcome] = append(byOutcome[outcome], detail)
+		o, d, s := responseFormatCall(ctx, c, tgt, opts, budget, toolDefs)
+		byOutcome[o] = append(byOutcome[o], d)
+		if s != "" {
+			short = s
+		}
 	}
-	for _, outcome := range []string{ResponseFormatNotHonored, ResponseFormatUnverified} {
-		if details := byOutcome[outcome]; len(details) > 0 {
-			return outcome, strings.Join(details, "; ")
+	for _, o := range []string{ResponseFormatNotHonored, ResponseFormatUnverified} {
+		if details := byOutcome[o]; len(details) > 0 {
+			return o, strings.Join(details, "; "), short
 		}
 	}
 	// An honored pass can still carry a note (the combined probe's "accepted;
@@ -928,13 +955,14 @@ func probeResponseFormat(ctx context.Context, c Completer, tgt Target, opts Opti
 			honoredNotes = append(honoredNotes, detail)
 		}
 	}
-	return ResponseFormatHonored, strings.Join(honoredNotes, "; ")
+	return ResponseFormatHonored, strings.Join(honoredNotes, "; "), short
 }
 
 // responseFormatCall places one response_format probe and returns its outcome and,
-// unless honored, the reason. With toolDefs it is the combined probe, which also
-// passes on a tool call.
-func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Options, budget int, toolDefs []llmclient.ToolDef) (string, string) {
+// unless honored, the reason, plus the plain probe's floor verdict (replyFloor).
+// With toolDefs it is the combined probe, which also passes on a tool call and so
+// is never held to the floor.
+func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Options, budget int, toolDefs []llmclient.ToolDef) (string, string, string) {
 	declared := "response_format: " + tgt.ResponseFormat
 	if len(toolDefs) > 0 {
 		declared = "tools: true with " + declared
@@ -976,18 +1004,18 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		// nothing.
 		var se *llmclient.HTTPStatusError
 		if errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != 429 && se.Status != 408 {
-			return ResponseFormatNotHonored, fmt.Sprintf("the provider rejected %s (HTTP %d): %s", declared, se.Status, scrubCredentials(se.Snippet, tgt))
+			return ResponseFormatNotHonored, fmt.Sprintf("the provider rejected %s (HTTP %d): %s", declared, se.Status, scrubCredentials(se.Snippet, tgt)), ""
 		}
 		if se != nil {
-			return ResponseFormatUnverified, fmt.Sprintf("the %s probe got HTTP %d, so no verdict was reached: %s", declared, se.Status, scrubCredentials(se.Snippet, tgt))
+			return ResponseFormatUnverified, fmt.Sprintf("the %s probe got HTTP %d, so no verdict was reached: %s", declared, se.Status, scrubCredentials(se.Snippet, tgt)), ""
 		}
-		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reached no verdict: %s", declared, scrubCredentials(bounded(err.Error()), tgt))
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reached no verdict: %s", declared, scrubCredentials(bounded(err.Error()), tgt)), ""
 	}
 	// Completer is an exported interface: an implementation may return (nil, nil).
 	// Reading resp below would panic inside a Run goroutine and kill the whole
 	// self-test, violating Run's report-is-always-complete contract.
 	if resp == nil {
-		return ResponseFormatUnverified, fmt.Sprintf("the %s probe got no response back, so no verdict was reached", declared)
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe got no response back, so no verdict was reached", declared), ""
 	}
 	if len(toolDefs) > 0 && len(resp.Message.ToolCalls) > 0 {
 		// A tool call proves the provider ACCEPTED tools beside response_format; it
@@ -995,7 +1023,7 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 		// response_format whenever tools are present would otherwise get a clean
 		// pass, contrary to the "ignored field must warn" risk rule — so the pass
 		// says what it actually saw, and --json can tell accepted from observed.
-		return ResponseFormatHonored, "accepted; shape not observed (the combined probe passed on a tool call)"
+		return ResponseFormatHonored, "accepted; shape not observed (the combined probe passed on a tool call)", ""
 	}
 	// A reply cut off at the budget is invalid or empty JSON whatever the provider did
 	// with the field — and a thinking model can spend the whole budget before answering.
@@ -1005,7 +1033,7 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	if resp.Truncated {
 		// The remedy text is cutOff's, so the response_format and thinking arms
 		// share one source and cannot drift the next time the wording changes.
-		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was %s, so no verdict was reached", declared, cutOff(budget))
+		return ResponseFormatUnverified, fmt.Sprintf("the %s probe reply was %s, so no verdict was reached", declared, cutOff(budget)), ""
 	}
 	content := ""
 	if resp.Message.Content != nil {
@@ -1023,17 +1051,45 @@ func responseFormatCall(ctx context.Context, c Completer, tgt Target, opts Optio
 	// (TD internal/doctor/run.go:958).
 	answer, _ := llmclient.SplitThink(content)
 	s := strings.TrimSpace(answer)
+	// The floor is read before the shape: a near-empty reply is the stronger
+	// signal, and it fails the row whatever response_format concludes.
+	var short string
+	if len(toolDefs) == 0 {
+		short = replyFloor(tgt.Model, resp.Usage)
+	}
 	if s == "" || s[0] != '{' || !json.Valid([]byte(s)) {
 		if len(toolDefs) > 0 {
-			return ResponseFormatNotHonored, "declared " + declared + ", but the reply was neither a tool call nor a bare JSON object; the provider likely ignored response_format"
+			return ResponseFormatNotHonored, "declared " + declared + ", but the reply was neither a tool call nor a bare JSON object; the provider likely ignored response_format", short
 		}
-		return ResponseFormatNotHonored, "declared " + declared + ", but the reply was not a bare JSON object; the provider likely ignored response_format"
+		return ResponseFormatNotHonored, "declared " + declared + ", but the reply was not a bare JSON object; the provider likely ignored response_format", short
 	}
 	// JSON mode held here; what failed is the shape of the object the model chose.
 	if !stream.IsNoFindings(s) && len(stream.ParseModelOutput([]byte(s))) == 0 {
-		return ResponseFormatNotHonored, "declared " + declared + `, and the reply was a bare JSON object, but the review parser read no findings from it (wrong keys or severity values); the model may not follow the {"findings":[...]} contract`
+		return ResponseFormatNotHonored, "declared " + declared + `, and the reply was a bare JSON object, but the review parser read no findings from it (wrong keys or severity values); the model may not follow the {"findings":[...]} contract`, short
 	}
-	return ResponseFormatHonored, ""
+	return ResponseFormatHonored, "", short
+}
+
+// replyFloor returns the short_reply hint when the review-shaped probe's reply is
+// under SmokeTokenFloor, naming the model; "" when it met the floor or no count was
+// reported. The count is the provider's completion_tokens less any reported
+// reasoning tokens, since thinking is not the review. A provider that reports no
+// usage gets no verdict: a byte estimate would be a guess the operator cannot check
+// against the endpoint's own numbers.
+func replyFloor(model string, usage llmclient.UsageData) string {
+	if usage.CompletionTokens <= 0 {
+		return ""
+	}
+	n := usage.CompletionTokens
+	if usage.ReasoningTokensReported {
+		n = max(n-usage.ReasoningTokens, 0)
+	}
+	if n >= SmokeTokenFloor {
+		return ""
+	}
+	return fmt.Sprintf("model %s answered the review-shaped probe in %d tokens, under the %d-token floor; "+
+		"a near-empty review usually means a chat-template or stop-token fault, so fix the model's "+
+		"template and stop tokens before scoring it", model, n, SmokeTokenFloor)
 }
 
 // declaresThinking reports that the target's agents declared thinking or

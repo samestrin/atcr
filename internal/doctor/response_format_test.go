@@ -131,7 +131,7 @@ func TestResponseFormatCall_DetailNamesThinkingDeclarationWhenFlagged(t *testing
 	fake.chatFn = func(llmclient.Invocation, []llmclient.Message, []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
 		return nil, &llmclient.HTTPStatusError{Status: 400, Snippet: "combination rejected"}
 	}
-	_, detail := responseFormatCall(context.Background(), fake, tgt, Options{Nonce: testNonce}, 2048, nil)
+	_, detail, _ := responseFormatCall(context.Background(), fake, tgt, Options{Nonce: testNonce}, 2048, nil)
 	assert.Contains(t, detail, "preserve_thinking: on",
 		"a flagged target's rejection detail must name the thinking declaration, got: %s", detail)
 }

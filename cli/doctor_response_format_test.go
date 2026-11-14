@@ -152,3 +152,43 @@ func TestDoctor_NoResponseFormatWarningForAnUndeclaredRoster(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "response_format")
 }
+
+// shortReplyProvider echoes the marker, then answers the review-shaped probe the
+// way gemma4:31b did in the epic 113 benchmark: a valid {"findings":[]} in 4
+// completion tokens, reported in the usage block.
+func shortReplyProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		content, tokens := `{"findings":[]}`, 4
+		if i := strings.Index(string(body), "ATCR-OK-"); i >= 0 {
+			content, tokens = "ATCR-OK-ok", 6
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}},
+			"usage":   map[string]int{"prompt_tokens": 210, "completion_tokens": tokens},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A review-shaped reply under the token floor fails doctor, and the error names
+// the agent and model, so a benchmark pre-flight stops the candidate before it is
+// scored (epic 113 AC2).
+func TestDoctor_ShortReviewReplyFailsAndNamesTheModel(t *testing.T) {
+	srv := shortReplyProvider(t)
+	setupDeclaredDoctorEnv(t, srv.URL)
+
+	stdout, stderr, err := executeSplit(t, "doctor")
+	require.Error(t, err, "a reply under the floor must fail the exit code")
+	assert.Contains(t, err.Error(), "bruce (test-model)")
+	assert.Contains(t, err.Error(), "token floor")
+	assert.Contains(t, stderr, "0 ok / 1 failed")
+	assert.Contains(t, stdout, "short_reply")
+	assert.Contains(t, stdout, "model test-model answered the review-shaped probe in 4 tokens")
+
+	jsonOut, err := execute(t, "doctor", "--json")
+	require.Error(t, err)
+	assert.Contains(t, jsonOut, `"status": "short_reply"`)
+}
