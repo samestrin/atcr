@@ -1024,6 +1024,31 @@ func TestDebtAdd_EvidenceIsTrimmed(t *testing.T) {
 	assert.Equal(t, "the excerpt", recs[0].Evidence)
 }
 
+// Confidence is flag-only: the wizard has no prompt for it, so there is nothing
+// to re-ask. A value the finalizer would reject must therefore be refused BEFORE
+// the wizard runs, not after all seven answers — the same discarded-answers
+// failure validDebtEst was added to prevent for a typed est.
+func TestDebtAdd_InvalidConfidenceFailsBeforeTheWizardPrompts(t *testing.T) {
+	dir := emptyDebtStore(t)
+
+	orig := debtStdinIsTTY
+	debtStdinIsTTY = func(_ io.Reader) bool { return true }
+	t.Cleanup(func() { debtStdinIsTTY = orig })
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(strings.Join([]string{"LOW", "z.go:3", "p", "f", "docs", "5", "open"}, "\n") + "\n"))
+	cmd.SetArgs([]string{"add", "--dir", dir, "--confidence", "kinda-sure"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--confidence")
+	assert.NotContains(t, out.String(), "Severity", "the bad flag is refused before the first prompt is printed")
+	assert.Empty(t, readDebtStore(t, dir))
+}
+
 // The wizard is not a flag bypass: --reported-by already applies to both paths,
 // and the three new fields are applied at the same point, so a partial-flag
 // interactive add keeps them too.
