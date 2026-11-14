@@ -407,6 +407,13 @@ type RunResult struct {
 	// recorded" rather than as a run with no reviewers.
 	Vocabulary []ReviewerVocabulary `json:"reviewer_vocabulary,omitempty"`
 
+	// FalseAlarms is each reviewer's unmatched-finding count, an upper bound on its
+	// false alarms (epic 113). Produced by FalseAlarms in score.go, which documents
+	// the definition and its limit; this field only carries it. Positionally
+	// aligned with Reviewers, run-result-only for the same reason Vocabulary is,
+	// and omitted when unmeasured. Only the standard (category) tier emits it.
+	FalseAlarms []ReviewerFalseAlarms `json:"reviewer_false_alarms,omitempty"`
+
 	// PositionalRecall is the repo-state-v1 tier's located-finding recall per
 	// reviewer, with out-of-diff recall reported SEPARATELY from overall recall
 	// (epic 35.16.10, AC4). Produced by ScorePositional; this field only carries it.

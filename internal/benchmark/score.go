@@ -114,28 +114,12 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 	var totalFindings, matchedFindings, ratedCases int
 	var recallSum float64
 	for _, c := range r.Cases {
-		// The expected side needs only the distinct set, so it uses normalizeDistinct
-		// rather than normalizeSet — whose parallel per-finding slice exists for the
-		// RAISED side alone and would otherwise be built and discarded every case.
-		expected := normalizeDistinct(c.Expected)
-		raised, normalizedRaised := normalizeSet(c.Raised)
+		m := matchCase(c)
 		totalFindings += len(c.Raised)
 
-		// Both quantities below resolve through the equivalence relation in
-		// equivalence.go: a coarse expected category is satisfied by any member of
-		// the ATCR family it spans, so a reviewer that writes `style` for a planted
-		// `maintainability` defect is credited for detecting it. The relation is
-		// scorer-side only — no product category is merged — and reduces to exact
-		// matching for any expected category with no family.
-		//
-		// One walk of the families yields both: hit (recall's numerator, decided
-		// per expected category) and satisfying (their union, the cost denominator's
-		// membership test).
-		hit, satisfying := satisfactions(expected, raised)
-
-		if len(expected) > 0 {
+		if m.expected > 0 {
 			ratedCases++
-			recallSum += float64(hit) / float64(len(expected))
+			recallSum += float64(m.hit) / float64(m.expected)
 		}
 		// Cost-per-corroborated denominator: every finding whose category satisfied
 		// an expected (planted) category.
@@ -166,18 +150,7 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		// cost-per-detected-category from the benchmark, distinguishable only by the
 		// envelope's source tag — is a worse defect than the hole. A unit change must
 		// version or rename the metric, in an epic scoped to touch PublicRecord.
-		//
-		// Drive the count off normalizedRaised so this pass normalizes each finding
-		// once rather than twice. It is NOT once per finding per RUN: OutOfVocabularyRate
-		// is a separate top-level walk over the same ReviewerScores and normalizes them
-		// again. That duplication is deliberate — it keeps the run diagnostic off
-		// Score's signature and out of the frozen PublicRecord — and is negligible
-		// against an LLM-bound run.
-		for _, cat := range normalizedRaised {
-			if satisfying[cat] {
-				matchedFindings++
-			}
-		}
+		matchedFindings += m.matched
 	}
 
 	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
@@ -194,6 +167,114 @@ func scoreOne(r ReviewerScore) scorecard.PublicRecord {
 		pr.CostPerCorroboratedFindingUSD = &v
 	}
 	return pr
+}
+
+// caseMatch is one case's category outcome: the distinct expected categories,
+// how many of them the reviewer hit, and how many of its findings matched one.
+type caseMatch struct {
+	expected int
+	hit      int
+	matched  int
+}
+
+// matchCase scores one case. It is the ONE definition of "matched" behind recall,
+// the cost denominator and FalseAlarms, so the three never disagree about which
+// finding matched.
+func matchCase(c CaseScore) caseMatch {
+	// The expected side needs only the distinct set, so it uses normalizeDistinct
+	// rather than normalizeSet — whose parallel per-finding slice exists for the
+	// RAISED side alone and would otherwise be built and discarded every case.
+	expected := normalizeDistinct(c.Expected)
+	raised, normalizedRaised := normalizeSet(c.Raised)
+
+	// Both quantities below resolve through the equivalence relation in
+	// equivalence.go: a coarse expected category is satisfied by any member of
+	// the ATCR family it spans, so a reviewer that writes `style` for a planted
+	// `maintainability` defect is credited for detecting it. The relation is
+	// scorer-side only — no product category is merged — and reduces to exact
+	// matching for any expected category with no family.
+	//
+	// One walk of the families yields both: hit (recall's numerator, decided
+	// per expected category) and satisfying (their union, the matched-finding
+	// membership test).
+	hit, satisfying := satisfactions(expected, raised)
+
+	// Drive the count off normalizedRaised so this pass normalizes each finding
+	// once rather than twice. It is NOT once per finding per RUN: OutOfVocabularyRate
+	// is a separate top-level walk over the same ReviewerScores and normalizes them
+	// again, and FalseAlarms calls this function a second time. That duplication is
+	// deliberate — it keeps the run diagnostics off Score's signature and out of the
+	// frozen PublicRecord — and is negligible against an LLM-bound run.
+	m := caseMatch{expected: len(expected), hit: hit}
+	for _, cat := range normalizedRaised {
+		if satisfying[cat] {
+			m.matched++
+		}
+	}
+	return m
+}
+
+// ReviewerFalseAlarms is one reviewer's false-alarm figure across the suite: the
+// findings whose category satisfied no expected category of their case (epic 113,
+// owner answer Q3).
+//
+// It is an UPPER BOUND on false alarms, not a count of them. expected_categories is
+// the planted-defect SUBSET, not exhaustive ground truth, so an unmatched finding
+// may be a real defect the suite never planted. That is the same reason Score
+// reports no precision; this figure is the raw volume that precision would have
+// hidden, named for what it can and cannot say. Telling a real extra find from a
+// false alarm needs a person reading the finding.
+//
+// Run-result-only, like ReviewerVocabulary (owner answer Q7): scorecard.PublicRecord
+// is the frozen schema shared with production `leaderboard --export`, and
+// BuildSubmission does not carry this array forward.
+type ReviewerFalseAlarms struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+
+	// Cases, Findings and Unmatched are the counts behind UnmatchedPerCase,
+	// published beside it so a reader can tell 1/1 from 40/40.
+	Cases     int `json:"cases"`
+	Findings  int `json:"findings"`
+	Unmatched int `json:"unmatched"`
+
+	// UnmatchedPerCase is Unmatched / Cases, the same per-case denominator
+	// findings_raised_avg uses. A POINTER so a reviewer with no cases is
+	// unmeasured rather than a 0.0 that reads as "no false alarms".
+	UnmatchedPerCase *float64 `json:"unmatched_per_case,omitempty"`
+}
+
+// FalseAlarms computes each reviewer's ReviewerFalseAlarms row. A finding is
+// unmatched when matchCase does not count it as matched, so the figure and
+// cost_per_corroborated_finding_usd's denominator are complements over the same
+// findings. An empty category matches nothing and counts, and every finding of a
+// case that plants no category counts.
+//
+// Rows are scrubbed and sorted exactly as Score's are, so entry i describes
+// reviewers[i] (see PerReviewerVocabulary for the same contract). nil when there
+// are no reviewers, so the run-result omits the key.
+func FalseAlarms(reviewers []ReviewerScore) []ReviewerFalseAlarms {
+	if len(reviewers) == 0 {
+		return nil
+	}
+	out := make([]ReviewerFalseAlarms, 0, len(reviewers))
+	for _, r := range reviewers {
+		id := scorecard.ScrubPublicRecord(scorecard.PublicRecord{Model: r.Model, Persona: r.Persona})
+		e := ReviewerFalseAlarms{Model: id.Model, Persona: id.Persona, Cases: len(r.Cases)}
+		for _, c := range r.Cases {
+			e.Findings += len(c.Raised)
+			e.Unmatched += len(c.Raised) - matchCase(c).matched
+		}
+		if e.Cases > 0 {
+			v := float64(e.Unmatched) / float64(e.Cases)
+			e.UnmatchedPerCase = &v
+		}
+		out = append(out, e)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return modelPersonaLess(out[i].Model, out[i].Persona, out[j].Model, out[j].Persona)
+	})
+	return out
 }
 
 // normalize lowercases and trims a category so matching is case-insensitive and
