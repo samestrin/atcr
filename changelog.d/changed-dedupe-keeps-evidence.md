@@ -1,0 +1,1 @@
+- `atcr dedupe` keeps EVIDENCE: each merged row and each member now carries an `evidence` key. A merged row leads with its highest-severity finding's evidence and joins each other distinct one with ` / `; a row with no evidence stays empty (epic 97.7)
