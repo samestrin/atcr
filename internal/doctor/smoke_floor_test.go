@@ -148,6 +148,21 @@ func TestSmokeFloor_AppliesOnlyToThePlainProbe(t *testing.T) {
 	assert.Equal(t, StatusOK, a.Status)
 }
 
+// The combined probe can also answer in text instead of a tool call. That reply
+// still reaches the shape check, so only the toolDefs guard keeps a short
+// combined reply from failing a row whose plain probe wrote a full review.
+func TestSmokeFloor_IgnoresAShortTextReplyFromTheCombinedProbe(t *testing.T) {
+	chat := func(_ llmclient.Invocation, _ []llmclient.Message, tools []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+		if len(tools) > 0 {
+			return usageReply(gemma4ShortReply, llmclient.UsageData{CompletionTokens: 4}, false)(llmclient.Invocation{}, nil, nil)
+		}
+		return usageReply(oneFinding, llmclient.UsageData{CompletionTokens: 71}, false)(llmclient.Invocation{}, nil, nil)
+	}
+	a, _ := runDeclared(t, true, chat)
+	assert.Equal(t, StatusOK, a.Status)
+	assert.Equal(t, ResponseFormatHonored, a.ResponseFormatStatus)
+}
+
 // A short reply on the primary is covered by a working fallback, like any other
 // failed status: the exit code reports whether the agent has a working path.
 func TestSmokeFloor_AWorkingFallbackCoversAShortPrimary(t *testing.T) {
@@ -168,7 +183,13 @@ func TestSmokeFloor_AWorkingFallbackCoversAShortPrimary(t *testing.T) {
 	require.NoError(t, err)
 	rep := Run(context.Background(), llmclient.New(), res, Options{Nonce: testNonce, MaxTokens: 2048})
 
-	assert.Equal(t, 0, rep.ExitCode)
+	status := map[string]string{}
+	for _, r := range rep.Agents {
+		status[r.Agent] = r.Status
+	}
+	assert.Equal(t, StatusShortReply, status["a"], "the primary fails the floor")
+	assert.Equal(t, StatusOK, status["a-back"], "the fallback passes it")
+	assert.Equal(t, 0, rep.ExitCode, "the working fallback covers the short primary")
 }
 
 // A salvaged marker is judged as a found marker by the zero-budget verdict, which
