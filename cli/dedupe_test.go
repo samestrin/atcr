@@ -62,6 +62,21 @@ func TestDedupe_TwoReviewersOnOneLineMergeForReview(t *testing.T) {
 	assert.Equal(t, tddedupe.Summary{InputRows: 3, Sources: 2, Clusters: 2, MergedRows: 2, NeedsReviewCount: 1}, res.Summary)
 }
 
+// The JSON keeps EVIDENCE, so the merged stream the skill writes from it still
+// has the column: the merged row leads with the highest-severity member's quote,
+// and each member keeps its own.
+func TestDedupe_KeepsEvidence(t *testing.T) {
+	res := runDedupeJSON(t, "--streams", dedupeStreams)
+
+	r := dedupeRowAt(t, res, "internal/store/store.go:42")
+	assert.Equal(t, "store.go:42 writes s.items[k] before make / store.go:43 assigns into a nil map", r.Evidence)
+	require.Len(t, r.Members, 2)
+	assert.Equal(t, "store.go:42 writes s.items[k] before make", r.Members[0].Evidence)
+	assert.Equal(t, "store.go:43 assigns into a nil map", r.Members[1].Evidence)
+
+	assert.Equal(t, "main.go:10 imports os", dedupeRowAt(t, res, "cli/main.go:10").Evidence)
+}
+
 func TestDedupe_UntrustedSourceAloneIsLow(t *testing.T) {
 	res := runDedupeJSON(t, "--streams", dedupeStreams, "--untrusted", "claude")
 	assert.Equal(t, "LOW", dedupeRowAt(t, res, "cli/main.go:10").Confidence)
@@ -105,10 +120,10 @@ func TestDedupe_PrintsTdDedupeKeys(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
 	row := dedupeRowKeys(t, doc.Merged, "internal/store/store.go:42")
-	assert.Equal(t, sortedKeys(row), []string{"category", "cluster_size", "confidence", "disagreement", "est_minutes", "file_line", "fix", "members", "needs_review", "problem", "reviewers", "severity", "source"})
+	assert.Equal(t, sortedKeys(row), []string{"category", "cluster_size", "confidence", "disagreement", "est_minutes", "evidence", "file_line", "fix", "members", "needs_review", "problem", "reviewers", "severity", "source"})
 	var members []map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(row["members"], &members))
-	assert.Equal(t, sortedKeys(members[0]), []string{"category", "est_minutes", "file_line", "fix", "problem", "reviewer", "severity"})
+	assert.Equal(t, sortedKeys(members[0]), []string{"category", "est_minutes", "evidence", "file_line", "fix", "problem", "reviewer", "severity"})
 	// warnings is omitted when every stream has a version header, as td-dedupe omits it.
 	assert.Equal(t, sortedKeys(doc.Summary), []string{"clusters", "input_rows", "merged_rows", "needs_review_count", "skipped", "sources"})
 }
