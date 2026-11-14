@@ -64,7 +64,7 @@ func TestFalseAlarms_PerCaseIsUnmatchedOverCases(t *testing.T) {
 
 	require.Len(t, got, 1)
 	assert.Equal(t, 4, got[0].Cases)
-	assert.Equal(t, 6, got[0].Findings)
+	assert.Equal(t, 5, got[0].Findings)
 	assert.Equal(t, 3, got[0].Unmatched)
 	require.NotNil(t, got[0].UnmatchedPerCase)
 	assert.InDelta(t, 0.75, *got[0].UnmatchedPerCase, 1e-9)

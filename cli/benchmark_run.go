@@ -757,7 +757,10 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		// The same drift, attributed. Built from the SAME slice as the two values
 		// above — which is what keeps the breakdown's totals equal to the scalar's,
 		// and its rows positionally aligned with the Reviewers rows Score emits.
-		Vocabulary:   benchmark.PerReviewerVocabulary(reviewers),
+		Vocabulary: benchmark.PerReviewerVocabulary(reviewers),
+		// Unmatched findings per reviewer, from the same slice, so a finding is
+		// unmatched here exactly when Score did not count it as matched.
+		FalseAlarms:  benchmark.FalseAlarms(reviewers),
 		SuiteCaseIDs: suiteCaseIDs,
 		Coverage:     coverage,
 	}, nil
