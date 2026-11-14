@@ -174,6 +174,29 @@ schema** (the same row shape `export` and `leaderboard export` emit):
 
 Category matching is case-insensitive and whitespace-trimmed on both sides.
 
+#### False alarms (an upper bound)
+
+The run-result's `reviewer_false_alarms` array gives each reviewer's **unmatched
+findings**: findings whose category satisfies no expected category of their case,
+under the same equivalence relation `corroboration_rate` uses. It carries `cases`,
+`findings`, `unmatched`, and `unmatched_per_case` (`unmatched` ÷ `cases`, the same
+per-case denominator as `findings_raised_avg`).
+
+**Its limit: it is an upper bound on false alarms, not a count of them.** For the
+same reason precision is not reported, an unmatched finding may be a real defect the
+suite never planted. A lower figure is fewer possible false alarms, but a thorough
+reviewer that finds real extra issues scores higher here. To tell the two apart, a
+person has to read a sample of the unmatched findings. Three more details:
+
+- A finding with an empty category matches nothing, so it counts.
+- In a case that plants no category, every finding counts.
+- `unmatched` and the denominator of `cost_per_corroborated_finding_usd` cover the
+  same findings: `findings` − `unmatched` is the number of matched findings.
+
+The array is **run-result-only**: it is not carried into the `export` envelope, and
+the public reviewer row is unchanged. Only the standard (category-scored) tier emits
+it; a `repo-state-v1` run-result omits the key.
+
 ### Reproducibility
 
 `run` stamps `generated_at` from the wall clock, but the **scoring is
@@ -785,12 +808,31 @@ emits and the order the documented positional join depends on.
       "rate": 0.0,
       "routing_values": 0
     }
+  ],
+  "reviewer_false_alarms": [
+    {
+      "model": "llm-large",
+      "persona": "brad",
+      "cases": 1,
+      "findings": 8,
+      "unmatched": 8,
+      "unmatched_per_case": 8.0
+    },
+    {
+      "model": "qwen3.8-max",
+      "persona": "brad",
+      "cases": 1,
+      "findings": 12,
+      "unmatched": 9,
+      "unmatched_per_case": 9.0
+    }
   ]
 }
 ```
 
-`reviewer_vocabulary` and `out_of_vocabulary_rate` are **run-result-only** — they are
-not carried into the submission envelope.
+`reviewer_vocabulary`, `out_of_vocabulary_rate` and `reviewer_false_alarms` are
+**run-result-only** — they are not carried into the submission envelope.
+`reviewer_false_alarms` is described under [False alarms](#false-alarms-an-upper-bound).
 
 `suite_case_ids` and `reviewer_coverage` **are** carried, as of `submission_schema` 2,
 but in trimmed form: the submission keeps `model`, `persona`, `case_ids`, and
@@ -801,8 +843,8 @@ qualifier, pinned in [docs/scorecard.md](scorecard.md).
 Every one of these keys is omitted entirely by a producer that did not measure it,
 which is what lets export tell "unmeasured" apart from "short". For `suite_case_ids`
 and `reviewer_coverage` that omission carries through to the submission envelope
-unchanged; the two vocabulary keys have no submission counterpart at all, so they are
-absent from it in every case, measured or not.
+unchanged; the two vocabulary keys and `reviewer_false_alarms` have no submission
+counterpart at all, so they are absent from it in every case, measured or not.
 
 `out_of_vocabulary_rate` is a **run-level diagnostic**, not a reviewer metric: the
 share of the run's findings whose category is not a member of the closed reviewer
