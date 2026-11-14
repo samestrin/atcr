@@ -1136,11 +1136,13 @@ atcr dedupe --streams a/td-stream.txt,b/td-stream.txt,c/td-stream.txt \
 It reads local files and writes nothing. Each merged row keeps `td-dedupe`'s
 keys and meaning: REVIEWERS union, SEVERITY max with a `<lo> vs <hi>`
 `disagreement`, CATEGORY modal, EST_MINUTES max, PROBLEM and FIX **pooled** with
-` // ` (so a second reviewer's remedy is never dropped), and CONFIDENCE `HIGH`
+` // ` (so a second reviewer's remedy is never dropped), EVIDENCE as the
+highest-severity row's followed by each other distinct one joined with ` / `
+(empty when no row carries any), and CONFIDENCE `HIGH`
 for two or more reviewers, `LOW` when every row comes from an `--untrusted`
 source, else `MEDIUM`. Every cluster of two or more is `needs_review` with its
-`members`, each carrying its own severity, problem, fix, category, estimate and
-`file_line`, so the "same issue?" decision stays with the model — `atcr dedupe`
+`members`, each carrying its own severity, problem, fix, category, estimate,
+evidence and `file_line`, so the "same issue?" decision stays with the model — `atcr dedupe`
 never guesses that two nearby findings are the same defect.
 
 Input layouts: `# atcr-findings/v1` and `/v2`, a `# Format:` comment that names
@@ -1166,7 +1168,8 @@ canonicalized to atcr's vocabulary, so an alias (`perf`, `tests`), a
 vocabulary arrives as `other`; and a `HIGH` cluster of two or more reviewers in
 the panel-wide-instruction class is discounted to `MEDIUM` by
 `reconcile.Merge`, which `atcr dedupe` reuses. `source` names the stream (the
-`--source-tags` tag), not a row's `SOURCE` column.
+`--source-tags` tag), not a row's `SOURCE` column. `atcr dedupe` also prints an
+`evidence` key on each row and member, which `td-dedupe` dropped.
 
 ## Ignoring false positives (`atcr ignore`)
 

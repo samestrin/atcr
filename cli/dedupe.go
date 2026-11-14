@@ -24,9 +24,10 @@ func newDedupeCmd() *cobra.Command {
 headerless 5/6/8/10-column file), cluster the rows by file and line within
 --tolerance, and merge each cluster: REVIEWERS union, SEVERITY max with a
 "<lo> vs <hi>" disagreement, CATEGORY modal, EST_MINUTES max, PROBLEM and FIX
-pooled with " // ", and CONFIDENCE HIGH for 2+ reviewers, LOW when every row
+pooled with " // ", EVIDENCE the highest-severity row's followed by each other
+distinct one, joined with " / ", and CONFIDENCE HIGH for 2+ reviewers, LOW when every row
 comes from an --untrusted source, else MEDIUM. Every cluster of 2+ is
-needs_review and lists its members with their own values.`,
+needs_review and lists its members with their own values, EVIDENCE included.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDedupe,
 	}

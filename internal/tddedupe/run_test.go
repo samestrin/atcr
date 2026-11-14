@@ -47,8 +47,8 @@ func TestRunTwoReviewersOnOneLineGiveOneHighRowNeedingReview(t *testing.T) {
 	}
 	// Each member carries its own values, never the pooled ones.
 	want := []Member{
-		{Reviewer: "claude", Severity: "HIGH", FileLine: "a.go:10", Problem: "nil deref", Fix: "check nil", Category: "correctness", EstMinutes: 15},
-		{Reviewer: "gpt", Severity: "MEDIUM", FileLine: "a.go:10", Problem: "nil pointer dereference", Fix: "guard the pointer", Category: "correctness", EstMinutes: 20},
+		{Reviewer: "claude", Severity: "HIGH", FileLine: "a.go:10", Problem: "nil deref", Fix: "check nil", Category: "correctness", EstMinutes: 15, Evidence: "ev1"},
+		{Reviewer: "gpt", Severity: "MEDIUM", FileLine: "a.go:10", Problem: "nil pointer dereference", Fix: "guard the pointer", Category: "correctness", EstMinutes: 20, Evidence: "ev2"},
 	}
 	if !reflect.DeepEqual(r.Members, want) {
 		t.Fatalf("members:\n got  %+v\n want %+v", r.Members, want)
@@ -192,12 +192,12 @@ func TestRunJSONKeysAreTdDedupes(t *testing.T) {
 	_ = json.Unmarshal(raw, &top)
 	assertKeys(t, "top", top, "merged", "summary")
 	assertKeys(t, "summary", doc.Summary, "input_rows", "sources", "clusters", "merged_rows", "needs_review_count", "skipped", "warnings")
-	assertKeys(t, "merged row", doc.Merged[0], "severity", "file_line", "problem", "fix", "category", "est_minutes", "source", "reviewers", "confidence", "disagreement", "cluster_size", "needs_review", "members")
+	assertKeys(t, "merged row", doc.Merged[0], "severity", "file_line", "problem", "fix", "category", "est_minutes", "source", "reviewers", "confidence", "disagreement", "cluster_size", "needs_review", "members", "evidence")
 	var members []map[string]json.RawMessage
 	if err := json.Unmarshal(doc.Merged[0]["members"], &members); err != nil {
 		t.Fatal(err)
 	}
-	assertKeys(t, "member", members[0], "reviewer", "severity", "file_line", "problem", "fix", "category", "est_minutes")
+	assertKeys(t, "member", members[0], "reviewer", "severity", "file_line", "problem", "fix", "category", "est_minutes", "evidence")
 }
 
 func assertKeys(t *testing.T, what string, m map[string]json.RawMessage, want ...string) {
@@ -240,5 +240,76 @@ func TestRunFailsFatalWhenClustersRepeatARow(t *testing.T) {
 	_, err := Run([]Stream{{Tag: "s", Data: []byte(header + "LOW|a.go:1|p|f|style|5|ev|x\nLOW|b.go:1|p|f|style|5|ev|x\n")}}, Options{Tolerance: 3})
 	if err == nil || !strings.HasPrefix(err.Error(), "FATAL") {
 		t.Fatalf("err = %v, want a FATAL accounting error", err)
+	}
+}
+
+// EVIDENCE survives the merge: the merged row leads with the highest-severity
+// member's evidence and joins a differing one with " / ", and each member keeps
+// its own, so a split cluster stays cited.
+func TestRunKeepsEvidenceOnTheMergedRowAndEachMember(t *testing.T) {
+	res := mustRun(t, Options{Tolerance: 3},
+		Stream{Tag: "gpt", Data: []byte(header + "MEDIUM|a.go:10|nil pointer|guard it|correctness|20|ptr read before the check|gpt\n")},
+		Stream{Tag: "claude", Data: []byte(header + "HIGH|a.go:11|nil deref|check nil|correctness|15|deref on line 11|claude\n")},
+	)
+	if len(res.Merged) != 1 || len(res.Merged[0].Members) != 2 {
+		t.Fatalf("merged = %+v, want one row with two members", res.Merged)
+	}
+	r := res.Merged[0]
+	if want := "deref on line 11 / ptr read before the check"; r.Evidence != want {
+		t.Fatalf("row evidence = %q, want %q (highest severity first)", r.Evidence, want)
+	}
+	got := map[string]string{}
+	for _, m := range r.Members {
+		got[m.Reviewer] = m.Evidence
+	}
+	want := map[string]string{"claude": "deref on line 11", "gpt": "ptr read before the check"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("member evidence = %v, want %v", got, want)
+	}
+}
+
+// Identical evidence is not repeated, and an empty one adds no separator.
+func TestRunEvidenceSkipsRepeatsAndEmpties(t *testing.T) {
+	res := mustRun(t, Options{Tolerance: 3},
+		Stream{Tag: "a", Data: []byte(header + "LOW|a.go:10|p|f|style|5|same quote|a\n")},
+		Stream{Tag: "b", Data: []byte(header + "HIGH|a.go:10|p|f|style|5|same quote|b\n")},
+		Stream{Tag: "c", Data: []byte(header + "CRITICAL|a.go:10|p|f|style|5||c\n")},
+	)
+	r := res.Merged[0]
+	if r.Evidence != "same quote" {
+		t.Fatalf("row evidence = %q, want %q", r.Evidence, "same quote")
+	}
+	for _, m := range r.Members {
+		if m.Reviewer == "c" && m.Evidence != "" {
+			t.Fatalf("member c evidence = %q, want empty", m.Evidence)
+		}
+	}
+}
+
+// A row with no EVIDENCE stays empty, alone or merged with another empty one.
+func TestRunEmptyEvidenceStaysEmpty(t *testing.T) {
+	res := mustRun(t, Options{Tolerance: 3},
+		Stream{Tag: "legacy", Data: []byte("HIGH|a.go:1|p|f|correctness\nLOW|b.go:1|p|f|style\n")},
+		Stream{Tag: "gpt", Data: []byte(header + "LOW|b.go:2|q|g|style|5||gpt\n")},
+	)
+	if len(res.Merged) != 2 {
+		t.Fatalf("merged = %+v, want two rows", res.Merged)
+	}
+	for _, r := range res.Merged {
+		if r.Evidence != "" {
+			t.Fatalf("row %s evidence = %q, want empty", r.FileLine, r.Evidence)
+		}
+		for _, m := range r.Members {
+			if m.Evidence != "" {
+				t.Fatalf("member %s evidence = %q, want empty", m.FileLine, m.Evidence)
+			}
+		}
+	}
+	raw, err := json.Marshal(res.Merged[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"evidence":""`) {
+		t.Fatalf("json = %s, want an empty evidence key", raw)
 	}
 }
