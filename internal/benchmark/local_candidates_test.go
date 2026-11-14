@@ -47,7 +47,13 @@ type localCandidate struct {
 	Thinking      string   `yaml:"thinking"`
 	ThinkingLevel string   `yaml:"thinking_level"`
 	MaxTokens     int      `yaml:"max_tokens"`
-	Notes         string   `yaml:"notes"`
+	// ResponseFormat must be json_object: atcr doctor runs its review-shaped
+	// probe, which carries the 16-token short-reply floor, only for an agent
+	// that declares response_format (internal/doctor/run.go). Without it the
+	// overlay copied from this profile gets no floor and a near-empty model
+	// goes on to scoring (epic 113 AC2).
+	ResponseFormat string `yaml:"response_format"`
+	Notes          string `yaml:"notes"`
 }
 
 type localCandidatesFile struct {
@@ -129,6 +135,10 @@ func checkLocalCandidate(c localCandidate) []string {
 	if c.MaxTokens <= 0 {
 		add("max_tokens is missing")
 	}
+	if c.ResponseFormat != registry.ResponseFormatJSONObject {
+		add("response_format is %q, want %q: atcr doctor applies its short-reply floor only to an agent that declares it",
+			c.ResponseFormat, registry.ResponseFormatJSONObject)
+	}
 	if err := registry.ValidateAgentYAML(c.Name, c.agentYAML()); err != nil {
 		add("does not load as a registry agent: %v", err)
 	}
@@ -144,9 +154,10 @@ func (c localCandidate) agentYAML() []byte {
 		"max_tokens": c.MaxTokens,
 	}
 	for key, v := range map[string]string{
-		"thinking_style": c.ThinkingStyle,
-		"thinking":       c.Thinking,
-		"thinking_level": c.ThinkingLevel,
+		"thinking_style":  c.ThinkingStyle,
+		"thinking":        c.Thinking,
+		"thinking_level":  c.ThinkingLevel,
+		"response_format": c.ResponseFormat,
 	} {
 		if v != "" {
 			agent[key] = v
@@ -213,21 +224,22 @@ func TestLocalCandidates_CoversThePlanCandidates(t *testing.T) {
 // one field each.
 func validThinkingCandidate() localCandidate {
 	return localCandidate{
-		Name:          "qwen3.8-27b",
-		OllamaTag:     "qwen3.8:27b-q4_K_M",
-		HFID:          "Qwen/Qwen3.8-27B",
-		Architecture:  "dense",
-		ParamsB:       27.3,
-		Quantization:  "Q4_K_M",
-		SizeGB:        17.74,
-		Tiers:         []string{"gpu-32gb", "unified-64gb"},
-		ChatTemplate:  "Ollama qwen3.8 renderer",
-		StopTokens:    "set by the renderer",
-		ThinkingModel: true,
-		ThinkingStyle: registry.ThinkingStyleReasoningEffort,
-		Thinking:      registry.ThinkingOn,
-		ThinkingLevel: registry.ThinkingLevelHigh,
-		MaxTokens:     32768,
+		Name:           "qwen3.8-27b",
+		OllamaTag:      "qwen3.8:27b-q4_K_M",
+		HFID:           "Qwen/Qwen3.8-27B",
+		Architecture:   "dense",
+		ParamsB:        27.3,
+		Quantization:   "Q4_K_M",
+		SizeGB:         17.74,
+		Tiers:          []string{"gpu-32gb", "unified-64gb"},
+		ChatTemplate:   "Ollama qwen3.8 renderer",
+		StopTokens:     "set by the renderer",
+		ThinkingModel:  true,
+		ThinkingStyle:  registry.ThinkingStyleReasoningEffort,
+		Thinking:       registry.ThinkingOn,
+		ThinkingLevel:  registry.ThinkingLevelHigh,
+		MaxTokens:      32768,
+		ResponseFormat: registry.ResponseFormatJSONObject,
 	}
 }
 
@@ -278,6 +290,10 @@ func TestCheckLocalCandidate_CatchesABrokenThinkingProfile(t *testing.T) {
 		"bad architecture":          {func(c *localCandidate) { c.Architecture = "" }, "architecture"},
 		"moe without active params": {func(c *localCandidate) { c.Architecture = "moe" }, "active_params_b"},
 		"no params":                 {func(c *localCandidate) { c.ParamsB = 0 }, "params_b is missing"},
+		// The T1 profile: no response_format, so doctor never ran the floor.
+		"no response_format": {func(c *localCandidate) { c.ResponseFormat = "" }, "response_format"},
+		"illegal response_format": {func(c *localCandidate) { c.ResponseFormat = "json_schema" },
+			"response_format"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -24,12 +24,25 @@ For each candidate and tier:
 2. Create a scratch project containing only that candidate's agent in
    `.atcr/config.yaml`, using the same persona on both tiers. Point its provider
    at that tier's Ollama `/v1` endpoint and copy the agent settings from the
-   candidate profile. Use `review_strategy: chunked` for the fit probe, as
-   described in [Benchmark Suite](benchmark.md#checking-a-persona--model-pair-before-repointing-an-agent).
+   candidate profile: `max_tokens`, the thinking fields, and
+   `response_format: json_object`. Declare `response_format` even if the model
+   is not known to honor it: `atcr doctor` runs its review-shaped probe, and
+   the short-reply floor in it, only for an agent that declares
+   `response_format`. Without it doctor passes a near-empty model. Use
+   `review_strategy: chunked` for the fit probe, as described in
+   [Benchmark Suite](benchmark.md#checking-a-persona--model-pair-before-repointing-an-agent).
 3. Run `atcr doctor` before scoring. A failed review-shaped response probe,
    including its short-reply floor, stops the candidate; record the failure
-   rather than treating it as a benchmark result. Also record the thinking
-   verdict for a thinking model.
+   rather than treating it as a benchmark result. A candidate that answers the
+   probe in under 16 tokens (not counting reported reasoning tokens) shows
+   `short_reply` in its row, and doctor exits 1 (see the expected output under
+   [Operator commands](#operator-commands)). If
+   `atcr doctor --agents <candidate-agent> --json` shows no
+   `response_format_status` for the agent, the probe and its floor did not run:
+   check that the overlay declares `response_format` before going on. A
+   `not_honored` `response_format` verdict is a warning, not a failure, and the
+   floor still ran; record it in Notes. Also record the thinking verdict for a
+   thinking model.
 4. Run the `fit-v1` health probe with three replicates and inspect
    `atcr benchmark fit`. Do not select a pair marked `unfit`.
 5. Verify and run the `standard-v1` suite with a checkpoint. Keep the generated
@@ -65,7 +78,12 @@ a tier.
 All candidates use the tags and settings in
 [`benchmarks/local-candidates.yaml`](../benchmarks/local-candidates.yaml), not a
 moving `latest` tag. Thinking candidates use `thinking_style:
-reasoning_effort`, `thinking: on`, and `thinking_level: high`.
+reasoning_effort`, `thinking: on`, and `thinking_level: high`. Every candidate,
+the baseline included, declares `response_format: json_object` so that doctor's
+short-reply floor runs. The review lane then runs in JSON mode for every
+candidate: the persona's `## Output Format` section is replaced by the shared
+JSON block ([registry](registry.md), `response_format`), so all candidates are
+compared on the same output format.
 
 | Candidate | Ollama tag | Quantization | Weights (GB) | Tiers | `max_tokens` |
 |---|---|---:|---:|---|---:|
@@ -91,6 +109,17 @@ ollama pull <pinned-ollama-tag>
 export OLLAMA_API_KEY=local-no-key-needed
 
 atcr doctor --agents <candidate-agent>
+# Go on only if doctor exits 0 and `--json` shows a response_format_status
+# for the agent. A candidate under the floor exits 1: its row's STATUS is
+# short_reply, with this HINT,
+#   model <pinned-ollama-tag> answered the review-shaped probe in 4 tokens,
+#   under the 16-token floor; a near-empty review usually means a
+#   chat-template or stop-token fault, so fix the model's template and stop
+#   tokens before scoring it
+# stderr counts it as "doctor: 0 ok / 1 failed", and the error reads
+#   one or more agents have no working endpoint (a review-shaped reply was
+#   under the 16-token floor for: <candidate-agent> (<pinned-ollama-tag>))
+atcr doctor --agents <candidate-agent> --json
 
 atcr benchmark run \
   --suite-path <atcr-repo>/benchmarks/fit-v1 \
