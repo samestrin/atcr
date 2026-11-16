@@ -7,10 +7,12 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	goaxi "github.com/samestrin/go-axi"
+	toon "github.com/toon-format/toon-go"
 )
 
 // The next-step suggestion registry (Epic 42.0, axi.md Principle 9 "Contextual
@@ -228,4 +230,43 @@ func writeNextSteps(w io.Writer, key suggestionKey, inv invocation) {
 // writeNextLines is writeNextSteps on cmd's stderr.
 func writeNextLines(cmd *cobra.Command, key suggestionKey, inv invocation) {
 	writeNextSteps(cmd.ErrOrStderr(), key, inv)
+}
+
+// writeAXIOrNextSteps closes a command that has an --axi mode but no legacy pipe
+// encoder. Under --axi, stdout gets payload as one TOON object and then key's
+// next steps as a help[] block, and no Next: line is written anywhere. Otherwise
+// the command has already printed its human output, so only the Next: lines
+// follow (writeNextStepsCmd), exactly as before --axi existed.
+func writeAXIOrNextSteps(cmd *cobra.Command, payload toon.Object, key suggestionKey, inv invocation) error {
+	if !axiFromContext(cmd.Context()) {
+		writeNextStepsCmd(cmd, key, inv)
+		return nil
+	}
+	return writeAXIHelp(cmd.OutOrStdout(), payload, renderSuggestions(key, inv))
+}
+
+// writeAXIHelp encodes payload as standard TOON, then appends lines as a help[]
+// block. The two decode together as one value carrying both.
+func writeAXIHelp(w io.Writer, payload toon.Object, lines []string) error {
+	if _, err := goaxi.EncodeChecked(w, payload); err != nil {
+		return fmt.Errorf("axi encoder: %w", err)
+	}
+	if err := goaxi.WriteHelp(w, lines); err != nil {
+		return fmt.Errorf("axi encoder: %w", err)
+	}
+	return nil
+}
+
+// writeNextStepsCmd prints key's Next: lines on cmd's stderr. Under
+// --log-format json each line rides the context logger instead (the
+// warnLegacyPipe pattern), so stderr stays NDJSON-only.
+func writeNextStepsCmd(cmd *cobra.Command, key suggestionKey, inv invocation) {
+	if !jsonLogFormat(cmd) {
+		writeNextSteps(cmd.ErrOrStderr(), key, inv)
+		return
+	}
+	logger := log.FromContext(cmd.Context())
+	for _, line := range renderSuggestions(key, inv) {
+		logger.Warn("Next: " + line)
+	}
 }

@@ -22,6 +22,7 @@ AXI mode is exposed on these agent-facing surfaces:
 | `atcr review` | `--axi` flag | a one-row `review_summary` TOON array (run metadata) |
 | `atcr review --resume <id>` | `--axi` flag | identical `review_summary` shape to `review --axi` |
 | `atcr report` | `--format axi` | a `findings[N]` TOON array of the reconciled findings |
+| `atcr reconcile` | `--axi` flag | a TOON object of the run values (`findings`, `sources`, `reconciled_dir`) |
 
 Note the two spellings are intentional and different: `review`/`resume` take the
 boolean `--axi` flag, while `report` selects AXI through its existing
@@ -40,9 +41,9 @@ Before this, atcr emitted a custom pipe-delimited variant (`findings[N|]{a|b}:`)
 | `atcr report` | `--format pipe` |
 | `atcr review --axi`, `atcr review --resume <id> --axi` | `--legacy-pipe` |
 | `atcr --axi` | `--legacy-pipe` |
-| every AXI surface above, including `report --format axi` | `ATCR_LEGACY_PIPE=1` |
+| every AXI surface above, including `report --format axi`, except `reconcile --axi` | `ATCR_LEGACY_PIPE=1` |
 
-`ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
+`atcr reconcile --axi` has no legacy pipe encoding: it rejects `--legacy-pipe` as a usage error (exit 2) and ignores `ATCR_LEGACY_PIPE`. `ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
 
 ```
 warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.
@@ -160,7 +161,18 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   `help[2]: atcr debt list,atcr verify <id>`. It is written wherever the payload
   goes, `--output` included. `--format md`, `json`, `checklist`, `sarif` and
   `pipe` (and `--format axi` under `ATCR_LEGACY_PIPE`) carry no `help` line.
-- `atcr reconcile` has no AXI mode. It prints the same suggestions as human
+- `atcr reconcile --axi` replaces its `reconciled N finding(s)` line with one
+  TOON object of the same values, followed by the same `help` array:
+
+  ```
+  findings: 1
+  sources: 1
+  reconciled_dir: .atcr/reviews/<id>/reconciled
+  help[2]: atcr debt list,atcr verify <id>
+  ```
+
+  No `Next:` line is written, on stderr or as a `--log-format json` record.
+- Without `--axi`, `atcr reconcile` prints the same suggestions as human
   lines on **stderr**, after its other diagnostics, and leaves stdout unchanged:
 
   ```

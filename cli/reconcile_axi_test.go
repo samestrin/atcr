@@ -79,3 +79,21 @@ func TestReconcileCmd_TextModeUnchanged(t *testing.T) {
 	assert.Equal(t, "reconciled 1 finding(s) from 1 source(s) -> "+filepath.Join(".atcr", "reviews", "r", "reconciled")+"\n", stdout)
 	assert.True(t, strings.HasSuffix(stderr, "Next: atcr debt list\nNext: atcr verify <id>\n"), "stderr: %q", stderr)
 }
+
+// TestReconcileCmd_AXIGateFailureStillEmits: a --fail-on gate that exits 1
+// still reconciled the findings, so the payload and help[] are still written.
+func TestReconcileCmd_AXIGateFailureStillEmits(t *testing.T) {
+	isolate(t)
+	nextStepsReviewFixture(t)
+	code, stdout, stderr := execCmdSplit(t, "reconcile", "--axi", "--fail-on", "low", "--no-scorecard", "--no-local-debt", "r")
+	assert.Equal(t, 1, code, stderr)
+	assert.Equal(t, reconcileAXIStdout(), stdout)
+}
+
+// TestWriteAXIHelp_WriteFault: a broken stdout is reported, not swallowed.
+func TestWriteAXIHelp_WriteFault(t *testing.T) {
+	payload := toon.NewObject(toon.Field{Key: "findings", Value: 1})
+	err := writeAXIHelp(failWriter{}, payload, []string{"atcr debt list"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "axi encoder")
+}
