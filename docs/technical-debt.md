@@ -366,9 +366,9 @@ rather than a fabricated value that `resolve` could not match.
 | `fix` | string | Proposed remediation |
 | `category` | string | Free-text classification (e.g. `correctness`) |
 | `est_minutes` | int | Estimated remediation effort |
-| `evidence` | string | Supporting excerpt or rationale |
-| `reviewers` | []string | Personas that raised the finding |
-| `confidence` | string | Reviewer-panel confidence |
+| `evidence` | string | Supporting excerpt or rationale; `atcr debt add --evidence` writes it |
+| `reviewers` | []string | Personas that raised the finding; `atcr debt add --reviewers` takes them as a comma list |
+| `confidence` | string | Reviewer-panel confidence (`LOW` / `MEDIUM` / `HIGH` / `VERIFIED`); `atcr debt add --confidence` writes it |
 | `model` | string | Model that produced the finding |
 | `justification` | string | Why it was resolved/dismissed (`--reason`) |
 | `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …}` (`line`/`section` omitted when unset) |
@@ -487,13 +487,35 @@ atcr debt add \
   --severity HIGH --file internal/x/y.go:12 \
   --problem "unbounded retry loop on 5xx" \
   --fix "cap retries and add jittered backoff" \
-  --category correctness --est 30
+  --category correctness --est 30 \
+  --reviewers bruce,clark --confidence HIGH \
+  --evidence "retry() has no ceiling on a 5xx response"
 ```
 
 Required in flag mode: `--severity`, `--file`, `--problem`, `--fix`,
 `--category`. Optional: `--store`, `--status` (default `open`), `--est`,
 `--reported-by` (who filed the item, such as a reviewer seat; `atcr debt report`
-shows it in its `Source` column).
+shows it in its `Source` column), and the three review facts below.
+
+`--reviewers`, `--confidence` and `--evidence` keep the review facts a reviewer
+panel produced, so a finding filed by hand — or re-filed from a merged
+`atcr dedupe` stream — does not lose who raised it, how sure the panel was, or
+the excerpt behind it:
+
+- `--reviewers` is a comma list of personas (`bruce,clark`). Each entry is
+  trimmed, blank entries are dropped and the order is kept. It is stored as the
+  record's `reviewers` array.
+- `--confidence` is one of `LOW`, `MEDIUM`, `HIGH`, `VERIFIED`, stored in that
+  upper-case spelling. Any other value is a usage error (exit 2) and nothing is
+  written, so a typo cannot file a row no `--confidence` selection matches.
+- `--evidence` is free text, trimmed at both ends and stored as `evidence`. It
+  counts towards the record's size cap, so an over-long excerpt is rejected with
+  the same "too large to store" error as an over-long `--problem` or `--fix`.
+
+All three are optional, and an add that names none of them writes exactly the
+record it wrote before they existed: `reviewers` stays `null`, `confidence` and
+`evidence` stay empty strings. They apply to the interactive wizard as well, and
+`atcr debt list --json` returns all three unchanged.
 
 `--file` takes a `path:line` location; a purely numeric suffix is parsed into
 the record's line number, and anything else is kept verbatim as the path.

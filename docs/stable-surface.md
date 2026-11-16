@@ -87,12 +87,15 @@ No flags.
 | Flag | Type | Default | Status |
 |---|---|---|---|
 | `--category` | string | `` |  |
+| `--confidence` | string | `` |  |
 | `--dir` | string | `` | deprecated alias |
 | `--est` | int | `0` |  |
+| `--evidence` | string | `` |  |
 | `--file` | string | `` |  |
 | `--fix` | string | `` |  |
 | `--problem` | string | `` |  |
 | `--reported-by` | string | `` |  |
+| `--reviewers` | string | `` |  |
 | `--severity` | string | `` |  |
 | `--status` | string | `open` |  |
 | `--store` | string | `` |  |

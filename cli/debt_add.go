@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/registry"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // debtStdinIsTTY reports whether stdin is an interactive terminal. It is a
@@ -72,6 +74,24 @@ var debtAddStatuses = map[string]bool{
 	localdebt.StatusResolved: true,
 }
 
+// debtAddConfidences is the accepted --confidence enum, in tier order. It is the
+// canonical confidence vocabulary the reconcile module defines and the store
+// already carries: PersistForReconcile copies JSONFinding.Confidence verbatim,
+// so a reviewed row holds one of these four values. The constants are referenced
+// rather than retyped so the CLI's enum cannot drift from the module's.
+//
+// VERIFIED is admitted because a skeptic-confirmed finding carries it, and
+// refusing it here would leave `debt add` unable to re-file such a finding with
+// its confidence intact — exactly the loss of review facts these flags exist to
+// prevent. (`debt filter --confidence` still selects only low|medium|high, which
+// is a pre-existing gap for every VERIFIED row reconcile writes, not one this
+// enum introduces.)
+//
+// Like the status enum, it is validated here because localdebt.Append performs
+// no schema validation and `debt filter` selects on this field: an off-enum
+// confidence would be filed and then match no selection.
+var debtAddConfidences = []string{reclib.ConfLow, reclib.ConfMedium, reclib.ConfHigh, reclib.ConfidenceVerified}
+
 // wizardDefaults seeds the interactive prompts with values already supplied as
 // flags, so partial flag input carries into the wizard instead of being
 // discarded.
@@ -89,7 +109,8 @@ func newDebtAddCmd() *cobra.Command {
 			"so the item is immediately listable and closeable. The appended item's id\n" +
 			"is echoed on success for `atcr debt resolve <id>`.\n\n" +
 			"Provide all required fields as flags for a non-interactive, scriptable add:\n" +
-			"  --severity --file --problem --fix --category (--status/--est optional).\n" +
+			"  --severity --file --problem --fix --category\n" +
+			"  (optional: --status --est --reported-by --reviewers --confidence --evidence).\n" +
 			"Omit them on an interactive terminal to be walked through a prompt instead.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtAdd,
@@ -107,6 +128,9 @@ func newDebtAddCmd() *cobra.Command {
 	cmd.Flags().String("category", "", "category label (required in flag mode)")
 	cmd.Flags().Int("est", 0, "estimated minutes")
 	cmd.Flags().String("reported-by", "", "who filed the item, e.g. a reviewer seat (shown in the report's Source column)")
+	cmd.Flags().String("reviewers", "", "comma list of personas that raised the finding (stored as reviewers)")
+	cmd.Flags().String("confidence", "", "reviewer-panel confidence: LOW|MEDIUM|HIGH|VERIFIED (stored as confidence)")
+	cmd.Flags().String("evidence", "", "supporting excerpt or rationale (stored as evidence)")
 	return cmd
 }
 
@@ -206,6 +230,14 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 		// Interactive wizard — only when we can actually prompt a human. Any
 		// required flags already supplied were seeded into def above, so partial
 		// flag input carries into the prompts instead of being discarded.
+		//
+		// Confidence is flag-only: the wizard has no prompt for it, so there is
+		// nothing to re-ask. A value the finalizer would reject is refused HERE,
+		// before the first prompt, rather than after all seven answers — the
+		// discarded-answers failure validDebtEst exists to prevent for a typed est.
+		if _, err := normalizeDebtConfidence(mustFlag(cmd, "confidence")); err != nil {
+			return err
+		}
 		var err error
 		rec, err = promptEntry(cmd.InOrStdin(), cmd.OutOrStdout(), def)
 		if err != nil {
@@ -222,6 +254,13 @@ func runDebtAdd(cmd *cobra.Command, _ []string) error {
 	}
 
 	rec.ReportedBy = mustFlag(cmd, "reported-by")
+	// The three review facts a merged reviewer stream carries. They are applied
+	// here, after the switch, so the wizard path keeps them exactly as it keeps
+	// --reported-by. The comma list is split raw: finalizeDebtRecord is the one
+	// place both paths normalize and validate, so the wizard is not a bypass.
+	rec.Reviewers = strings.Split(mustFlag(cmd, "reviewers"), ",")
+	rec.Confidence = mustFlag(cmd, "confidence")
+	rec.Evidence = mustFlag(cmd, "evidence")
 	if err := finalizeDebtRecord(&rec); err != nil {
 		return err
 	}
@@ -296,6 +335,8 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	rec.Fix = strings.TrimSpace(rec.Fix)
 	rec.Category = strings.TrimSpace(rec.Category)
 	rec.ReportedBy = strings.TrimSpace(rec.ReportedBy)
+	rec.Evidence = strings.TrimSpace(rec.Evidence)
+	rec.Reviewers = normalizeDebtReviewers(rec.Reviewers)
 	for _, req := range []struct{ flag, val string }{
 		{"--file", rec.File}, {"--problem", rec.Problem}, {"--fix", rec.Fix}, {"--category", rec.Category},
 	} {
@@ -317,6 +358,15 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 		status = ""
 	}
 	rec.Status = status
+	// Confidence is stored in the canonical upper-case tier spelling reconcile
+	// writes, so a hand-filed row and a reviewed one are one value to every
+	// reader. Empty stays empty: the field is optional, and a record that names
+	// no confidence must keep the wire shape it has today.
+	confidence, err := normalizeDebtConfidence(rec.Confidence)
+	if err != nil {
+		return err
+	}
+	rec.Confidence = confidence
 	// The upper bound is the same typo-guard as the decode-side clamp
 	// (stream.maxModelEstMinutes == registry.MaxExecutorEstimatedMinutes): a
 	// larger --est would be clamped back to exactly the bound on read, making
@@ -364,10 +414,40 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 	}
 	if len(line)+1 > localdebt.MaxRecordBytes {
 		return usageError(fmt.Errorf(
-			"item is too large to store: %d bytes encoded, cap is %d — shorten --problem/--fix (the store skips longer lines on read, so it would be filed and never seen)",
+			"item is too large to store: %d bytes encoded, cap is %d — shorten --problem/--fix/--evidence (the store skips longer lines on read, so it would be filed and never seen)",
 			len(line)+1, localdebt.MaxRecordBytes))
 	}
 	return nil
+}
+
+// normalizeDebtReviewers trims each entry of the comma list, drops the blanks and
+// keeps the caller's order — the same reading `debt filter` gives its comma lists.
+//
+// It returns NIL for an empty list, never an empty slice, and that is load-bearing:
+// Record.Reviewers carries no omitempty, so nil marshals as null (the value every
+// record written before these flags existed holds) while []string{} would marshal
+// as [] and change the stored bytes of every add that names no reviewer.
+func normalizeDebtReviewers(in []string) []string {
+	var out []string
+	for _, r := range in {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// normalizeDebtConfidence canonicalizes a confidence to the store's upper-case
+// tier spelling and rejects an off-enum value as a usage error. Empty stays
+// empty: no confidence recorded is a legal record, and the one every add without
+// the flag writes. It is called both by finalizeDebtRecord and, for the wizard
+// path, before the first prompt, so the two cannot disagree.
+func normalizeDebtConfidence(v string) (string, error) {
+	c := strings.ToUpper(strings.TrimSpace(v))
+	if c != "" && !slices.Contains(debtAddConfidences, c) {
+		return "", usageError(fmt.Errorf("invalid --confidence %q: expected %s", v, strings.Join(debtAddConfidences, "|")))
+	}
+	return c, nil
 }
 
 // validDebtSeverity, validDebtStatus and validDebtEst are the wizard's prompt-time
