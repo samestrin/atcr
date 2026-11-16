@@ -16,6 +16,23 @@ Development notes from before the first tagged release (`v0.1.0`, 2026-07-24) ar
 
 Changes not yet released are in [`changelog.d/`](changelog.d/), one file per change.
 
+## [1.2.0] - 2026-11-16
+
+### Added
+
+- `atcr benchmark run` now reports false alarms per reviewer in the run-result's new `reviewer_false_alarms` array: the findings whose category matched no planted category of their case, with the counts and the figure per case. It is an upper bound, because a suite plants only some of the real defects, so an unmatched finding can be a real extra find. The array is not carried into `atcr benchmark export`, and the public reviewer row is unchanged. (epic 113)
+- `atcr debt add` takes `--reviewers` (a comma list of personas), `--confidence` (`LOW`, `MEDIUM`, `HIGH` or `VERIFIED`) and `--evidence`, and writes them to the record's `reviewers`, `confidence` and `evidence` fields, so a finding filed by hand — or re-filed from a merged `atcr dedupe` stream — keeps who raised it, how sure the panel was and the excerpt behind it. `atcr debt list --json` returns all three unchanged, and an add that names none of them writes exactly the record it wrote before. (epic 97.7)
+- `atcr doctor` now fails an agent whose reply to the review-shaped `response_format` probe is under a 16-token floor, with the new status `short_reply` and a hint naming the model. A near-empty review (the `gemma4:31b` 4-token reply) means a chat-template or stop-token fault, so a benchmark pre-flight now stops that model before it is scored. Counts come from the provider's `completion_tokens`, less reported reasoning tokens; a provider that reports no usage is not checked. (epic 113 T2)
+- Added an operator guide and unfilled results sheet for benchmarking the seven pinned local-model candidates on 32 GB GPU and 64 GB unified-memory hardware. (epic 113)
+
+### Changed
+
+- `atcr dedupe` keeps EVIDENCE: each merged row and each member now carries an `evidence` key. A merged row leads with its highest-severity finding's evidence and joins each other distinct one with ` / `; a row with no evidence stays empty (epic 97.7)
+
+### Fixed
+
+- Every local-model candidate in `benchmarks/local-candidates.yaml` now declares `response_format: json_object`, and the benchmark guide tells the operator to copy it into the overlay. `atcr doctor` runs its 16-token short-reply floor only for an agent that declares `response_format`, so before this an overlay copied from the profile was never checked and a near-empty model went on to scoring. (epic 113)
+
 ## [1.1.0] - 2026-11-12
 
 ### Added
@@ -934,7 +951,8 @@ Changes not yet released are in [`changelog.d/`](changelog.d/), one file per cha
 
 - Updated stale `cmd/atcr/...` comment cross-references and the `newRootCmd` symbol name to `cli/...`/`NewRootCmdWithClient` in ~12 non-relocated files, closing out documentation drift left by the Sprint 34.0 CLI relocation.
 
-[Unreleased]: https://github.com/samestrin/atcr/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/samestrin/atcr/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/samestrin/atcr/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/samestrin/atcr/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/samestrin/atcr/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/samestrin/atcr/compare/v0.3.0...v0.4.0
