@@ -1,0 +1,1 @@
+- `atcr reconcile --axi` prints the run values (findings, sources, reconciled directory) as one TOON object followed by a `help[]` block of next steps on stdout, instead of the prose line and stderr `Next:` lines; `--legacy-pipe` is rejected (epic 104.1).

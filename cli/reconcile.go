@@ -18,6 +18,9 @@ import (
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
+	toon "github.com/toon-format/toon-go"
 )
 
 // newReconcileCmd builds `atcr reconcile`: discover sources, normalize,
@@ -79,6 +82,14 @@ and atcr review --resume honor the config/registry tiers but take no flag.`,
 	cmd.Flags().Bool("no-local-debt", false, "skip writing reconciled findings to the local TD store")
 	addSyncCloudFlags(cmd)
 	addQualitySignalFlags(cmd)
+	// The root PersistentPreRunE propagates this into the command context; there
+	// is no legacy pipe encoder for this command.
+	cmd.Flags().Bool("axi", false, "emit the run values and next steps as a token-dense TOON payload on stdout for agent consumption")
+	// Registered because every --axi command must carry it (TestAxiImpliesLegacyPipeFlag),
+	// but rejected: the pipe encoder is frozen and deprecated.
+	cmd.Flags().Bool("legacy-pipe", false, "not supported by this command; rejected")
+	_ = cmd.Flags().MarkHidden("legacy-pipe")
+	cmd.Annotations = map[string]string{noLegacyPipeAnnotation: "true"}
 	return cmd
 }
 
@@ -112,6 +123,10 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// logger was wired (no reliance on slog.Default). User-facing summary output
 	// still goes to stdout (OutOrStdout) unchanged.
 	logger := log.FromContext(cmd.Context())
+
+	if legacy, _ := cmd.Flags().GetBool("legacy-pipe"); legacy {
+		return usageError(errors.New("--legacy-pipe is not supported by reconcile; --axi emits standard TOON"))
+	}
 
 	// --dry-run renders the outbound quality-signal payload locally and sends
 	// nothing (Story 3). It short-circuits at the top of RunE — before the
@@ -271,9 +286,18 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// still reads all history. A drop in this count between runs is the signal.
 	logger.Info("trust priors resolved", "reviewers", res.Summary.TrustPriorsResolved, "unmeasured_outcome", unmeasured)
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
-		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
-		filepath.Join(reviewDir, "reconciled"))
+	// Under --axi the same values close the run as one TOON object instead
+	// (writeReconcileNextSteps), so stdout carries no prose line.
+	reconciledDir := filepath.Join(reviewDir, "reconciled")
+	axiPayload := toon.NewObject(
+		toon.Field{Key: "findings", Value: res.Summary.TotalFindings},
+		toon.Field{Key: "sources", Value: len(res.Summary.SourcesScanned)},
+		toon.Field{Key: "reconciled_dir", Value: goaxi.SanitizeString(reconciledDir)},
+	)
+	if !axiFromContext(cmd.Context()) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
+			res.Summary.TotalFindings, len(res.Summary.SourcesScanned), reconciledDir)
+	}
 	writeSuppressedNoticeCmd(cmd, len(res.Suppressed))
 
 	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
@@ -358,9 +382,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	// Next-step suggestions (Epic 42.0) close the run on stderr, after every
-	// other diagnostic. The findings were reconciled whatever the gate or the
-	// cloud push decided, so the next steps apply on every path that gets here.
-	writeReconcileNextSteps(cmd, invocation{Flags: invocationFlags(cmd)})
+	// other diagnostic, or under --axi as the payload's help[] block on stdout.
+	// The findings were reconciled whatever the gate or the cloud push decided,
+	// so the next steps apply on every path that gets here. A render fault is
+	// reported only when the run itself succeeded, so it never masks the gate's
+	// or the push's own exit code.
+	if werr := writeReconcileNextSteps(cmd, axiPayload, invocation{Flags: invocationFlags(cmd)}); werr != nil && err == nil {
+		err = werr
+	}
 	return err
 }
 
@@ -372,18 +401,10 @@ func jsonLogFormat(cmd *cobra.Command) bool {
 	return strings.EqualFold(strings.TrimSpace(format), "json")
 }
 
-// writeReconcileNextSteps closes the run with reconcile's Next: lines. Text mode
-// prints them raw via writeNextSteps; under --log-format json each line rides the
-// context logger (the warnLegacyPipe pattern), so stderr stays NDJSON-only.
-func writeReconcileNextSteps(cmd *cobra.Command, inv invocation) {
-	if !jsonLogFormat(cmd) {
-		writeNextSteps(cmd.ErrOrStderr(), suggestReconcile, inv)
-		return
-	}
-	logger := log.FromContext(cmd.Context())
-	for _, line := range renderSuggestions(suggestReconcile, inv) {
-		logger.Warn("Next: " + line)
-	}
+// writeReconcileNextSteps closes the run: under --axi the run values and a help[]
+// block on stdout, otherwise reconcile's Next: lines (writeAXIOrNextSteps).
+func writeReconcileNextSteps(cmd *cobra.Command, payload toon.Object, inv invocation) error {
+	return writeAXIOrNextSteps(cmd, payload, suggestReconcile, inv)
 }
 
 // persistLocalDebt is the CLI half of the local-TD persistence hook: delegate to

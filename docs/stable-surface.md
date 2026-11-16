@@ -455,10 +455,12 @@ No flags.
 
 | Flag | Type | Default | Status |
 |---|---|---|---|
+| `--axi` | bool | `false` |  |
 | `--cloud-endpoint` | string | `` |  |
 | `--consensus` | string | `` |  |
 | `--dry-run` | bool | `false` |  |
 | `--fail-on` | string | `` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
 | `--no-local-debt` | bool | `false` |  |
 | `--no-scorecard` | bool | `false` |  |
 | `--preview` | bool | `false` | deprecated alias |
