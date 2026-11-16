@@ -15,6 +15,9 @@ Next: atcr review --resume <id>
 The `review --resume` line appears only while `agents_pending` is above zero.
 `<id>` is a placeholder for the review id. The MCP tool does not add these lines.
 
+Under [`--axi`](#axi-mode) the same fields print as one TOON object followed by
+the same next steps as a `help[]` block, all on stdout.
+
 It reads only files the review has already written, so it never claims more
 than is on disk: a persona still working shows as `pending`, and a stage that is
 running shows as the stage before it. It can be polled at any interval while a
@@ -132,6 +135,37 @@ still finishing; check whether `last_activity_at` is still moving before
 resuming one.
 A file write time more than 60 seconds in the future does not count as
 activity, so it cannot hold a dead review at `in_progress`.
+
+## AXI mode
+
+`atcr status --axi` replaces the JSON document with the same `ReviewStatus`
+fields encoded as one [TOON](findings-format.md) object, followed by the next
+steps as a `help[]` block; the two decode together as one value. Field names,
+types and omission rules match the JSON document: `current_stage`,
+`completed_agents`, `agents` and a row's `last_activity_at` appear only when
+non-empty.
+
+```
+review_id: 2026-06-10_x
+status: completed
+agent_count: 2
+agents_done: 2
+agents_pending: 0
+partial: false
+current_stage: reviewed
+completed_agents[2]: greta,kai
+agents[2]{name,state,chunks_done,chunks_total,last_activity_at}:
+  greta,done,1,1,"2026-06-10T14:31:12Z"
+  kai,done,1,1,"2026-06-10T14:32:05Z"
+help[1]: atcr report <id>
+```
+
+While `agents_pending` is above zero, `help[]` also offers
+`atcr review --resume <id>`. No `Next:` line is written anywhere. There is no
+legacy pipe encoding: `--legacy-pipe` is rejected as a usage error (exit 2)
+and `ATCR_LEGACY_PIPE` is ignored. Without `--axi` the output is byte-identical
+to what it always was. The `atcr_status` MCP tool is unchanged: it always
+returns the JSON-shaped document.
 
 ## Spotting a stalled review
 

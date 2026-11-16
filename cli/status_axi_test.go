@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	toon "github.com/toon-format/toon-go"
+
+	"github.com/samestrin/atcr/internal/fanout"
 )
 
 // statusAXIStdout is the exact --axi stdout of the completed writeStatusFixture
@@ -220,6 +222,17 @@ func TestStatusCmd_AXIMissingReview(t *testing.T) {
 	code, stdout, _ := execCmdSplit(t, "status", "--axi", "missing")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, stdout)
+}
+
+// TestStatusAXIPayload_OmitsEmptyFields pins the omitempty mirror directly: a
+// status with no stage, no completed personas and an empty roster encodes only
+// the six run-level fields — no empty current_stage, completed_agents or agents
+// key an agent would pay tokens to read.
+func TestStatusAXIPayload_OmitsEmptyFields(t *testing.T) {
+	st := &fanout.ReviewStatus{ReviewID: "r", Status: fanout.RunCompleted}
+	var buf bytes.Buffer
+	require.NoError(t, writeAXIHelp(&buf, statusAXIPayload(st), nil))
+	assert.Equal(t, "review_id: r\nstatus: completed\nagent_count: 0\nagents_done: 0\nagents_pending: 0\npartial: false\n", buf.String())
 }
 
 // execStatusBrokenStdout runs args through the real root with a stdout that
