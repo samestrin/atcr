@@ -106,6 +106,27 @@ func TestVerifyCmd_AXITextModeUnchanged(t *testing.T) {
 	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\n"), "stderr: %q", stderr)
 }
 
+// TestVerifyCmd_TextModeLogFormatJSON: routing the text path through the T1
+// helper (writeNextStepsCmd) means that under --log-format json without --axi
+// the Next: line rides the context logger as an NDJSON warn record, matching
+// reconcile, instead of a raw line that would break NDJSON-only stderr.
+func TestVerifyCmd_TextModeLogFormatJSON(t *testing.T) {
+	verifyAXIFixture(t, verifyAXIResult())
+	code, stdout, stderr := execCmdSplit(t, "--log-format", "json", "verify", "r")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "verified 4 finding(s): 2 confirmed, 1 refuted, 1 unverifiable -> "+
+		filepath.Join(".atcr", "reviews", "r", "reconciled")+"\n", stdout)
+	var next []string
+	for _, line := range nonEmptyLines(stderr) {
+		v := map[string]any{}
+		require.NoError(t, json.Unmarshal([]byte(line), &v), "stderr stays NDJSON: %q", line)
+		if msg, _ := v["msg"].(string); strings.HasPrefix(msg, "Next:") {
+			next = append(next, msg)
+		}
+	}
+	assert.Equal(t, []string{"Next: atcr report <id>"}, next)
+}
+
 // TestVerifyCmd_AXIHarnessUnavailableStaysPlainError: the harnessUnavailableError
 // return fires before the AXI emission, so a run whose skeptics could not read
 // the code stays a plain error (exit 1) with no TOON payload and no help block.
