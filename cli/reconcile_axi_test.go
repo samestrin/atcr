@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +98,57 @@ func TestReconcileCmd_AXIGateFailureStillEmits(t *testing.T) {
 func TestWriteAXIHelp_WriteFault(t *testing.T) {
 	payload := toon.NewObject(toon.Field{Key: "findings", Value: 1})
 	err := writeAXIHelp(failWriter{}, payload, []string{"atcr debt list"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "axi encoder")
+}
+
+// execReconcileBrokenStdout runs args through the real root with a stdout that
+// fails every write, and returns the command's error.
+func execReconcileBrokenStdout(t *testing.T, args ...string) error {
+	t.Helper()
+	var errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs(args)
+	root.SetOut(failWriter{})
+	root.SetErr(&errBuf)
+	return root.ExecuteContext(context.Background())
+}
+
+// TestReconcileCmd_AXIRenderFaultKeepsGateError: a broken stdout under --axi
+// never replaces an error the run already has. The gate's error is returned,
+// not the encoder's, though both exit 1, so the error itself is asserted.
+func TestReconcileCmd_AXIRenderFaultKeepsGateError(t *testing.T) {
+	isolate(t)
+	nextStepsReviewFixture(t)
+	err := execReconcileBrokenStdout(t, "reconcile", "--axi", "--fail-on", "low", "--no-scorecard", "--no-local-debt", "r")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "survived reconciliation", "the gate's error is kept")
+	assert.NotContains(t, err.Error(), "axi encoder", "the render fault must not mask the gate")
+	assert.Equal(t, 1, exitCode(err))
+}
+
+// TestReconcileCmd_AXIRenderFaultKeepsAuthExit: a --sync-cloud 401 exits 3
+// under --axi even when stdout is broken.
+func TestReconcileCmd_AXIRenderFaultKeepsAuthExit(t *testing.T) {
+	isolate(t)
+	nextStepsReviewFixture(t)
+	writePoolSummary(t, "r")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_API_KEY", "bad-key")
+	err := execReconcileBrokenStdout(t, "reconcile", "--axi", "--sync-cloud", "--cloud-endpoint", srv.URL, "--no-scorecard", "--no-local-debt", "r")
+	require.Error(t, err)
+	assert.Equal(t, exitAuth, exitCode(err), "the auth exit survives a broken stdout: %v", err)
+}
+
+// TestReconcileCmd_AXIRenderFaultAlone: with no other error pending, a broken
+// stdout is reported as the encoder's fault.
+func TestReconcileCmd_AXIRenderFaultAlone(t *testing.T) {
+	isolate(t)
+	nextStepsReviewFixture(t)
+	err := execReconcileBrokenStdout(t, "reconcile", "--axi", "--no-scorecard", "--no-local-debt", "r")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "axi encoder")
 }
