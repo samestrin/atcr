@@ -39,15 +39,24 @@ For each candidate and tier:
    [Operator commands](#operator-commands)). If
    `atcr doctor --agents <candidate-agent> --json` shows no
    `response_format_status` for the agent, the probe and its floor did not run:
-   check that the overlay declares `response_format` before going on. The
-   floor applies only when the probe got a reply to measure. A `not_honored`
-   verdict because the model ignored the field (the HINT says the reply was not
-   a bare JSON object, or the parser read no findings) still had its reply
-   held to the floor: it is a warning, not a failure, so record it in Notes. A
-   `not_honored` whose HINT says the provider rejected the request (HTTP 4xx),
-   an `unverified` verdict, or a reply cut off at the cap had no floor check at
-   all: fix the endpoint and re-run doctor, or record the candidate as failed,
-   before scoring. Also record the thinking verdict for a thinking model.
+   check that the overlay declares `response_format` before going on.
+
+   The floor needs a reply to measure and the provider's token count for it.
+   Doctor gives no floor verdict, and says nothing about it, when:
+   - the provider rejected the request (`not_honored` with an HTTP 4xx in the
+     HINT),
+   - the verdict is `unverified`, or the reply was cut off at the cap, or
+   - the endpoint reports no `usage.completion_tokens`. Ollama's `/v1`
+     endpoint reports it; confirm that once per tier with a plain
+     `/v1/chat/completions` request.
+
+   In those cases fix the endpoint and re-run doctor, or record the candidate
+   as failed, before scoring. A `not_honored` because the model ignored the
+   field (the HINT says the reply was not a bare JSON object, or the parser
+   read no findings) is held to the floor like any other reply: under 16
+   tokens the row is `short_reply` and doctor exits 1; at or over it,
+   `not_honored` is a warning, not a failure, so record it in Notes. Also
+   record the thinking verdict for a thinking model.
 4. Run the `fit-v1` health probe with three replicates and inspect
    `atcr benchmark fit`. Do not select a pair marked `unfit`.
 5. Verify and run the `standard-v1` suite with a checkpoint. Keep the generated

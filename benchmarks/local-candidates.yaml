@@ -31,10 +31,12 @@
 #                   Without it doctor never checks the reply length, and a
 #                   near-empty model like bench36's 4-token gemma4 goes on to
 #                   scoring. A reply that ignores the field (doctor reports
-#                   not_honored) is still held to the floor. A request the
-#                   provider rejects (not_honored with HTTP 4xx), an unverified
-#                   verdict, or a cut-off reply has no reply to measure and gets
-#                   no floor check: fix the endpoint before scoring.
+#                   not_honored) is still held to the floor and fails as
+#                   short_reply when under it. A request the provider rejects
+#                   (not_honored with HTTP 4xx), an unverified verdict, a
+#                   cut-off reply, or an endpoint that reports no
+#                   completion_tokens gets no floor check: fix the endpoint
+#                   before scoring.
 #
 # Ollama's /v1/chat/completions reads reasoning_effort for every thinking
 # model (docs/api/openai-compatibility in ollama/ollama), so every thinking
