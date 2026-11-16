@@ -74,13 +74,21 @@ func TestDebateCmd_AXILogFormatJSON(t *testing.T) {
 // nothing and announces no deprecated encoder.
 func TestDebateCmd_AXILegacyPipeRejected(t *testing.T) {
 	debateAXIFixture(t)
-	code, stdout, stderr := execCmdSplit(t, "debate", "--axi", "--legacy-pipe", "r")
-	assert.Equal(t, 2, code)
-	assert.Empty(t, stdout)
-	assert.Contains(t, stderr, "--legacy-pipe is not supported by debate")
+	// The usage error's message rides the returned error (main prints it), so
+	// drive the root directly to capture both the error and the empty stdout.
+	var outBuf, errBuf bytes.Buffer
+	root := NewRootCmd()
+	root.SetArgs([]string{"debate", "--axi", "--legacy-pipe", "r"})
+	root.SetOut(&outBuf)
+	root.SetErr(&errBuf)
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+	assert.Empty(t, outBuf.String())
+	assert.Contains(t, err.Error(), "--legacy-pipe is not supported by debate")
 
 	t.Setenv("ATCR_LEGACY_PIPE", "1")
-	code, stdout, stderr = execCmdSplit(t, "debate", "--axi", "r")
+	code, stdout, stderr := execCmdSplit(t, "debate", "--axi", "r")
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, debateAXIStdout(), stdout)
 	assert.NotContains(t, stderr, "deprecated", "no deprecation notice for an encoder this command lacks")
