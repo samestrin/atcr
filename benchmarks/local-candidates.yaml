@@ -30,9 +30,11 @@
 #                   (docs/registry.md, response_format verification detail).
 #                   Without it doctor never checks the reply length, and a
 #                   near-empty model like bench36's 4-token gemma4 goes on to
-#                   scoring. The floor runs even when doctor reports the field
-#                   not_honored, so a declaration the endpoint ignores still
-#                   gets checked.
+#                   scoring. A reply that ignores the field (doctor reports
+#                   not_honored) is still held to the floor. A request the
+#                   provider rejects (not_honored with HTTP 4xx), an unverified
+#                   verdict, or a cut-off reply has no reply to measure and gets
+#                   no floor check: fix the endpoint before scoring.
 #
 # Ollama's /v1/chat/completions reads reasoning_effort for every thinking
 # model (docs/api/openai-compatibility in ollama/ollama), so every thinking
@@ -198,8 +200,12 @@ candidates:
       not a safe saving: nemotron-3-super stopped reviewing at low
       (docs/registry.md, Thinking and max_tokens). nemotron-3-nano did not
       honor response_format behind the litellm proxy (docs/registry.md); it
-      is declared anyway so doctor's floor runs. A not_honored verdict is a
-      warning, not a failure: record it beside the result.
+      is declared anyway so doctor's floor runs: a reply that ignores the
+      field is still measured, and fails the row as short_reply when it is
+      under the floor. A not_honored verdict on a reply that meets the floor
+      is a warning, not a failure: record it beside the result. If the
+      provider rejects the field (HTTP 4xx), no reply was measured: fix the
+      endpoint before scoring.
 
   - name: gemma3-27b
     ollama_tag: gemma3:27b-it-q4_K_M

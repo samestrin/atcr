@@ -39,10 +39,15 @@ For each candidate and tier:
    [Operator commands](#operator-commands)). If
    `atcr doctor --agents <candidate-agent> --json` shows no
    `response_format_status` for the agent, the probe and its floor did not run:
-   check that the overlay declares `response_format` before going on. A
-   `not_honored` `response_format` verdict is a warning, not a failure, and the
-   floor still ran; record it in Notes. Also record the thinking verdict for a
-   thinking model.
+   check that the overlay declares `response_format` before going on. The
+   floor applies only when the probe got a reply to measure. A `not_honored`
+   verdict because the model ignored the field (the HINT says the reply was not
+   a bare JSON object, or the parser read no findings) still had its reply
+   held to the floor: it is a warning, not a failure, so record it in Notes. A
+   `not_honored` whose HINT says the provider rejected the request (HTTP 4xx),
+   an `unverified` verdict, or a reply cut off at the cap had no floor check at
+   all: fix the endpoint and re-run doctor, or record the candidate as failed,
+   before scoring. Also record the thinking verdict for a thinking model.
 4. Run the `fit-v1` health probe with three replicates and inspect
    `atcr benchmark fit`. Do not select a pair marked `unfit`.
 5. Verify and run the `standard-v1` suite with a checkpoint. Keep the generated
@@ -82,8 +87,9 @@ reasoning_effort`, `thinking: on`, and `thinking_level: high`. Every candidate,
 the baseline included, declares `response_format: json_object` so that doctor's
 short-reply floor runs. The review lane then runs in JSON mode for every
 candidate: the persona's `## Output Format` section is replaced by the shared
-JSON block ([registry](registry.md), `response_format`), so all candidates are
-compared on the same output format.
+JSON block, or the block is appended when the persona has none
+([registry](registry.md), `response_format`), so all candidates are compared on
+the same output format.
 
 | Candidate | Ollama tag | Quantization | Weights (GB) | Tiers | `max_tokens` |
 |---|---|---:|---:|---|---:|
@@ -95,8 +101,9 @@ compared on the same output format.
 | `nemotron-3-nano-30b-a3b` | `nemotron-3-nano:30b-a3b-q4_K_M` | Q4_K_M | 24.27 | both | 32768 |
 | `gemma3-27b` (baseline) | `gemma3:27b-it-q4_K_M` | Q4_K_M | 17.41 | both | 8192 |
 
-The baseline is the existing `gerald` binding and has no thinking mode. Keep its
-settings unchanged so it is a reference point, not a separately tuned entry.
+The baseline is the existing `gerald` binding and has no thinking mode. Apart
+from the shared `response_format: json_object`, keep its settings unchanged so
+it is a reference point, not a separately tuned entry.
 
 ## Operator commands
 
