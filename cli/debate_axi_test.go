@@ -94,8 +94,8 @@ func TestDebateCmd_AXILegacyPipeRejected(t *testing.T) {
 	assert.NotContains(t, stderr, "deprecated", "no deprecation notice for an encoder this command lacks")
 }
 
-// TestDebateCmd_TextModeUnchanged: without --axi stdout and stderr are the
-// bytes debate printed before --axi existed.
+// TestDebateCmd_TextModeUnchanged: without --axi, in text mode, stdout and
+// stderr are the bytes debate printed before --axi existed.
 func TestDebateCmd_TextModeUnchanged(t *testing.T) {
 	debateAXIFixture(t)
 	code, stdout, stderr := execCmdSplit(t, "debate", "r")
@@ -105,25 +105,19 @@ func TestDebateCmd_TextModeUnchanged(t *testing.T) {
 	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\n"), "stderr: %q", stderr)
 }
 
-// TestDebateCmd_LogFormatJSONNextRecords: without --axi under --log-format json
-// the Next: lines ride the context logger as NDJSON warn records (the T1
-// helper's writeNextStepsCmd path), so stderr stays NDJSON-only; stdout keeps
-// the prose line.
-func TestDebateCmd_LogFormatJSONNextRecords(t *testing.T) {
+// TestDebateCmd_LogFormatJSONNextLineUnchanged: without --axi under
+// --log-format json, debate's output is also unchanged (AC1: "without --axi
+// the output is unchanged"): stdout keeps the prose line and stderr keeps the
+// raw Next: line, exactly as before --axi existed. Making json-mode stderr
+// NDJSON-only is a separate change outside this task's scope.
+func TestDebateCmd_LogFormatJSONNextLineUnchanged(t *testing.T) {
 	debateAXIFixture(t)
 	code, stdout, stderr := execCmdSplit(t, "--log-format", "json", "debate", "r")
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, "debated 1 item(s): 0 upheld, 0 overturned, 0 split, 1 unresolved (0 overflow, 0 withheld) -> "+
 		filepath.Join(".atcr", "reviews", "r", "reconciled")+"\n", stdout)
-	nexts := 0
-	for _, line := range nonEmptyLines(stderr) {
-		v := map[string]any{}
-		require.NoError(t, json.Unmarshal([]byte(line), &v), "stderr stays NDJSON: %q", line)
-		if msg, _ := v["msg"].(string); msg == "Next: atcr report <id>" {
-			nexts++
-		}
-	}
-	assert.Equal(t, 1, nexts, "the Next: line rides the logger exactly once")
+	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\n"),
+		"the raw Next: line stays on stderr in json mode: %q", stderr)
 }
 
 // execDebateBrokenStdout runs args through the real root with a stdout that
