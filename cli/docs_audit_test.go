@@ -2415,6 +2415,11 @@ func exampleEnv(t *testing.T, w exampleWorkspace, shimDir string) []string {
 		"GOPROXY=off", "GOTOOLCHAIN=local", "GOFLAGS=",
 		"GOCACHE=" + goEnvValue(t, "GOCACHE"),
 		"GOMODCACHE=" + goEnvValue(t, "GOMODCACHE"),
+		// Under -race, `atcr` is a race-built binary, and the race runtime
+		// sleeps a second at exit (atexit_sleep_ms defaults to 1000). Examples
+		// run atcr hundreds of times, so that second dominated this test's
+		// run time. Any GORACE options the caller set still apply.
+		"GORACE=" + strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"),
 	}
 }
 
@@ -2598,7 +2603,15 @@ func TestDocsHermeticExamplesRun(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
-	defer cloud.Close()
+	// The subtests run in parallel, so they start only after this function
+	// returns: the server closes and the post count is read in cleanups, which
+	// run once every subtest has finished (LIFO, so the check runs first).
+	t.Cleanup(cloud.Close)
+	t.Cleanup(func() {
+		if cloudPosts.Load() == 0 {
+			t.Error("the --sync-cloud example never reached the fake cloud endpoint with its documented key")
+		}
+	})
 
 	pages := auditedMarkdown(t)
 	for _, ex := range documentedExamples {
@@ -2620,6 +2633,10 @@ func TestDocsHermeticExamplesRun(t *testing.T) {
 			if ex.skip != "" {
 				t.Skipf("not hermetic: %s", ex.skip)
 			}
+			// Each example runs in its own workspace, HOME and TMPDIR, with an
+			// explicit environment, so examples share nothing but the read-only
+			// fixture they copy and the go caches.
+			t.Parallel()
 			var w exampleWorkspace
 			id, finding, run := id, finding, run
 			if ex.ownFixture {
@@ -2644,7 +2661,6 @@ func TestDocsHermeticExamplesRun(t *testing.T) {
 			}
 		})
 	}
-	require.Positive(t, cloudPosts.Load(), "the --sync-cloud example never reached the fake cloud endpoint with its documented key")
 }
 
 // TestDocsReferenceOnlyRealCommandsCatchesAFakeCommandAndFlag is the deliberate

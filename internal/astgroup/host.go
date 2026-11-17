@@ -80,6 +80,9 @@ func NewHost(opts ...Option) *Host {
 		opt(h)
 	}
 	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true).WithMemoryLimitPages(h.maxMemoryPages)
+	if compilationCache != nil {
+		cfg = cfg.WithCompilationCache(compilationCache)
+	}
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	h.runtime = rt
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
@@ -87,6 +90,15 @@ func NewHost(opts ...Option) *Host {
 	}
 	return h
 }
+
+// compilationCache, when non-nil, is attached to every runtime NewHost builds, so
+// a parser compiled by one Host is reused by the next instead of recompiled.
+// Production leaves it nil: SharedHost already amortizes compilation for the
+// process. The package's TestMain sets it, because hundreds of short-lived test
+// Hosts would otherwise each recompile the same multi-MB parser, ~10s apiece
+// under -race. A cached compile is shared machine code only; each runtime still
+// decodes the module, applies its own memory limit and instantiates fresh.
+var compilationCache wazero.CompilationCache
 
 var (
 	sharedHostOnce sync.Once
