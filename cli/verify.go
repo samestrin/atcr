@@ -306,8 +306,10 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	// Under --axi the same values close the run as one TOON object plus the
-	// suggestVerify help[] block (writeAXIOrNextSteps below), so stdout carries
-	// no prose line.
+	// suggestVerify help[] block (writeAXIHelp below), so stdout carries no
+	// prose line. Otherwise the prose line and the stderr Next: lines print
+	// exactly as before --axi existed, in every log format (writeNextLines, not
+	// the NDJSON-logging writeNextStepsCmd).
 	reconciledDir := filepath.Join(reviewDir, "reconciled")
 	axiPayload := toon.NewObject(
 		toon.Field{Key: "findings", Value: res.FindingsProcessed},
@@ -328,7 +330,12 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if herr := harnessUnavailableError(res); herr != nil {
 		return herr
 	}
-	return writeAXIOrNextSteps(cmd, axiPayload, suggestVerify, invocation{Flags: invocationFlags(cmd)})
+	inv := invocation{Flags: invocationFlags(cmd)}
+	if !axiFromContext(cmd.Context()) {
+		writeNextLines(cmd, suggestVerify, inv)
+		return nil
+	}
+	return writeAXIHelp(cmd.OutOrStdout(), axiPayload, renderSuggestions(suggestVerify, inv))
 }
 
 // verifyMinSeverity reads and validates the --min-severity flag, returning the
