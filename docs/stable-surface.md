@@ -76,6 +76,8 @@ No flags.
 
 | Flag | Type | Default | Status |
 |---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
 | `--single-model` | bool | `false` |  |
 
 ### `atcr debt`
