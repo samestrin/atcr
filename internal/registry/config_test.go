@@ -1181,3 +1181,37 @@ func TestLoadProjectConfig_WebhookLinearAutoFixTokenCapsRejectNegative(t *testin
 	}
 }
 
+// Epic 105.2 T2: an auto_fix block with neither token-cap key loads with both
+// caps zero (no cap), and an explicit zero loads the same way.
+func TestLoadProjectConfig_WebhookLinearAutoFixTokenCapsAbsentMeansNoCap(t *testing.T) {
+	cfg, err := LoadProjectConfig(webhookProject(t, validWebhookBody(t.TempDir())+linearWebhookBlock+linearAutoFixBlock))
+	require.NoError(t, err)
+	a := cfg.Webhook.Linear.AutoFix
+	require.NotNil(t, a)
+	assert.Zero(t, a.JobTokenCap, "an absent job_token_cap means no per-job token cap")
+	assert.Zero(t, a.DailyTokenCap, "an absent daily_token_cap means no per-day token cap")
+
+	body := validWebhookBody(t.TempDir()) + linearWebhookBlock + linearAutoFixBlock +
+		"      job_token_cap: 0\n" +
+		"      daily_token_cap: 0\n"
+	cfg, err = LoadProjectConfig(webhookProject(t, body))
+	require.NoError(t, err)
+	a = cfg.Webhook.Linear.AutoFix
+	require.NotNil(t, a)
+	assert.Zero(t, a.JobTokenCap)
+	assert.Zero(t, a.DailyTokenCap)
+}
+
+// Epic 105.2 T2: both token-cap keys load into the struct beside daily_job_cap.
+func TestLoadProjectConfig_WebhookLinearAutoFixTokenCapsLoad(t *testing.T) {
+	body := validWebhookBody(t.TempDir()) + linearWebhookBlock + linearAutoFixBlock +
+		"      job_token_cap: 200000\n" +
+		"      daily_token_cap: 1000000\n"
+	cfg, err := LoadProjectConfig(webhookProject(t, body))
+	require.NoError(t, err)
+	a := cfg.Webhook.Linear.AutoFix
+	require.NotNil(t, a)
+	assert.Equal(t, 200000, a.JobTokenCap)
+	assert.Equal(t, 1000000, a.DailyTokenCap)
+	assert.Equal(t, 5, a.DailyJobCap, "the job-count cap is unchanged by the token caps")
+}

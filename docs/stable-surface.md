@@ -806,6 +806,8 @@ Keys of the user registry (`registry.yaml`) and the project config (`.atcr/confi
 | `webhook.linear.api_key_env` | string |
 | `webhook.linear.auto_fix` | *registry.WebhookLinearAutoFixConfig |
 | `webhook.linear.auto_fix.daily_job_cap` | int |
+| `webhook.linear.auto_fix.daily_token_cap` | int |
+| `webhook.linear.auto_fix.job_token_cap` | int |
 | `webhook.linear.auto_fix.push_token_env` | string |
 | `webhook.linear.auto_fix.repos` | []string |
 | `webhook.linear.auto_fix.statuses` | []string |

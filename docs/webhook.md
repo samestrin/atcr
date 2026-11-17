@@ -268,6 +268,8 @@ webhook:
       repos: [acme/widget]              # each must also be a key of webhook.repos
       push_token_env: GITHUB_PUSH_TOKEN # push-capable token; NOT webhook.github_token_env
       daily_job_cap: 5                  # most auto-fix jobs per UTC day; at least 1
+      job_token_cap: 200000             # optional: tokens one auto-fix job may spend; 0 or absent = no cap
+      daily_token_cap: 1000000          # optional: tokens all auto-fix jobs may spend per UTC day; 0 or absent = no cap
 ```
 
 - **Trigger and statuses.** Only an Issue `update` whose state changed, in an
@@ -309,7 +311,11 @@ webhook:
   to retry). A job whose pull request lookup fails, or whose pull request is
   busy with another job, uses neither the claim nor the daily count. One job
   per pull request runs at a time, as with reviews, and `webhook.job_timeout`
-  bounds the whole run.
+  bounds the whole run. Two optional token caps sit beside the job-count cap:
+  `job_token_cap` caps the tokens one auto-fix job may spend, and
+  `daily_token_cap` caps the tokens all auto-fix jobs may spend in one UTC
+  day. Both default to no cap: zero or an absent key means no cap, and a
+  negative value is rejected at config load.
 - **A failed job keeps its claim.** The issue+state claim and the day's count
   are written before the job runs, so a job that fails afterwards — whether it
   never pushed a fix branch or failed after the first push — keeps both: the
