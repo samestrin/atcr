@@ -674,6 +674,7 @@ func TestWebhookCmd_LinearAutoFixStatusRunsAutoFix(t *testing.T) {
 	assert.Empty(t, reviewed, "an auto-fix status runs no review")
 	assert.FileExists(t, filepath.Join(".atcr", "webhook", "auto-fix-state.json"))
 	assert.NotContains(t, stderr.String(), whPushToken)
+	assert.NotContains(t, stderr.String(), webhook.ErrAutoFixNoUsage.Error(), "without a token cap a job's usage line is not required")
 }
 
 // Epic 105.2 T4: webhook.linear.auto_fix.job_token_cap and daily_token_cap
