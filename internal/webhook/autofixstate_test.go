@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -414,5 +415,19 @@ func TestAutoFixStateAddTokensWriteFailureRecordsNothing(t *testing.T) {
 	}
 	if got := s.Tokens(now); got != 0 {
 		t.Fatalf("Tokens after failed write = %d, want 0", got)
+	}
+}
+
+func TestAutoFixStateAddTokensSaturates(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 1)
+	if err := s.AddTokens(math.MaxInt-1, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(5, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Tokens(now); got != math.MaxInt {
+		t.Fatalf("Tokens = %d, want math.MaxInt", got)
 	}
 }
