@@ -159,6 +159,28 @@ func TestInstallUnit_BindingOnlyFirstInstallKeepsConcurrentMD(t *testing.T) {
 	assert.Equal(t, concurrentMD, string(got), "concurrently created .md left untouched")
 }
 
+// TestInstallUnit_BindingOnlyStaleMDRemovalFailureErrors: on a RE-install of a
+// binding-only persona, a stale <name>.md that cannot be removed (here: a
+// non-empty directory squatting the path) fails the install with a descriptive
+// error rather than silently leaving the stale prompt in place.
+func TestInstallUnit_BindingOnlyStaleMDRemovalFailureErrors(t *testing.T) {
+	dir := t.TempDir()
+	unitDir := filepath.Join(dir, "security")
+	require.NoError(t, os.MkdirAll(unitDir, 0o700))
+	// A prior .yaml exists, so the stale-.md removal applies.
+	require.NoError(t, os.WriteFile(filepath.Join(unitDir, "owasp.yaml"), []byte(validPersonaYAML), 0o600))
+	// The stale .md path is a non-empty directory: os.Remove fails (ENOTEMPTY).
+	mdDest := filepath.Join(unitDir, "owasp.md")
+	require.NoError(t, os.MkdirAll(mdDest, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(mdDest, "blocker"), []byte("x"), 0o600))
+
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": validPersonaYAML})
+
+	err := InstallUnit(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove stale persona prompt")
+}
+
 // TestInstallUnit_ReinstallMDFailurePreservesPriorYAML: on a RE-install the fresh
 // <name>.yaml is written (renaming over the prior valid one) before the co-located
 // <name>.md. If the .md write then fails, the rollback must NOT delete the .yaml —
