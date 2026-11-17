@@ -561,7 +561,10 @@ No flags.
 
 ### `atcr status`
 
-No flags.
+| Flag | Type | Default | Status |
+|---|---|---|---|
+| `--axi` | bool | `false` |  |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
 
 ### `atcr trust`
 
