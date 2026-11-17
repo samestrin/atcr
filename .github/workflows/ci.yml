@@ -55,37 +55,56 @@ jobs:
   # newly added package always lands somewhere and is never silently dropped
   # from CI coverage just because nobody updated a shard's package list.
   #
-  # The three shard names are required status checks on main, so a new shard
-  # means a branch-protection change too. Within a shard, `split` names the
-  # packages whose own tests are bucketed across concurrent `go test` processes
-  # (.github/scripts/go-test-split.sh): a package's tests otherwise run
-  # serially in one process however many cores the runner has.
+  # Within a shard, `split` names the packages whose own tests are bucketed
+  # across concurrent `go test` processes (.github/scripts/go-test-split.sh): a
+  # package's tests otherwise run serially in one process however many cores
+  # the runner has. `shard` spreads one package's buckets over several runners.
   #
-  # Timings on GitHub-hosted 4-core runners, 2026-11-17 (EST-6985):
-  #   cli    7.4 min -> see the PR; was ./cli at 388s, mostly the docs-example
-  #          test (204s) waiting on a 1s race-runtime exit per child process
-  #   heavy 11.7 min -> internal/astgroup was 663s recompiling the same wasm
+  # `Go Test (cli|heavy|rest)` are required status checks on main, so the
+  # shards report under their own names and the `test-gate` job below reports
+  # those three. Adding or renaming a shard needs no branch-protection change.
+  #
+  # Timings on GitHub-hosted 4-core runners, 2026-11-17 (EST-6985, PR #848):
+  #   cli    7.4 min: ./cli was 388s, mostly the docs-example test (204s)
+  #          waiting on a 1s race-runtime exit per child process
+  #   heavy 11.7 min: internal/astgroup was 663s recompiling the same wasm
   #          parser in every test; its tests now share one compilation cache
-  #   rest   4.6 min -> internal/fanout (193s) is split four ways
+  #   rest   4.6 min: internal/fanout (193s) now has its own shard
   test:
-    name: Go Test (${{ matrix.name }})
+    name: Go Test shard (${{ matrix.name }})
     runs-on: ubuntu-latest
     # A hang guard, about twice the slowest shard's measured run.
-    timeout-minutes: 12
+    timeout-minutes: 8
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: cli
+          - name: cli-1
             packages: "./cli/... ./cmd/..."
             split: "./cli"
+            buckets: "8"
+            shard: "1/2"
+          - name: cli-2
+            packages: "./cli/... ./cmd/..."
+            split: "./cli"
+            buckets: "8"
+            shard: "2/2"
           - name: heavy
             packages: "./internal/astgroup/... ./internal/sandbox/... ./internal/payload/..."
             split: ""
-          - name: rest
-            packages: "" # computed at runtime: everything not in the two shards above
+            buckets: "4"
+            shard: "1/1"
+          - name: fanout
+            packages: "./internal/fanout"
             split: "./internal/fanout"
+            buckets: "4"
+            shard: "1/1"
+          - name: rest
+            packages: "" # computed at runtime: everything not in the shards above
+            split: ""
+            buckets: "4"
+            shard: "1/1"
 
     env:
       # This job is the ONLY thing that builds the root module against the
@@ -146,14 +165,15 @@ jobs:
         # wazero compilation cache across its tests took it to about a minute.
         #
         # The "rest" shard's package list is computed here, not hardcoded,
-        # specifically so it always equals "everything minus the two named
+        # specifically so it always equals "everything minus the named
         # shards" even as packages are added, renamed, or removed.
         env:
           SPLIT: ${{ matrix.split }}
-          BUCKETS: "4"
+          BUCKETS: ${{ matrix.buckets }}
+          SHARD: ${{ matrix.shard }}
         run: |
           if [ "${{ matrix.name }}" = "rest" ]; then
-            pkgs=$(go list ./... | grep -v -e '^github.com/samestrin/atcr/cli$' -e '^github.com/samestrin/atcr/cmd/' -e '/astgroup$' -e '/sandbox$' -e '/payload$')
+            pkgs=$(go list ./... | grep -v -e '^github.com/samestrin/atcr/cli$' -e '^github.com/samestrin/atcr/cmd/' -e '/astgroup$' -e '/sandbox$' -e '/payload$' -e '/internal/fanout$')
           else
             pkgs="${{ matrix.packages }}"
           fi
@@ -214,6 +234,25 @@ jobs:
           path: coverage-${{ matrix.name }}.out
           if-no-files-found: warn
           retention-days: 7
+
+  # Reports the three required checks, Go Test (cli|heavy|rest). Each passes
+  # only when every shard above passed, so a failing shard blocks the merge
+  # whatever its name. `always()` makes a failed or cancelled shard report a
+  # failure here instead of a skip.
+  test-gate:
+    name: Go Test (${{ matrix.name }})
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    strategy:
+      matrix:
+        name: [cli, heavy, rest]
+    steps:
+      - name: Require every test shard to pass
+        run: |
+          echo "test shards: ${{ needs.test.result }}"
+          [ "${{ needs.test.result }}" = success ]
 
   # Full-tree secret scan. The pre-commit hook also runs gitleaks, but it is
   # opt-in (`git config core.hooksPath .githooks`), silently skipped when the

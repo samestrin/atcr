@@ -15,13 +15,20 @@
 # `go test -list` from the same test binary the buckets then run, so every test
 # the package compiles lands in exactly one bucket.
 #
+# SHARD=i/n spreads one package's buckets over n runners: this runner takes
+# buckets i, i+n, i+2n, ... and only shard 1 runs the unsplit packages.
+#
 # SPLIT          packages (as `go list` accepts them) whose tests are bucketed
-# BUCKETS        buckets per split package (default 4)
+# BUCKETS        buckets per split package, across all shards (default 4)
+# SHARD          i/n, this runner's share of the buckets (default 1/1)
 # GO_TEST_FLAGS  flags for every `go test` invocation
 # COVER_OUT      when set, write one merged coverage profile here
 set -euo pipefail
 
 buckets=${BUCKETS:-4}
+shard=${SHARD:-1/1}
+si=${shard%/*} sn=${shard#*/}
+[[ $si =~ ^[0-9]+$ && $sn =~ ^[0-9]+$ && $si -ge 1 && $si -le $sn ]] || { echo "bad SHARD $shard" >&2; exit 2; }
 read -r -a flags <<<"${GO_TEST_FLAGS:-}"
 [ $# -gt 0 ] || { echo "usage: $0 <packages...>" >&2; exit 2; }
 
@@ -55,7 +62,7 @@ run() { # run <label> <go test args...>
 }
 
 # Started first so it overlaps the listing builds below.
-[ ${#rest[@]} -eq 0 ] || run "unsplit packages" "${rest[@]}"
+[ ${#rest[@]} -eq 0 ] || [ "$si" -ne 1 ] || run "unsplit packages" "${rest[@]}"
 
 for p in "${split[@]}"; do
   # Listing builds the test binary once, up front: concurrent `go test`
@@ -63,10 +70,10 @@ for p in "${split[@]}"; do
   list=$(go test "${flags[@]}" "${cover[@]}" -list '.*' "$p")
   mapfile -t names < <(grep -E '^(Test|Example|Fuzz)' <<<"$list" | sort)
   if [ ${#names[@]} -lt "$buckets" ]; then
-    run "$p" "$p"
+    [ "$si" -ne 1 ] || run "$p" "$p"
     continue
   fi
-  for ((b = 0; b < buckets; b++)); do
+  for ((b = si - 1; b < buckets; b += sn)); do
     mine=()
     for ((i = b; i < ${#names[@]}; i += buckets)); do mine+=("${names[i]}"); done
     run "$p [bucket $((b + 1))/$buckets, ${#mine[@]} tests]" -run "^($(IFS='|'; echo "${mine[*]}"))\$" "$p"
