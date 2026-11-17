@@ -1162,3 +1162,22 @@ func TestLoadProjectConfig_WebhookLinearAutoFixRejectsInvalid(t *testing.T) {
 		})
 	}
 }
+
+// Epic 105.2 T2: a negative per-job or per-day token cap is rejected at load,
+// naming the key. Zero is legal (it means no cap) and is covered by the
+// absent-key test below.
+func TestLoadProjectConfig_WebhookLinearAutoFixTokenCapsRejectNegative(t *testing.T) {
+	cases := []struct{ name, add, want string }{
+		{"job cap negative", "      job_token_cap: -1\n", "webhook.linear.auto_fix.job_token_cap must be >= 0 (0 means no cap), got -1"},
+		{"daily cap negative", "      daily_token_cap: -5\n", "webhook.linear.auto_fix.daily_token_cap must be >= 0 (0 means no cap), got -5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := validWebhookBody(t.TempDir()) + linearWebhookBlock + linearAutoFixBlock + c.add
+			_, err := LoadProjectConfig(webhookProject(t, body))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.want)
+		})
+	}
+}
+
