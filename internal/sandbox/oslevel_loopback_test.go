@@ -292,7 +292,7 @@ func TestCheckLoopbackPortsFree_DialTimeoutFailsClosed(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
 	assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
 	assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
-	assert.Contains(t, err.Error(), "127.0.0.1:3000", "the refusal must name the probe that timed out")
+	assert.Contains(t, err.Error(), "port 3000 on 127.0.0.1", "the refusal must name the probe that timed out")
 }
 
 func TestCheckLoopbackPortsFree_RefusedDialMeansFree(t *testing.T) {
