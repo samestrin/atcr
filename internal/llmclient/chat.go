@@ -359,6 +359,12 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return nil, fmt.Errorf("message %d: %w", i, ErrContentAndParts)
 		}
 	}
+	// Scanned before anything is encoded, so block refuses with no request
+	// sent and redact sends only the redacted copy.
+	messages, err = guardMessages(ctx, inv, messages)
+	if err != nil {
+		return nil, err
+	}
 	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	req := chatToolRequest{
 		Model:          inv.Model,

@@ -150,6 +150,16 @@ type Invocation struct {
 	// message carrying an image part with ErrVisionNotDeclared unless it is
 	// set; it is declared, never probed.
 	SupportsVision bool
+	// SecretGuard is the secret_guard policy Chat applies to the outbound
+	// messages: "off", "warn", "redact" or "block". Empty is off, so a caller
+	// that does not set it is not scanned. Validation is the registry's job;
+	// Chat refuses any other value rather than guess.
+	SecretGuard string
+	// AlreadyGuardedMessages counts the leading messages the caller already
+	// guarded (the fanout review prompt, say). Chat scans only the messages at
+	// and after it; a negative count, or one above len(messages), is
+	// ErrAlreadyGuardedMessages.
+	AlreadyGuardedMessages int
 }
 
 type message struct {

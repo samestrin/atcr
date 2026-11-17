@@ -227,13 +227,18 @@ func TestChat_SecretGuardRedactRewritesACopy(t *testing.T) {
 	}
 	inv := guardInv(srv, "redact", 1)
 	inv.SupportsVision = true
-	_, err := fastRetry(srv.Client()).Chat(context.Background(), inv, msgs, nil)
+	var logs bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
+	_, err := fastRetry(srv.Client()).Chat(ctx, inv, msgs, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, hits.Load())
 
 	assert.Equal(t, []string{content, "part " + chatAWSKey}, *scanned, "Content and text Parts are scanned; image parts and guarded messages are not")
 	assert.Equal(t, 1, strings.Count(*body, chatAWSKey), "only the already-guarded message keeps its text")
 	assert.Equal(t, 2, strings.Count(*body, payload.SecretPlaceholder))
+	assert.Contains(t, logs.String(), "2 secret(s) [aws-access-token] in message 1, 2")
+	assert.Contains(t, logs.String(), "secret_guard: redact")
+	assert.NotContains(t, logs.String(), chatAWSKey)
 
 	// The caller's history is untouched.
 	assert.Equal(t, "key "+chatAWSKey, *msgs[1].Content)
