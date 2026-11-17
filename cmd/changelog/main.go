@@ -45,6 +45,9 @@ var versionRE = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 const unreleasedHeading = "## [Unreleased]"
 
+// removeFragment deletes an assembled fragment; a test swaps it to fail.
+var removeFragment = os.Remove
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -118,7 +121,7 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 	}
 	for _, byCat := range frags {
 		for _, f := range byCat {
-			if err := os.Remove(f.path); err != nil {
+			if err := removeFragment(f.path); err != nil {
 				return fmt.Errorf("%s assembled but fragment not removed: %w", changelogPath, err)
 			}
 		}
