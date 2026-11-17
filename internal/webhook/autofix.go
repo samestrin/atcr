@@ -27,6 +27,9 @@ const (
 	autoFixLogChunk = 64 << 10
 	// autoFixLogLineRunes caps one logged output line, after redaction.
 	autoFixLogLineRunes = 1000
+	// autoFixUsagePrefix starts the token usage line `atcr review --auto-fix`
+	// ends with. It must match autoFixUsagePrefix in cli/autofix.go.
+	autoFixUsagePrefix = "atcr-auto-fix-usage:"
 )
 
 var (
@@ -36,6 +39,14 @@ var (
 	// ErrNoAutoFixBase is returned for a job with no branch for the fix pull
 	// request to target.
 	ErrNoAutoFixBase = errors.New("webhook: auto-fix needs a base branch for the fix pull request")
+	// ErrAutoFixJobTokenCap is returned for a job whose reported token usage
+	// is over AutoFixRunner.JobTokenCap. The job has already run: its spend is
+	// charged to the day all the same.
+	ErrAutoFixJobTokenCap = errors.New("webhook: auto-fix job token cap exceeded")
+	// ErrAutoFixNoUsage is returned, under token accounting, for a job whose
+	// child printed no usable usage line. Its spend is unknown and uncharged,
+	// so it is a degradation, never a pass.
+	ErrAutoFixNoUsage = errors.New("webhook: auto-fix child printed no token usage line")
 )
 
 // autoFixKillGrace is how long a cancelled `atcr` child has, after SIGTERM, to
@@ -81,6 +92,15 @@ type AutoFixRunner struct {
 	Secrets []string
 	// Logf receives the child's output, one redacted line per call.
 	Logf func(format string, args ...any)
+	// JobTokenCap is the most tokens one job may report before Run returns
+	// ErrAutoFixJobTokenCap; zero is no cap. The usage is only known once the
+	// child exits, so the cap flags the job after the fact and never stops it.
+	JobTokenCap int
+	// State, when set, is charged with every job's reported token usage, so
+	// its DailyTokenCap refuses the next Claim once the day's spend reaches it.
+	State *AutoFixState
+	// Now is the clock the usage is charged at; nil is time.Now.
+	Now func() time.Time
 }
 
 // Run checks out t's pull request head and runs `atcr review --auto-fix` in
@@ -88,6 +108,12 @@ type AutoFixRunner struct {
 // after autoFixKillGrace (on unix, of its whole process group, so nothing it
 // started outlives it), and the worktree and its branch are removed either
 // way. A missing push token or base is refused before anything is checked out.
+//
+// With token accounting on (JobTokenCap or State set), Run reads the usage line
+// the child ends with, whether it passed or failed: the usage is charged to
+// State, a job over JobTokenCap returns ErrAutoFixJobTokenCap, and a child with
+// no usage line returns ErrAutoFixNoUsage. These join any error of the child's
+// own.
 func (r *AutoFixRunner) Run(ctx context.Context, t AutoFixTarget) error {
 	var token string
 	if r.PushTokenEnv != "" {
@@ -126,14 +152,78 @@ func (r *AutoFixRunner) Run(ctx context.Context, t AutoFixTarget) error {
 		err := cmd.Run()
 		reap()
 		out.Flush()
+		var errs []error
 		if cerr := ctx.Err(); cerr != nil {
-			return fmt.Errorf("webhook: auto-fix of %s: %w", label, cerr)
+			errs = append(errs, fmt.Errorf("webhook: auto-fix of %s: %w", label, cerr))
+		} else if err != nil {
+			errs = append(errs, fmt.Errorf("webhook: auto-fix of %s: atcr review --auto-fix: %w", label, err))
 		}
-		if err != nil {
-			return fmt.Errorf("webhook: auto-fix of %s: atcr review --auto-fix: %w", label, err)
+		if r.JobTokenCap > 0 || r.State != nil {
+			if uerr := r.chargeUsage(label, out); uerr != nil {
+				errs = append(errs, uerr)
+			}
 		}
-		return nil
+		if len(errs) == 1 {
+			return errs[0]
+		}
+		return errors.Join(errs...)
 	})
+}
+
+// chargeUsage charges the usage out saw to State and checks it against
+// JobTokenCap.
+func (r *AutoFixRunner) chargeUsage(label string, out *autoFixLogWriter) error {
+	in, outTokens, ok := out.Usage()
+	if !ok {
+		return fmt.Errorf("%w: auto-fix of %s; its spend is not counted against the caps", ErrAutoFixNoUsage, label)
+	}
+	total := addCapped(in, outTokens)
+	var errs []error
+	if r.State != nil {
+		now := time.Now
+		if r.Now != nil {
+			now = r.Now
+		}
+		if err := r.State.AddTokens(total, now()); err != nil {
+			errs = append(errs, fmt.Errorf("webhook: auto-fix of %s: charge %d tokens: %w", label, total, err))
+		}
+	}
+	if r.JobTokenCap > 0 && total > r.JobTokenCap {
+		errs = append(errs, fmt.Errorf("%w: auto-fix of %s used %d tokens (in %d, out %d), cap %d",
+			ErrAutoFixJobTokenCap, label, total, in, outTokens, r.JobTokenCap))
+	}
+	return errors.Join(errs...)
+}
+
+// parseAutoFixUsage reads a usage line,
+//
+//	atcr-auto-fix-usage: tokens_in=<n> tokens_out=<n> ...
+//
+// It must start the line and carry tokens_in and tokens_out once each, as
+// non-negative integers; other fields are ignored.
+func parseAutoFixUsage(line string) (in, out int, ok bool) {
+	rest, found := strings.CutPrefix(line, autoFixUsagePrefix)
+	if !found {
+		return 0, 0, false
+	}
+	vals := map[string]int{}
+	for _, f := range strings.Fields(rest) {
+		k, v, _ := strings.Cut(f, "=")
+		if k != "tokens_in" && k != "tokens_out" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if _, dup := vals[k]; dup || err != nil || n < 0 {
+			return 0, 0, false
+		}
+		vals[k] = n
+	}
+	in, inOK := vals["tokens_in"]
+	out, outOK := vals["tokens_out"]
+	if !inOK || !outOK {
+		return 0, 0, false
+	}
+	return in, out, true
 }
 
 // childEnv is env without GITHUB_TOKEN, which the caller replaces with the push
@@ -181,6 +271,10 @@ type autoFixLogWriter struct {
 	mu      sync.Mutex
 	buf     bytes.Buffer
 	discard bool // dropping the rest of an over-long line
+
+	// The last usage line seen (parseAutoFixUsage), read before redaction.
+	usageIn, usageOut int
+	usageSeen         bool
 }
 
 func newAutoFixLogWriter(label string, secrets []string, logf func(string, ...any)) *autoFixLogWriter {
@@ -230,10 +324,21 @@ func (w *autoFixLogWriter) Flush() {
 	w.discard = false
 }
 
+// Usage returns the token usage of the last usage line the child printed.
+// Call it after Flush.
+func (w *autoFixLogWriter) Usage() (in, out int, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.usageIn, w.usageOut, w.usageSeen
+}
+
 func (w *autoFixLogWriter) emit() {
 	line := strings.TrimRight(w.buf.String(), "\r")
 	truncated := w.buf.Len() > autoFixLogChunk
 	w.buf.Reset()
+	if in, out, ok := parseAutoFixUsage(line); ok && !truncated {
+		w.usageIn, w.usageOut, w.usageSeen = in, out, true
+	}
 	line = w.redact.Redact(line)
 	line = tokenShapes.ReplaceAllString(line, "[redacted]")
 	if r := []rune(line); len(r) > autoFixLogLineRunes {
