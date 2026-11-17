@@ -98,6 +98,7 @@ func TestEvaluate(t *testing.T) {
 		{"cmd dir", []change{{'M', "cmd/x/main.go"}}, logEmpty, "", nil, []string{"adds no fragment"}},
 		{"reconcile dir", []change{{'M', "reconcile/x.go"}}, logEmpty, "", nil, []string{"adds no fragment"}},
 		{"test-only passes", []change{{'M', "internal/fanout/review_test.go"}}, logEmpty, "", nil, nil},
+		{"testdata-only passes", []change{{'M', "internal/fanout/testdata/fixture.json"}}, logEmpty, "", nil, nil},
 		{"docs only passes", []change{{'M', "docs/x.md"}}, logEmpty, "", nil, nil},
 		{"label opts out", []change{code}, logEmpty, "", []string{"bug", "no-changelog"}, nil},
 		{"body line opts out", []change{code}, logEmpty, "Refactor.\r\n\r\nChangelog: none\r\n", nil, nil},
@@ -122,6 +123,46 @@ func TestEvaluate(t *testing.T) {
 				if !strings.Contains(got, s) {
 					t.Errorf("want %q in %q", s, got)
 				}
+			}
+		})
+	}
+}
+
+// TestNeedsFragment pins which changes demand a fragment: testdata fixtures
+// under the code dirs are skipped like _test.go files, but deletions of
+// non-test code and near-miss names still count (EST-7028 Q1: testdata-only).
+func TestNeedsFragment(t *testing.T) {
+	tests := []struct {
+		name    string
+		changes []change
+		want    bool
+	}{
+		{"no changes", nil, false},
+		{"code file", []change{{'M', "internal/fanout/review.go"}}, true},
+		{"added code file", []change{{'A', "cmd/x/main.go"}}, true},
+		{"deleted code file still needs one", []change{{'D', "internal/fanout/review.go"}}, true},
+		{"test file skipped", []change{{'M', "internal/fanout/review_test.go"}}, false},
+		{"testdata under internal skipped", []change{{'M', "internal/fanout/testdata/fixture.json"}}, false},
+		{"testdata under cmd skipped", []change{{'A', "cmd/changelog/testdata/golden.txt"}}, false},
+		{"testdata under cli skipped", []change{{'M', "cli/testdata/in.txt"}}, false},
+		{"testdata under reconcile skipped", []change{{'M', "reconcile/x/testdata/in.yaml"}}, false},
+		{"testdata under personas skipped", []change{{'A', "personas/testdata/p.md"}}, false},
+		{"testdata directly under a code dir skipped", []change{{'M', "internal/testdata/x.bin"}}, false},
+		{"nested testdata skipped", []change{{'M', "internal/a/testdata/b/testdata/x.bin"}}, false},
+		{"deleted testdata file skipped", []change{{'D', "internal/fanout/testdata/old.json"}}, false},
+		{"several testdata files skipped", []change{{'A', "cmd/x/testdata/a.txt"}, {'D', "cmd/x/testdata/b.txt"}}, false},
+		{"testdata plus code still needs one", []change{{'M', "internal/fanout/testdata/fixture.json"}, {'M', "internal/fanout/review.go"}}, true},
+		{"testdata as a filename prefix still counts", []change{{'A', "internal/testdatabase.go"}}, true},
+		{"testdata inside a filename still counts", []change{{'A', "internal/mytestdata.go"}}, true},
+		{"testdata inside a dir name still counts", []change{{'M', "internal/mytestdata/x.go"}}, true},
+		{"file literally named testdata still counts", []change{{'M', "internal/testdata"}}, true},
+		{"testdata outside code dirs", []change{{'M', "docs/testdata/x.md"}}, false},
+		{"docs only", []change{{'M', "docs/x.md"}}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := needsFragment(tc.changes); got != tc.want {
+				t.Fatalf("needsFragment(%v) = %v, want %v", tc.changes, got, tc.want)
 			}
 		})
 	}

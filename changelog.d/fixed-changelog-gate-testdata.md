@@ -1,0 +1,1 @@
+- The changelog gate no longer demands a fragment (or the `no-changelog` opt-out) from a PR that only touches `testdata/` fixture directories under the code trees; deletions of non-test code and files merely named like testdata (for example `testdatabase.go`) still need one. (epic 101.1)

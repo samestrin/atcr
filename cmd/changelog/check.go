@@ -196,13 +196,25 @@ func optedOut(body string, labels []string) bool {
 
 func needsFragment(changes []change) bool {
 	for _, c := range changes {
-		if strings.HasSuffix(c.path, "_test.go") {
+		if strings.HasSuffix(c.path, "_test.go") || underTestdata(c.path) {
 			continue
 		}
 		for _, d := range codeDirs {
 			if strings.HasPrefix(c.path, d) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// underTestdata reports whether p lies under a directory named testdata, the
+// fixture convention the go tool ignores. Only directory components count:
+// files like testdatabase.go or a file literally named testdata are not fixtures.
+func underTestdata(p string) bool {
+	for _, dir := range strings.Split(path.Dir(p), "/") {
+		if dir == "testdata" {
+			return true
 		}
 	}
 	return false
