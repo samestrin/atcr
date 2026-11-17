@@ -1,0 +1,1 @@
+- On macOS, a sandboxed run with loopback ports no longer treats a held-port probe to 127.0.0.1 or ::1 that timed out as "port free". A host firewall that silently drops loopback connects used to let the check pass; the run is now refused with "could not check whether the requested loopback ports are free on the host", naming the port and address that timed out (epic 105.1).
