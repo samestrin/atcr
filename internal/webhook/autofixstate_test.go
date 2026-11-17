@@ -252,3 +252,167 @@ func TestAutoFixStateClaimAllowedAgainPastReplayHorizon(t *testing.T) {
 		t.Fatalf("repeat past the horizon: %v", err)
 	}
 }
+
+func TestAutoFixStateDailyTokenCapRefusesNextClaim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+	s := openState(t, path, 10)
+	s.DailyTokenCap = 1000
+	if err := s.Claim("ISS-1", "st", now); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if err := s.AddTokens(999, now); err != nil {
+		t.Fatalf("AddTokens: %v", err)
+	}
+	// One token under the cap still allows a claim.
+	if err := s.Claim("ISS-2", "st", now); err != nil {
+		t.Fatalf("claim under the token cap: %v", err)
+	}
+	if err := s.AddTokens(1, now); err != nil {
+		t.Fatalf("AddTokens: %v", err)
+	}
+	if got := s.Tokens(now); got != 1000 {
+		t.Fatalf("Tokens = %d, want 1000", got)
+	}
+	err := s.Claim("ISS-3", "st", now)
+	if !errors.Is(err, ErrAutoFixDailyTokenCap) {
+		t.Fatalf("claim at the token cap: got %v, want ErrAutoFixDailyTokenCap", err)
+	}
+	if errors.Is(err, ErrAutoFixDailyCap) {
+		t.Fatalf("token cap reads as the job cap: %v", err)
+	}
+	// The refused claim recorded nothing, and the count stays where it was.
+	if got := s.Count(now); got != 2 {
+		t.Fatalf("Count = %d, want 2", got)
+	}
+	// A repeat is still a repeat, not the token cap.
+	if err := s.Claim("ISS-1", "st", now); !errors.Is(err, ErrAutoFixClaimed) {
+		t.Fatalf("repeat at the token cap: got %v, want ErrAutoFixClaimed", err)
+	}
+	// The next UTC day starts at zero tokens.
+	tomorrow := now.Add(24 * time.Hour)
+	if got := s.Tokens(tomorrow); got != 0 {
+		t.Fatalf("next-day Tokens = %d, want 0", got)
+	}
+	if err := s.Claim("ISS-3", "st", tomorrow); err != nil {
+		t.Fatalf("claim the next day: %v", err)
+	}
+}
+
+func TestAutoFixStateNoTokenCapNeverRefuses(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 10)
+	if err := s.AddTokens(1<<40, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Claim("ISS-1", "st", now); err != nil {
+		t.Fatalf("claim with no token cap: %v", err)
+	}
+}
+
+func TestAutoFixStateTokensSurviveRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+	s := openState(t, path, 10)
+	if err := s.Claim("ISS-1", "st", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(700, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(500, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened := openState(t, path, 10)
+	reopened.DailyTokenCap = 1200
+	if got := reopened.Tokens(now); got != 1200 {
+		t.Fatalf("Tokens after reopen = %d, want 1200", got)
+	}
+	if got := reopened.Count(now); got != 1 {
+		t.Fatalf("Count after reopen = %d, want 1", got)
+	}
+	if err := reopened.Claim("ISS-2", "st", now.Add(2*time.Hour)); !errors.Is(err, ErrAutoFixDailyTokenCap) {
+		t.Fatalf("claim after reopen at the token cap: got %v, want ErrAutoFixDailyTokenCap", err)
+	}
+}
+
+// TestAutoFixStateLoadsFileWithoutTokens covers a state file written before
+// token accounting: it loads with zero tokens for its day.
+func TestAutoFixStateLoadsFileWithoutTokens(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	old := `{"version":1,"seen":{},"day":"2026-11-17","count":3}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, path, 10)
+	if got := s.Tokens(now); got != 0 {
+		t.Fatalf("Tokens = %d, want 0", got)
+	}
+	if got := s.Count(now); got != 3 {
+		t.Fatalf("Count = %d, want 3", got)
+	}
+}
+
+// TestAutoFixStateTokensAcrossMidnight covers a job claimed one UTC day and
+// charged the next: the spend counts against the day it is charged, and the
+// new day's job count starts at zero.
+func TestAutoFixStateTokensAcrossMidnight(t *testing.T) {
+	day1 := time.Date(2026, 11, 17, 23, 50, 0, 0, time.UTC)
+	day2 := day1.Add(20 * time.Minute)
+	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 1)
+	if err := s.Claim("ISS-1", "st", day1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(50, day1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(40, day2); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Tokens(day2); got != 40 {
+		t.Fatalf("day-2 Tokens = %d, want 40", got)
+	}
+	if got := s.Count(day2); got != 0 {
+		t.Fatalf("day-2 Count = %d, want 0", got)
+	}
+	if err := s.Claim("ISS-2", "st", day2); err != nil {
+		t.Fatalf("day-2 claim: %v", err)
+	}
+	if got := s.Tokens(day2); got != 40 {
+		t.Fatalf("day-2 Tokens after claim = %d, want 40", got)
+	}
+}
+
+func TestAutoFixStateAddTokensRejectsNegative(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 1)
+	if err := s.AddTokens(-1, now); err == nil {
+		t.Fatal("AddTokens(-1) succeeded")
+	}
+	if got := s.Tokens(now); got != 0 {
+		t.Fatalf("Tokens = %d, want 0", got)
+	}
+}
+
+func TestAutoFixStateAddTokensWriteFailureRecordsNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, path, 1)
+	// A directory in the file's slot makes the rename over it fail.
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(10, now); err == nil {
+		t.Fatal("AddTokens with unwritable state: want error")
+	}
+	if got := s.Tokens(now); got != 0 {
+		t.Fatalf("Tokens after failed write = %d, want 0", got)
+	}
+}
