@@ -9,6 +9,9 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
+	toon "github.com/toon-format/toon-go"
 )
 
 // newDebateCmd builds `atcr debate`: cross-examine a review's disputed findings
@@ -32,10 +35,22 @@ func newDebateCmd() *cobra.Command {
 	}
 	cmd.Flags().Bool("single-model", false,
 		"allow the same-model persona fallback when fewer than 3 distinct models are available across the proposer/challenger/judge roles (default: skip and record unresolved)")
+	// The root PersistentPreRunE propagates this into the command context; there
+	// is no legacy pipe encoder for this command.
+	cmd.Flags().Bool("axi", false, "emit the run values and next steps as a token-dense TOON payload on stdout for agent consumption")
+	// Registered because every --axi command must carry it (TestAxiImpliesLegacyPipeFlag),
+	// but rejected: the pipe encoder is frozen and deprecated.
+	cmd.Flags().Bool("legacy-pipe", false, "not supported by this command; rejected")
+	_ = cmd.Flags().MarkHidden("legacy-pipe")
+	cmd.Annotations = map[string]string{noLegacyPipeAnnotation: "true"}
 	return cmd
 }
 
 func runDebateCmd(cmd *cobra.Command, args []string) error {
+	if legacy, _ := cmd.Flags().GetBool("legacy-pipe"); legacy {
+		return usageError(errors.New("--legacy-pipe is not supported by debate; --axi emits standard TOON"))
+	}
+
 	arg := ""
 	if len(args) == 1 {
 		arg = args[0]
@@ -60,12 +75,32 @@ func runDebateCmd(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld) -> %s\n",
-		res.Selected, res.Upheld, res.Overturned, res.Split, res.Unresolved, res.Overflow, res.Withheld,
-		filepath.Join(reviewDir, "reconciled"))
-	writeNextLines(cmd, suggestDebate, invocation{Flags: invocationFlags(cmd)})
-	return nil
+	// Under --axi the same values close the run as one TOON object plus the
+	// suggestDebate help[] block on stdout (writeAXIHelp), so stdout carries no
+	// prose line and no Next: line is written anywhere. Otherwise the prose line
+	// and the stderr Next: lines print exactly as before --axi existed, in every
+	// log format (writeNextLines, not the NDJSON-logging writeNextStepsCmd).
+	reconciledDir := filepath.Join(reviewDir, "reconciled")
+	inv := invocation{Flags: invocationFlags(cmd)}
+	if !axiFromContext(cmd.Context()) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld) -> %s\n",
+			res.Selected, res.Upheld, res.Overturned, res.Split, res.Unresolved, res.Overflow, res.Withheld,
+			reconciledDir)
+		writeNextLines(cmd, suggestDebate, inv)
+		return nil
+	}
+	axiPayload := toon.NewObject(
+		toon.Field{Key: "selected", Value: res.Selected},
+		toon.Field{Key: "upheld", Value: res.Upheld},
+		toon.Field{Key: "overturned", Value: res.Overturned},
+		toon.Field{Key: "split", Value: res.Split},
+		toon.Field{Key: "unresolved", Value: res.Unresolved},
+		toon.Field{Key: "overflow", Value: res.Overflow},
+		toon.Field{Key: "withheld", Value: res.Withheld},
+		toon.Field{Key: "reconciled_dir", Value: goaxi.SanitizeString(reconciledDir)},
+	)
+	return writeAXIHelp(cmd.OutOrStdout(), axiPayload, renderSuggestions(suggestDebate, inv))
 }
 
 // debateFailureError wraps a non-ErrNoReconciledFindings error from debate.Debate
