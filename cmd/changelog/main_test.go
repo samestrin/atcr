@@ -253,3 +253,15 @@ func TestAssemble_KeepsRemovingAfterAFailedRemove(t *testing.T) {
 		}
 	}
 }
+
+func TestAssemble_OneFailedRemoveIsSingular(t *testing.T) {
+	dir := setup(t, baseChangelog, map[string]string{"added-a.md": "- a. (epic 1)\n"})
+	orig := removeFragment
+	removeFragment = func(path string) error { return &os.PathError{Op: "remove", Path: path, Err: os.ErrPermission} }
+	t.Cleanup(func() { removeFragment = orig })
+
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
+	if code != 1 || !strings.Contains(stderr, "1 fragment not removed") {
+		t.Errorf("code %d, stderr:\n%s", code, stderr)
+	}
+}
