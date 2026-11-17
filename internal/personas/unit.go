@@ -78,7 +78,9 @@ func (e *ValidationError) Unwrap() error { return e.Err }
 // reader never observes a partial write. When the persona is binding-only (no
 // co-located .md upstream), any stale <name>.md from a prior install is removed so
 // the on-disk unit always matches what was fetched — never a leftover custom
-// prompt fed into an LLM.
+// prompt fed into an LLM. On a first-time install (no prior <name>.yaml) nothing
+// is removed: a <name>.md that appears during the fetch belongs to another
+// process, not to a prior install of this unit.
 //
 // A "bundle/"-prefixed name is rejected (defense in depth, mirroring Install): a
 // bundle must be expanded via InstallBundle, never round-tripped through the
@@ -154,10 +156,15 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 			}
 			return err
 		}
-	} else if err := os.Remove(mdDest); err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(priorErr, os.ErrNotExist) {
 		// Binding-only upstream: drop any stale co-located prompt from a prior
-		// install so the resolver never feeds an outdated custom prompt.
-		return fmt.Errorf("failed to remove stale persona prompt %s: %w", mdDest, err)
+		// install so the resolver never feeds an outdated custom prompt. Skipped
+		// on a first-time install (the .yaml did not exist before this write):
+		// there is no prior unit whose stale .md this could be, and removing one
+		// would delete a .md another process created during the fetch.
+		if err := os.Remove(mdDest); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to remove stale persona prompt %s: %w", mdDest, err)
+		}
 	}
 	return nil
 }
