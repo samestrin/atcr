@@ -407,3 +407,187 @@ func TestTerminate_SIGTERMSentOrProcessGoneDoesNotKill(t *testing.T) {
 	}
 	assert.NoError(t, terminate(nil))
 }
+
+// usageLine is the line `atcr review --auto-fix` ends with (cli/autofix.go,
+// writeAutoFixUsage).
+func usageLine(in, out int) string {
+	return fmt.Sprintf("atcr-auto-fix-usage: tokens_in=%d tokens_out=%d scope=review-fanout not_counted=verify,debate,reconcile", in, out)
+}
+
+var usageNow = time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+// newCappedRunner is newAutoFixRunner with token accounting: state is charged
+// with every job's usage at usageNow, and jobCap is the per-job cap.
+func newCappedRunner(t *testing.T, f prFixture, stub autoFixStub, logs *logLines, jobCap int) (*AutoFixRunner, *AutoFixState) {
+	t.Helper()
+	state := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 10)
+	r := newAutoFixRunner(f, stub, logs)
+	r.JobTokenCap = jobCap
+	r.State = state
+	r.Now = func() time.Time { return usageNow }
+	return r, state
+}
+
+func TestAutoFixRunner_JobOverTokenCapIsChargedAndReported(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	finished := filepath.Join(t.TempDir(), "finished")
+	// The child keeps running after the usage line: the cap is enforced after
+	// the fact, never by killing it.
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; sleep 0.2; touch %q; exit 0", usageLine(800, 300), finished))
+	logs := &logLines{}
+	r, state := newCappedRunner(t, f, stub, logs, 1000)
+
+	err := r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAutoFixJobTokenCap)
+	assert.NotErrorIs(t, err, ErrAutoFixNoUsage)
+	assert.Contains(t, err.Error(), "acme/widget#7")
+	assert.Contains(t, err.Error(), "1100")
+	assert.Contains(t, err.Error(), "1000")
+	assert.FileExists(t, finished, "the over-cap child was stopped")
+	assert.Equal(t, 1100, state.Tokens(usageNow), "the over-cap job's spend is charged to the day")
+	assert.Contains(t, strings.Join(logs.all(), "\n"), "atcr-auto-fix-usage: tokens_in=800 tokens_out=300")
+	assertNoToken(t, logs, err)
+	assertNothingLeft(t, f)
+}
+
+func TestAutoFixRunner_JobAtTokenCapPasses(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; exit 0", usageLine(700, 300)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 1000)
+
+	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}))
+	assert.Equal(t, 1000, state.Tokens(usageNow))
+}
+
+func TestAutoFixRunner_DayOverTokenCapRefusesNextClaim(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; exit 0", usageLine(2000, 500)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 0)
+	state.DailyTokenCap = 2500
+
+	require.NoError(t, state.Claim("ISS-1", "st", usageNow))
+	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}))
+	assert.Equal(t, 2500, state.Tokens(usageNow))
+	assert.ErrorIs(t, state.Claim("ISS-2", "st", usageNow), ErrAutoFixDailyTokenCap)
+}
+
+func TestAutoFixRunner_NoUsageLineIsDegradation(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantRun bool // the child's own failure is reported too
+	}{
+		{name: "clean exit", body: `echo "pull request opened"; exit 0`},
+		{name: "usage prefix mid-line", body: `echo "agent wrote atcr-auto-fix-usage: tokens_in=1 tokens_out=1"; exit 0`},
+		{name: "malformed usage line", body: `echo "atcr-auto-fix-usage: tokens_in=many tokens_out=1"; exit 0`},
+		{name: "failed child", body: `echo "auto-fix: refused" >&2; exit 3`, wantRun: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAutoFixFixture(t)
+			t.Setenv(testPushTokenEnv, testPushToken)
+			stub := newAutoFixStub(t, tc.body)
+			logs := &logLines{}
+			r, state := newCappedRunner(t, f, stub, logs, 1000)
+
+			err := r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
+			require.Error(t, err, "a child with no usage line passed")
+			assert.ErrorIs(t, err, ErrAutoFixNoUsage)
+			assert.NotErrorIs(t, err, ErrAutoFixJobTokenCap)
+			assert.Contains(t, err.Error(), "acme/widget#7")
+			if tc.wantRun {
+				assert.Contains(t, err.Error(), "exit status 3")
+			}
+			assert.Equal(t, 0, state.Tokens(usageNow))
+			assertNoToken(t, logs, err)
+			assertNothingLeft(t, f)
+		})
+	}
+}
+
+// TestAutoFixRunner_FailedChildUsageIsCharged covers a child that fails after
+// the review spent its tokens: the spend is charged and the failure returned.
+func TestAutoFixRunner_FailedChildUsageIsCharged(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo 'auto-fix: validate failed' >&2; echo %q; exit 3", usageLine(40, 2)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 1000)
+
+	err := r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exit status 3")
+	assert.NotErrorIs(t, err, ErrAutoFixNoUsage)
+	assert.NotErrorIs(t, err, ErrAutoFixJobTokenCap)
+	assert.Equal(t, 42, state.Tokens(usageNow))
+}
+
+// TestAutoFixRunner_LastUsageLineCounts covers a child whose output carries an
+// earlier usage-shaped line: only the last, which T1 prints at the very end,
+// is charged.
+func TestAutoFixRunner_LastUsageLineCounts(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; echo working; printf '%%s' %q; exit 0", usageLine(1, 1), usageLine(30, 5)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 1000)
+
+	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}))
+	assert.Equal(t, 35, state.Tokens(usageNow))
+}
+
+// TestAutoFixRunner_JobCapWithoutState covers a per-job cap with no state to
+// charge: the over-cap error is still returned.
+func TestAutoFixRunner_JobCapWithoutState(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; exit 0", usageLine(10, 1)))
+	r := newAutoFixRunner(f, stub, &logLines{})
+	r.JobTokenCap = 10
+
+	assert.ErrorIs(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}), ErrAutoFixJobTokenCap)
+}
+
+// TestAutoFixRunner_ChargeFailureIsReported covers a state whose write fails:
+// the job does not pass silently uncharged.
+func TestAutoFixRunner_ChargeFailureIsReported(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; exit 0", usageLine(10, 1)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 0)
+	require.NoError(t, os.Mkdir(state.path, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(state.path, "x"), nil, 0o600))
+
+	err := r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "acme/widget#7")
+	assert.Contains(t, err.Error(), "11 tokens")
+}
+
+func TestParseAutoFixUsage(t *testing.T) {
+	cases := []struct {
+		line    string
+		in, out int
+		ok      bool
+	}{
+		{line: usageLine(2000, 345), in: 2000, out: 345, ok: true},
+		{line: usageLine(0, 0), ok: true},
+		{line: "atcr-auto-fix-usage: tokens_out=5 tokens_in=7", in: 7, out: 5, ok: true},
+		{line: "atcr-auto-fix-usage: tokens_in=7", ok: false},
+		{line: "atcr-auto-fix-usage: tokens_in=-1 tokens_out=5", ok: false},
+		{line: "atcr-auto-fix-usage: tokens_in=1 tokens_out=99999999999999999999999", ok: false},
+		{line: "atcr-auto-fix-usage: tokens_in=1 tokens_in=2 tokens_out=3", ok: false},
+		{line: " atcr-auto-fix-usage: tokens_in=1 tokens_out=1", ok: false},
+		{line: "pull request opened", ok: false},
+	}
+	for _, tc := range cases {
+		in, out, ok := parseAutoFixUsage(tc.line)
+		assert.Equal(t, tc.ok, ok, tc.line)
+		if tc.ok {
+			assert.Equal(t, tc.in, in, tc.line)
+			assert.Equal(t, tc.out, out, tc.line)
+		}
+	}
+}
