@@ -110,12 +110,16 @@ func TestChangelogWorkflowBuildsCheckerFromBase(t *testing.T) {
 	}
 }
 
-// The check must reject the workflow as it stood before the fix, and each way
-// back to running PR-supplied code.
+// The check must reject the workflow as it stood before the fix, and trip each
+// of its guards: every case names the guard it expects, so a guard that stops
+// firing fails here instead of being masked by an earlier one.
 func TestCheckerBuiltFromBaseRejects(t *testing.T) {
 	good := readRepoFile(t, changelogWorkflow)
+	buildStep := "      - name: Build the checker from the base commit\n" +
+		"        working-directory: base\n" +
+		"        run: go build -o \"$RUNNER_TEMP/changelog\" ./cmd/changelog\n\n"
 	for _, tc := range []struct {
-		name, wf string
+		name, wf, want string
 	}{
 		{"go run from the PR checkout", `
 jobs:
@@ -130,20 +134,30 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: go run ./cmd/changelog check --base "$BASE_SHA" --head "$HEAD_SHA"
-`},
-		{"built from the head checkout", strings.Replace(good, "working-directory: base", "working-directory: head", 1)},
-		{"base checkout of the head ref", strings.Replace(good, "ref: "+baseRef, "ref: ${{ github.event.pull_request.head.sha }}", 1)},
-		{"check runs a different binary", strings.Replace(good, `"$RUNNER_TEMP/changelog" check`, `go run ./cmd/changelog check`, 1)},
-		{"build changes into the head checkout", strings.Replace(good, `go build -o`, `cd ../head && go build -o`, 1)},
-		{"build with go -C", strings.Replace(good, `go build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, `go -C ../head build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, 1)},
-		{"untrusted expansion in run", strings.Replace(good, `--head "$HEAD_SHA"`, `--head "${{ github.event.pull_request.head.sha }}"`, 1)},
+`, "uses go run"},
+		{"check through go run", strings.Replace(good, `"$RUNNER_TEMP/changelog" check`, `go run ./cmd/changelog check`, 1), "uses go run"},
+		{"check runs a different binary", strings.Replace(good, `"$RUNNER_TEMP/changelog" check`, `/bin/false check`, 1), `does not run the base-built binary "$RUNNER_TEMP/changelog"`},
+		{"BASE_SHA is the head commit", strings.Replace(good, "BASE_SHA: "+baseRef, "BASE_SHA: ${{ github.event.pull_request.head.sha }}", 1), "BASE_SHA is"},
+		{"built from the head checkout", strings.Replace(good, "working-directory: base", "working-directory: head", 1), "builds ./cmd/changelog outside the base checkout"},
+		{"base checkout of the head ref", strings.Replace(good, "ref: "+baseRef, "ref: ${{ github.event.pull_request.head.sha }}", 1), "builds ./cmd/changelog outside the base checkout"},
+		{"base checkout over the workspace root", strings.Replace(good, "ref: "+baseRef+"\n          path: base\n", "ref: "+baseRef+"\n", 1), "over the workspace root"},
+		{"build without -o", strings.Replace(good, `go build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, `go build ./cmd/changelog`, 1), "without -o"},
+		{"check before build", strings.Replace(good, buildStep, "", 1) + "\n" + strings.TrimSuffix(buildStep, "\n"), "before any step builds"},
+		{"check runs in the base checkout", strings.Replace(good, "working-directory: head", "working-directory: base", 1), "runs in the base checkout"},
+		{"build changes into the head checkout", strings.Replace(good, `go build -o`, `cd ../head && go build -o`, 1), "changes directory"},
+		{"build with go -C", strings.Replace(good, `go build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, `go -C ../head build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, 1), "touches cmd/changelog other than to build it"},
+		{"untrusted expansion in run", strings.Replace(good, `--head "$HEAD_SHA"`, `--head "${{ github.event.pull_request.head.sha }}"`, 1), "expands ${{ }} inside run:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.wf == good {
 				t.Fatal("mutation did not apply; the workflow changed shape, update this test to follow it")
 			}
-			if err := checkerBuiltFromBase([]byte(tc.wf)); err == nil {
+			err := checkerBuiltFromBase([]byte(tc.wf))
+			if err == nil {
 				t.Fatal("checkerBuiltFromBase accepted a workflow that runs PR-supplied checker code")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("rejected by the wrong guard: got %q, want it to mention %q", err, tc.want)
 			}
 		})
 	}
