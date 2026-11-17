@@ -571,8 +571,10 @@ No flags.
 
 | Flag | Type | Default | Status |
 |---|---|---|---|
+| `--axi` | bool | `false` |  |
 | `--exec` | bool | `false` |  |
 | `--fresh` | bool | `false` | deprecated alias |
+| `--legacy-pipe` | bool | `false` | deprecated alias |
 | `--min-severity` | string | `` |  |
 | `--repo-root` | string | `.` |  |
 | `--repo` | string | `.` | deprecated alias |

@@ -16,6 +16,9 @@ import (
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
+
+	goaxi "github.com/samestrin/go-axi"
+	toon "github.com/toon-format/toon-go"
 )
 
 // newVerifyCmd builds `atcr verify`: run skeptics over a review's reconciled,
@@ -44,6 +47,14 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
 	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
+	// The root PersistentPreRunE propagates this into the command context; there
+	// is no legacy pipe encoder for this command.
+	cmd.Flags().Bool("axi", false, "emit the run values and next steps as a token-dense TOON payload on stdout for agent consumption")
+	// Registered because every --axi command must carry it (TestAxiImpliesLegacyPipeFlag),
+	// but rejected: the pipe encoder is frozen and deprecated.
+	cmd.Flags().Bool("legacy-pipe", false, "not supported by this command; rejected")
+	_ = cmd.Flags().MarkHidden("legacy-pipe")
+	cmd.Annotations = map[string]string{noLegacyPipeAnnotation: "true"}
 	// `diff` is a SUBCOMMAND of a command that is also a leaf (verify takes an
 	// optional [id-or-path]). Cobra resolves a matching child before positional
 	// args, so a review id or path literally named "diff" is shadowed here and
@@ -190,6 +201,10 @@ var newRedactor = log.NewRedactor
 var verifyRun = verify.Verify
 
 func runVerify(cmd *cobra.Command, args []string) error {
+	if legacy, _ := cmd.Flags().GetBool("legacy-pipe"); legacy {
+		return usageError(errors.New("--legacy-pipe is not supported by verify; --axi emits standard TOON"))
+	}
+
 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
 	// value fails fast as a usage error (exit 2), per AC 04-01 Error Scenario 2.
 	minSev, err := verifyMinSeverity(cmd)
@@ -290,15 +305,30 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable -> %s\n",
-		res.FindingsProcessed, res.VerdictCounts.Confirmed, res.VerdictCounts.Refuted,
-		res.VerdictCounts.Unverifiable, filepath.Join(reviewDir, "reconciled"))
+	// Under --axi the same values close the run as one TOON object plus the
+	// suggestVerify help[] block (writeAXIOrNextSteps below), so stdout carries
+	// no prose line.
+	reconciledDir := filepath.Join(reviewDir, "reconciled")
+	axiPayload := toon.NewObject(
+		toon.Field{Key: "findings", Value: res.FindingsProcessed},
+		toon.Field{Key: "confirmed", Value: res.VerdictCounts.Confirmed},
+		toon.Field{Key: "refuted", Value: res.VerdictCounts.Refuted},
+		toon.Field{Key: "unverifiable", Value: res.VerdictCounts.Unverifiable},
+		toon.Field{Key: "reconciled_dir", Value: goaxi.SanitizeString(reconciledDir)},
+	)
+	if !axiFromContext(cmd.Context()) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable -> %s\n",
+			res.FindingsProcessed, res.VerdictCounts.Confirmed, res.VerdictCounts.Refuted,
+			res.VerdictCounts.Unverifiable, reconciledDir)
+	}
+	// The harness-unavailable refusal stays a plain error (exit 1) on both
+	// paths: the check the operator asked for did not happen, so neither the
+	// TOON payload nor a help[] block is written (EST-5102, Epic 104.1 T2).
 	if herr := harnessUnavailableError(res); herr != nil {
 		return herr
 	}
-	writeNextSteps(cmd.ErrOrStderr(), suggestVerify, invocation{Flags: invocationFlags(cmd)})
-	return nil
+	return writeAXIOrNextSteps(cmd, axiPayload, suggestVerify, invocation{Flags: invocationFlags(cmd)})
 }
 
 // verifyMinSeverity reads and validates the --min-severity flag, returning the
