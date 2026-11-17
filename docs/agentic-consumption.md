@@ -190,9 +190,8 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   run whose skeptics' tool harness could not be built stays a plain error
   (exit 1) with no payload and no `help` block, exactly as in text mode.
 - Without `--axi`, `atcr verify` prints `Next: atcr report <id>` on **stderr**
-  after its result line, and leaves stdout unchanged. Under `--log-format json`
-  the line rides the logger as an NDJSON warn record, so stderr stays
-  NDJSON-only.
+  after its result line, and leaves stdout unchanged. It stays a raw stderr
+  line under `--log-format json` too, exactly as before `--axi` existed.
 - `atcr status --axi` replaces its indented JSON document with one TOON object
   of the same fields (see [status.md](status.md#axi-mode)), followed by the
   same `help` array: `help[1]: atcr report <id>`, plus a
