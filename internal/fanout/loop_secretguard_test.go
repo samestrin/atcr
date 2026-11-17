@@ -142,10 +142,14 @@ func TestToolLoop_RedactsToolResultsNotThePrompt(t *testing.T) {
 		msgs := wireMessages(t, body)
 		assert.Contains(t, string(msgs[0]["content"]), loopAWSKey, "request %d: the guarded prompt is not rescanned", i+1)
 		for j, m := range msgs[1:] {
-			if string(m["role"]) == `"tool"` {
-				assert.NotContains(t, string(m["content"]), loopAWSKey, "request %d message %d", i+1, j+1)
-				assert.Contains(t, string(m["content"]), payload.SecretPlaceholder, "request %d message %d", i+1, j+1)
-			}
+			assert.NotContains(t, string(m["content"]), loopAWSKey, "request %d message %d", i+1, j+1)
+		}
+		if i > 0 {
+			// Message 2 is turn 1's read_file result; turn 2's call trips the
+			// budget and is answered with a skip notice, not the file.
+			require.Greater(t, len(msgs), 2, "request %d", i+1)
+			assert.Equal(t, `"tool"`, string(msgs[2]["role"]), "request %d", i+1)
+			assert.Contains(t, string(msgs[2]["content"]), payload.SecretPlaceholder, "request %d: the tool result is redacted", i+1)
 		}
 	}
 	assert.NotContains(t, bodies[2], `"tools"`, "the last request is requestFinalAnswer's")

@@ -46,6 +46,21 @@ func (l *toolLoop) replayable(m llmclient.Message) llmclient.Message {
 	return m
 }
 
+// chatInvocation is the invocation every Chat of the loop sends (Epic 106.2):
+// the agent's secret_guard policy, set from Settings.SecretGuard when the agent
+// was built and warn, the fanout default, on an agent built without it, with
+// the review prompt (message zero) counted as already guarded. renderAgent and
+// buildFallbackAgent guarded it before rendering, so Chat scans only the turns
+// and tool results added after it, never the prompt again.
+func (l *toolLoop) chatInvocation() llmclient.Invocation {
+	inv := l.agent.Invocation
+	if strings.TrimSpace(inv.SecretGuard) == "" {
+		inv.SecretGuard = secretGuardWarn
+	}
+	inv.AlreadyGuardedMessages = 1
+	return inv
+}
+
 // historyMessage is the form of an assistant turn that is safe to re-send as
 // conversation history: inline <think> reasoning stripped off its Content. Without
 // it, a model that reasons inline gets its own discarded draft replayed back as
@@ -227,7 +242,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			return l.finalize(classifyStatus(err), err)
 		}
 
-		resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, l.toolDefs)
+		resp, err := l.cc.Chat(ctx, l.chatInvocation(), l.messages, l.toolDefs)
 		if err != nil {
 			// A Chat error ends the loop. A deadline/cancel records the timeout
 			// budget; any other provider error is a plain failure. Partial
@@ -423,7 +438,7 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		return l.finalize(classifyStatus(err), err)
 	}
 	l.appendUser(finalAnswerMessage)
-	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
+	resp, err := l.cc.Chat(ctx, l.chatInvocation(), l.messages, nil)
 	if err != nil {
 		// Count the final-answer call's wire attempt(s) even on error (Epic 4.11),
 		// mirroring the per-turn path above.

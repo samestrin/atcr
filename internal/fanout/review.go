@@ -3836,6 +3836,7 @@ func renderAgent(ctx context.Context, cfg *ReviewConfig, name string, ac registr
 			ThinkingLevel:    ac.ThinkingLevel,
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
+			SecretGuard:      secretGuardPolicy(cfg),
 		},
 	}, nil
 }
@@ -4519,6 +4520,7 @@ func buildFallbackAgent(ctx context.Context, cfg *ReviewConfig, primary Agent, n
 			ThinkingLevel:    ac.ThinkingLevel,
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
+			SecretGuard:      secretGuardPolicy(cfg),
 		},
 	}, warned, nil
 }
