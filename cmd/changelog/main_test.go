@@ -208,3 +208,60 @@ func TestRun_Usage(t *testing.T) {
 		}
 	}
 }
+
+func TestAssemble_KeepsRemovingAfterAFailedRemove(t *testing.T) {
+	dir := setup(t, baseChangelog, map[string]string{
+		"added-a.md":   "- a. (epic 1)\n",
+		"added-b.md":   "- b. (epic 1)\n",
+		"changed-c.md": "- c. (epic 1)\n",
+		"fixed-d.md":   "- d. (epic 1)\n",
+	})
+	stuck := map[string]bool{"added-b.md": true, "fixed-d.md": true}
+	orig := removeFragment
+	removeFragment = func(path string) error {
+		if stuck[filepath.Base(path)] {
+			return &os.PathError{Op: "remove", Path: path, Err: os.ErrPermission}
+		}
+		return orig(path)
+	}
+	t.Cleanup(func() { removeFragment = orig })
+
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
+	if code != 1 {
+		t.Fatalf("code %d, want 1: %s", code, stderr)
+	}
+	if got := readFile(t, filepath.Join(dir, "CHANGELOG.md")); !strings.Contains(got, "## [1.0.0] - 2026-11-01") {
+		t.Errorf("CHANGELOG.md lacks the new section:\n%s", got)
+	}
+	for _, name := range []string{"added-a.md", "changed-c.md"} {
+		if _, err := os.Stat(filepath.Join(dir, "changelog.d", name)); !os.IsNotExist(err) {
+			t.Errorf("%s not removed after an earlier failure: %v", name, err)
+		}
+	}
+	for name := range stuck {
+		path := filepath.Join(dir, "changelog.d", name)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if !strings.Contains(stderr, path) {
+			t.Errorf("stderr does not report %s:\n%s", path, stderr)
+		}
+	}
+	for _, want := range []string{"2 fragments not removed", "delete them by hand", "do not re-run assemble"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+}
+
+func TestAssemble_OneFailedRemoveIsSingular(t *testing.T) {
+	dir := setup(t, baseChangelog, map[string]string{"added-a.md": "- a. (epic 1)\n"})
+	orig := removeFragment
+	removeFragment = func(path string) error { return &os.PathError{Op: "remove", Path: path, Err: os.ErrPermission} }
+	t.Cleanup(func() { removeFragment = orig })
+
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
+	if code != 1 || !strings.Contains(stderr, "1 fragment not removed") {
+		t.Errorf("code %d, stderr:\n%s", code, stderr)
+	}
+}
