@@ -295,6 +295,51 @@ func TestCheckLoopbackPortsFree_DialTimeoutFailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "port 3000 on 127.0.0.1", "the refusal must name the probe that timed out")
 }
 
+func TestCheckLoopbackPortsFree_InterfaceAddressTimeoutIsNotLocal(t *testing.T) {
+	// Measured on the macOS CI runner (PR #849, first run): every probe to the
+	// IPv6 link-local address of utun0, a tunnel interface, timed out, on every
+	// port. A scoped link-local dial leaves through its interface rather than
+	// lo0, so nothing on the host answers it, and the loopback grant does not
+	// reach it either. Only a timeout at 127.0.0.1 or ::1 means a firewall
+	// dropped loopback traffic; failing closed on this one would refuse every
+	// darwin run with loopback ports on a host with a VPN or tunnel interface.
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "utun0"}}, nil }
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::e493:3041:b67b:a5b2"), Mask: net.CIDRMask(64, 128)}}, nil
+	}
+	var timedOut []string
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if strings.Contains(addr, "%utun0") {
+			timedOut = append(timedOut, addr)
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	require.NoError(t, checkLoopbackPortsFree(context.Background(), []int{49178}))
+	assert.Equal(t, []string{"[fe80::e493:3041:b67b:a5b2%utun0]:49178"}, timedOut, "the interface address is still probed")
+}
+
+func TestCheckLoopbackPortsFree_IPv6LoopbackTimeoutFailsClosed(t *testing.T) {
+	// The timeout rule covers both loopback addresses, not only 127.0.0.1.
+	origIfaces, origDial := netInterfaces, loopbackDial
+	t.Cleanup(func() { netInterfaces, loopbackDial = origIfaces, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return nil, nil }
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr == "[::1]:3000" {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	err := checkLoopbackPortsFree(context.Background(), []int{3000})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+	assert.Contains(t, err.Error(), "port 3000 on ::1")
+}
+
 func TestCheckLoopbackPortsFree_RefusedDialMeansFree(t *testing.T) {
 	// The other side of the timeout rule: a refused connect is a real answer,
 	// and the port is free.
