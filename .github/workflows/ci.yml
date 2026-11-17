@@ -54,9 +54,24 @@ jobs:
   # explicitly; the third is a `go list` catch-all, not a hardcoded list, so a
   # newly added package always lands somewhere and is never silently dropped
   # from CI coverage just because nobody updated a shard's package list.
+  #
+  # The three shard names are required status checks on main, so a new shard
+  # means a branch-protection change too. Within a shard, `split` names the
+  # packages whose own tests are bucketed across concurrent `go test` processes
+  # (.github/scripts/go-test-split.sh): a package's tests otherwise run
+  # serially in one process however many cores the runner has.
+  #
+  # Timings on GitHub-hosted 4-core runners, 2026-11-17 (EST-6985):
+  #   cli    7.4 min -> see the PR; was ./cli at 388s, mostly the docs-example
+  #          test (204s) waiting on a 1s race-runtime exit per child process
+  #   heavy 11.7 min -> internal/astgroup was 663s recompiling the same wasm
+  #          parser in every test; its tests now share one compilation cache
+  #   rest   4.6 min -> internal/fanout (193s) is split four ways
   test:
     name: Go Test (${{ matrix.name }})
     runs-on: ubuntu-latest
+    # A hang guard, about twice the slowest shard's measured run.
+    timeout-minutes: 12
 
     strategy:
       fail-fast: false
@@ -64,10 +79,13 @@ jobs:
         include:
           - name: cli
             packages: "./cli/... ./cmd/..."
+            split: "./cli"
           - name: heavy
             packages: "./internal/astgroup/... ./internal/sandbox/... ./internal/payload/..."
+            split: ""
           - name: rest
             packages: "" # computed at runtime: everything not in the two shards above
+            split: "./internal/fanout"
 
     env:
       # This job is the ONLY thing that builds the root module against the
@@ -89,6 +107,10 @@ jobs:
       # unexported predicate widened in-tree — compiles clean either way and is
       # governed by release discipline (docs/release-process.md), not by CI.
       GOWORK: "off"
+      # The race runtime sleeps a second before every race-built process exits
+      # so late reports can flush. Tests that re-exec the test binary (cli's
+      # docs examples run `atcr` hundreds of times) paid that second per child.
+      GORACE: atexit_sleep_ms=0
 
     steps:
       - name: Check out code
@@ -118,18 +140,17 @@ jobs:
         # which disables Go's test cache. Coverage is only consumed by the
         # post-merge upload, so PRs get -race WITHOUT it and stay cached.
         #
-        # -timeout 40m because internal/astgroup runs ~5x slower under -race and
-        # overruns Go's 10m default, which surfaces as a panic rather than a
-        # useful failure. Both paths get it: the post-merge job runs the same
-        # suite with coverage on top. 20m was too tight: on 2026-10-23 the
-        # package alone took 699s to 1085s (runs 39885742585 to 39962071942,
-        # PR and push alike), and a slow runner or a stalled module download
-        # in TestCrossCompileZeroCGO tipped it over (run 38602398566). 40m is
-        # about twice the slowest measured run.
+        # -timeout 10m is Go's default, set explicitly as the per-package hang
+        # guard. It was 40m while internal/astgroup took 699s to 1085s under
+        # -race (2026-10-23, runs 39885742585 to 39962071942); sharing one
+        # wazero compilation cache across its tests took it to about a minute.
         #
         # The "rest" shard's package list is computed here, not hardcoded,
         # specifically so it always equals "everything minus the two named
         # shards" even as packages are added, renamed, or removed.
+        env:
+          SPLIT: ${{ matrix.split }}
+          BUCKETS: "4"
         run: |
           if [ "${{ matrix.name }}" = "rest" ]; then
             pkgs=$(go list ./... | grep -v -e '^github.com/samestrin/atcr/cli$' -e '^github.com/samestrin/atcr/cmd/' -e '/astgroup$' -e '/sandbox$' -e '/payload$')
@@ -139,9 +160,9 @@ jobs:
           echo "packages under test:"
           echo "$pkgs"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            go test -race -timeout 40m $pkgs
+            GO_TEST_FLAGS="-race -timeout 10m" .github/scripts/go-test-split.sh $pkgs
           else
-            go test -v -race -timeout 40m -coverprofile=coverage-${{ matrix.name }}.out $pkgs
+            GO_TEST_FLAGS="-v -race -timeout 10m" COVER_OUT=coverage-${{ matrix.name }}.out .github/scripts/go-test-split.sh $pkgs
           fi
 
       - name: Surface reconcile release-lag skip
