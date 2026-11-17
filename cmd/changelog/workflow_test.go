@@ -54,7 +54,8 @@ func checkerBuiltFromBase(src []byte) error {
 		if strings.Contains(s.Run, "go run") {
 			return fmt.Errorf("step %q uses go run, which compiles the PR's own code", s.Name)
 		}
-		if strings.Contains(s.Run, "cmd/changelog") && !(strings.Contains(s.Run, "go build") && s.WorkingDirectory == baseDir && baseDir != "") {
+		inBaseBuild := baseDir != "" && s.WorkingDirectory == baseDir && strings.Contains(s.Run, "go build")
+		if strings.Contains(s.Run, "cmd/changelog") && !inBaseBuild {
 			return fmt.Errorf("step %q touches cmd/changelog outside the base build", s.Name)
 		}
 		switch {
