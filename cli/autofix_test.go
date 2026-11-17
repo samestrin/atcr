@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/autofix"
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -458,6 +460,93 @@ func TestOrchestrateAutoFix_AllBelowThresholdMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, buf.String(), "below the --fail-on HIGH threshold",
 		"an all-below-threshold run must name the threshold, not report no fixes")
+}
+
+// writeAgentUsage writes <reviewDir>/sources/pool/summary.json with the given
+// agents' statuses, the file fanout.ReadPoolSummary reads.
+func writeAgentUsage(t *testing.T, reviewDir string, agents []fanout.AgentStatus) {
+	t.Helper()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	data, err := json.Marshal(fanout.PoolSummary{Agents: agents, Total: len(agents), Succeeded: len(agents)})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), data, 0o644))
+}
+
+// lastLine is the final non-empty line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+// TestOrchestrateAutoFix_UsageLineSumsPoolTokens: the run's last output line is
+// the usage line, carrying the review fan-out agents' summed tokens and naming
+// the stages it does not count.
+func TestOrchestrateAutoFix_UsageLineSumsPoolTokens(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "usage", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{
+		{Agent: "bruce", TokensIn: 1200, TokensOut: 300},
+		{Agent: "greta", TokensIn: 800, TokensOut: 45},
+		{Agent: "failed"},
+	})
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=2000 tokens_out=345 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestOrchestrateAutoFix_UsageLineZero: a run whose agents report no usage still
+// prints the usage line, with zeros.
+func TestOrchestrateAutoFix_UsageLineZero(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "nousage", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{{Agent: "bruce"}})
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=0 tokens_out=0 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestOrchestrateAutoFix_UsageLineOnError: a run that fails still spent its
+// review tokens, so the usage line is printed before the error is returned.
+func TestOrchestrateAutoFix_UsageLineOnError(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{{Agent: "bruce", TokensIn: 7, TokensOut: 3}})
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "")
+	require.Error(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=7 tokens_out=3 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestOrchestrateAutoFix_UsageLineNoSummary: a review dir with no pool summary
+// says the usage is unavailable and still ends with a zero usage line.
+func TestOrchestrateAutoFix_UsageLineNoSummary(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "nosummary", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "auto-fix: token usage unavailable")
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=0 tokens_out=0 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
 }
 
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -
