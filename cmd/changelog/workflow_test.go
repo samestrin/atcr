@@ -54,6 +54,9 @@ func checkerBuiltFromBase(src []byte) error {
 		if strings.Contains(s.Run, "go run") {
 			return fmt.Errorf("step %q uses go run, which compiles the PR's own code", s.Name)
 		}
+		if strings.Contains(s.Run, "cmd/changelog") && !(strings.Contains(s.Run, "go build") && s.WorkingDirectory == baseDir && baseDir != "") {
+			return fmt.Errorf("step %q touches cmd/changelog outside the base build", s.Name)
+		}
 		switch {
 		case strings.HasPrefix(s.Uses, "actions/checkout@") && s.With["ref"] == baseRef:
 			if s.With["path"] == "" {
@@ -63,6 +66,9 @@ func checkerBuiltFromBase(src []byte) error {
 		case strings.Contains(s.Run, "go build") && strings.Contains(s.Run, "./cmd/changelog"):
 			if baseDir == "" || s.WorkingDirectory != baseDir {
 				return fmt.Errorf("step %q builds ./cmd/changelog outside the base checkout (working-directory %q, base checkout %q)", s.Name, s.WorkingDirectory, baseDir)
+			}
+			if strings.Contains(s.Run, "cd ") || strings.Contains(s.Run, " -C ") {
+				return fmt.Errorf("step %q changes directory before building; the build must run in the base checkout", s.Name)
 			}
 			m := buildOutputRE.FindStringSubmatch(s.Run)
 			if m == nil {
@@ -127,6 +133,8 @@ jobs:
 		{"built from the head checkout", strings.Replace(good, "working-directory: base", "working-directory: head", 1)},
 		{"base checkout of the head ref", strings.Replace(good, "ref: "+baseRef, "ref: ${{ github.event.pull_request.head.sha }}", 1)},
 		{"check runs a different binary", strings.Replace(good, `"$RUNNER_TEMP/changelog" check`, `go run ./cmd/changelog check`, 1)},
+		{"build changes into the head checkout", strings.Replace(good, `go build -o`, `cd ../head && go build -o`, 1)},
+		{"build with go -C", strings.Replace(good, `go build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, `go -C ../head build -o "$RUNNER_TEMP/changelog" ./cmd/changelog`, 1)},
 		{"untrusted expansion in run", strings.Replace(good, `--head "$HEAD_SHA"`, `--head "${{ github.event.pull_request.head.sha }}"`, 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
