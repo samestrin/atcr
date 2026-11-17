@@ -1,0 +1,1 @@
+- `webhook.linear.auto_fix` accepts two optional token spend caps beside `daily_job_cap`: `job_token_cap` (tokens one auto-fix job may spend) and `daily_token_cap` (tokens all auto-fix jobs may spend per UTC day). Zero or an absent key means no cap; a negative value is rejected at config load (epic 105.2).

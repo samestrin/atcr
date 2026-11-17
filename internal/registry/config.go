@@ -1943,10 +1943,10 @@ type WebhookLinearConfig struct {
 	AutoFix *WebhookLinearAutoFixConfig `yaml:"auto_fix,omitempty"`
 }
 
-// WebhookLinearAutoFixConfig is the `webhook.linear.auto_fix:` block. Every key
-// is required: auto-fix pushes a branch and opens a pull request, so it runs
-// only for a listed status and a listed repository, with its own push token and
-// a daily job cap.
+// WebhookLinearAutoFixConfig is the `webhook.linear.auto_fix:` block. Every
+// key except the optional token caps is required: auto-fix pushes a branch and
+// opens a pull request, so it runs only for a listed status and a listed
+// repository, with its own push token and a daily job cap.
 type WebhookLinearAutoFixConfig struct {
 	// Statuses are the Linear status names that start an auto-fix job.
 	Statuses []string `yaml:"statuses"`
@@ -1959,6 +1959,13 @@ type WebhookLinearAutoFixConfig struct {
 	PushTokenEnv string `yaml:"push_token_env"`
 	// DailyJobCap is the most auto-fix jobs started in one day; at least 1.
 	DailyJobCap int `yaml:"daily_job_cap"`
+	// JobTokenCap caps the tokens one auto-fix job may spend (Epic 105.2).
+	// Optional: zero or absent means no cap; a negative value is rejected.
+	JobTokenCap int `yaml:"job_token_cap,omitempty"`
+	// DailyTokenCap caps the tokens auto-fix jobs may spend in one UTC day
+	// (Epic 105.2). Optional: zero or absent means no cap; a negative value is
+	// rejected.
+	DailyTokenCap int `yaml:"daily_token_cap,omitempty"`
 }
 
 // WebhookSlackConfig is the `webhook.slack:` block. Every allowlist is
@@ -2077,6 +2084,12 @@ func (a *WebhookLinearAutoFixConfig) validate(w *WebhookConfig) []error {
 	}
 	if a.DailyJobCap < 1 {
 		errs = append(errs, fmt.Errorf("webhook.linear.auto_fix.daily_job_cap must be >= 1, got %d", a.DailyJobCap))
+	}
+	if a.JobTokenCap < 0 {
+		errs = append(errs, fmt.Errorf("webhook.linear.auto_fix.job_token_cap must be >= 0 (0 means no cap), got %d", a.JobTokenCap))
+	}
+	if a.DailyTokenCap < 0 {
+		errs = append(errs, fmt.Errorf("webhook.linear.auto_fix.daily_token_cap must be >= 0 (0 means no cap), got %d", a.DailyTokenCap))
 	}
 	return errs
 }
