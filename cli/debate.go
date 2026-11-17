@@ -76,15 +76,19 @@ func runDebateCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	// Under --axi the same values close the run as one TOON object plus the
-	// suggestDebate help[] block on stdout (writeAXIOrNextSteps), so stdout
-	// carries no prose line and no Next: line is written anywhere. Otherwise the
-	// prose line and the stderr Next: lines print exactly as before --axi existed.
+	// suggestDebate help[] block on stdout (writeAXIHelp), so stdout carries no
+	// prose line and no Next: line is written anywhere. Otherwise the prose line
+	// and the stderr Next: lines print exactly as before --axi existed, in every
+	// log format (writeNextLines, not the NDJSON-logging writeNextStepsCmd).
 	reconciledDir := filepath.Join(reviewDir, "reconciled")
+	inv := invocation{Flags: invocationFlags(cmd)}
 	if !axiFromContext(cmd.Context()) {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow, %d withheld) -> %s\n",
 			res.Selected, res.Upheld, res.Overturned, res.Split, res.Unresolved, res.Overflow, res.Withheld,
 			reconciledDir)
+		writeNextLines(cmd, suggestDebate, inv)
+		return nil
 	}
 	axiPayload := toon.NewObject(
 		toon.Field{Key: "selected", Value: res.Selected},
@@ -96,7 +100,7 @@ func runDebateCmd(cmd *cobra.Command, args []string) error {
 		toon.Field{Key: "withheld", Value: res.Withheld},
 		toon.Field{Key: "reconciled_dir", Value: goaxi.SanitizeString(reconciledDir)},
 	)
-	return writeAXIOrNextSteps(cmd, axiPayload, suggestDebate, invocation{Flags: invocationFlags(cmd)})
+	return writeAXIHelp(cmd.OutOrStdout(), axiPayload, renderSuggestions(suggestDebate, inv))
 }
 
 // debateFailureError wraps a non-ErrNoReconciledFindings error from debate.Debate

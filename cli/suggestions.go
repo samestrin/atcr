@@ -227,6 +227,11 @@ func writeNextSteps(w io.Writer, key suggestionKey, inv invocation) {
 	}
 }
 
+// writeNextLines is writeNextSteps on cmd's stderr.
+func writeNextLines(cmd *cobra.Command, key suggestionKey, inv invocation) {
+	writeNextSteps(cmd.ErrOrStderr(), key, inv)
+}
+
 // writeAXIOrNextSteps closes a command that has an --axi mode but no legacy pipe
 // encoder. Under --axi, stdout gets payload as one TOON object and then key's
 // next steps as a help[] block, and no Next: line is written anywhere. Otherwise
