@@ -53,6 +53,23 @@ runs `atcr review --auto-fix` for a Linear status change, it passes
 request's head branch**, so the fix stacks on the pull request under review
 rather than on the default branch.
 
+## Token usage line
+
+Every `--auto-fix` run, whether it opens a pull request, finds nothing to
+apply or fails, ends its output with one usage line:
+
+```text
+atcr-auto-fix-usage: tokens_in=2000 tokens_out=345 scope=review-fanout not_counted=verify,debate,reconcile
+```
+
+The totals are the input and output tokens the review's agents reported,
+summed from `sources/pool/summary.json` in the review directory. Only the
+initial review fan-out is counted: tokens spent by verify, debate and
+reconcile are not in the totals, as `not_counted` says. A run whose agents
+reported no usage prints zeros. If the summary cannot be read, an
+`auto-fix: token usage unavailable: ...` line comes first and the usage line
+still follows, with zeros.
+
 ## What runs in the sandbox — and how it differs from `--exec`
 
 `--exec` mounts a **pristine, read-only snapshot** of the review's code at

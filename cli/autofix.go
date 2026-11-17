@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/autofix"
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/payload"
@@ -765,7 +766,43 @@ var newAutoFixGitHubFn = func(apiURL, token string) autoFixGitHub {
 // GitHub client. The heavy end-to-end proof (sequencing against stubs) lives in
 // Phase 6; this adapter only assembles the run. It is guarded entirely by the
 // --auto-fix flag, so the default review path is byte-identical (AC 06-01).
+//
+// Whatever the outcome, its last output line is the usage line
+// (writeAutoFixUsage): the review's tokens were spent either way.
 func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
+	err := orchestrateAutoFixRun(ctx, out, be, reviewDir, threshold, baseBranch)
+	writeAutoFixUsage(out, reviewDir)
+	return err
+}
+
+// autoFixUsagePrefix starts the usage line an `atcr review --auto-fix` run ends
+// with. The webhook auto-fix runner reads the line to enforce its token caps.
+const autoFixUsagePrefix = "atcr-auto-fix-usage:"
+
+// writeAutoFixUsage prints the machine-readable usage line:
+//
+//	atcr-auto-fix-usage: tokens_in=<n> tokens_out=<n> scope=review-fanout not_counted=verify,debate,reconcile
+//
+// The totals are the review fan-out agents' TokensIn/TokensOut from
+// sources/pool/summary.json; verify, debate and reconcile spend is not
+// recorded there, and the line says so. Zero usage prints zeros. A summary
+// that cannot be read is reported on its own line, and the usage line still
+// follows with zeros.
+func writeAutoFixUsage(out io.Writer, reviewDir string) {
+	var in, outTokens int
+	ps, err := fanout.ReadPoolSummary(reviewDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "auto-fix: token usage unavailable: %v\n", err)
+	}
+	for _, a := range ps.Agents {
+		in += a.TokensIn
+		outTokens += a.TokensOut
+	}
+	_, _ = fmt.Fprintf(out, "%s tokens_in=%d tokens_out=%d scope=review-fanout not_counted=verify,debate,reconcile\n",
+		autoFixUsagePrefix, in, outTokens)
+}
+
+func orchestrateAutoFixRun(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
 	if strings.TrimSpace(baseBranch) == "" {
 		return fmt.Errorf("auto-fix: could not resolve a base branch to open the pull request against")
 	}
