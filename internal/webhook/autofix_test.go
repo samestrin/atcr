@@ -484,6 +484,7 @@ func TestAutoFixRunner_NoUsageLineIsDegradation(t *testing.T) {
 		{name: "clean exit", body: `echo "pull request opened"; exit 0`},
 		{name: "usage prefix mid-line", body: `echo "agent wrote atcr-auto-fix-usage: tokens_in=1 tokens_out=1"; exit 0`},
 		{name: "malformed usage line", body: `echo "atcr-auto-fix-usage: tokens_in=many tokens_out=1"; exit 0`},
+		{name: "usage unavailable", body: `echo "auto-fix: token usage unavailable: open sources/pool/summary.json: no such file or directory"; exit 0`},
 		{name: "failed child", body: `echo "auto-fix: refused" >&2; exit 3`, wantRun: true},
 	}
 	for _, tc := range cases {

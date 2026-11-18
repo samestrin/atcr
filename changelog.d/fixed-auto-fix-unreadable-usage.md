@@ -1,0 +1,1 @@
+- `atcr review --auto-fix` no longer prints a zero `atcr-auto-fix-usage:` line when the review's `sources/pool/summary.json` cannot be read; it prints only the `auto-fix: token usage unavailable` line, so `atcr webhook` logs the job as having unknown spend instead of charging it zero tokens and slipping past the daily token cap (epic 105.2).
