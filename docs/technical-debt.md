@@ -634,7 +634,10 @@ are required core data, and scrubbing an id would break the join contract).
 
 Renders every item in the store, in every status, as a Markdown report for
 people to read: one table per README section that `atcr debt import` read the
-items from. Dated sections come newest first, then undated ones; items that came
+items from. A section is keyed by its source README's path plus its heading, so
+two READMEs carrying the same `### [date] From: ...` heading keep separate
+sections. Dated sections come newest first, then undated ones, ties by heading
+then source path; items that came
 from no README section (filed by `atcr reconcile` or `atcr debt add`) come last,
 under **Not from a README section**. Within a table the most severe items come
 first, then by file and line.

@@ -735,17 +735,27 @@ func debtMonthHistogram(sums []localdebt.Summary) []debtMonthCount {
 	return out
 }
 
-// debtMarkdownCell makes a value safe to embed in a Markdown table cell:
-// newlines collapse to spaces and literal pipes are escaped as `\|`, so a crafted
-// or hand-edited field cannot break the table's column count, yet the cell still
-// renders a pipe and `debt import` reads it back as one. It is distinct from
-// this package's sanitizeCell (which strips terminal control sequences for the
-// scorecard's plain-text tables) because the hazard is different: here it is
-// Markdown structure, not ANSI injection.
+// debtMarkdownCell makes a value safe to embed in a Markdown table cell: a
+// crafted or hand-edited field cannot break the table's column count, yet the
+// cell still renders a pipe and `debt import` reads it back as one.
 func debtMarkdownCell(s string) string {
+	return debtMarkdownSafe(s, false)
+}
+
+// debtMarkdownSafe is the one cell-safety pass shared by the table cells
+// (debtMarkdownCell) and the report headings (debtReportHeading): newlines
+// collapse to spaces, and with keepPipe=false literal pipes are escaped as `\|`
+// so a field cannot break a table's column count; a heading keeps the pipe,
+// which cannot break it. It is distinct from this package's sanitizeCell
+// (which strips terminal control sequences for the scorecard's plain-text
+// tables) because the hazard is different: here it is Markdown structure, not
+// ANSI injection.
+func debtMarkdownSafe(s string, keepPipe bool) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "|", `\|`)
+	if !keepPipe {
+		s = strings.ReplaceAll(s, "|", `\|`)
+	}
 	// The two hazards compose rather than compete. sanitizeCell strips ESC/C0/C1,
 	// DEL and U+2028/U+2029: the dashboard writes to the TERMINAL by default, so a
 	// finding carrying an ANSI sequence would erase or overwrite the rows above it
