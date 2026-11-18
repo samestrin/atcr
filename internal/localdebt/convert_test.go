@@ -3,6 +3,7 @@ package localdebt
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -294,12 +295,12 @@ func TestFoldDiff_NamesEveryChangedMissingAndNewID(t *testing.T) {
 	assert.Contains(t, err.Error(), "for 7 item(s): 1, 2, 3, 4, 5 and 2 more; nothing was changed")
 }
 
-// fullTie appends two records of idP that tie on id, timestamp and status and
+// fullTie appends two open records of idP that tie on id, timestamp and status and
 // differ in model and justification, ordered so the event layout would pick the
 // other one: the store cannot convert as it is.
-func fullTie(t *testing.T, status string) string {
+func fullTie(t *testing.T) string {
 	t.Helper()
-	a := eventRec(idP, "2026-06-14T10:00:00Z", status)
+	a := eventRec(idP, "2026-06-14T10:00:00Z", "")
 	a.Model, a.Justification = "model-a", "reason a"
 	b := a
 	b.Model, b.Justification = "model-b", "reason b"
@@ -322,7 +323,7 @@ func fullTie(t *testing.T, status string) string {
 // the way out, and `debt compact` folds a tied item to one record, after which the
 // store converts with the fold unchanged.
 func TestConvert_CompactClearsAFullTie(t *testing.T) {
-	dir := fullTie(t, "")
+	dir := fullTie(t)
 	before := foldedAll(t, dir)
 
 	_, err := Convert(dir, quiet)
@@ -338,16 +339,34 @@ func TestConvert_CompactClearsAFullTie(t *testing.T) {
 }
 
 // TestConvert_CompactKeepsTiedResolutionsWithDifferentReasons: compaction keeps
-// every resolution reason, so such a tie survives it. The refusal says so rather
-// than sending the user round the same loop.
+// every resolution reason, so such a tie survives it, and whether the store then
+// converts depends on how the rewritten lines hash. When it does not, the refusal
+// says compaction will not help rather than sending the user round the same loop.
 func TestConvert_CompactKeepsTiedResolutionsWithDifferentReasons(t *testing.T) {
-	dir := fullTie(t, StatusResolved)
-	_, err := Compact(dir, quiet)
-	require.NoError(t, err)
+	refused := false
+	for i := 0; i < 8 && !refused; i++ {
+		a := eventRec(idP, "2026-06-14T10:00:00Z", StatusResolved)
+		a.Model, a.Justification = "model-a", fmt.Sprintf("reason a%d", i)
+		b := a
+		b.Model, b.Justification = "model-b", fmt.Sprintf("reason b%d", i)
+		for _, order := range [][2]Record{{a, b}, {b, a}} {
+			dir := DefaultDir(t.TempDir())
+			require.NoError(t, Append(dir, order[0]))
+			require.NoError(t, Append(dir, order[1]))
+			_, err := Compact(dir, quiet)
+			require.NoError(t, err)
+			recs, err := readShardRecords(dir, quiet)
+			require.NoError(t, err)
+			assert.Len(t, recs, 2, "compaction keeps both reasons, so the tie survives")
 
-	_, err = Convert(dir, quiet)
-	require.ErrorIs(t, err, ErrFoldChanged)
-	assert.Contains(t, err.Error(), "resolutions with different reasons survive compaction")
+			if _, err = ConvertPlan(dir, quiet); err != nil {
+				refused = true
+				require.ErrorIs(t, err, ErrFoldChanged)
+				assert.Contains(t, err.Error(), "resolutions with different reasons survive compaction")
+			}
+		}
+	}
+	require.True(t, refused, "fixture: some tie still refuses after compaction")
 }
 
 // isolateCache points the user cache dir and the OS temp dir of this test at
