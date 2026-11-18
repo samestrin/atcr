@@ -15,9 +15,9 @@ import (
 )
 
 // ErrVisualNeedsRange rejects a VisualReviewer on a baseline (--all/--scope)
-// or --diff-file review: felix authors its spec from a change set, and those
-// paths have none to show it.
-var ErrVisualNeedsRange = errors.New("the visual review (--preview-url) applies to git-range reviews only; it cannot be combined with a baseline (--all/--scope) or --diff-file review")
+// scan or a diff-based review: felix authors its spec from a change set, and
+// those paths have none to show it.
+var ErrVisualNeedsRange = errors.New("the visual review (--preview-url) applies to git-range reviews only; it cannot be combined with a baseline (--all/--scope) scan")
 
 // visualSkipWarning is logged when felix is in the roster but no visual stage
 // was built: without --preview-url there is no page to open.

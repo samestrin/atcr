@@ -351,6 +351,8 @@ func TestPrepareReviewFromRepo_RefusesAVisualStage(t *testing.T) {
 	req.Visual = &fakeVisual{log: &callLog{}}
 	_, err := PrepareReviewFromRepo(context.Background(), felixConfig(), req)
 	assert.ErrorIs(t, err, ErrVisualNeedsRange)
+	assert.NotContains(t, err.Error(), "--diff-file", "the usage error must not name a flag that does not exist")
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
 }
 
 func TestPrepareReviewFromDiff_RefusesAVisualStage(t *testing.T) {
@@ -359,6 +361,8 @@ func TestPrepareReviewFromDiff_RefusesAVisualStage(t *testing.T) {
 	req.Visual = &fakeVisual{log: &callLog{}}
 	_, err := PrepareReviewFromDiff(context.Background(), felixConfig(), req, "diff --git a/x b/x\n")
 	assert.ErrorIs(t, err, ErrVisualNeedsRange)
+	assert.NotContains(t, err.Error(), "--diff-file", "the usage error must not name a flag that does not exist")
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
 }
 
 // A resume rebuilds the pool from the manifest roster, which leaves felix out;
