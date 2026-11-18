@@ -32,6 +32,12 @@ var buildOutputRE = regexp.MustCompile(`go build\b.*\s-o\s+("[^"]+"|\S+)`)
 // cmd/changelog decide whether that PR passes: the checker must be compiled
 // from a checkout of the base commit and the check must run that binary, never
 // `go run` from the PR checkout.
+//
+// It validates the base checkout, the build and the check invocation only. It
+// does not detect every later write to the built output path: a later step
+// could overwrite the binary without naming `go run` or `cmd/changelog`. No
+// output-path rejection is added, because the legitimate check step names
+// that path (EST-7265 Q5).
 func checkerBuiltFromBase(src []byte) error {
 	var wf struct {
 		Jobs map[string]struct {
@@ -159,6 +165,43 @@ jobs:
 				t.Fatalf("rejected by the wrong guard: got %q, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestGateCommentsStateTheirLimits pins the honest scope of the base-build
+// gate (EST-7295). The workflow header must say the gate stops a PR that edits
+// only cmd/changelog, not one that also edits the workflow or its pin test,
+// and checkerBuiltFromBase's doc comment must state what it does not check.
+// A comment that overclaims again fails here instead of misleading the next
+// reader. The doc comment is read from this file's own source, sliced to the
+// text immediately above the function so this test's own literals cannot
+// satisfy it.
+func TestGateCommentsStateTheirLimits(t *testing.T) {
+	wf := readRepoFile(t, changelogWorkflow)
+	if strings.Contains(wf, "a PR cannot edit cmd/changelog to pass its own gate") {
+		t.Errorf("%s: comment claims a PR cannot edit cmd/changelog to pass its own gate; a PR can also edit the workflow and this pin test in the same commit", changelogWorkflow)
+	}
+	for _, want := range []string{
+		"a PR that edits only cmd/changelog cannot pass its own gate",
+		"does not protect against a PR that also edits this workflow or its pin test",
+	} {
+		if !strings.Contains(wf, want) {
+			t.Errorf("%s: comment must say %q (EST-7262 Q4)", changelogWorkflow, want)
+		}
+	}
+	src := readRepoFile(t, "workflow_test.go")
+	fn := strings.Index(src, "func checkerBuiltFromBase(")
+	if fn < 0 {
+		t.Fatal("checkerBuiltFromBase moved or was renamed; update this drift test to follow it")
+	}
+	doc := src[:fn]
+	start := strings.LastIndex(doc, "// checkerBuiltFromBase")
+	if start < 0 {
+		t.Fatal("checkerBuiltFromBase has no doc comment; update this drift test to follow it")
+	}
+	doc = doc[start:]
+	if !strings.Contains(doc, "does not detect every later write to the built output path") {
+		t.Error("checkerBuiltFromBase's doc comment must note that it does not detect every later write to the built output path (EST-7265 Q5)")
 	}
 }
 
