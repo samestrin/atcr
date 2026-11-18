@@ -299,26 +299,38 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 
 	if rep.ExitCode != 0 {
-		// The cause is named, because the two are repaired in different files: an
-		// endpoint failure is a key or base_url, an unresolvable persona is a missing
-		// prompt. A single "no working endpoint" sent the operator to the wrong one.
-		if len(rep.PersonaResolutionErrors) > 0 {
-			if endpointFailed {
-				return fmt.Errorf("one or more agents have no working invocation path "+
-					"(an endpoint probe failed, and personas could not be resolved for: %s)",
-					strings.Join(rep.PersonaResolutionErrors, ", "))
-			}
-			return fmt.Errorf("one or more agents have no working invocation path "+
-				"(persona could not be resolved for: %s)",
-				strings.Join(rep.PersonaResolutionErrors, ", "))
-		}
 		// A short_reply row answered, so "no working endpoint" alone would send the
 		// operator to the key and base_url. Name the model, which is what failed.
+		// Collected BEFORE the persona branches below: a short_reply row can coexist
+		// with persona errors in both of them (the row itself fails the endpoint
+		// verdict; or a working fallback covers it, leaving the row in the report at
+		// endpoint exit 0 while the persona fold fails the run), and those branches
+		// used to return without naming it — the same mis-routing one cause down.
 		var short []string
 		for _, a := range rep.Agents {
 			if a.Status == doctor.StatusShortReply {
 				short = append(short, a.Agent+" ("+a.Model+")")
 			}
+		}
+		shortClause := ""
+		if len(short) > 0 {
+			shortClause = fmt.Sprintf("; a review-shaped reply was under the %d-token floor for: %s",
+				doctor.SmokeTokenFloor, strings.Join(short, ", "))
+		}
+		// The cause is named, because the two are repaired in different files: an
+		// endpoint failure is a key or base_url, an unresolvable persona is a missing
+		// prompt. A single "no working endpoint" sent the operator to the wrong one.
+		// The short_reply clause rides along for the same reason: it is a third
+		// cause with a third repair (the model's chat template or stop tokens).
+		if len(rep.PersonaResolutionErrors) > 0 {
+			if endpointFailed {
+				return fmt.Errorf("one or more agents have no working invocation path "+
+					"(an endpoint probe failed, and personas could not be resolved for: %s%s)",
+					strings.Join(rep.PersonaResolutionErrors, ", "), shortClause)
+			}
+			return fmt.Errorf("one or more agents have no working invocation path "+
+				"(persona could not be resolved for: %s%s)",
+				strings.Join(rep.PersonaResolutionErrors, ", "), shortClause)
 		}
 		if len(short) > 0 {
 			return fmt.Errorf("one or more agents have no working endpoint (a review-shaped reply was under the %d-token floor for: %s)",
