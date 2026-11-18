@@ -493,8 +493,9 @@ const loopbackDialTimeout = 500 * time.Millisecond
 
 // ErrOSLevelLoopbackCheckUnavailable is returned by a darwin Run when the
 // held-port check behind ErrOSLevelLoopbackPortHeld could not finish: the
-// host's addresses could not be listed, a probe at 127.0.0.1 or ::1 timed out
-// (a firewall dropping the connect), or the run's context ended mid-check.
+// host's addresses could not be listed, a probe at one of the host's own
+// addresses timed out (a firewall dropping the connect; zone-suffixed
+// link-local addresses excepted), or the run's context ended mid-check.
 // The run is refused, as for a held port, because an unfinished check cannot
 // say the grant reaches nothing of the host's; the sentinel is separate so the
 // message does not claim a port was found in use.
@@ -511,11 +512,13 @@ var (
 // the host accepts a TCP connect on a port in ports, at any of the host's own
 // addresses: 127.0.0.1 and ::1, plus every interface address. It returns
 // ErrOSLevelLoopbackCheckUnavailable when it cannot finish: the addresses
-// cannot be listed, ctx ends, or a probe at 127.0.0.1 or ::1 times out. The
-// probes run one after another, each bounded by loopbackDialTimeout and by
-// ctx. Under a firewall that drops loopback traffic rather than refusing it,
-// the first loopback probe to time out ends the check: a dropped connect says
-// nothing about whether a host service listens there.
+// cannot be listed, ctx ends, or a probe at any address but a zone-suffixed
+// link-local one times out. The probes run one after another, each bounded by
+// loopbackDialTimeout and by ctx. Under a firewall that drops traffic to the
+// host's own addresses rather than refusing it, the first such probe to time
+// out ends the check: a dropped connect says nothing about whether a host
+// service listens there. A link-local address that times out is not probed
+// again for later ports in the same call.
 //
 // The interface addresses are not belt-and-braces. Measured on the macOS CI
 // runner (PR #753): under a grant on port P the workload connected to a host
@@ -558,8 +561,15 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 			hosts = append(hosts, host)
 		}
 	}
+	// dead holds the zone-suffixed link-local hosts that have timed out in this
+	// call. Each such probe costs the full loopbackDialTimeout and learns
+	// nothing, so later ports skip them.
+	dead := map[string]bool{}
 	for _, p := range ports {
 		for _, host := range hosts {
+			if dead[host] {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("%w: %w", ErrOSLevelLoopbackCheckUnavailable, err)
 			}
@@ -573,15 +583,21 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 				// "refused", it would report a port free that was never checked.
 				return fmt.Errorf("%w: %w", ErrOSLevelLoopbackCheckUnavailable, ctxErr)
 			}
-			if ne := net.Error(nil); errors.As(err, &ne) && ne.Timeout() && (host == "127.0.0.1" || host == "::1") {
-				// The probe's own bound fired. A loopback connect is answered
-				// or refused at once, so silence means a firewall dropped the
-				// SYN, not that nothing listens: the port's state is unknown.
-				// A timeout at an interface address is different: measured on
-				// the macOS CI runner (PR #849), every probe to utun0's IPv6
-				// link-local address timed out, because a scoped link-local
-				// dial leaves through its interface rather than lo0. Nothing
-				// on the host answers there, and the grant does not reach it.
+			if ne := net.Error(nil); errors.As(err, &ne) && ne.Timeout() {
+				// The probe's own bound fired. A connect to the host's own
+				// address goes over lo0 and is answered or refused at once,
+				// so silence means a firewall dropped the SYN, not that
+				// nothing listens: the port's state is unknown. The one
+				// exception is a zone-suffixed link-local address: measured
+				// on the macOS CI runner (PR #849), every probe to utun0's
+				// IPv6 link-local address timed out, because a scoped
+				// link-local dial leaves through its interface rather than
+				// lo0. Nothing on the host answers there, and the grant does
+				// not reach it.
+				if strings.Contains(host, "%") {
+					dead[host] = true
+					continue
+				}
 				return fmt.Errorf("%w: port %d on %s: %w", ErrOSLevelLoopbackCheckUnavailable, p, host, err)
 			}
 		}
