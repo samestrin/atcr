@@ -40,6 +40,13 @@ func DefaultDir(root string) string {
 // The container (<root>/.atcr) is still created on demand — that is ordinary
 // first-write behavior — but only under a parent that already exists, so the chain
 // stops exactly one level below the root.
+//
+// The anchor is the store's GRANDPARENT, which is the repo root only for the
+// default <root>/.atcr/debt layout: a configured debt.store (StoreDir) may sit at
+// any depth, e.g. docs/planning/debt, whose anchor is <root>/docs. The refusal
+// therefore names the configured store and the missing grandparent instead of
+// calling the anchor the "store root" — the wrong diagnosis for a configured
+// store (TD internal/localdebt/paths.go:45, row 993fffb0c24de643).
 func ensureStoreDir(dir string) error {
 	if info, err := os.Stat(dir); err == nil {
 		if !info.IsDir() {
@@ -47,10 +54,10 @@ func ensureStoreDir(dir string) error {
 		}
 		return nil
 	}
-	container := filepath.Dir(dir)    // <root>/.atcr
-	anchor := filepath.Dir(container) // <root>, or "." for the CWD-relative default
+	container := filepath.Dir(dir)    // <root>/.atcr for the default layout
+	anchor := filepath.Dir(container) // the store's grandparent: <root> for the default, or "." for the CWD-relative default
 	if info, err := os.Stat(anchor); err != nil || !info.IsDir() {
-		return fmt.Errorf("localdebt store root %s does not exist; refusing to recreate it", filepath.Base(anchor))
+		return fmt.Errorf("localdebt store %q cannot be created: its grandparent directory %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(anchor))
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return basePathErr(err)
