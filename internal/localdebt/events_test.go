@@ -2,6 +2,7 @@ package localdebt
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,6 +161,190 @@ func TestReadEventRecords_MissingDirIsEmpty(t *testing.T) {
 	recs, err := ReadEventRecords(DefaultDir(t.TempDir()), ReadOpts{})
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+}
+
+// eventLine marshals rec exactly as appendLocked does: one JSON line with its
+// trailing newline, the bytes whose hash names the event file.
+func eventLine(t *testing.T, rec Record) []byte {
+	t.Helper()
+	line, err := json.Marshal(rec)
+	require.NoError(t, err)
+	return append(line, '\n')
+}
+
+// TestAppend_EventLayoutSweepsCrashLeftovers pins the crash-debris fix: a SIGKILL
+// between CreateTemp and rename skips the deferred remove, so the next locked
+// write must reap the dot-prefixed .tmp- leftover instead of letting it
+// accumulate in items/ (row 1a57b0e633a1a9a6). Lookalikes — the marker, a foreign
+// file, a directory — must survive the sweep.
+func TestAppend_EventLayoutSweepsCrashLeftovers(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	items := ItemsDir(dir)
+
+	// An event published by an earlier process, written by hand so this process
+	// has not yet touched the store's write path.
+	old := eventRec(idP, "2026-06-14T10:00:00Z", "")
+	line := eventLine(t, old)
+	oldName, err := eventFileName(old, line)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(items, oldName), line, 0o600))
+
+	// The SIGKILL leftover: the exact shape CreateTemp produces, half-written.
+	leftover := filepath.Join(items, "."+oldName+".tmp-123456")
+	require.NoError(t, os.WriteFile(leftover, []byte("{partial"), 0o600))
+	// Lookalikes the sweep must not touch.
+	require.NoError(t, os.Mkdir(filepath.Join(items, ".dir.json.tmp-1"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(items, "notes.txt"), []byte("hi"), 0o600))
+
+	require.NoError(t, Append(dir, eventRec(idX, "2026-06-15T10:00:00Z", "")))
+
+	assert.NoFileExists(t, leftover, "the next locked write reaps the crash leftover")
+	assert.FileExists(t, filepath.Join(items, oldName), "a published event is never swept")
+	assert.FileExists(t, filepath.Join(items, eventLayoutMarker), "the layout marker is never swept")
+	assert.FileExists(t, filepath.Join(items, "notes.txt"), "a foreign file is never swept")
+	assert.DirExists(t, filepath.Join(items, ".dir.json.tmp-1"), "a directory is never swept")
+	assert.Len(t, eventFiles(t, dir), 2, "the old and the new event both read back")
+}
+
+// TestAppend_EventLayoutPreExistingStoreGetsGitignore pins the second half of the
+// fix: a store opted in before this change has no items/.gitignore, so the first
+// event write must ship one. Without it a crash leftover between now and the next
+// write is staged by `git add -A` in a shared store.
+func TestAppend_EventLayoutPreExistingStoreGetsGitignore(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	items := ItemsDir(dir)
+	// An opted-in store as an older binary left it: directory and marker only.
+	require.NoError(t, os.MkdirAll(items, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(items, eventLayoutMarker), nil, 0o600))
+
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
+
+	b, err := os.ReadFile(filepath.Join(items, ".gitignore"))
+	require.NoError(t, err, "the first event write ships items/.gitignore")
+	assert.Contains(t, string(b), ".*.tmp-*", "the ignore pattern covers the CreateTemp names")
+}
+
+// TestEventLayout_GitAddNeverStagesCrashLeftover is the harm the row names, end to
+// end: in a real git repository holding an event-layout store, a crash leftover
+// planted after the last commit must never be staged by `git add -A`, while a
+// real new event still stages normally.
+func TestEventLayout_GitAddNeverStagesCrashLeftover(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("git is required for the staging test: %v", err)
+	}
+	repo := t.TempDir()
+	mustGit(t, repo, "init", "-q")
+	store := DefaultDir(repo)
+	require.NoError(t, EnableEventLayout(store))
+	require.NoError(t, Append(store, eventRec(idP, "2026-06-14T10:00:00Z", "")))
+	commitAll(t, repo, "base: add P")
+
+	// The SIGKILL leftover, planted after the commit and before any next write.
+	leftover := "." + idX + ".20260615T100000.000000000Z-0123456789ab.json.tmp-42"
+	require.NoError(t, os.WriteFile(filepath.Join(ItemsDir(store), leftover), []byte("{"), 0o600))
+	mustGit(t, repo, "add", "-A")
+	assert.NotContains(t, mustGit(t, repo, "diff", "--cached", "--name-only"), ".tmp-",
+		"a crash leftover must never be staged by git add -A")
+
+	// A real new event still stages: the ignore file is narrow, not the whole dir.
+	require.NoError(t, Append(store, eventRec(idX, "2026-06-15T10:00:00Z", "")))
+	mustGit(t, repo, "add", "-A")
+	assert.Contains(t, mustGit(t, repo, "diff", "--cached", "--name-only"), idX+".",
+		"a published event still stages normally")
+}
+
+// TestAppend_EventLayoutPublishFailsOnDirectoryAtEventName injects the publish
+// fault: a directory squatting on the exact event name makes the final rename
+// fail. Append must report the publish error and the deferred remove must still
+// reap the temp file, leaving no debris.
+func TestAppend_EventLayoutPublishFailsOnDirectoryAtEventName(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	rec := eventRec(idP, "2026-06-14T10:00:00Z", "")
+	name, err := eventFileName(rec, eventLine(t, rec))
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(ItemsDir(dir), name), 0o700))
+
+	err = Append(dir, rec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "publishing localdebt event")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+
+	entries, err := os.ReadDir(ItemsDir(dir))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".tmp-", "the failed publish leaves no temp debris: %s", e.Name())
+	}
+	assert.DirExists(t, filepath.Join(ItemsDir(dir), name), "the squatting directory is left alone")
+}
+
+// TestEnableEventLayout_ItemsAsRegularFileIsError injects the CreateTemp-side
+// fault at opt-in: items exists but is a regular file, so MkdirAll must fail with
+// the items-dir error rather than panic or silently continue.
+func TestEnableEventLayout_ItemsAsRegularFileIsError(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(ItemsDir(dir), []byte("not a dir"), 0o600))
+
+	err := EnableEventLayout(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating localdebt items dir")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+}
+
+// TestWriteEventLocked_ItemsAsRegularFileIsError injects the same fault at the
+// write path: CreateTemp under a regular-file items must fail with the
+// creating-event error (the sweep and gitignore steps must not mask it).
+func TestWriteEventLocked_ItemsAsRegularFileIsError(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(ItemsDir(dir), []byte("not a dir"), 0o600))
+
+	rec := eventRec(idP, "2026-06-14T10:00:00Z", "")
+	err := writeEventLocked(dir, rec, eventLine(t, rec))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating localdebt event")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+}
+
+// TestEnableEventLayout_MarkerBlockedIsError covers the marker-write branch: a
+// directory squatting on the marker name makes OpenFile fail.
+func TestEnableEventLayout_MarkerBlockedIsError(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(ItemsDir(dir), eventLayoutMarker), 0o700))
+
+	err := EnableEventLayout(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing localdebt event-layout marker")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+}
+
+// TestReadEventRecords_UnreadableEventFileReturnsWhatItReadRedacted pins the
+// partial-result contract of the EACCES branch: the events read before the
+// unreadable one still come back, the error is redacted, and the unreadable file
+// is not silently dropped. (The error-and-redaction shape is also covered by
+// TestDualLayout_UnreadableEventsFailEveryReadPathRedacted; the partial records
+// are new here.)
+func TestReadEventRecords_UnreadableEventFileReturnsWhatItReadRedacted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied read cannot be provoked as root")
+	}
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-15T10:00:00Z", StatusResolved)))
+	names := eventFiles(t, dir)
+	require.Len(t, names, 2)
+	blocked := filepath.Join(ItemsDir(dir), names[1])
+	require.NoError(t, os.Chmod(blocked, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o600) })
+
+	recs, err := ReadEventRecords(dir, ReadOpts{})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+	require.Len(t, recs, 1, "the readable first event still comes back with the error")
+	assert.Equal(t, "2026-06-14T10:00:00Z", recs[0].Timestamp)
 }
 
 // git runs one git command pinned to the fixture repository dir, with no global or
