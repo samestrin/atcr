@@ -278,6 +278,28 @@ func TestDebtReport_SameHeadingInTwoReadmesStaysTwoSections(t *testing.T) {
 	assert.Contains(t, renderDebtReport(samePath), "**Items:** 2 in 1 sections")
 }
 
+// Two raw sections of one README can normalize to the same heading and date
+// (a trailing newline collapses away). They are distinct keys, and their order
+// must not depend on map iteration: the render stays byte-identical.
+func TestDebtReport_SameNormalizedHeadingStaysDeterministic(t *testing.T) {
+	mk := func(id, section string) localdebt.Record {
+		return localdebt.Record{
+			ID: id, Severity: "HIGH", File: "a.go", Line: 1, Problem: id,
+			SourceReport: &localdebt.SourceReport{Path: "README.md", Section: section},
+		}
+	}
+	recs := []localdebt.Record{
+		mk("p1", "### [2026-10-01] From: epic 1"),
+		mk("p2", "### [2026-10-01] From: epic 1\n"),
+	}
+	got := renderDebtReport(recs)
+	assert.Contains(t, got, "**Items:** 2 in 2 sections")
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, got, renderDebtReport(recs), "map iteration must not reorder tied sections")
+		assert.Equal(t, got, renderDebtReport([]localdebt.Record{recs[1], recs[0]}), "input order does not change the bytes")
+	}
+}
+
 // A pipe in item text is written as `\|`, the escape `debt import` reads back,
 // so the report's text is the store's text: a row with `a|b` in it, read by the
 // import's own table parser, yields `a|b` again rather than `a/b`.
