@@ -18,7 +18,7 @@ import (
 )
 
 // debtCleanFixture is the store twin of testdata/debt_clean/fixture_README.md:
-// the same ten rows, each checkbox stored as the status TDMarkerStatus maps it
+// the same eight rows, each checkbox stored as the status TDMarkerStatus maps it
 // to. golden_clean.json and golden_cleaned_README.md were captured by running
 // `llm-support td-clean --json --today 2026-11-02` (v1.5.0) over that README, so
 // these tests assert the kept items and the counts without the original binary.
