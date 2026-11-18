@@ -47,16 +47,15 @@ func (l *toolLoop) replayable(m llmclient.Message) llmclient.Message {
 }
 
 // chatInvocation is the invocation every Chat of the loop sends (Epic 106.2):
-// the agent's secret_guard policy, set from Settings.SecretGuard when the agent
-// was built and warn, the fanout default, on an agent built without it, with
-// the first l.guarded messages counted as already guarded. Message zero, the
-// review prompt, starts out guarded: renderAgent and buildFallbackAgent scanned
-// it before rendering, so Chat never scans it again.
+// the agent's own secret_guard policy, unchanged, with the first l.guarded
+// messages counted as already guarded. A review agent carries
+// secretGuardPolicy(cfg) (warn when unset) and AlreadyGuardedMessages 1, since
+// renderAgent and buildFallbackAgent scanned its prompt before rendering. A
+// tool agent built elsewhere (verify, executor, debate) carries neither, so
+// llmclient treats it as off until its caller opts in, and when it does its
+// prompt is scanned too.
 func (l *toolLoop) chatInvocation() llmclient.Invocation {
 	inv := l.agent.Invocation
-	if strings.TrimSpace(inv.SecretGuard) == "" {
-		inv.SecretGuard = secretGuardWarn
-	}
 	inv.AlreadyGuardedMessages = l.guarded
 	return inv
 }
@@ -221,7 +220,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		start:      time.Now(),
 		nudgedSigs: map[string]bool{},
 		tr:         tr,
-		guarded:    1,
+		guarded:    a.Invocation.AlreadyGuardedMessages,
 	}
 	return l.run(ctx)
 }

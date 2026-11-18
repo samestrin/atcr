@@ -3837,6 +3837,9 @@ func renderAgent(ctx context.Context, cfg *ReviewConfig, name string, ac registr
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
 			SecretGuard:      secretGuardPolicy(cfg),
+			// guardSecrets scanned the prompt above, so the tool loop's Chat
+			// skips message zero (loop.go chatInvocation).
+			AlreadyGuardedMessages: 1,
 		},
 	}, nil
 }
@@ -4521,6 +4524,9 @@ func buildFallbackAgent(ctx context.Context, cfg *ReviewConfig, primary Agent, n
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
 			SecretGuard:      secretGuardPolicy(cfg),
+			// guardSecrets scanned the prompt above, so the tool loop's Chat
+			// skips message zero (loop.go chatInvocation).
+			AlreadyGuardedMessages: 1,
 		},
 	}, warned, nil
 }
