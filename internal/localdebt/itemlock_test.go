@@ -356,8 +356,9 @@ func TestItemLockList_ReadsEveryLockAndFreesNone(t *testing.T) {
 	require.NoError(t, err)
 	before := itemLockGit(t, remote, "for-each-ref", "refs/atcr/")
 
-	locks, err := ItemLocker{Dir: stores[1]}.List(ctx)
+	locks, warnings, err := ItemLocker{Dir: stores[1]}.List(ctx)
 	require.NoError(t, err)
+	require.Empty(t, warnings)
 	require.Len(t, locks, 3)
 	byID := map[string]ItemLock{}
 	for _, lk := range locks {
@@ -378,25 +379,119 @@ func TestItemLockList_ReadsEveryLockAndFreesNone(t *testing.T) {
 
 func TestItemLockList_NoLocksIsEmpty(t *testing.T) {
 	_, stores := itemLockRemote(t, 1)
-	locks, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	locks, warnings, err := ItemLocker{Dir: stores[0]}.List(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, locks)
+	require.Empty(t, warnings)
 }
 
 func TestItemLockList_NoRemoteIsError(t *testing.T) {
 	clone := t.TempDir()
 	itemLockGit(t, clone, "init", "-q")
-	_, err := ItemLocker{Dir: DefaultDir(clone)}.List(context.Background())
+	_, _, err := ItemLocker{Dir: DefaultDir(clone)}.List(context.Background())
 	require.ErrorContains(t, err, "no git remote")
 }
 
-func TestItemLockList_ForeignRefNameIsError(t *testing.T) {
+// Epic 122 T4 (owner decision 2026-11-18) replaces TestItemLockList_ForeignRefNameIsError:
+// a malformed ref name is a structured warning alongside the valid locks, not an
+// error that hides every lock. This is a change of the documented rule, not a
+// weakening: the bad ref must still be shown, by name, in the result.
+func TestItemLockList_ForeignRefNameIsWarning(t *testing.T) {
 	remote, stores := itemLockRemote(t, 1)
+	ctx := context.Background()
+	_, err := ItemLocker{Dir: stores[0], Holder: "alice", Now: fixedNow}.Lock(ctx, []string{"TD-001"})
+	require.NoError(t, err)
 	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
 	for _, name := range []string{"not-hex", "5A44"} {
 		itemLockGit(t, remote, "update-ref", ItemLockRefPrefix+name, "HEAD")
-		_, err := ItemLocker{Dir: stores[0]}.List(context.Background())
-		require.ErrorContains(t, err, ItemLockRefPrefix+name)
-		itemLockGit(t, remote, "update-ref", "-d", ItemLockRefPrefix+name)
 	}
+
+	locks, warnings, err := ItemLocker{Dir: stores[0]}.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, locks, 1, "the valid lock is still listed")
+	require.Equal(t, "TD-001", locks[0].ID)
+	require.Len(t, warnings, 2)
+	// Warnings are ordered by ref, so the output is deterministic.
+	require.Equal(t, ItemLockRefPrefix+"5A44", warnings[0].Ref)
+	require.Equal(t, ItemLockRefPrefix+"not-hex", warnings[1].Ref)
+	for _, w := range warnings {
+		require.Equal(t, "origin", w.Remote)
+		require.Contains(t, w.Reason, "not an item lock ref")
+	}
+}
+
+// A ref whose name is a valid hex id but whose tag cannot be read as a lock is
+// also a warning, and every other lock is still listed (epic 122 T4).
+func TestItemLockList_BadTagIsWarningAndGoodLocksStillListed(t *testing.T) {
+	ref := ItemLockRef("TD-002")
+	putTag := func(t *testing.T, remote, name, msg string) {
+		t.Helper()
+		itemLockGit(t, remote, "tag", "-a", name, "-m", msg, "HEAD")
+		itemLockGit(t, remote, "update-ref", ref, "refs/tags/"+name)
+	}
+	cases := map[string]struct {
+		setup  func(t *testing.T, remote string)
+		reason string
+	}{
+		"commit not tag": {
+			setup: func(t *testing.T, remote string) {
+				itemLockGit(t, remote, "update-ref", ref, "HEAD")
+			},
+			reason: "cat-file",
+		},
+		"tag without lock fields": {
+			setup: func(t *testing.T, remote string) {
+				putTag(t, remote, "foreign", "not a lock")
+			},
+			reason: "not an item lock tag",
+		},
+		"mismatched id": {
+			setup: func(t *testing.T, remote string) {
+				putTag(t, remote, "foreign", "atcr debt lock\nid: TD-999\nholder: alice\nat: 2026-11-06T12:00:00Z\nnonce: ab")
+			},
+			reason: `the tag records id "TD-999"`,
+		},
+		"bad time": {
+			setup: func(t *testing.T, remote string) {
+				putTag(t, remote, "foreign", "atcr debt lock\nid: TD-002\nholder: alice\nat: yesterday")
+			},
+			reason: "not an item lock tag",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			remote, stores := itemLockRemote(t, 1)
+			ctx := context.Background()
+			_, err := ItemLocker{Dir: stores[0], Holder: "alice", Now: fixedNow}.Lock(ctx, []string{"TD-001"})
+			require.NoError(t, err)
+			itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+			c.setup(t, remote)
+			// A malformed name alongside the bad tag: warnings of both kinds
+			// come back together, sorted by ref.
+			itemLockGit(t, remote, "update-ref", ItemLockRefPrefix+"not-hex", "HEAD")
+
+			locks, warnings, err := ItemLocker{Dir: stores[0]}.List(ctx)
+			require.NoError(t, err)
+			require.Len(t, locks, 1)
+			require.Equal(t, "TD-001", locks[0].ID)
+			require.Len(t, warnings, 2)
+			require.Equal(t, ref, warnings[0].Ref)
+			require.Equal(t, ItemLockRefPrefix+"not-hex", warnings[1].Ref)
+			require.Equal(t, "origin", warnings[0].Remote)
+			require.Contains(t, warnings[0].Reason, c.reason)
+		})
+	}
+}
+
+// The listing's leniency must not leak into the mutation paths: unlock (and
+// the lock-held read behind Lock) still refuses a ref whose tag cannot be read.
+func TestItemUnlock_BadTagIsStillError(t *testing.T) {
+	remote, stores := itemLockRemote(t, 1)
+	ctx := context.Background()
+	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	itemLockGit(t, remote, "update-ref", ItemLockRef("TD-001"), "HEAD")
+	_, err := ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(ctx, []string{"TD-001"})
+	require.ErrorContains(t, err, "TD-001")
+	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Lock(ctx, []string{"TD-001"})
+	require.ErrorIs(t, err, ErrItemLocked)
 }

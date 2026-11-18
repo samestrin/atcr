@@ -120,6 +120,58 @@ func TestDebtLocks_NoLocks(t *testing.T) {
 
 	rep, _ := debtLocksJSON(t, "--store", stores[0])
 	require.NotNil(t, rep.Locks, "--json prints an empty array, not null")
+	require.NotNil(t, rep.Warnings, "--json prints an empty warnings array, not null")
+	require.Empty(t, rep.Warnings)
+}
+
+// Epic 122 T4: one malformed ref under refs/atcr/debt-locks/ is a warning in
+// both outputs, never an error that hides every other lock.
+func TestDebtLocks_BadRefIsWarningInBothOutputs(t *testing.T) {
+	isolate(t)
+	remote, stores := itemLockClones(t, 1)
+	id := debtSampleRecords()[0].ID
+	_, err := localdebt.ItemLocker{Dir: stores[0], Holder: "alice"}.Lock(context.Background(), []string{id})
+	require.NoError(t, err)
+	runFixtureGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	badRef := localdebt.ItemLockRefPrefix + "not-hex"
+	runFixtureGit(t, remote, "update-ref", badRef, "HEAD")
+	before := remoteLockRefs(t, remote)
+
+	rep, rows := debtLocksJSON(t, "--store", stores[0])
+	require.Contains(t, rows, id, "the valid lock is still listed")
+	require.Len(t, rep.Warnings, 1)
+	require.Equal(t, badRef, rep.Warnings[0].Ref)
+	require.Equal(t, "origin", rep.Warnings[0].Remote)
+	require.Contains(t, rep.Warnings[0].Reason, "not an item lock ref")
+
+	out, err := runDebt(t, "locks", "--store", stores[0])
+	require.NoError(t, err, out)
+	require.Contains(t, out, id)
+	require.Contains(t, out, badRef)
+	require.Contains(t, out, "warning")
+
+	require.Equal(t, before, remoteLockRefs(t, remote), "locks must never change a ref, bad or not")
+}
+
+// With only a bad ref and no valid lock, the listing still succeeds and shows
+// the warning in both outputs.
+func TestDebtLocks_OnlyBadRefStillWarns(t *testing.T) {
+	isolate(t)
+	remote, stores := itemLockClones(t, 1)
+	runFixtureGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	badRef := localdebt.ItemLockRefPrefix + "not-hex"
+	runFixtureGit(t, remote, "update-ref", badRef, "HEAD")
+
+	out, err := runDebt(t, "locks", "--store", stores[0])
+	require.NoError(t, err, out)
+	require.Contains(t, out, "No item locks")
+	require.Contains(t, out, badRef)
+
+	rep, rows := debtLocksJSON(t, "--store", stores[0])
+	require.Empty(t, rows)
+	require.NotNil(t, rep.Locks)
+	require.Len(t, rep.Warnings, 1)
+	require.Equal(t, badRef, rep.Warnings[0].Ref)
 }
 
 func TestDebtLocks_BadOlderThanIsUsageError(t *testing.T) {
