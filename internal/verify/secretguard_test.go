@@ -241,3 +241,40 @@ func TestCallExecutor_MetaPathSecretGuard(t *testing.T) {
 	assert.NotContains(t, invs[0].Prompt, verifyAWSKey)
 	assert.Contains(t, invs[0].Prompt, payload.SecretPlaceholder)
 }
+
+// A skeptic without function calling degrades to fanout's single-shot path,
+// which sends the prompt through Complete/CompleteWithMeta, and llmclient scans
+// only Chat. Through the real client the credential is still warned about,
+// redacted or blocked as the policy says on that lane; block sends nothing and
+// records the finding unverifiable with a named secret_guard note.
+func TestRunVerify_DegradedSkepticPromptSecretGuardOnTheWire(t *testing.T) {
+	for _, policy := range []string{"warn", "redact", "block"} {
+		t.Run(policy, func(t *testing.T) {
+			ws := &wireServer{}
+			srv := ws.start(t, `"{\"verdict\":\"confirmed\",\"reasoning\":\"checked the line\"}"`)
+			dir := pipelineReview(t, []reconcile.JSONFinding{
+				{Severity: "HIGH", File: "a.go", Line: 1, Problem: "hardcoded key " + verifyAWSKey, Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+			})
+			reg := skepticRegistry()
+			reg.Providers["p"] = registry.Provider{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY"}
+			sk := reg.Agents["skep"]
+			sk.SupportsFC = false
+			reg.Agents["skep"] = sk
+			reg.SecretGuard = policy
+			_, err := runVerify(context.Background(), dir, reg, Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+				return llmclient.New(llmclient.WithHTTPClient(srv.Client())), okDispatcher(), nil, nil
+			})
+			require.NoError(t, err)
+			assertWire(t, policy, ws.sent())
+			got := readFindings(t, dir)
+			require.NotNil(t, got[0].Verification)
+			if policy == "block" {
+				assert.Equal(t, verdictUnverifiable, got[0].Verification.Verdict)
+				assert.Contains(t, got[0].Verification.Notes, "secret_guard=block")
+				assert.NotContains(t, got[0].Verification.Notes, verifyAWSKey)
+			} else {
+				assert.Equal(t, "confirmed", got[0].Verification.Verdict)
+			}
+		})
+	}
+}
