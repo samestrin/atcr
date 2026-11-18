@@ -347,6 +347,42 @@ func TestReadEventRecords_UnreadableEventFileReturnsWhatItReadRedacted(t *testin
 	assert.Equal(t, "2026-06-14T10:00:00Z", recs[0].Timestamp)
 }
 
+// TestEnableEventLayout_GitignoreBlockedIsError covers the ignore-file write
+// branch: a directory squatting on the .gitignore name makes WriteFile fail.
+func TestEnableEventLayout_GitignoreBlockedIsError(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Join(ItemsDir(dir), ".gitignore"), 0o700))
+
+	err := EnableEventLayout(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing localdebt items .gitignore")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+}
+
+// TestAppend_EventLayoutReadOnlyItemsIsError pins that the best-effort prepare
+// (gitignore write, sweep) never masks the canonical CreateTemp error: under a
+// read-only items directory the append fails with the creating-event error and
+// the store is left untouched.
+func TestAppend_EventLayoutReadOnlyItemsIsError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied write cannot be provoked as root")
+	}
+	dir := DefaultDir(t.TempDir())
+	items := ItemsDir(dir)
+	// A pre-existing store without the ignore file, so the prepare step's own
+	// gitignore write is attempted and fails too — both failures stay silent.
+	require.NoError(t, os.MkdirAll(items, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(items, eventLayoutMarker), nil, 0o600))
+	require.NoError(t, os.Chmod(items, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(items, 0o700) })
+
+	err := Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", ""))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "creating localdebt event")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+	assert.Empty(t, eventFiles(t, dir))
+}
+
 // git runs one git command pinned to the fixture repository dir, with no global or
 // system git config, so it can never write into the developer's own checkout.
 func git(t *testing.T, dir string, args ...string) (string, error) {

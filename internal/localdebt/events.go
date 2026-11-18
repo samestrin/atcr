@@ -40,7 +40,16 @@ const (
 	// characters. It tells apart two different events of one item at the same
 	// instant; the same event written twice gets the same name.
 	eventHashLen = 12
+	// itemsGitignore is the ignore file shipped inside items/. A SIGKILL between
+	// CreateTemp and rename skips writeEventLocked's deferred remove, and the
+	// next locked write may be far away; until then `git add -A` in a shared
+	// store would stage the leftover. The pattern covers exactly the CreateTemp
+	// names ("."+name+".tmp-*"); the .event-layout marker stays tracked.
+	itemsGitignore = ".gitignore"
 )
+
+// itemsGitignoreBody ignores in-flight and crash-leftover event temp files.
+const itemsGitignoreBody = "# In-flight and crash-leftover event temp files (events.go).\n.*.tmp-*\n"
 
 // ItemsDir returns the event directory of the store at dir: <dir>/items.
 func ItemsDir(dir string) string {
@@ -76,7 +85,44 @@ func enableEventLayoutLocked(dir string) error {
 	if err != nil {
 		return fmt.Errorf("writing localdebt event-layout marker: %w", basePathErr(err))
 	}
-	return basePathErr(f.Close())
+	if err := f.Close(); err != nil {
+		return basePathErr(err)
+	}
+	if err := os.WriteFile(filepath.Join(items, itemsGitignore), []byte(itemsGitignoreBody), 0o600); err != nil {
+		return fmt.Errorf("writing localdebt items .gitignore: %w", basePathErr(err))
+	}
+	return nil
+}
+
+// isEventTempName reports whether a name in items/ is an in-flight or
+// crash-leftover event temp: dot-prefixed with the ".tmp-" infix CreateTemp
+// leaves. The marker and .gitignore carry no infix and never match.
+func isEventTempName(name string) bool {
+	return strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")
+}
+
+// prepareItemsLocked ships items/.gitignore if missing and sweeps crash
+// leftovers before a new temp is created. The caller holds the store lock, and
+// every temp write happens under that same lock, so any leftover seen here
+// belongs to a dead process (a SIGKILL skips the deferred remove). Like
+// sweepStaleTemps (store.go), it runs on every locked write and removal is
+// best-effort: readers skip temps regardless, and a failed remove is retried by
+// the next write. Failures are left to CreateTemp to report, so a broken items
+// directory surfaces its own canonical error instead of a sweep error.
+func prepareItemsLocked(items string) {
+	gi := filepath.Join(items, itemsGitignore)
+	if _, err := os.Stat(gi); os.IsNotExist(err) {
+		_ = os.WriteFile(gi, []byte(itemsGitignoreBody), 0o600)
+	}
+	entries, err := os.ReadDir(items)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && isEventTempName(e.Name()) {
+			_ = os.Remove(filepath.Join(items, e.Name()))
+		}
+	}
 }
 
 // IsEventEntry reports whether a directory entry in the items directory is an
@@ -107,12 +153,16 @@ func eventFileName(rec Record, line []byte) (string, error) {
 // the store lock and has run the write gate. The file is written to a dot-prefixed
 // temp name and renamed into place, so a reader never sees a partial event. A
 // rename onto an existing name replaces the same bytes: the name is a hash of them.
+// Before creating the temp it ships items/.gitignore and sweeps crash leftovers
+// (prepareItemsLocked), so a SIGKILL'd write can neither be committed by
+// `git add -A` nor accumulate in items/.
 func writeEventLocked(dir string, rec Record, line []byte) error {
 	name, err := eventFileName(rec, line)
 	if err != nil {
 		return err
 	}
 	items := ItemsDir(dir)
+	prepareItemsLocked(items)
 	tmp, err := os.CreateTemp(items, "."+name+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating localdebt event: %w", basePathErr(err))
@@ -127,7 +177,9 @@ func writeEventLocked(dir string, rec Record, line []byte) error {
 		return fmt.Errorf("writing localdebt event: %w", basePathErr(err))
 	}
 	if err := os.Rename(tmpPath, filepath.Join(items, name)); err != nil {
-		return fmt.Errorf("publishing localdebt event: %w", basePathErr(err))
+		// os.Rename raises an *os.LinkError, which basePathErr passes through
+		// untouched; quotedPathErr redacts both of its paths (backfill.go).
+		return fmt.Errorf("publishing localdebt event: %w", quotedPathErr(err))
 	}
 	return nil
 }
