@@ -160,20 +160,28 @@ var (
 	validateBacktickRe = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 )
 
-// debtProblemSymbol returns the symbol a Problem names: the leading "(name) "
-// anchor, else the first backticked identifier. "" means it names none.
-func debtProblemSymbol(problem string) string {
+// debtProblemSymbols returns the symbols a Problem names: the leading "(name) "
+// anchor alone, else every backticked identifier in order, since the first one
+// need not be the row's symbol. nil means it names none.
+func debtProblemSymbols(problem string) []string {
 	if m := validateAnchorRe.FindStringSubmatch(problem); m != nil {
-		return m[1]
+		return []string{m[1]}
 	}
-	if m := validateBacktickRe.FindStringSubmatch(problem); m != nil {
-		return m[1]
+	var syms []string
+	for _, m := range validateBacktickRe.FindAllStringSubmatch(problem, -1) {
+		syms = append(syms, m[1])
 	}
-	return ""
+	return syms
 }
 
+// validateDebtRecord reports Symbol as the first named symbol the file
+// contains, or the first named symbol when it contains none or was not read.
 func validateDebtRecord(root string, r localdebt.Record) debtValidateItem {
-	it := debtValidateItem{ID: r.ID, File: r.File, Line: r.Line, Symbol: debtProblemSymbol(r.Problem)}
+	syms := debtProblemSymbols(r.Problem)
+	it := debtValidateItem{ID: r.ID, File: r.File, Line: r.Line}
+	if len(syms) > 0 {
+		it.Symbol = syms[0]
+	}
 	if strings.TrimSpace(r.File) == "" {
 		it.Status = validateNoFile
 		return it
@@ -183,7 +191,24 @@ func validateDebtRecord(root string, r localdebt.Record) debtValidateItem {
 		it.Status, it.Reason = validateFileMissing, "path is outside the repository"
 		return it
 	}
-	data, err := os.ReadFile(filepath.Join(root, rel))
+	// IsLocal is lexical: a symlink under root can still resolve outside it,
+	// so resolve both and re-check before reading. Both are absolute so Rel
+	// works when a relative root meets a link with an absolute target.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		it.Status, it.Reason = validateFileMissing, "file not found"
+		return it
+	}
+	path, err := filepath.EvalSymlinks(filepath.Join(absRoot, rel))
+	if err != nil {
+		it.Status, it.Reason = validateFileMissing, "file not found"
+		return it
+	}
+	if realRoot, err := filepath.EvalSymlinks(absRoot); err != nil || !pathUnder(realRoot, path) {
+		it.Status, it.Reason = validateFileMissing, "path is outside the repository"
+		return it
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		it.Status, it.Reason = validateFileMissing, "file not found"
 		return it
@@ -198,12 +223,28 @@ func validateDebtRecord(root string, r localdebt.Record) debtValidateItem {
 			return it
 		}
 	}
-	if it.Symbol != "" && !containsIdent(data, it.Symbol) {
-		it.Status, it.Reason = validateSymbolNotFound, "symbol not found in file"
-		return it
+	if len(syms) > 0 {
+		found := false
+		for _, s := range syms {
+			if containsIdent(data, s) {
+				it.Symbol, found = s, true
+				break
+			}
+		}
+		if !found {
+			it.Status, it.Reason = validateSymbolNotFound, "symbol not found in file"
+			return it
+		}
 	}
 	it.Status = validateValid
 	return it
+}
+
+// pathUnder reports whether path is root or inside it. Both must already be
+// symlink-resolved.
+func pathUnder(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(rel)
 }
 
 // containsIdent reports whether sym occurs in data as a whole identifier.
