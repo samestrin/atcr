@@ -23,7 +23,7 @@ type ThreatMapper interface {
 // scan or a diff-based preparation. The phase is scoped to git-range reviews,
 // and ignoring the mapper there would review every file while the caller
 // believes the run was scoped.
-var ErrThreatMapNeedsRange = errors.New("threat-map scoping applies to git-range reviews only; it cannot be combined with a baseline (--all/--scope) scan")
+var ErrThreatMapNeedsRange = errors.New("threat-map scoping applies to git-range reviews only; it cannot be combined with a baseline (--all/--scope) scan or a diff-based preparation")
 
 // threatScope is the threat-map input to buildPayloads: a live mapper on a
 // fresh run, or the manifest's record on a resume. Both nil means the run does
