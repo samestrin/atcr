@@ -1,0 +1,1 @@
+- `atcr skill export` error messages now recommend `--dest`, the documented flag, instead of the hidden deprecated `--dir` alias: the unknown-harness error, the "destination exists and is not a directory" error, and the home-directory expansion failure all name `--dest <path>`. (epic 124 T2)

@@ -49,6 +49,59 @@ func TestManualRunID_RejectsOutOfRangeYears(t *testing.T) {
 	}
 }
 
+// TestEnsureStoreDir_MissingAnchorNamesTheConfiguredStore pins row 993fffb0c24de643
+// (TD internal/localdebt/paths.go:45). ensureStoreDir's existence check sits two
+// levels above the store dir — the repo root ONLY for the default <root>/.atcr/debt
+// layout. A configured debt.store (StoreDir) may sit at any depth: for
+// docs/planning/debt the checked anchor is <root>/docs, which is not the repo root.
+// When that anchor is missing, the refusal must name the CONFIGURED STORE and the
+// directory that is actually missing, not label the anchor "store root" — the wrong
+// diagnosis sends the operator looking for a vanished checkout instead of a missing
+// parent of their configured store.
+func TestEnsureStoreDir_MissingAnchorNamesTheConfiguredStore(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "docs", "planning", "debt")
+
+	err := ensureStoreDir(dir)
+	require.Error(t, err, "a store whose grandparent is missing must be refused, not created")
+	assert.Contains(t, err.Error(), `"debt"`, "the refusal must name the configured store")
+	assert.Contains(t, err.Error(), `"docs"`, "the refusal must name the directory that is actually missing")
+	assert.NotContains(t, err.Error(), "store root",
+		"the missing grandparent of a configured store is not the store root; calling it that misdiagnoses the cause")
+	_, statErr := os.Stat(filepath.Join(root, "docs"))
+	assert.True(t, os.IsNotExist(statErr), "the refusal must not create anything: %v", statErr)
+}
+
+// TestEnsureStoreDir_DefaultLayoutStillRefusesAVanishedRoot keeps the original
+// stale-root stop signal intact under the new message: for the default layout the
+// grandparent IS the repo root, and a root that vanished between validation and the
+// write must still be an error, never a resurrection (TD internal/localdebt/root.go:123).
+func TestEnsureStoreDir_DefaultLayoutStillRefusesAVanishedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "gone-repo")
+
+	err := ensureStoreDir(DefaultDir(root))
+	require.Error(t, err, "a vanished repo root must be refused, not recreated")
+	assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
+	assert.Contains(t, err.Error(), `"gone-repo"`, "the refusal names the missing root")
+	_, statErr := os.Stat(root)
+	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
+}
+
+// TestEnsureStoreDir_ConfiguredStoreUnderExistingGrandparentIsCreated guards that
+// the message fix changes no behavior: when the grandparent exists, a configured
+// store at a non-default depth is still created on demand (the intermediate
+// docs/planning is ordinary first-write behavior, paths.go MkdirAll).
+func TestEnsureStoreDir_ConfiguredStoreUnderExistingGrandparentIsCreated(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "docs"), 0o755))
+	dir := filepath.Join(root, "docs", "planning", "debt")
+
+	require.NoError(t, ensureStoreDir(dir))
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir(), "the configured store must exist as a directory")
+}
+
 // TestRedactPathErr pins the exported path-reduction contract (TD
 // internal/localdebt/paths.go:51 — the row's FIX cell was a reconcile
 // copy-paste of the ManualRunID item; this is the clarified fix): a surfaced
