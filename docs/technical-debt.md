@@ -691,6 +691,8 @@ is removed from the store; use `atcr debt compact` to fold it.
 theme smaller than `--min-group-size` is left in `ungrouped`, and every CRITICAL
 item gets its own group regardless of size.
 
+A regular `critical` theme and the CRITICAL-severity group are separate groups that can both carry `theme: "critical"`; `theme` is therefore not a unique key.
+
 #### Intended differences from the originals
 
 - They read the store, not the README table, so a README row without a
