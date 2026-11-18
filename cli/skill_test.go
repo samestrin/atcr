@@ -597,7 +597,7 @@ func TestSkillExport_DestHomeExpansionFailureNamesDest(t *testing.T) {
 	assert.Contains(t, err.Error(), "~/skills/atcr", "the error must quote the destination it failed to resolve")
 }
 
-// TestSkillExport_DirExpandsLeadingTilde — --dir is documented with a ~/ example,
+// TestSkillExport_DirExpandsLeadingTilde — --dest is documented with a ~/ example,
 // so a quoted or config-supplied ~/... must resolve against the home directory
 // rather than creating a directory literally named "~" under the cwd.
 func TestSkillExport_DirExpandsLeadingTilde(t *testing.T) {
