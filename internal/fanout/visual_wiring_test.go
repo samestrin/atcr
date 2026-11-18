@@ -365,6 +365,25 @@ func TestPrepareReviewFromDiff_RefusesAVisualStage(t *testing.T) {
 	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
 }
 
+// The refusal is raised on two paths (baseline scan and diff-based
+// preparation), so its text must name both causes, not only the baseline one
+// (technical-debt row 6b3ad13381e938db).
+func TestPrepareReview_Visual_RefusalNamesBothCauses(t *testing.T) {
+	repo, _, _ := initRepo(t)
+	req := reviewReq(repo, repo, "", "")
+	req.Visual = &fakeVisual{log: &callLog{}}
+
+	_, err := PrepareReviewFromRepo(context.Background(), felixConfig(), req)
+	require.ErrorIs(t, err, ErrVisualNeedsRange)
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
+	assert.Contains(t, err.Error(), "diff-based preparation", "the baseline refusal must also name the diff-preparation cause")
+
+	_, err = PrepareReviewFromDiff(context.Background(), felixConfig(), req, "diff --git a/x b/x\n")
+	require.ErrorIs(t, err, ErrVisualNeedsRange)
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
+	assert.Contains(t, err.Error(), "diff-based preparation", "the diff refusal must name its own cause")
+}
+
 // A resume rebuilds the pool from the manifest roster, which leaves felix out;
 // felix's record from the original run must still reach the rebuilt pool.
 func TestRebuildPool_KeepsTheVisualRecordOnResume(t *testing.T) {
