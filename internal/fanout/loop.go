@@ -46,6 +46,32 @@ func (l *toolLoop) replayable(m llmclient.Message) llmclient.Message {
 	return m
 }
 
+// chatInvocation is the invocation every Chat of the loop sends (Epic 106.2):
+// the agent's own secret_guard policy, unchanged, with the first l.guarded
+// messages counted as already guarded. A review agent carries
+// secretGuardPolicy(cfg) (warn when unset) and AlreadyGuardedMessages 1, since
+// renderAgent and buildFallbackAgent scanned its prompt before rendering. A
+// tool agent built elsewhere (verify, executor, debate) carries neither, so
+// llmclient treats it as off until its caller opts in, and when it does its
+// prompt is scanned too.
+func (l *toolLoop) chatInvocation() llmclient.Invocation {
+	inv := l.agent.Invocation
+	inv.AlreadyGuardedMessages = l.guarded
+	return inv
+}
+
+// markSent records that a Chat under inv returned without error after sending
+// the first sent messages. l.messages is append-only, so under warn (already
+// reported, sent unchanged) and block (found clean) those messages need no
+// second scan, and each one is scanned once over the loop rather than once per
+// turn. Not under redact: Chat redacts a copy, and the loop's history keeps
+// the original text, so every later request must redact it again.
+func (l *toolLoop) markSent(inv llmclient.Invocation, sent int) {
+	if inv.SecretGuard == secretGuardWarn || inv.SecretGuard == secretGuardBlock {
+		l.guarded = sent
+	}
+}
+
 // historyMessage is the form of an assistant turn that is safe to re-send as
 // conversation history: inline <think> reasoning stripped off its Content. Without
 // it, a model that reasons inline gets its own discarded draft replayed back as
@@ -157,6 +183,10 @@ type toolLoop struct {
 	// (see payload.ReasoningReplayReserveCaps).
 	reasoningBytes int64
 
+	// guarded is the count of leading messages already scanned under the
+	// agent's secret_guard policy (chatInvocation, markSent).
+	guarded int
+
 	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
 	// when transcript recording is disabled; every method on *tools.Transcript is
 	// nil-safe, so the loop never guards the calls.
@@ -190,6 +220,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		start:      time.Now(),
 		nudgedSigs: map[string]bool{},
 		tr:         tr,
+		guarded:    a.Invocation.AlreadyGuardedMessages,
 	}
 	return l.run(ctx)
 }
@@ -227,7 +258,8 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			return l.finalize(classifyStatus(err), err)
 		}
 
-		resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, l.toolDefs)
+		inv, sent := l.chatInvocation(), len(l.messages)
+		resp, err := l.cc.Chat(ctx, inv, l.messages, l.toolDefs)
 		if err != nil {
 			// A Chat error ends the loop. A deadline/cancel records the timeout
 			// budget; any other provider error is a plain failure. Partial
@@ -245,6 +277,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			}
 			return l.finalize(status, err)
 		}
+		l.markSent(inv, sent)
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
 		l.res.addCallRecords(resp.CallRecords)
@@ -423,7 +456,7 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		return l.finalize(classifyStatus(err), err)
 	}
 	l.appendUser(finalAnswerMessage)
-	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
+	resp, err := l.cc.Chat(ctx, l.chatInvocation(), l.messages, nil)
 	if err != nil {
 		// Count the final-answer call's wire attempt(s) even on error (Epic 4.11),
 		// mirroring the per-turn path above.
