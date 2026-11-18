@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -204,4 +205,43 @@ func TestDebtLocks_HelpSaysItNeverFrees(t *testing.T) {
 	flat := strings.Join(strings.Fields(out), " ")
 	require.Contains(t, flat, "never frees a lock")
 	require.Contains(t, flat, "no liveness check")
+}
+
+// failOnWrite fails the write that contains substr and accepts every other.
+type failOnWrite struct{ substr string }
+
+func (w failOnWrite) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.substr) {
+		return 0, errors.New("write failed")
+	}
+	return len(p), nil
+}
+
+// Every write in the human rendering reports its error, including the warning
+// lines, with and without locks in the table.
+func TestRenderDebtLocks_WriteErrors(t *testing.T) {
+	withLocks := debtLocksReport{
+		Locks:    []debtLockRow{{ID: "TD-1", Holder: "alice", LockedAt: "2026-11-06T12:00:00Z", Flags: []string{}}},
+		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Reason: "bad name"}},
+	}
+	noLocks := debtLocksReport{Warnings: withLocks.Warnings}
+	now := time.Now()
+	cases := []struct {
+		name string
+		rep  debtLocksReport
+		fail string
+	}{
+		{"no locks line", debtLocksReport{}, "No item locks"},
+		{"warnings header after no locks", noLocks, "warning(s)"},
+		{"warning line after no locks", noLocks, "not-hex: bad name"},
+		{"footer", withLocks, "locks flagged"},
+		{"warnings header", withLocks, "warning(s)"},
+		{"warning line", withLocks, "not-hex: bad name"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Error(t, renderDebtLocks(failOnWrite{substr: c.fail}, c.rep, time.Hour, now))
+		})
+	}
+	require.NoError(t, renderDebtLocks(failOnWrite{substr: "never matches"}, withLocks, time.Hour, now))
 }

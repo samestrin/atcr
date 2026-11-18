@@ -392,6 +392,37 @@ func TestItemLockList_NoRemoteIsError(t *testing.T) {
 	require.ErrorContains(t, err, "no git remote")
 }
 
+// A remote that cannot be reached at all is still an error: leniency is per
+// bad ref, not per unreachable remote.
+func TestItemLockList_UnreachableRemoteIsError(t *testing.T) {
+	clone := t.TempDir()
+	itemLockGit(t, clone, "init", "-q")
+	itemLockGit(t, clone, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	_, _, err := ItemLocker{Dir: DefaultDir(clone)}.List(context.Background())
+	require.ErrorContains(t, err, "read locks from origin")
+}
+
+// A remote whose refs can be listed but whose objects cannot be fetched is
+// still an error on both the listing and the mutation path: no lock can be
+// read at all. The ref here names an object the remote no longer has.
+func TestItemLockList_UnfetchableRemoteIsError(t *testing.T) {
+	remote, stores := itemLockRemote(t, 1)
+	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	itemLockGit(t, remote, "update-ref", ItemLockRef("TD-001"), "HEAD")
+	// Empty the remote's object store, keeping the directory so it is still a
+	// repository: ls-remote reads refs only, fetch needs the objects.
+	objects := filepath.Join(remote, ".git", "objects")
+	entries, err := os.ReadDir(objects)
+	require.NoError(t, err)
+	for _, e := range entries {
+		require.NoError(t, os.RemoveAll(filepath.Join(objects, e.Name())))
+	}
+	_, _, err = ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.ErrorContains(t, err, "read locks from origin")
+	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(context.Background(), []string{"TD-001"})
+	require.ErrorContains(t, err, "read locks from origin")
+}
+
 // Epic 122 T4 (owner decision 2026-11-18) replaces TestItemLockList_ForeignRefNameIsError:
 // a malformed ref name is a structured warning alongside the valid locks, not an
 // error that hides every lock. This is a change of the documented rule, not a
