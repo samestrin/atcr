@@ -32,6 +32,12 @@ var buildOutputRE = regexp.MustCompile(`go build\b.*\s-o\s+("[^"]+"|\S+)`)
 // cmd/changelog decide whether that PR passes: the checker must be compiled
 // from a checkout of the base commit and the check must run that binary, never
 // `go run` from the PR checkout.
+//
+// It validates the base checkout, the build and the check invocation only. It
+// does not detect every later write to the built output path: a later step
+// could overwrite the binary without naming `go run` or `cmd/changelog`. No
+// output-path rejection is added, because the legitimate check step names
+// that path (EST-7265 Q5).
 func checkerBuiltFromBase(src []byte) error {
 	var wf struct {
 		Jobs map[string]struct {
