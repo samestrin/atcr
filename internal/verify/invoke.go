@@ -107,6 +107,20 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		logger.Debug("skeptic failure detail", "skeptic", skeptic.Name, "class", "window_too_small", "detail", "window_below_prompt_overhead")
 		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "window_below_prompt_overhead", Skeptic: skeptic.Name}, nil, nil
 	}
+	// secret_guard (Epic 106.3) on the degrade lane: a skeptic without function
+	// calling runs single-shot through Complete/CompleteWithMeta, which send the
+	// prompt unscanned (llmclient scans only Chat), so the prompt is guarded here
+	// and the returned text is what is sent. cc and disp are non-nil above, so
+	// SupportsFC is the only way this lane degrades. A block sends nothing.
+	if !skeptic.Config.SupportsFC {
+		sent, gerr := fanout.GuardOutbound(ctx, guard, "the skeptic", []fanout.OutboundText{{Label: "skeptic prompt", Text: prompt}})
+		if gerr != nil {
+			notes := "skeptic prompt not sent: " + gerr.Error()
+			logSkepticFailure(logger, skeptic.Name, "secret_guard_blocked", notes)
+			return &reclib.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, nil, nil
+		}
+		agent.Prompt, agent.Invocation.Prompt = sent[0], sent[0]
+	}
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(clampDispatcher(disp, agent.ToolBudgetBytes)), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
