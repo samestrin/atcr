@@ -7,8 +7,10 @@
 # with a read-only token and no secrets, so a fork PR can run it.
 #
 # The checker is compiled from the PR's base commit, never from the PR head, so
-# a PR cannot edit cmd/changelog to pass its own gate. The binary then runs in
-# the head checkout. cmd/changelog/workflow_test.go pins this shape.
+# a PR that edits only cmd/changelog cannot pass its own gate. The gate
+# does not protect against a PR that also edits this workflow or its pin test:
+# such a PR changes the gate itself, and only review catches that. The binary
+# then runs in the head checkout. cmd/changelog/workflow_test.go pins this shape.
 name: Changelog
 
 on:

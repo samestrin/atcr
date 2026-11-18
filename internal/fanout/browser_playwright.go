@@ -53,6 +53,9 @@ const (
 	playwrightOutputDir       = playwrightWorkDir + "/test-results"
 	playwrightReportPath      = playwrightWorkDir + "/report.json"
 	playwrightScreenshotsPath = playwrightWorkDir + "/screenshots.tar"
+	// playwrightScreenshotsCount carries the packed-file count between the
+	// batches of the screenshot pass.
+	playwrightScreenshotsCount = playwrightWorkDir + "/screenshots.count"
 	// playwrightRunRoot is the writable copy the run executes in, as Docker and
 	// Linux bwrap mount it. Playwright matches a test filter against absolute
 	// file paths, so the spec filter is anchored here. The darwin OS-level
@@ -80,15 +83,23 @@ var playwrightConfigNames = []string{
 // sends the JSON report to a file so it is neither truncated with the output nor
 // mixed with the dev server's logs, then packs the screenshots under the output
 // directory into one tar, since RunSpec.Collect names files, not directories.
+// find hands the matches to the packing loop as argv, so a path holding a
+// newline stays one name; a count file keeps the screenshot cap across the
+// batches `find -exec ... {} +` may split the matches into. The first file
+// creates the tar and the rest append to it, using only POSIX find, sh and tar.
 // The command's exit status is preserved.
 var playwrightRunShell = `export NODE_PATH=/src/node_modules PATH="/src/node_modules/.bin:$PATH" ` +
 	`PLAYWRIGHT_JSON_OUTPUT_NAME=` + playwrightReportPath + ` npm_config_yes=false; ` +
 	`[ -e node_modules ] || ln -s /src/node_modules node_modules 2>/dev/null; ` +
 	`mkdir -p ` + playwrightWorkDir + `; "$@"; _atcr_rc=$?; ` +
-	`find ` + playwrightOutputDir + ` -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) 2>/dev/null ` +
-	`| head -n ` + fmt.Sprint(playwrightMaxScreenshots) + ` > ` + playwrightWorkDir + `/screenshots.list; ` +
-	`[ -s ` + playwrightWorkDir + `/screenshots.list ] && tar -cf ` + playwrightScreenshotsPath +
-	` -T ` + playwrightWorkDir + `/screenshots.list 2>/dev/null; exit $_atcr_rc`
+	`rm -f ` + playwrightScreenshotsPath + ` ` + playwrightScreenshotsCount + `; ` +
+	`find ` + playwrightOutputDir + ` -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) ` +
+	`-exec sh -c 'n=$(cat ` + playwrightScreenshotsCount + ` 2>/dev/null); n=${n:-0}; ` +
+	`for f; do [ "$n" -ge ` + fmt.Sprint(playwrightMaxScreenshots) + ` ] && break; ` +
+	`if [ "$n" -eq 0 ]; then tar -cf ` + playwrightScreenshotsPath + ` "$f"; ` +
+	`else tar -rf ` + playwrightScreenshotsPath + ` "$f"; fi 2>/dev/null && n=$((n+1)); done; ` +
+	`echo "$n" > ` + playwrightScreenshotsCount + `' sh {} + 2>/dev/null; ` +
+	`rm -f ` + playwrightScreenshotsCount + `; exit $_atcr_rc`
 
 // PlaywrightBackend is the BrowserBackend that runs a spec with
 // `npx playwright test --reporter=json` inside a sandbox.Backend. The sandbox
