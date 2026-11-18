@@ -9,8 +9,10 @@
 // order, then deletes the fragments it assembled. README.md and dotfiles are
 // ignored; directories and symlinks are skipped, never followed. CHANGELOG.md
 // is written to a temporary file and renamed into place before any fragment is
-// deleted, so a crash leaves the fragments where they were. --dry-run prints
-// the section and writes nothing.
+// deleted, so a crash leaves the fragments where they were. It refuses, writing
+// nothing, when a complete fragment bullet (with its indented continuation
+// lines) is already in CHANGELOG.md, as a fragment left by a failed delete is.
+// --dry-run prints the section and writes nothing.
 //
 //	go run ./cmd/changelog check --base <commit> --head <commit>
 //
@@ -112,6 +114,9 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 	if err != nil {
 		return err
 	}
+	if err := refuseConsumed(changelogPath, string(old), frags); err != nil {
+		return err
+	}
 	updated, err := insertSection(string(old), version, section)
 	if err != nil {
 		return err
@@ -125,7 +130,7 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 	for _, c := range categories {
 		for _, f := range frags[c] {
 			if err := removeFragment(f.path); err != nil {
-				failed = append(failed, "  "+err.Error())
+				failed = append(failed, fmt.Sprintf("  %s: %v", f.path, err))
 			}
 		}
 	}
@@ -172,6 +177,64 @@ func readFragments(dir string) (map[string][]fragment, error) {
 		out[cat] = append(out[cat], fragment{path: path, name: name, bullets: body})
 	}
 	return out, nil
+}
+
+// refuseConsumed fails when a fragment bullet is already in the changelog,
+// which is what a fragment that survived a failed remove looks like: without
+// this, the next assemble would render it again into the new section.
+func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment) error {
+	have := map[string]bool{}
+	for _, b := range splitBullets(changelog) {
+		have[b] = true
+	}
+	var found []string
+	for _, c := range categories {
+		for _, f := range frags[c] {
+			for _, b := range splitBullets(f.bullets) {
+				if have[b] {
+					first, _, _ := strings.Cut(b, "\n")
+					found = append(found, fmt.Sprintf("  %s: %s", f.path, first))
+				}
+			}
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	noun := "bullets are"
+	if len(found) == 1 {
+		noun = "bullet is"
+	}
+	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete them from the fragments by hand, then re-run",
+		len(found), noun, changelogPath, strings.Join(found, "\n"))
+}
+
+// splitBullets returns each complete "- " bullet in text with its indented
+// continuation lines, joined by "\n" with trailing whitespace trimmed, so two
+// bullets compare equal only when every line of both matches.
+func splitBullets(text string) []string {
+	var out []string
+	var cur []string
+	flush := func() {
+		if cur != nil {
+			out = append(out, strings.Join(cur, "\n"))
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimRight(line, " \t")
+		switch {
+		case strings.HasPrefix(line, "- "):
+			flush()
+			cur = []string{line}
+		case cur != nil && line != "" && (line[0] == ' ' || line[0] == '\t'):
+			cur = append(cur, line)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return out
 }
 
 func categoryOf(name string) (string, bool) {
