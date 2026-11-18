@@ -47,15 +47,14 @@ func buildSkepticPromptWithSentinel(finding reconcile.JSONFinding, entries []pay
 	closeTag := "</" + sentinel + ">"
 
 	b.WriteString(openTag + "\n")
-	// Problem and Evidence are embedded verbatim on purpose: sanitizeInterAgentText
-	// is not reused for them. They are reviewer-authored evidence, carried inside
-	// the untrusted-data sentinel block the Instructions below tell the skeptic to
-	// treat as data only, and the sanitizer drops whole code fences and command
-	// lines (sanitize.go), which would strip the quoted code the skeptic must check.
-	writeField(&b, "Problem", finding.Problem)
+	// Problem and Evidence are reviewer-authored evidence: filterSkepticEvidence
+	// keeps their code fences and command lines, which sanitizeInterAgentText would
+	// drop, and removes only hidden characters and override phrases. The embedded
+	// copy is filtered; finding.Problem and finding.Evidence stay intact.
+	writeField(&b, "Problem", filterSkepticEvidence(finding.Problem))
 	// Fix is executor-authored; sanitize the embedded copy only, finding.Fix stays intact.
 	writeField(&b, "Fix", sanitizeInterAgentText(finding.Fix))
-	writeField(&b, "Evidence", finding.Evidence)
+	writeField(&b, "Evidence", filterSkepticEvidence(finding.Evidence))
 	writeField(&b, "Severity", finding.Severity)
 	writeField(&b, "Confidence", finding.Confidence)
 	if finding.File != "" {
@@ -142,4 +141,25 @@ func writeField(b *strings.Builder, name, value string) {
 		return
 	}
 	fmt.Fprintf(b, "**%s:** %s\n", name, value)
+}
+
+// filterSkepticEvidence returns the copy of a reviewer-authored Problem or Evidence
+// that the skeptic prompt embeds. Unlike sanitizeInterAgentText it keeps code
+// fences, command lines and every other line, because they are the evidence the
+// skeptic must check; it removes only control and format characters
+// (stripControlChars) and the instruction-override phrases themselves (overrideRe),
+// leaving the rest of each line. Control characters go first so a zero-width
+// character cannot split a phrase. Phrases are matched per line so overrideRe's
+// line-start role prefix applies to every line, and removal repeats until nothing
+// matches so it cannot join the text around a phrase into a new one; each pass
+// shortens the line, so the loop ends.
+func filterSkepticEvidence(s string) string {
+	lines := strings.Split(stripControlChars(s), "\n")
+	for i, line := range lines {
+		for overrideRe.MatchString(line) {
+			line = overrideRe.ReplaceAllString(line, "")
+		}
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
 }

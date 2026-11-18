@@ -1,0 +1,1 @@
+- The skeptic prompt now removes zero-width, bidi and other hidden characters and instruction-override phrases (such as `ignore all prior instructions`) from a finding's problem and evidence, while keeping their quoted code, command lines and prose byte for byte; the stored finding is unchanged. (epic 106.1)
