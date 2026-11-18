@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -67,16 +68,17 @@ func recordLoopInvocations(t *testing.T, policy string) []llmclient.Invocation {
 // guarded review prompt (message zero) as already guarded. Under warn and
 // block a message is scanned once: a successful Chat sent the messages it was
 // given, warned about them or found them clean, so the next call counts them
-// as guarded too. Call 2 sends prompt, turn 1 and its tool result (3); the
-// final-answer call scans only what turn 2 added. Under redact the redacted
+// as guarded too. Call 1 sends only the prompt, so call 2 scans from message
+// 1; call 2 sent prompt, turn 1 and its tool result (3), so the final-answer
+// call scans only what turn 2 added. Under redact the redacted
 // copy never reaches the loop's history, so every call redacts from message 1
 // again; off scans nothing and stays at 1.
 func TestToolLoop_SecretGuardOnEveryChatCall(t *testing.T) {
 	want := map[string][]int{
 		secretGuardOff:    {1, 1, 1},
-		secretGuardWarn:   {1, 3, 3},
+		secretGuardWarn:   {1, 1, 3},
 		secretGuardRedact: {1, 1, 1},
-		secretGuardBlock:  {1, 3, 3},
+		secretGuardBlock:  {1, 1, 3},
 	}
 	for policy, guarded := range want {
 		for i, inv := range recordLoopInvocations(t, policy) {
@@ -91,7 +93,7 @@ func TestToolLoop_SecretGuardOnEveryChatCall(t *testing.T) {
 func TestToolLoop_SecretGuardDefaultsToWarn(t *testing.T) {
 	for i, inv := range recordLoopInvocations(t, "") {
 		assert.Equal(t, secretGuardWarn, inv.SecretGuard, "call %d", i+1)
-		assert.Equal(t, []int{1, 3, 3}[i], inv.AlreadyGuardedMessages, "call %d", i+1)
+		assert.Equal(t, []int{1, 1, 3}[i], inv.AlreadyGuardedMessages, "call %d", i+1)
 	}
 }
 
@@ -165,4 +167,29 @@ func TestToolLoop_RedactsToolResultsNotThePrompt(t *testing.T) {
 		}
 	}
 	assert.NotContains(t, bodies[2], `"tools"`, "the last request is requestFinalAnswer's")
+}
+
+// Through the real client: under block a credential in a tool result stops the
+// agent before the turn that would carry it is sent, so advancing the guarded
+// count past the clean messages never skips a new one.
+func TestToolLoop_BlockStopsOnAToolResultSecret(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		_, _ = fmt.Fprintf(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,`+
+			`"tool_calls":[{"id":"c%d","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"f%d.go\"}"}}]}}]}`, n, n)
+	}))
+	defer srv.Close()
+	t.Setenv("ATCR_TEST_KEY", "k")
+
+	d := newFakeDispatcher()
+	d.byName["read_file"] = tools.ToolResult{Content: "key = " + loopAWSKey}
+	a := toolAgent("a", 3, 0)
+	a.Invocation = llmclient.Invocation{Model: "m", BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY",
+		Prompt: "review this", SecretGuard: secretGuardBlock}
+
+	r := toolEngine(llmclient.New(llmclient.WithHTTPClient(srv.Client())), d).invokeAgent(context.Background(), a)
+	assert.Equal(t, StatusFailed, r.Status)
+	assert.ErrorIs(t, r.Err, llmclient.ErrSecretGuardBlocked)
+	assert.Equal(t, int32(1), hits.Load(), "only the first turn, which holds no credential, is sent")
 }
