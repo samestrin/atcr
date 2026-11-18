@@ -47,6 +47,7 @@ siblings.
 | `format-blocking-column` | source | `post-review` | `post` | `source` is the stream's `--source-tags` tag (here the parent directory name), not the row's `SOURCE` column; a v1 stream's eighth column is REVIEWER, so the tag is the only value every layout has |
 | `format-evidence-source` | source | `execute-epic` | `epic` | same: `source` names the stream, not the skill that wrote the row |
 | `panel-wide-confidence` | confidence | `HIGH` | `MEDIUM` | `atcr dedupe` merges through `reconcile.Merge`, whose panel-wide-instruction discount lowers `HIGH` to `MEDIUM` for a 2+ reviewer `invariant` cluster whose quotes are not independent |
+| `malformed-row` | skipped | `1` | `0` | epic 118 (EST-7267 Q1): `ReadStream` ignores a line that does not start with `CRITICAL`, `HIGH`, `MEDIUM` or `LOW` and a pipe as prose, as `stream.parse` does, so the `GARBAGE` row is not counted; a malformed row that starts with a severity still is |
 
 ## Added fields
 
