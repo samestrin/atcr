@@ -773,12 +773,22 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 		require.FileExists(t, ran)
 		require.NoError(t, os.Remove(ran))
 
-		postSignedLinearIssue(t, base, "iss-2")
+		// The usage is charged before the first job releases the pull
+		// request, so an event that arrives first is refused as busy (using
+		// no claim); send another, under a new issue, until one is refused
+		// by the cap.
 		var comment string
-		select {
-		case comment = <-posted:
-		case <-time.After(60 * time.Second):
-			t.Fatalf("no refusal comment; daemon stderr:\n%s", stderr.String())
+		deadline := time.After(60 * time.Second)
+	wait:
+		for i := 2; ; i++ {
+			postSignedLinearIssue(t, base, fmt.Sprintf("iss-%d", i))
+			select {
+			case comment = <-posted:
+				break wait
+			case <-time.After(250 * time.Millisecond):
+			case <-deadline:
+				t.Fatalf("no refusal comment; daemon stderr:\n%s", stderr.String())
+			}
 		}
 		require.NoError(t, stop())
 
