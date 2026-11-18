@@ -592,7 +592,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	defer func() { _ = tr.Close() }()
 	ir.Transcript = filepath.Join(debateSubdir, id, "transcript.jsonl")
 
-	rec := RunDebate(ctx, item, cast, cc, disp, tr)
+	rec := RunDebate(ctx, item, cast, "", cc, disp, tr)
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
