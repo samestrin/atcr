@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +264,134 @@ func TestAssemble_OneFailedRemoveIsSingular(t *testing.T) {
 	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
 	if code != 1 || !strings.Contains(stderr, "1 fragment not removed") {
 		t.Errorf("code %d, stderr:\n%s", code, stderr)
+	}
+}
+
+// TestAssemble_FailedRemoveNamesThePath pins that the recovery list names each
+// fragment by path even when the remove error does not: an os.Remove error is
+// a *PathError that already carries it, so the seam returns one that is not.
+func TestAssemble_FailedRemoveNamesThePath(t *testing.T) {
+	dir := setup(t, baseChangelog, map[string]string{"added-a.md": "- a. (epic 1)\n"})
+	orig := removeFragment
+	removeFragment = func(string) error { return errors.New("device busy") }
+	t.Cleanup(func() { removeFragment = orig })
+
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
+	if code != 1 {
+		t.Fatalf("code %d, want 1: %s", code, stderr)
+	}
+	want := "  " + filepath.Join(dir, "changelog.d", "added-a.md") + ": device busy"
+	if !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr)
+	}
+}
+
+// surviveAssemble assembles version 1.0.0 with removes of the stuck fragments
+// failing, so they survive into the next run as a crashed release leaves them.
+func surviveAssemble(t *testing.T, dir string, stuck ...string) {
+	t.Helper()
+	orig := removeFragment
+	removeFragment = func(path string) error {
+		for _, s := range stuck {
+			if filepath.Base(path) == s {
+				return errors.New("device busy")
+			}
+		}
+		return orig(path)
+	}
+	defer func() { removeFragment = orig }()
+	if code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01"); code != 1 {
+		t.Fatalf("first assemble: code %d, want 1: %s", code, stderr)
+	}
+}
+
+func TestAssemble_RefusesBulletAlreadyInChangelog(t *testing.T) {
+	tests := []struct {
+		name    string
+		frags   map[string]string
+		stuck   string
+		extra   string // appended to the survivor before the second run
+		wantErr string // the bullet's first line, as the refusal names it
+	}{
+		{
+			name:    "single-line bullet",
+			frags:   map[string]string{"added-a.md": "- a. (epic 1)\n", "fixed-b.md": "- b. (epic 1)\n"},
+			stuck:   "fixed-b.md",
+			wantErr: "- b. (epic 1)",
+		},
+		{
+			name:    "multi-line bullet",
+			frags:   map[string]string{"added-a.md": "- a, which wraps\n  onto a second line. (epic 1)\n"},
+			stuck:   "added-a.md",
+			wantErr: "- a, which wraps",
+		},
+		{
+			name:    "one consumed bullet among new ones",
+			frags:   map[string]string{"changed-c.md": "- c. (epic 1)\n"},
+			stuck:   "changed-c.md",
+			extra:   "- c2, added after the release. (epic 2)\n",
+			wantErr: "- c. (epic 1)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := setup(t, baseChangelog, tt.frags)
+			surviveAssemble(t, dir, tt.stuck)
+			survivor := filepath.Join(dir, "changelog.d", tt.stuck)
+			if tt.extra != "" {
+				writeFile(t, survivor, readFile(t, survivor)+tt.extra)
+			}
+			before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+
+			code, _, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02")
+			if code != 1 {
+				t.Fatalf("code %d, want 1: %s", code, stderr)
+			}
+			for _, want := range []string{survivor, tt.wantErr, "already in"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("stderr lacks %q:\n%s", want, stderr)
+				}
+			}
+			if got := readFile(t, filepath.Join(dir, "CHANGELOG.md")); got != before {
+				t.Errorf("CHANGELOG.md changed on refusal:\n%s", got)
+			}
+			if _, err := os.Stat(survivor); err != nil {
+				t.Errorf("survivor removed on refusal: %v", err)
+			}
+
+			// Dry-run is unchanged: it still prints the section.
+			code, stdout, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02", "--dry-run")
+			if code != 0 || !strings.Contains(stdout, tt.wantErr) {
+				t.Errorf("dry-run: code %d, stdout %q, stderr %s", code, stdout, stderr)
+			}
+		})
+	}
+}
+
+// TestAssemble_NewBulletsPass is the known-good side of the guard: a bullet
+// matches only as a whole, at line boundaries, with its continuation lines.
+func TestAssemble_NewBulletsPass(t *testing.T) {
+	changelog := "# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-10-27\n\n### Added\n\n" +
+		"- old entry. (epic 1)\n" +
+		"- wrapped entry\n  with a second line. (epic 1)\n" +
+		"- nested entry. (epic 1)\n  - a sub-point.\n"
+	tests := map[string]string{
+		"brand new":                 "- new entry. (epic 2)\n",
+		"prefix of an old bullet":   "- old entry.\n",
+		"old bullet inside a line":  "- see: - old entry. (epic 1)\n",
+		"first line of a wrap":      "- wrapped entry\n",
+		"old bullet plus a wrap":    "- old entry. (epic 1)\n  now with more. (epic 2)\n",
+		"different continuation":    "- wrapped entry\n  with another line. (epic 2)\n",
+		"old bullet without nested": "- nested entry. (epic 1)\n",
+		"old continuation as text":  "- x\n  with a second line. (epic 1)\n",
+		"several new bullets":       "- one. (epic 2)\n- two\n  wrapped. (epic 2)\n",
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := setup(t, changelog, map[string]string{"added-x.md": body})
+			if code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01"); code != 0 {
+				t.Fatalf("code %d: %s", code, stderr)
+			}
+		})
 	}
 }

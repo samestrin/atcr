@@ -1,0 +1,1 @@
+- `go run ./cmd/changelog assemble` names each fragment it could not delete by its path, and refuses, writing nothing, when a fragment bullet is already in `CHANGELOG.md`, so a fragment left behind by a failed delete is not released twice. (epic 116)
