@@ -31,6 +31,20 @@ func TestRunVerify_HarnessUnavailableIsReported(t *testing.T) {
 	assert.Contains(t, res.HarnessReason, "no head commit")
 }
 
+// The headless-manifest reason names only the reachable causes: a baseline
+// scan of a tree with uncommitted changes, and a review made before baseline
+// scans recorded HEAD. No atcr command has a --diff-file flag (the diff
+// ingestion path serves only `atcr benchmark run`, whose review directories
+// are temporary), so the user-facing "verification did not run: ..." error
+// must not name one (debt row 29c9921cbd70b872, epic 124 T3).
+func TestHarnessUnavailableReason_NamesOnlyReachableCauses(t *testing.T) {
+	reason := harnessUnavailableReason(ErrNoManifestHead)
+	assert.NotContains(t, reason, "--diff-file", "no atcr command has a --diff-file flag")
+	assert.Contains(t, reason, "no head commit")
+	assert.Contains(t, reason, "a baseline scan of a tree with uncommitted changes")
+	assert.Contains(t, reason, "a review made before baseline scans recorded HEAD")
+}
+
 // Any other harness failure gets a generic reason: the error detail can carry a
 // path, which the stage keeps out of every output.
 func TestRunVerify_HarnessUnavailableReasonIsGeneric(t *testing.T) {
