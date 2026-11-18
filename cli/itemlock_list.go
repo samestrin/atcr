@@ -23,10 +23,20 @@ const (
 	debtLockFlagResolved = "item-resolved"
 )
 
-// debtLocksReport is the --json shape of `atcr debt locks`.
+// debtLocksReport is the --json shape of `atcr debt locks`. Warnings is empty,
+// never null, when every ref under the lock prefix reads as a lock.
 type debtLocksReport struct {
-	OlderThan string        `json:"older_than"`
-	Locks     []debtLockRow `json:"locks"`
+	OlderThan string            `json:"older_than"`
+	Locks     []debtLockRow     `json:"locks"`
+	Warnings  []debtLockWarning `json:"warnings"`
+}
+
+// debtLockWarning is one ref under refs/atcr/debt-locks/ that could not be read
+// as a lock (epic 122 T4): it is shown, never hidden, and never frees anything.
+type debtLockWarning struct {
+	Ref    string `json:"ref"`
+	Remote string `json:"remote"`
+	Reason string `json:"reason"`
 }
 
 // debtLockRow is one lock. Status is the item's folded status in the store, ""
@@ -53,7 +63,9 @@ func newDebtLocksCmd() *cobra.Command {
 			"older than --older-than (default 12h) and a lock on an item whose status in\n" +
 			"the store is resolved. A flag is a prompt to ask the holder, nothing more:\n" +
 			"there is no liveness check, and the command never frees a lock. Release one\n" +
-			"with atcr debt unlock --holder <holder> <id>.",
+			"with atcr debt unlock --holder <holder> <id>. A ref under the lock namespace\n" +
+			"that cannot be read as a lock is shown as a warning, never hidden, and does\n" +
+			"not fail the listing.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtLocks,
 	}
@@ -75,7 +87,7 @@ func runDebtLocks(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	locks, err := localdebt.ItemLocker{Dir: dir}.List(cmd.Context())
+	locks, lockWarnings, err := localdebt.ItemLocker{Dir: dir}.List(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("atcr debt locks: %w", err)
 	}
@@ -88,7 +100,14 @@ func runDebtLocks(cmd *cobra.Command, _ []string) error {
 		status[s.ID] = s.Status
 	}
 	now := time.Now()
-	rep := debtLocksReport{OlderThan: olderThan.String(), Locks: make([]debtLockRow, 0, len(locks))}
+	rep := debtLocksReport{
+		OlderThan: olderThan.String(),
+		Locks:     make([]debtLockRow, 0, len(locks)),
+		Warnings:  make([]debtLockWarning, 0, len(lockWarnings)),
+	}
+	for _, w := range lockWarnings {
+		rep.Warnings = append(rep.Warnings, debtLockWarning{Ref: w.Ref, Remote: w.Remote, Reason: w.Reason})
+	}
 	for _, lk := range locks {
 		row := debtLockRow{
 			ID: lk.ID, Holder: lk.Holder, LockedAt: lk.At.Format(time.RFC3339),
@@ -109,11 +128,13 @@ func runDebtLocks(cmd *cobra.Command, _ []string) error {
 }
 
 // renderDebtLocks prints the human table: one row per lock, its age, and why it
-// is flagged.
+// is flagged, then one line per warning for a ref that could not be read.
 func renderDebtLocks(w io.Writer, rep debtLocksReport, olderThan time.Duration, now time.Time) error {
 	if len(rep.Locks) == 0 {
-		_, err := fmt.Fprintln(w, "No item locks.")
-		return err
+		if _, err := fmt.Fprintln(w, "No item locks."); err != nil {
+			return err
+		}
+		return renderDebtLockWarnings(w, rep.Warnings)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "ID\tHOLDER\tLOCKED AT\tAGE\tSTATUS\tFLAGGED")
@@ -142,6 +163,25 @@ func renderDebtLocks(w io.Writer, rep debtLocksReport, olderThan time.Duration, 
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d of %d locks flagged. Nothing was freed; release a lock with atcr debt unlock.\n", flagged, len(rep.Locks))
-	return err
+	if _, err := fmt.Fprintf(w, "\n%d of %d locks flagged. Nothing was freed; release a lock with atcr debt unlock.\n", flagged, len(rep.Locks)); err != nil {
+		return err
+	}
+	return renderDebtLockWarnings(w, rep.Warnings)
+}
+
+// renderDebtLockWarnings prints one line per bad ref, so a ref that cannot be
+// read as a lock is shown and never hidden (epic 122 T4).
+func renderDebtLockWarnings(w io.Writer, warnings []debtLockWarning) error {
+	if len(warnings) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "\n%d warning(s): these refs under %s could not be read as locks; inspect or delete them with git:\n", len(warnings), localdebt.ItemLockRefPrefix); err != nil {
+		return err
+	}
+	for _, wn := range warnings {
+		if _, err := fmt.Fprintf(w, "  %s: %s\n", wn.Ref, wn.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }

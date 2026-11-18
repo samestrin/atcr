@@ -1125,12 +1125,20 @@ store does not hold the id). It flags a lock for a second look when:
 ```bash
 atcr debt locks                      # table, with a count of flagged locks
 atcr debt locks --older-than 48h     # flag only locks older than two days
-atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}]}
+atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}], warnings: [{ref, remote, reason}]}
 ```
 
 Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
 `older-than` and/or `item-resolved`, and is an empty list for a lock nothing
 flags.
+
+A ref under `refs/atcr/debt-locks/` that cannot be read as a lock — its name is
+not a hex-encoded id, or its tag cannot be read or records a different id — is
+reported as a warning, in the human output and in the `warnings` list of
+`--json` (an empty list when there is nothing to warn about). Every other lock
+is still listed: one bad ref never hides the rest, and the listing still
+succeeds. Inspect or delete a warned-about ref with git; `locks` itself never
+changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To
