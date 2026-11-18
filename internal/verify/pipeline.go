@@ -621,7 +621,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 // any other error's text can carry a repository path.
 func harnessUnavailableReason(err error) string {
 	if errors.Is(err, ErrNoManifestHead) {
-		return "the review recorded no head commit to snapshot (a --diff-file review, a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD)"
+		return "the review recorded no head commit to snapshot (a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD)"
 	}
 	return "the repository snapshot at the review's head could not be built"
 }

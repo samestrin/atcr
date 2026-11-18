@@ -298,6 +298,27 @@ func TestPrepareReview_ThreatMap_RefusedOutsideGitRange(t *testing.T) {
 	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
 }
 
+// The refusal is raised on two paths (baseline scan and diff-based
+// preparation), so its text must name both causes, not only the baseline one
+// (technical-debt row 6b3ad13381e938db).
+func TestPrepareReview_ThreatMap_RefusalNamesBothCauses(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, _, _ := threatMapRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, "", "")
+	req.ThreatMapper = &fakeMapper{keep: []string{"auth.go"}}
+
+	_, err := PrepareReviewFromRepo(context.Background(), cfg, req)
+	require.ErrorIs(t, err, ErrThreatMapNeedsRange)
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
+	assert.Contains(t, err.Error(), "diff-based preparation", "the baseline refusal must also name the diff-preparation cause")
+
+	_, err = PrepareReviewFromDiff(context.Background(), cfg, req, "diff --git a/x b/x\n")
+	require.ErrorIs(t, err, ErrThreatMapNeedsRange)
+	assert.Contains(t, err.Error(), "baseline (--all/--scope) scan")
+	assert.Contains(t, err.Error(), "diff-based preparation", "the diff refusal must name its own cause")
+}
+
 // cancellingMapper cancels the run while it maps, as a Ctrl-C during the call
 // would, and returns the context error.
 type cancellingMapper struct{ cancel context.CancelFunc }
