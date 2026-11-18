@@ -146,6 +146,16 @@ func TestDebtValidate_SymlinkedRoot(t *testing.T) {
 	assert.Equal(t, validateValid, got["p"].Status)
 }
 
+// A relative --root still grounds a link whose in-root target is absolute.
+func TestDebtValidate_RelativeRootAbsoluteLink(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join(root, "a.go"), filepath.Join(root, "link.go")))
+	t.Chdir(root)
+	got := validateRows(t, ".", localdebt.Record{File: "link.go", Line: 1, Problem: "p"})
+	assert.Equal(t, validateValid, got["p"].Status)
+}
+
 func debtValidateStore(t *testing.T) (dir, root string) {
 	t.Helper()
 	root = t.TempDir()
