@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 
@@ -26,8 +27,10 @@ const debateAWSKey = "AKIA" + "QYLPMN5HHHFPZAM2"
 
 // Epic 106.3 T2: the registry's secret_guard reaches every seat's Invocation
 // through debateOne, RunDebate, runTurn and driveSeat, and an unset policy is
-// warn, the registry default. A seat's prompt was never scanned before it is
-// built, so no message is counted as already guarded.
+// warn, the registry default. driveSeat guards the seat's prompt before it is
+// built (so a single-shot seat, which llmclient.Chat never sees, is covered),
+// so the prompt is counted as already guarded and the tool loop scans only the
+// messages it adds.
 func TestDebateOne_SeatsCarryRegistrySecretGuard(t *testing.T) {
 	for setting, want := range map[string]string{
 		"":       registry.DefaultSecretGuard,
@@ -50,7 +53,7 @@ func TestDebateOne_SeatsCarryRegistrySecretGuard(t *testing.T) {
 		require.Len(t, invs, 3, "setting %q: one Chat call per seat", setting)
 		for i, inv := range invs {
 			assert.Equal(t, want, inv.SecretGuard, "setting %q: seat %d", setting, i+1)
-			assert.Equal(t, 0, inv.AlreadyGuardedMessages, "setting %q: seat %d", setting, i+1)
+			assert.Equal(t, 1, inv.AlreadyGuardedMessages, "setting %q: seat %d", setting, i+1)
 		}
 	}
 }
@@ -83,26 +86,67 @@ func (s *seatServer) sent() []string {
 	return append([]string(nil), s.bodies...)
 }
 
-// realCast is the three-seat cast of debateRoster, routed to baseURL.
-func realCast(t *testing.T, baseURL string) Cast {
+// seatShape is how a debate seat reaches its endpoint: the tool loop (Chat),
+// or the single-shot degrade (CompleteWithMeta) a seat without function
+// calling, or one with no dispatcher wired, is sent down.
+type seatShape struct {
+	name     string
+	fc       bool
+	dispatch bool
+}
+
+var seatShapes = []seatShape{
+	{name: "tool loop", fc: true, dispatch: true},
+	{name: "no function calling", fc: false, dispatch: true},
+	{name: "no dispatcher", fc: true, dispatch: false},
+}
+
+// realCast is the three-seat cast of debateRoster, routed to baseURL, with
+// every seat's function calling set by fc.
+func realCast(t *testing.T, baseURL string, fc bool) Cast {
 	t.Helper()
 	reg := debateRoster()
 	reg.Providers["p"] = registry.Provider{APIKeyEnv: "ATCR_DEBATE_TEST_KEY", BaseURL: baseURL}
+	for n, a := range reg.Agents {
+		a.SupportsFC = fc
+		reg.Agents[n] = a
+	}
 	t.Setenv("ATCR_DEBATE_TEST_KEY", "k")
 	cast, ok, reason := CastRoles(reg, debateItem(), Config{})
 	require.True(t, ok, reason)
 	return cast
 }
 
+// captureStderr returns what fn writes to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
 // runRealDebate drives one debate through the real llmclient under policy and
-// returns the record and what was logged.
-func runRealDebate(t *testing.T, policy string, item reconcile.DisagreementItem, cast Cast) (Record, string) {
+// returns the record and what was logged or written to stderr.
+func runRealDebate(t *testing.T, policy string, item reconcile.DisagreementItem, cast Cast, shape seatShape) (Record, string) {
 	t.Helper()
 	var logs bytes.Buffer
 	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
-	cc := llmclient.New()
-	rec := RunDebate(ctx, item, cast, policy, cc, &fakeDispatcher{}, nil)
-	return rec, logs.String()
+	var disp Dispatcher
+	if shape.dispatch {
+		disp = &fakeDispatcher{}
+	}
+	var rec Record
+	stderr := captureStderr(t, func() {
+		rec = RunDebate(ctx, item, cast, policy, llmclient.New(), disp, nil)
+	})
+	return rec, logs.String() + stderr
 }
 
 func ruling(int) string { return `{"outcome":"uphold","settled_severity":"HIGH"}` }
@@ -117,52 +161,59 @@ func TestRunDebate_SecretInEverySeatPromptFollowsPolicy(t *testing.T) {
 		return item
 	}
 
-	t.Run("warn sends it and warns", func(t *testing.T) {
-		srv := &seatServer{}
-		rec, logs := runRealDebate(t, "warn", secretItem(), realCast(t, srv.start(t, ruling)))
-		assert.Empty(t, rec.Halted)
-		bodies := srv.sent()
-		require.Len(t, bodies, 3, "proposer, challenger and judge are each sent")
-		for i, b := range bodies {
-			assert.Contains(t, b, debateAWSKey, "seat %d: warn sends the prompt unchanged", i+1)
-		}
-		assert.Contains(t, logs, "secret_guard: warn")
-	})
+	for _, shape := range seatShapes {
+		t.Run(shape.name+": warn sends it and warns", func(t *testing.T) {
+			srv := &seatServer{}
+			rec, out := runRealDebate(t, "warn", secretItem(), realCast(t, srv.start(t, ruling), shape.fc), shape)
+			assert.Empty(t, rec.Halted)
+			bodies := srv.sent()
+			require.Len(t, bodies, 3, "proposer, challenger and judge are each sent")
+			for i, b := range bodies {
+				assert.Contains(t, b, debateAWSKey, "seat %d: warn sends the prompt unchanged", i+1)
+			}
+			assert.Contains(t, out, "secret_guard: warn")
+			assert.NotContains(t, out, debateAWSKey, "a warning never holds the secret")
+		})
 
-	t.Run("redact sends the placeholder", func(t *testing.T) {
-		srv := &seatServer{}
-		rec, _ := runRealDebate(t, "redact", secretItem(), realCast(t, srv.start(t, ruling)))
-		assert.Empty(t, rec.Halted)
-		bodies := srv.sent()
-		require.Len(t, bodies, 3)
-		for i, b := range bodies {
-			assert.NotContains(t, b, debateAWSKey, "seat %d", i+1)
-			assert.Contains(t, b, payload.SecretPlaceholder, "seat %d", i+1)
-		}
-	})
+		t.Run(shape.name+": redact sends the placeholder", func(t *testing.T) {
+			srv := &seatServer{}
+			rec, _ := runRealDebate(t, "redact", secretItem(), realCast(t, srv.start(t, ruling), shape.fc), shape)
+			assert.Empty(t, rec.Halted)
+			bodies := srv.sent()
+			require.Len(t, bodies, 3)
+			for i, b := range bodies {
+				assert.NotContains(t, b, debateAWSKey, "seat %d", i+1)
+				assert.Contains(t, b, payload.SecretPlaceholder, "seat %d", i+1)
+			}
+		})
 
-	t.Run("block sends nothing and halts every seat", func(t *testing.T) {
-		srv := &seatServer{}
-		cast := realCast(t, srv.start(t, ruling))
-		rec, _ := runRealDebate(t, "block", secretItem(), cast)
-		assert.Empty(t, srv.sent(), "no seat's request may leave")
-		assert.Equal(t, []string{cast.Proposer.Label, cast.Challenger.Label, cast.Judge.Label}, rec.Halted)
-		assert.Empty(t, rec.JudgeRaw)
-	})
+		t.Run(shape.name+": block sends nothing and halts every seat", func(t *testing.T) {
+			srv := &seatServer{}
+			cast := realCast(t, srv.start(t, ruling), shape.fc)
+			rec, _ := runRealDebate(t, "block", secretItem(), cast, shape)
+			assert.Empty(t, srv.sent(), "no seat's request may leave")
+			assert.Equal(t, []string{cast.Proposer.Label, cast.Challenger.Label, cast.Judge.Label}, rec.Halted)
+			assert.Empty(t, rec.JudgeRaw)
+		})
+	}
 }
 
 // Through the real client: a credential that first appears in the proposer's
 // statement reaches only the challenger's and the judge's prompts, and block
 // stops those two seats' requests while the proposer's clean one was sent.
 func TestRunDebate_SecretInProposerStatementBlocksLaterSeats(t *testing.T) {
-	srv := &seatServer{}
-	cast := realCast(t, srv.start(t, func(n int) string {
-		if n == 1 {
-			return "the config holds " + debateAWSKey
-		}
-		return ruling(n)
-	}))
-	rec, _ := runRealDebate(t, "block", debateItem(), cast)
-	assert.Len(t, srv.sent(), 1, "only the proposer's clean request is sent")
-	assert.Equal(t, []string{cast.Challenger.Label, cast.Judge.Label}, rec.Halted)
+	for _, shape := range seatShapes {
+		t.Run(shape.name, func(t *testing.T) {
+			srv := &seatServer{}
+			cast := realCast(t, srv.start(t, func(n int) string {
+				if n == 1 {
+					return "the config holds " + debateAWSKey
+				}
+				return ruling(n)
+			}), shape.fc)
+			rec, _ := runRealDebate(t, "block", debateItem(), cast, shape)
+			assert.Len(t, srv.sent(), 1, "only the proposer's clean request is sent")
+			assert.Equal(t, []string{cast.Challenger.Label, cast.Judge.Label}, rec.Halted)
+		})
+	}
 }
