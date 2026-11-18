@@ -453,7 +453,7 @@ func TestPlaywrightRunShell_CapHoldsAcrossFindBatches(t *testing.T) {
 	const files = playwrightMaxScreenshots + 6
 	writeScreenshots(t, dir, files)
 	// Confirm the wrapped find really splits the matches into batches.
-	probe := exec.Command(filepath.Join(bin, "find"), playwrightOutputDir, "-type", "f", "-exec", "sh", "-c", "echo batch", "sh", "{}", "+")
+	probe := exec.Command("/bin/sh", "-c", `find "$1" -type f -exec sh -c 'echo batch' sh {} +`, "sh", playwrightOutputDir)
 	probe.Dir = dir
 	probe.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := probe.Output()
@@ -482,7 +482,7 @@ exec "$real" "$@"
 	if len(names) != 1 {
 		t.Fatalf("packed names = %q, want only the first screenshot", names)
 	}
-	for _, want := range []string{"invalid option", "atcr: screenshot pass:", "could not append", "kept 1 screenshot"} {
+	for _, want := range []string{"invalid option", "atcr: screenshot pass: tar append failed", "kept 1 screenshot"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("run output = %q, want it to mention %q", out, want)
 		}
