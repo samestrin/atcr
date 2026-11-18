@@ -1,0 +1,1 @@
+- `atcr debt filter` reads the store once for both halves of its output, so `summary.matched` always agrees with `items` even when another process writes to the store while the command runs. (epic 123)
