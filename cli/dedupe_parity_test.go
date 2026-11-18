@@ -225,7 +225,7 @@ func dedupeParityCases() []dedupeParityCase {
 // dedupeDeviation is one allowed difference, read from DIFFERENCES.md.
 type dedupeDeviation struct {
 	index int    // position within its case's rows, the stale-row guard's key
-	field string // category, member category, confidence or source
+	field string // category, member category, confidence, source or skipped
 	from  string // the td-dedupe value in the golden
 	to    string // the atcr dedupe value
 }
@@ -507,11 +507,15 @@ func dedupeParityPaths(tc dedupeParityCase) string {
 }
 
 // applyDedupeDeviations rewrites the golden's category/source/confidence values
-// through the documented deviations and returns the indexes of the rows it
-// used, so the caller can detect a stale row at the row level. Fields without a
-// deviation are left alone, so the comparison stays exact.
+// and its summary's skipped count through the documented deviations and
+// returns the indexes of the rows it used, so the caller can detect a stale row
+// at the row level. Fields without a deviation are left alone, so the
+// comparison stays exact.
 func applyDedupeDeviations(golden map[string]any, deviations []dedupeDeviation) map[int]bool {
 	applied := map[int]bool{}
+	if summary, ok := golden["summary"].(map[string]any); ok {
+		applyDedupeSkippedDeviation(summary, deviations, applied)
+	}
 	rows, ok := golden["merged"].([]any)
 	if !ok {
 		return applied
@@ -553,6 +557,25 @@ func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, fi
 			applied[d.index] = true
 			return
 		}
+	}
+}
+
+// applyDedupeSkippedDeviation rewrites summary.skipped, a JSON number, when a
+// "skipped" row's from value is its decimal spelling.
+func applyDedupeSkippedDeviation(summary map[string]any, deviations []dedupeDeviation, applied map[int]bool) {
+	got, ok := summary["skipped"].(float64)
+	if !ok {
+		return
+	}
+	for _, d := range deviations {
+		if d.field != "skipped" || d.from != strconv.FormatFloat(got, 'f', -1, 64) {
+			continue
+		}
+		if to, err := strconv.ParseFloat(d.to, 64); err == nil {
+			summary["skipped"] = to
+			applied[d.index] = true
+		}
+		return
 	}
 }
 
@@ -693,8 +716,8 @@ func readDedupeDeviations(t *testing.T) map[string][]dedupeDeviation {
 		}
 		name, field, from, to := cells[0], cells[1], cells[2], cells[3]
 		require.Truef(t, known[name], "%s: row %q names a case that does not exist", dedupeParityDiffDoc, name)
-		require.Containsf(t, []string{"category", "member category", "confidence", "source"}, field,
-			"%s: row %q names field %q; only category, member category, confidence and source may differ", dedupeParityDiffDoc, name, field)
+		require.Containsf(t, []string{"category", "member category", "confidence", "source", "skipped"}, field,
+			"%s: row %q names field %q; only category, member category, confidence, source and skipped may differ", dedupeParityDiffDoc, name, field)
 		// cells[4] is the human "Why" column; it is prose, not test input.
 		out[name] = append(out[name], dedupeDeviation{index: len(out[name]), field: field, from: from, to: to})
 	}
