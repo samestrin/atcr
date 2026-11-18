@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -330,6 +333,110 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 	}
 	if !bytes.Equal(res.Screenshots[1].Data, extra) {
 		t.Fatalf("extra screenshot = %+v", res.Screenshots[1])
+	}
+}
+
+// runPlaywrightShellLocally runs playwrightRunShell with /bin/sh in dir, the
+// stand-in for /work, with a no-op command, and returns the names packed into
+// the screenshots tar. It skips when sh, find or tar is missing.
+func runPlaywrightShellLocally(t *testing.T, dir string) []string {
+	t.Helper()
+	for _, tool := range []string{"sh", "find", "tar"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available: %v", tool, err)
+		}
+	}
+	cmd := exec.Command("/bin/sh", "-c", playwrightRunShell, "sh", "true")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run shell: %v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(playwrightScreenshotsPath)))
+	if err != nil {
+		t.Fatalf("read screenshots tar: %v", err)
+	}
+	var names []string
+	tr := tar.NewReader(bytes.NewReader(raw))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names
+		}
+		if err != nil {
+			t.Fatalf("read screenshots tar: %v", err)
+		}
+		names = append(names, h.Name)
+	}
+}
+
+// TestPlaywrightRunShell_PacksNewlineNamedScreenshot runs the real packing
+// shell: a screenshot whose path holds a newline is packed under its exact name,
+// not split into two names that match no file.
+func TestPlaywrightRunShell_PacksNewlineNamedScreenshot(t *testing.T) {
+	dir := t.TempDir()
+	name := playwrightOutputDir + "/home-failed\nretry-1.png"
+	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(playwrightOutputDir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte("\x89PNG fake"), 0o644); err != nil {
+		t.Skipf("filesystem refuses a newline in a file name: %v", err)
+	}
+	names := runPlaywrightShellLocally(t, dir)
+	if !slices.Equal(names, []string{name}) {
+		t.Fatalf("packed names = %q, want exactly %q", names, name)
+	}
+}
+
+// TestPlaywrightRunShell_CapHoldsAcrossFindBatches packs more screenshots than
+// one `find -exec ... {} +` batch holds: the 64-file cap counts across batches,
+// so the second batch adds nothing.
+func TestPlaywrightRunShell_CapHoldsAcrossFindBatches(t *testing.T) {
+	if _, err := exec.LookPath("find"); err != nil {
+		t.Skipf("find not available: %v", err)
+	}
+	dir := t.TempDir()
+	// Long path components push the argv past one batch with few files.
+	deep := playwrightOutputDir
+	for i := range 15 {
+		deep += "/" + strings.Repeat(string(rune('a'+i)), 240)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(deep)), 0o755); err != nil {
+		t.Skipf("filesystem refuses a long path: %v", err)
+	}
+	const files = 700
+	for i := range files {
+		p := filepath.Join(dir, filepath.FromSlash(deep), fmt.Sprintf("%03d-%s.png", i, strings.Repeat("s", 230)))
+		if err := os.WriteFile(p, []byte("\x89PNG"), 0o644); err != nil {
+			t.Skipf("filesystem refuses a long path: %v", err)
+		}
+	}
+	// Confirm this find really splits the matches into more than one batch.
+	probe := exec.Command("find", playwrightOutputDir, "-type", "f", "-exec", "sh", "-c", "echo batch", "sh", "{}", "+")
+	probe.Dir = dir
+	out, err := probe.Output()
+	if err != nil {
+		t.Fatalf("probe find: %v", err)
+	}
+	if batches := strings.Count(string(out), "batch"); batches < 2 {
+		t.Skipf("find packed %d files into %d batch; the cross-batch cap is not exercised", files, batches)
+	}
+	if names := runPlaywrightShellLocally(t, dir); len(names) != playwrightMaxScreenshots {
+		t.Fatalf("packed %d files, want the cap %d", len(names), playwrightMaxScreenshots)
+	}
+}
+
+// TestPlaywrightRunShell_PacksFromFindArgv pins the packing path: find hands the
+// matches to a tar -rf loop as argv, with no newline-separated list between them.
+func TestPlaywrightRunShell_PacksFromFindArgv(t *testing.T) {
+	for _, s := range []string{"find " + playwrightOutputDir + " ", "-exec sh -c ", "tar -rf " + playwrightScreenshotsPath, "{} +"} {
+		if !strings.Contains(playwrightRunShell, s) {
+			t.Fatalf("run shell %q missing %q", playwrightRunShell, s)
+		}
+	}
+	for _, s := range []string{"| head", " -T ", "screenshots.list"} {
+		if strings.Contains(playwrightRunShell, s) {
+			t.Fatalf("run shell %q still holds the newline list %q", playwrightRunShell, s)
+		}
 	}
 }
 
