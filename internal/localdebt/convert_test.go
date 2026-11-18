@@ -293,3 +293,156 @@ func TestFoldDiff_NamesEveryChangedMissingAndNewID(t *testing.T) {
 	require.ErrorIs(t, err, ErrFoldChanged)
 	assert.Contains(t, err.Error(), "for 7 item(s): 1, 2, 3, 4, 5 and 2 more; nothing was changed")
 }
+
+// fullTie appends two records of idP that tie on id, timestamp and status and
+// differ in model and justification, ordered so the event layout would pick the
+// other one: the store cannot convert as it is.
+func fullTie(t *testing.T, status string) string {
+	t.Helper()
+	a := eventRec(idP, "2026-06-14T10:00:00Z", status)
+	a.Model, a.Justification = "model-a", "reason a"
+	b := a
+	b.Model, b.Justification = "model-b", "reason b"
+	nameOf := func(r Record) string {
+		n, err := eventFileName(r, []byte(mustLine(t, r)))
+		require.NoError(t, err)
+		return n
+	}
+	first, last := a, b
+	if nameOf(b) > nameOf(a) {
+		first, last = b, a
+	}
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, Append(dir, first))
+	require.NoError(t, Append(dir, last))
+	return dir
+}
+
+// TestConvert_CompactClearsAFullTie (TD row 3679acc34b7a08d8): the refusal names
+// the way out, and `debt compact` folds a tied item to one record, after which the
+// store converts with the fold unchanged.
+func TestConvert_CompactClearsAFullTie(t *testing.T) {
+	dir := fullTie(t, "")
+	before := foldedAll(t, dir)
+
+	_, err := Convert(dir, quiet)
+	require.ErrorIs(t, err, ErrFoldChanged)
+	assert.Contains(t, err.Error(), "run `atcr debt compact`, then convert again")
+
+	_, err = Compact(dir, quiet)
+	require.NoError(t, err)
+	res, err := Convert(dir, quiet)
+	require.NoError(t, err, "compaction cleared the tie")
+	assert.Equal(t, []string{"2026-06.jsonl"}, res.Shards)
+	assert.Equal(t, before, foldedAll(t, dir), "the fold is the one the store had before compact and convert")
+}
+
+// TestConvert_CompactKeepsTiedResolutionsWithDifferentReasons: compaction keeps
+// every resolution reason, so such a tie survives it. The refusal says so rather
+// than sending the user round the same loop.
+func TestConvert_CompactKeepsTiedResolutionsWithDifferentReasons(t *testing.T) {
+	dir := fullTie(t, StatusResolved)
+	_, err := Compact(dir, quiet)
+	require.NoError(t, err)
+
+	_, err = Convert(dir, quiet)
+	require.ErrorIs(t, err, ErrFoldChanged)
+	assert.Contains(t, err.Error(), "resolutions with different reasons survive compaction")
+}
+
+// isolateCache points the user cache dir and the OS temp dir of this test at
+// fresh directories and returns them.
+func isolateCache(t *testing.T) (cache, tmp string) {
+	t.Helper()
+	home, tmp := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("LocalAppData", filepath.Join(home, "cache"))
+	t.Setenv("TMPDIR", tmp)
+	cache, err := os.UserCacheDir()
+	require.NoError(t, err)
+	return cache, tmp
+}
+
+// TestConvertPlan_StagesUnderTheUserCacheDir (TD row dc8c372ee0c8ae31): a dry run
+// stages its copy of the records in a 0700 directory of the user cache dir, never
+// the shared OS temp dir, and removes it when done.
+func TestConvertPlan_StagesUnderTheUserCacheDir(t *testing.T) {
+	cache, tmp := isolateCache(t)
+	dir := buildStore(t, layoutShards)
+
+	var staged string
+	convertAfterStage = func(stageDir string) {
+		staged = stageDir
+		info, err := os.Stat(stageDir)
+		require.NoError(t, err)
+		assert.Equal(t, fs.FileMode(0o700), info.Mode().Perm(), "the staged records are private to the user")
+		entries, err := os.ReadDir(stageDir)
+		require.NoError(t, err)
+		assert.NotEmpty(t, entries, "fixture: the dry run staged events")
+	}
+	defer func() { convertAfterStage = nil }()
+
+	_, err := ConvertPlan(dir, quiet)
+	require.NoError(t, err)
+	require.NotEmpty(t, staged, "the dry run staged its events")
+	rel, err := filepath.Rel(cache, staged)
+	require.NoError(t, err)
+	assert.False(t, strings.HasPrefix(rel, ".."), "staged under the user cache dir, got %s", staged)
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing staged in the OS temp dir")
+	_, err = os.Stat(staged)
+	assert.True(t, os.IsNotExist(err), "the staging is removed when the dry run ends")
+}
+
+// TestConvert_RemovesTheCopyOfACrashedDryRun: a dry run that dies leaves its staged
+// copy behind (no deferred cleanup runs); the next run on that store, dry or real,
+// removes it.
+func TestConvert_RemovesTheCopyOfACrashedDryRun(t *testing.T) {
+	for _, dryRun := range []bool{true, false} {
+		t.Run(map[bool]string{true: "dry-run", false: "real"}[dryRun], func(t *testing.T) {
+			isolateCache(t)
+			dir := buildStore(t, layoutShards)
+			stale, err := dryRunStaging(dir)
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(stale, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(stale, idY+".20260901T000000.000000000Z-000000000000.json"),
+				[]byte(mustLine(t, eventRec(idY, "2026-09-01T00:00:00Z", ""))), 0o600))
+
+			run := Convert
+			if dryRun {
+				run = ConvertPlan
+			}
+			_, err = run(dir, quiet)
+			require.NoError(t, err)
+			_, err = os.Stat(stale)
+			assert.True(t, os.IsNotExist(err), "the stale copy is removed")
+		})
+	}
+}
+
+// TestConvert_ReportsTheOptIn (TD row 8f8e6986e9550a96): a run that converts no
+// shard still opts the store in to the event layout, and says so; a store already
+// opted in is not reported again. The dry run reports what the real run would do.
+func TestConvert_ReportsTheOptIn(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.jsonl"), []byte(mustLine(t, eventRec(idY, "2025-05-01T00:00:00Z", ""))), 0o600))
+
+	plan, err := ConvertPlan(dir, quiet)
+	require.NoError(t, err)
+	assert.True(t, plan.OptedIn, "the dry run reports the opt-in the real run makes")
+	assert.False(t, UsesEventLayout(dir), "the dry run does not opt in")
+
+	res, err := Convert(dir, quiet)
+	require.NoError(t, err)
+	assert.Empty(t, res.Shards, "fixture: nothing converts")
+	assert.True(t, res.OptedIn)
+	assert.True(t, UsesEventLayout(dir))
+	assert.Equal(t, res, plan)
+
+	res, err = Convert(dir, quiet)
+	require.NoError(t, err)
+	assert.False(t, res.OptedIn, "an opted-in store is not opted in again")
+}
