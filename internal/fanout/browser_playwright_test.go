@@ -341,6 +341,15 @@ func TestPlaywrightBackend_RunsNpxPlaywrightInSandbox(t *testing.T) {
 // the screenshots tar. It skips when sh, find or tar is missing.
 func runPlaywrightShellLocally(t *testing.T, dir string) []string {
 	t.Helper()
+	names, _ := runPlaywrightShellWithBin(t, dir, "")
+	return names
+}
+
+// runPlaywrightShellWithBin is runPlaywrightShellLocally with bin, when set,
+// put first on PATH so its fake tools stand in for the real ones. It also
+// returns the run's combined output.
+func runPlaywrightShellWithBin(t *testing.T, dir, bin string) ([]string, string) {
+	t.Helper()
 	for _, tool := range []string{"sh", "find", "tar"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not available: %v", tool, err)
@@ -348,24 +357,71 @@ func runPlaywrightShellLocally(t *testing.T, dir string) []string {
 	}
 	cmd := exec.Command("/bin/sh", "-c", playwrightRunShell, "sh", "true")
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if bin != "" {
+		cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("run shell: %v\n%s", err, out)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(playwrightScreenshotsPath)))
 	if err != nil {
-		t.Fatalf("read screenshots tar: %v", err)
+		t.Fatalf("read screenshots tar: %v\n%s", err, out)
 	}
 	var names []string
 	tr := tar.NewReader(bytes.NewReader(raw))
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return names
+			return names, string(out)
 		}
 		if err != nil {
 			t.Fatalf("read screenshots tar: %v", err)
 		}
 		names = append(names, h.Name)
+	}
+}
+
+// writeFakeTool writes an executable sh script named name into bin. body may
+// name the real tool as $real.
+func writeFakeTool(t *testing.T, bin, name, body string) {
+	t.Helper()
+	real, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("%s not available: %v", name, err)
+	}
+	script := "#!/bin/sh\nreal='" + real + "'\n" + body
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeOneFilePerBatchFind writes a find into bin that runs the real one with a
+// trailing "+" turned into ";", so `-exec ... {} +` hands the packing loop one
+// file per batch whatever the host's ARG_MAX.
+func writeOneFilePerBatchFind(t *testing.T, bin string) {
+	t.Helper()
+	writeFakeTool(t, bin, "find", `n=$#; i=0
+for a; do
+	i=$((i+1)); shift
+	if [ "$i" -eq "$n" ] && [ "$a" = "+" ]; then a=';'; fi
+	set -- "$@" "$a"
+done
+exec "$real" "$@"
+`)
+}
+
+// writeScreenshots writes n small screenshots under the output directory in dir.
+func writeScreenshots(t *testing.T, dir string, n int) {
+	t.Helper()
+	out := filepath.Join(dir, filepath.FromSlash(playwrightOutputDir))
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range n {
+		if err := os.WriteFile(filepath.Join(out, fmt.Sprintf("%03d.png", i)), []byte("\x89PNG"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -389,39 +445,87 @@ func TestPlaywrightRunShell_PacksNewlineNamedScreenshot(t *testing.T) {
 
 // TestPlaywrightRunShell_CapHoldsAcrossFindBatches packs more screenshots than
 // one `find -exec ... {} +` batch holds: the 64-file cap counts across batches,
-// so the second batch adds nothing.
+// so the later batches add nothing. A find wrapper forces one file per batch, so
+// the test does not depend on the host's ARG_MAX and cannot skip on batch size.
 func TestPlaywrightRunShell_CapHoldsAcrossFindBatches(t *testing.T) {
-	if _, err := exec.LookPath("find"); err != nil {
-		t.Skipf("find not available: %v", err)
-	}
-	dir := t.TempDir()
-	// Long path components push the argv past one batch with few files.
-	deep := playwrightOutputDir
-	for i := range 15 {
-		deep += "/" + strings.Repeat(string(rune('a'+i)), 240)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(deep)), 0o755); err != nil {
-		t.Skipf("filesystem refuses a long path: %v", err)
-	}
-	const files = 700
-	for i := range files {
-		p := filepath.Join(dir, filepath.FromSlash(deep), fmt.Sprintf("%03d-%s.png", i, strings.Repeat("s", 230)))
-		if err := os.WriteFile(p, []byte("\x89PNG"), 0o644); err != nil {
-			t.Skipf("filesystem refuses a long path: %v", err)
-		}
-	}
-	// Confirm this find really splits the matches into more than one batch.
-	probe := exec.Command("find", playwrightOutputDir, "-type", "f", "-exec", "sh", "-c", "echo batch", "sh", "{}", "+")
+	dir, bin := t.TempDir(), t.TempDir()
+	writeOneFilePerBatchFind(t, bin)
+	const files = playwrightMaxScreenshots + 6
+	writeScreenshots(t, dir, files)
+	// Confirm the wrapped find really splits the matches into batches.
+	probe := exec.Command(filepath.Join(bin, "find"), playwrightOutputDir, "-type", "f", "-exec", "sh", "-c", "echo batch", "sh", "{}", "+")
 	probe.Dir = dir
+	probe.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := probe.Output()
 	if err != nil {
 		t.Fatalf("probe find: %v", err)
 	}
-	if batches := strings.Count(string(out), "batch"); batches < 2 {
-		t.Skipf("find packed %d files into %d batch; the cross-batch cap is not exercised", files, batches)
+	if batches := strings.Count(string(out), "batch"); batches != files {
+		t.Fatalf("wrapped find ran %d batches for %d files, want one per file", batches, files)
 	}
-	if names := runPlaywrightShellLocally(t, dir); len(names) != playwrightMaxScreenshots {
+	if names, _ := runPlaywrightShellWithBin(t, dir, bin); len(names) != playwrightMaxScreenshots {
 		t.Fatalf("packed %d files, want the cap %d", len(names), playwrightMaxScreenshots)
+	}
+}
+
+// TestPlaywrightRunShell_ReportsFailedAppend runs the packing shell against a
+// tar with no append mode, as busybox's: the first screenshot is still packed,
+// and the run output says the append failed and how many were kept, instead of
+// dropping the rest silently.
+func TestPlaywrightRunShell_ReportsFailedAppend(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	writeFakeTool(t, bin, "tar", `case "$1" in -r*) echo "tar: invalid option -- 'r'" >&2; exit 1;; esac
+exec "$real" "$@"
+`)
+	writeScreenshots(t, dir, 3)
+	names, out := runPlaywrightShellWithBin(t, dir, bin)
+	if len(names) != 1 {
+		t.Fatalf("packed names = %q, want only the first screenshot", names)
+	}
+	for _, want := range []string{"invalid option", "atcr: screenshot pass:", "could not append", "kept 1 screenshot"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("run output = %q, want it to mention %q", out, want)
+		}
+	}
+	if strings.Count(out, "atcr: screenshot pass:") != 1 {
+		t.Errorf("run output = %q, want the failure reported once", out)
+	}
+}
+
+// TestPlaywrightRunShell_CreateOrAppendFollowsTheArchive: whether a screenshot
+// creates the tar or appends to it depends on whether the tar exists, not on
+// the count file. With the count file unusable (a directory stands in its
+// place), every batch reads a count of zero; a later batch must still append,
+// not recreate the tar over the screenshots already packed.
+func TestPlaywrightRunShell_CreateOrAppendFollowsTheArchive(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	writeOneFilePerBatchFind(t, bin)
+	writeScreenshots(t, dir, 3)
+	if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(playwrightWorkDir), "screenshots.count"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if names, out := runPlaywrightShellWithBin(t, dir, bin); len(names) != 3 {
+		t.Fatalf("packed names = %q, want all 3 screenshots\n%s", names, out)
+	}
+}
+
+// TestPlaywrightRunShell_NoScreenshotsIsQuiet: a run that wrote no output
+// directory leaves no screenshots tar and prints nothing.
+func TestPlaywrightRunShell_NoScreenshotsIsQuiet(t *testing.T) {
+	for _, tool := range []string{"sh", "find", "tar"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available: %v", tool, err)
+		}
+	}
+	dir := t.TempDir()
+	cmd := exec.Command("/bin/sh", "-c", playwrightRunShell, "sh", "true")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil || len(out) != 0 {
+		t.Fatalf("run shell = %v, output %q; want success and no output", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(playwrightScreenshotsPath))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("screenshots tar stat = %v, want it absent", err)
 	}
 }
 
