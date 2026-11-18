@@ -58,7 +58,8 @@ type LinearAutoFix struct {
 	Heads PRHeadLookup
 	// Fixer runs the job.
 	Fixer AutoFixer
-	// Commenter posts the daily-cap refusal on the pull request. nil logs it.
+	// Commenter posts the daily job and token cap refusals on the pull
+	// request. nil logs them.
 	Commenter PRCommenter
 	// Now is the clock for the daily cap; nil is time.Now.
 	Now func() time.Time
@@ -208,8 +209,9 @@ func (r *LinearRunner) autoFixJob(issue, state string) (Job, bool) {
 }
 
 // runAutoFix looks up the pull request's head branch, claims the issue and
-// state, and runs the fix. Once the day's cap is used it posts a refusal on
-// the pull request instead, carrying the cap and nothing else.
+// state, and runs the fix. Once the day's job cap or token cap is used it posts
+// a refusal on the pull request instead, carrying the cap and nothing else. A
+// job that went over its per-job token cap is reported once it has run.
 func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr linear.PR, t AutoFixTarget) error {
 	a := r.AutoFix
 	label := t.Repo + "#" + strconv.Itoa(t.Number)
@@ -230,19 +232,34 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 	case errors.Is(err, ErrAutoFixDailyCap):
 		text := fmt.Sprintf("ATCR auto-fix did not run for %s: daily cap reached (%d auto-fix jobs per UTC day). "+
 			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, a.State.dailyCap)
-		if a.Commenter == nil {
-			r.logf("webhook: linear issue %s: auto-fix of %s refused: daily cap reached; no PR commenter configured", issue, label)
-			return err
-		}
-		if perr := a.Commenter.PostIssueComment(context.WithoutCancel(ctx), pr.Owner, pr.Repo, pr.Number, text); perr != nil {
-			err = errors.Join(err, fmt.Errorf("webhook: PR comment for %s: %w", label, perr))
-		}
-		return err
+		return r.refuseAutoFix(ctx, issue, label, pr, "daily cap reached", text, err)
+	case errors.Is(err, ErrAutoFixDailyTokenCap):
+		text := fmt.Sprintf("ATCR auto-fix did not run for %s: daily token cap reached (%d tokens per UTC day). "+
+			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, a.State.DailyTokenCap)
+		return r.refuseAutoFix(ctx, issue, label, pr, "daily token cap reached", text, err)
 	case err != nil:
 		return fmt.Errorf("linear issue %s: %w", issue, err)
 	}
 	r.logf("webhook: linear issue %s: auto-fix of %s started against %s", issue, label, t.Base)
-	return a.Fixer.Run(ctx, t)
+	err = a.Fixer.Run(ctx, t)
+	if errors.Is(err, ErrAutoFixJobTokenCap) {
+		r.logf("webhook: linear issue %s: auto-fix of %s went over its per-job token cap; its spend is charged to the day", issue, label)
+	}
+	return err
+}
+
+// refuseAutoFix posts text, a cap refusal, on the pull request and returns err
+// joined with any failure to post it. Without a PR commenter it logs reason.
+func (r *LinearRunner) refuseAutoFix(ctx context.Context, issue, label string, pr linear.PR, reason, text string, err error) error {
+	a := r.AutoFix
+	if a.Commenter == nil {
+		r.logf("webhook: linear issue %s: auto-fix of %s refused: %s; no PR commenter configured", issue, label, reason)
+		return err
+	}
+	if perr := a.Commenter.PostIssueComment(context.WithoutCancel(ctx), pr.Owner, pr.Repo, pr.Number, text); perr != nil {
+		err = errors.Join(err, fmt.Errorf("webhook: PR comment for %s: %w", label, perr))
+	}
+	return err
 }
 
 // teamAllowed reports whether the issue's team key or id is allowlisted.

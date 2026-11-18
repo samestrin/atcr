@@ -193,21 +193,29 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 			if err != nil {
 				return usageError(err)
 			}
+			state.DailyTokenCap = a.DailyTokenCap
 			// The push token reads the PR head and posts the cap refusal: the
 			// review token may be unset, and is never handed push rights.
 			gh := &ghaction.Client{APIURL: githubAPIURL, Token: pushToken}
+			fixer := &webhook.AutoFixRunner{
+				Repos:        cfg.Repos,
+				Binary:       autoFixBinary,
+				PushTokenEnv: a.PushTokenEnv,
+				Secrets:      secrets,
+				Logf:         logf,
+				JobTokenCap:  a.JobTokenCap,
+			}
+			// Each job's usage is charged to the state only under a token
+			// cap, so a deployment without one keeps its count-only behaviour.
+			if a.JobTokenCap > 0 || a.DailyTokenCap > 0 {
+				fixer.State = state
+			}
 			runner.AutoFix = &webhook.LinearAutoFix{
-				Statuses: a.Statuses,
-				Repos:    a.Repos,
-				State:    state,
-				Heads:    gh,
-				Fixer: &webhook.AutoFixRunner{
-					Repos:        cfg.Repos,
-					Binary:       autoFixBinary,
-					PushTokenEnv: a.PushTokenEnv,
-					Secrets:      secrets,
-					Logf:         logf,
-				},
+				Statuses:  a.Statuses,
+				Repos:     a.Repos,
+				State:     state,
+				Heads:     gh,
+				Fixer:     fixer,
 				Commenter: gh,
 			}
 		}

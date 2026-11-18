@@ -532,6 +532,7 @@ type fakeFixer struct {
 	targets []AutoFixTarget
 	started chan struct{}
 	gate    chan struct{}
+	err     error // returned by every run that is not cancelled
 }
 
 func (f *fakeFixer) Run(ctx context.Context, t AutoFixTarget) error {
@@ -548,7 +549,7 @@ func (f *fakeFixer) Run(ctx context.Context, t AutoFixTarget) error {
 			return ctx.Err()
 		}
 	}
-	return nil
+	return f.err
 }
 
 func (f *fakeFixer) runs() []AutoFixTarget {
@@ -723,6 +724,64 @@ func TestLinearAutoFix_DailyCapPostsCommentAndRunsNone(t *testing.T) {
 	assert.Contains(t, comments[0], "acme/widget#7")
 	assert.NotContains(t, comments[0], "iss-2", "the comment carries the cap only")
 	assert.Equal(t, 1, h.logs.count(ErrAutoFixDailyCap.Error()))
+}
+
+// Epic 105.2 T4: once the tokens charged to the day reach the daily token cap,
+// the next event posts "daily token cap reached" on the pull request through
+// GitHub and starts no job.
+func TestLinearAutoFix_DailyTokenCapPostsCommentAndRunsNone(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{}
+	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	h.runner.AutoFix.State.DailyTokenCap = 1000
+	require.NoError(t, h.runner.AutoFix.State.AddTokens(1000, time.Now()))
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	h.drain(t)
+
+	assert.Empty(t, fixer.runs(), "a token-capped claim starts no job")
+	assert.Zero(t, h.runner.AutoFix.State.Count(time.Now()), "the refused claim records nothing")
+	comments := gh.posted()
+	require.Len(t, comments, 1)
+	assert.Contains(t, comments[0], "daily token cap reached")
+	assert.Contains(t, comments[0], "1000 tokens")
+	assert.Contains(t, comments[0], "acme/widget#7")
+	assert.NotContains(t, comments[0], "iss-1", "the comment carries the cap only")
+	assert.Equal(t, 1, h.logs.count(ErrAutoFixDailyTokenCap.Error()))
+}
+
+// Epic 105.2 T4: without a PR commenter the token-cap refusal is logged.
+func TestLinearAutoFix_DailyTokenCapWithoutCommenterLogs(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{}
+	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	h.runner.AutoFix.Commenter = nil
+	h.runner.AutoFix.State.DailyTokenCap = 10
+	require.NoError(t, h.runner.AutoFix.State.AddTokens(10, time.Now()))
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	h.drain(t)
+
+	assert.Empty(t, fixer.runs())
+	assert.Empty(t, gh.posted())
+	assert.Equal(t, 1, h.logs.count("daily token cap reached; no PR commenter configured"))
+}
+
+// Epic 105.2 T4: a job over the per-job token cap is reported as such once it
+// has run; it already used its claim.
+func TestLinearAutoFix_OverJobTokenCapIsReported(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
+	fixer := &fakeFixer{err: fmt.Errorf("%w: auto-fix of acme/widget#7 used 25 tokens (in 20, out 5), cap 10", ErrAutoFixJobTokenCap)}
+	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	h.drain(t)
+
+	assert.Len(t, fixer.runs(), 1)
+	assert.Equal(t, 1, h.runner.AutoFix.State.Count(time.Now()))
+	assert.Equal(t, 1, h.logs.count("auto-fix of acme/widget#7 went over its per-job token cap"))
+	assert.Equal(t, 1, h.logs.count(ErrAutoFixJobTokenCap.Error()), "the job still fails with the over-cap error")
+	assert.Empty(t, gh.posted())
 }
 
 // A status in both lists starts the auto-fix; a review status still reviews.
