@@ -1061,9 +1061,13 @@ rows' file paths are relative to; default the repository root), `--coherence`,
 **Grounding** reports one of four statuses per row: `valid` (the file exists
 and the line is inside it), `file_missing` (the file does not exist, or the
 line is past its end — the `reason` field says which half failed),
-`symbol_not_found` (the row's Problem names a symbol — a `(name) ` anchor or a
-backticked identifier — that the file does not contain), and `no_file` (the row
-carries no file). The symbol is checked only when the Problem text names one.
+`symbol_not_found` (the row's Problem names a symbol that the file does not
+contain), and `no_file` (the row carries no file). The symbol is checked only
+when the Problem text names one: a leading `(name) ` anchor is the row's
+symbol; without one, the row is grounded when the file contains any backticked
+identifier in the Problem, and `symbol` names the first one found. A path that
+leaves the repository, lexically or through a symlink, is `file_missing` with
+reason `path is outside the repository`.
 
 **Coherence** (`--coherence`) scores each row's Fix against its Problem by the
 cosine of their embeddings from the `context_prefetch.semantic` embedding
