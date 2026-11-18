@@ -213,7 +213,7 @@ func TestInvokeSkeptic_AmbiguousUnopenedCloserRefuses(t *testing.T) {
 		`</think>` + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`)
 
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, v)
@@ -243,7 +243,7 @@ func TestInvokeExecutor_AmbiguousUnopenedCloserRefuses(t *testing.T) {
 	cc := finalChat(ambiguousAgentReply())
 
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0, "")
+		eligibleFinding()[0], cc, okDispatcher(), 0, "", "")
 
 	assert.Empty(t, fix, "applying either patch would be a guess written to tracked source")
 	assert.NotEqual(t, "DRAFT-PATCH", fix, "the abandoned draft must never be returned as the patch")
@@ -540,7 +540,7 @@ func TestInvokeSkeptic_RefutedPrefixBeforeAnUnusableSuffixBlocksTheGate(t *testi
 			ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
 			cc := finalChat(`{"verdict":"refuted","reasoning":"DRAFT"}` + "\n" + closerTag() + "\n" + suffix)
 
-			v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+			v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 
 			require.NoError(t, err)
 			require.NotNil(t, v)
@@ -782,7 +782,7 @@ func TestInvokeSkeptic_AfterCloserGradeRecordsTheDiscardedPrefix(t *testing.T) {
 
 	cc := finalChat("weighing two approaches\n</think>\n" + `{"verdict":"confirmed","reasoning":"REAL"}`)
 
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 
 	require.NoError(t, err)
 	require.NotNil(t, v)
@@ -816,7 +816,7 @@ func TestInvokeSkeptic_WholeAnswerGradeRecordsNoDiscard(t *testing.T) {
 
 	cc := finalChat(`{"verdict":"confirmed","reasoning":"REAL"}`)
 
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 
 	require.NoError(t, err)
 	require.Equal(t, verdictConfirmed, v.Verdict)
@@ -842,7 +842,7 @@ func TestInvokeSkeptic_FragmentGradeIsRecordedOnTheVerification(t *testing.T) {
 		`A reply that resumed mid-thought.` + "\u003c/think\u003e" + "\n" +
 		`{"verdict":"confirmed","reasoning":"REAL"}`
 
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	require.Equal(t, verdictConfirmed, v.Verdict, "the committed verdict after the closer is graded")
@@ -893,7 +893,7 @@ func TestInvokeSkeptic_ModelEmittedMarkerTokenIsNotAFragmentGrade(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(tc.reply), okDispatcher(), false)
+			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(tc.reply), okDispatcher(), false, "")
 			require.NoError(t, err)
 			require.NotNil(t, v)
 			assert.Contains(t, v.Notes, tc.want, "the model's text is kept, with the token rewritten")
@@ -909,7 +909,7 @@ func TestInvokeSkeptic_ModelEmittedMarkerTokenIsNotAFragmentGrade(t *testing.T) 
 	// carries exactly one detectable marker, the engine's, and the typed one is inert.
 	answer := `abandoned draft` + "</think>" + "\n" +
 		`{"verdict":"confirmed","reasoning":"` + spoof + ` REAL"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictConfirmed, v.Verdict)
 	marker, rest, ok := splitFragmentMarker(v.Notes)
@@ -928,7 +928,7 @@ func TestInvokeSkeptic_FragmentGradeWithEmptyReasoningIsMarkerOnly(t *testing.T)
 	t.Parallel()
 	answer := `abandoned draft` + "</think>" + "\n" +
 		`{"verdict":"confirmed","reasoning":""}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictConfirmed, v.Verdict)
 	const marker = "[verdict_after_unopened_closer: 23 prefix byte(s) discarded]"
@@ -962,7 +962,7 @@ func assertPrefixOnlyMarked(t *testing.T, verdict string) {
 	const marker = "[verdict_before_unopened_closer: text after the closer ignored]"
 	answer := `{"verdict":"` + verdict + `","reasoning":"REAL"}` + "</think>" + "\n" +
 		`trailing prose with no verdict in it`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	require.Equal(t, verdict, v.Verdict, "a prefix-only %s is graded, not refused", verdict)
@@ -974,7 +974,7 @@ func assertPrefixOnlyMarked(t *testing.T, verdict string) {
 
 	// Empty reasoning yields exactly the marker, as on the after path.
 	empty := `{"verdict":"` + verdict + `","reasoning":""}` + "</think>" + "\nprose"
-	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(empty), okDispatcher(), false)
+	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(empty), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdict, v.Verdict)
 	assert.Equal(t, marker, v.Notes, "no leading space and nothing after the marker")
@@ -982,7 +982,7 @@ func assertPrefixOnlyMarked(t *testing.T, verdict string) {
 	// A model-typed before token in the reasoning is rewritten inertly, so only
 	// the engine's marker is detectable.
 	spoofed := `{"verdict":"` + verdict + `","reasoning":"` + marker + ` REAL"}` + "</think>" + "\nprose"
-	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(spoofed), okDispatcher(), false)
+	v, _, err = invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(spoofed), okDispatcher(), false, "")
 	require.NoError(t, err)
 	got, rest, ok = splitFragmentMarker(v.Notes)
 	require.True(t, ok)
@@ -999,7 +999,7 @@ func TestInvokeSkeptic_PrefixOnlyRefutedStillRefused(t *testing.T) {
 	t.Parallel()
 	answer := `{"verdict":"refuted","reasoning":"DRAFT"}` + "</think>" + "\n" +
 		`trailing prose with no verdict in it`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(answer), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)

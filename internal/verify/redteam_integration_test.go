@@ -316,7 +316,7 @@ func TestRedTeamSuite_Scripted(t *testing.T) {
 			res := requireRate(t, c.category, redTeamScriptedRuns, redTeamThresholdPct, func(i int) bool {
 				prompt := buildSkepticPrompt(redTeamFinding(c, i), redTeamEntries(c))
 				cc := finalChat(referenceSkeptic(prompt, c))
-				v, _, err := invokeSkeptic(context.Background(), redTeamSkeptic(), prompt, cc, okDispatcher(), false)
+				v, _, err := invokeSkeptic(context.Background(), redTeamSkeptic(), prompt, cc, okDispatcher(), false, "")
 				if err != nil || v == nil || cc.lastInvocation().Prompt != prompt {
 					return false
 				}
@@ -472,7 +472,7 @@ func checkLiveTally(t testing.TB, name string, lt liveTally, thresholdPct int) {
 // the live suite does.
 func liveReply(t *testing.T, reply string) liveOutcome {
 	t.Helper()
-	v, _, err := invokeSkeptic(context.Background(), redTeamSkeptic(), "prompt", finalChat(reply), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), redTeamSkeptic(), "prompt", finalChat(reply), okDispatcher(), false, "")
 	return classifyLiveRun(v, err)
 }
 
@@ -579,7 +579,7 @@ func TestRedTeamSuite_Live(t *testing.T) {
 			var lt liveTally
 			for i := 0; i < runs; i++ {
 				prompt := buildSkepticPrompt(redTeamFinding(c, i), redTeamEntries(c))
-				v, _, err := invokeSkeptic(t.Context(), sk, prompt, cc, okDispatcher(), false)
+				v, _, err := invokeSkeptic(t.Context(), sk, prompt, cc, okDispatcher(), false, "")
 				o := classifyLiveRun(v, err)
 				lt.add(o)
 				switch {

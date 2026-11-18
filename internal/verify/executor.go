@@ -216,6 +216,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
 		return 0
 	}
+	guard := secretGuardPolicy(reg)
 	minSev := ex.EffectiveFixMinSeverity()
 	// Complexity ceilings (Sprint 32.1): resolved once, outside the loop, mirroring
 	// minSev. Both are "no ceiling" sentinels when unset (0 / ""), so an executor
@@ -379,11 +380,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					// Agent mode (Epic 7.4): drive the read-only tool loop, reusing the
 					// dispatcher the skeptics use. invokeExecutor never errors — a failure
 					// (provider error, tripped budget, parse failure) comes back as warn.
-					o, w, tr := invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry)
+					o, w, tr := invokeExecutor(ctx, ex, prov, *f, cc, disp, sharedTimeoutSecs, smellRetry, guard)
 					return o, w, tr, false
 				}
 				prompt := buildFixPrompt(*f, snippet, ex, smellRetry)
-				o, tr, salv, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
+				o, tr, salv, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs, guard)
 				if err != nil && !tr {
 					return "", "fix generation failed: " + err.Error(), false, false
 				}
@@ -642,7 +643,16 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // with the chain-of-thought promoted by llmclient — never a patch), and any error.
 // The truncation and salvage bools are only ever true via the MetaCompleter path;
 // a Complete-only completer reports false for both.
-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, bool, bool, error) {
+func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int, guard string) (string, bool, bool, error) {
+	// secret_guard (Epic 106.3): Complete and CompleteWithMeta send inv.Prompt
+	// unscanned (llmclient scans only Chat), so the prompt is guarded here and
+	// the returned text is what is sent. A block sends nothing and its error
+	// takes generateFixes' failure path to a FixWarning.
+	sent, err := fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: prompt}})
+	if err != nil {
+		return "", false, false, err
+	}
+	prompt = sent[0]
 	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
 	// Settings literal is sufficient here.
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
@@ -891,12 +901,12 @@ func appendFixAttribution(evidence, name string) string {
 // smellRetry carries the same diff-smell rejection feedback buildFixPrompt takes,
 // so an agent-mode retry re-enters the AGENT path with the feedback rather than
 // being downgraded to the single-shot snippet path (Epic 35.3 clarification Q4).
-func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int, smellRetry string) (string, string, bool) {
+func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int, smellRetry, guard string) (string, string, bool) {
 	logger := log.FromContext(ctx)
 	tFile, tLine := fixTarget(finding)
 	logger.Debug("agent-mode executor entry", "file", tFile, "line", tLine, "max_tool_calls", ex.EffectiveMaxToolCalls())
 	prompt := buildExecutorAgentPrompt(finding, smellRetry)
-	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
+	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs, guard)
 	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// One slot yields one result; guard the index so a zero-length return cannot
@@ -969,7 +979,7 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 // budget (default 10). TimeoutSecs is the executor's resolved fix deadline so a hung
 // provider cannot block the loop unbounded. Temperature defaults to the deterministic
 // 0.0 (EffectiveExecutorTemperature). Provider BaseURL/APIKeyEnv route the call.
-func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, prompt string, sharedTimeoutSecs int) fanout.Agent {
+func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, prompt string, sharedTimeoutSecs int, guard string) fanout.Agent {
 	temp := ex.EffectiveExecutorTemperature()
 	return fanout.Agent{
 		Name:       ex.Name,
@@ -992,6 +1002,9 @@ func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, pro
 			Model:       ex.Model,
 			Temperature: &temp,
 			Prompt:      prompt,
+			// secret_guard (Epic 106.3): the tool loop's Chat scans the prompt
+			// and every tool result under it.
+			SecretGuard: guard,
 		},
 	}
 }

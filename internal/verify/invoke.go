@@ -55,7 +55,7 @@ type Dispatcher interface {
 // Read-only contract: callers must not mutate the returned tripped-budget slice.
 // It aliases the fanout.Result's backing memory; mutating it corrupts the engine
 // result for any subsequent inspection.
-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, []string, error) {
+func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher, exec bool, guard string) (*reclib.Verification, []string, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("invokeSkeptic: nil context")
 	}
@@ -73,7 +73,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// enforced — not re-derived by a second, independent call and assumed equal
 	// to it (a future override, settings tier or clamp inside buildSkepticAgent
 	// would otherwise desync the two with no test able to catch it).
-	agent, derivedBudget := buildSkepticAgent(skeptic, prompt, exec)
+	agent, derivedBudget := buildSkepticAgent(skeptic, prompt, exec, guard)
 	// The ceiling this lane will enforce, with its provenance, once per
 	// invocation. failureNotes alone renders a 400 KB read and a 3-byte derived
 	// ceiling as byte-identical class=budget_truncated lines, and the floored
@@ -488,7 +488,7 @@ func tripsVoidTheVerdict(tripped []string, derivedBudget bool) bool {
 // It returns (agent, derived) from a SINGLE skepticToolBudget evaluation: the
 // bool is the provenance of the very budget installed on the agent, so callers
 // never re-derive the ceiling and assume the two agree.
-func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.Agent, derived bool) {
+func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool, guard string) (agent fanout.Agent, derived bool) {
 	c := skeptic.Config
 	budget, derived := skepticToolBudget(c)
 	wireMaxTokens, wireThinking, wireThinkingLevel := thinkingWire(c)
@@ -551,6 +551,10 @@ func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) (agent fanout.
 			// is illegal under that style (validateThinking) and llmclient ignores it
 			// there, so the declaration is forwarded as-is (TD internal/verify/invoke.go:416).
 			PreserveThinking: c.PreserveThinking,
+			// secret_guard (Epic 106.3): the tool loop's Chat scans every
+			// message under it, the prompt included, since no guard scanned it
+			// before (AlreadyGuardedMessages 0).
+			SecretGuard: guard,
 		},
 	}, derived
 }
@@ -652,6 +656,9 @@ func failureClass(res fanout.Result) string {
 	case fanout.StatusTimeout:
 		return "timeout"
 	case fanout.StatusFailed:
+		if errors.Is(res.Err, llmclient.ErrSecretGuardBlocked) {
+			return "secret_guard_blocked"
+		}
 		return "provider_error"
 	default:
 		if len(res.TrippedBudgets) > 0 {
