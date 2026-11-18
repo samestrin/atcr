@@ -768,7 +768,8 @@ var newAutoFixGitHubFn = func(apiURL, token string) autoFixGitHub {
 // --auto-fix flag, so the default review path is byte-identical (AC 06-01).
 //
 // Whatever the outcome, its last output line is the usage line
-// (writeAutoFixUsage): the review's tokens were spent either way.
+// (writeAutoFixUsage): the review's tokens were spent either way. When the
+// usage cannot be read, the last line says so instead.
 func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
 	err := orchestrateAutoFixRun(ctx, out, be, reviewDir, threshold, baseBranch)
 	writeAutoFixUsage(out, reviewDir)
@@ -786,13 +787,15 @@ const autoFixUsagePrefix = "atcr-auto-fix-usage:"
 // The totals are the review fan-out agents' TokensIn/TokensOut from
 // sources/pool/summary.json; verify, debate and reconcile spend is not
 // recorded there, and the line says so. Zero usage prints zeros. A summary
-// that cannot be read is reported on its own line, and the usage line still
-// follows with zeros.
+// that cannot be read is reported on its own line and no usage line follows:
+// the webhook runner then reports the job as unaccounted (ErrAutoFixNoUsage)
+// rather than charging it zero tokens against the caps.
 func writeAutoFixUsage(out io.Writer, reviewDir string) {
 	var in, outTokens int
 	ps, err := fanout.ReadPoolSummary(reviewDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "auto-fix: token usage unavailable: %v\n", err)
+		return
 	}
 	for _, a := range ps.Agents {
 		in += a.TokensIn

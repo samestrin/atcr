@@ -66,9 +66,10 @@ The totals are the input and output tokens the review's agents reported,
 summed from `sources/pool/summary.json` in the review directory. Only the
 initial review fan-out is counted: tokens spent by verify, debate and
 reconcile are not in the totals, as `not_counted` says. A run whose agents
-reported no usage prints zeros. If the summary cannot be read, an
-`auto-fix: token usage unavailable: ...` line comes first and the usage line
-still follows, with zeros.
+reported no usage prints zeros. If the summary cannot be read, the run ends
+with an `auto-fix: token usage unavailable: ...` line instead and prints no
+usage line, so the [webhook daemon](webhook.md#linear-triggered-auto-fix-webhooklinearauto_fix)
+logs the job as a failure with unknown spend rather than charging it zero.
 
 ## What runs in the sandbox — and how it differs from `--exec`
 
