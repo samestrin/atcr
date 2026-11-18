@@ -1,0 +1,1 @@
+- `docs/security.md` now describes `secret_guard` coverage of tool-loop results and the caller-policy opt-in still needed for debate, verify and doctor traffic. (epic 106.2)

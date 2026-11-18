@@ -155,13 +155,17 @@ aborts the run rather than send a prompt holding a credential — and fails
 closed when the scan itself could not be trusted. Warnings and block errors
 name the agent, the secret kinds and the files, never the value.
 
-The guard covers the **review prompt only** — the payload (diff, claim ledger,
-context definitions, prefetched context) and the sprint-plan scope constraint
-sent to a review agent or its fallback. It does not scan persona text, and it
-does not scan tool-loop results, debate, verify or doctor traffic. One input
-to verify is covered: the deterministic SAST findings a review saves to
-`sast.json` (the scanner messages and rules the Fixer reads through the
-reconciled report) pass the same policy before the file is written.
+The guard covers the **review prompt and tool-loop results** — the payload
+(diff, claim ledger, context definitions, prefetched context) and the
+sprint-plan scope constraint sent to a review agent or its fallback, followed
+by the tool results and model turns added during the tool loop. The review
+prompt is scanned once when it is built; each later request scans the new
+messages under the same policy. Persona text is not scanned. Debate, verify
+and doctor traffic will be scanned once their callers set the policy (slice
+106.3); until then, those callers leave it unset. One input to verify is
+already covered: the deterministic SAST findings a review saves to `sast.json`
+(the scanner messages and rules the Fixer reads through the reconciled report)
+pass the same policy before the file is written.
 
 It is one layer of three, and the docs describe them together in
 [docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
