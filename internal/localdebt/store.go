@@ -1520,9 +1520,10 @@ func sweepStaleTemps(dir string) {
 // from a no-op.
 //
 // StoreFound answers ONE question — is there a store here — and is true whenever
-// the directory holds at least one shard file, whatever this binary could make of
-// its contents. It used to be false for a store that existed and held records
-// (all newer-schema, or all malformed), which forced every caller to special-case
+// the directory holds at least one record file (a month shard or an event file),
+// whatever this binary could make of its contents. It used to be false for a
+// store that existed and held records (all newer-schema, or all malformed),
+// which forced every caller to special-case
 // the other counts to avoid printing "no store" over existing records. Whether
 // anything was FOLDABLE is RecordsBefore's question, and what could not be
 // decoded is Preserved's; an empty directory holds no records either way, so it
