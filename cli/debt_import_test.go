@@ -332,3 +332,30 @@ func TestDebtImport_RestoresReportedByOnAnEventStore(t *testing.T) {
 		assert.Equal(t, want, r.ReportedBy, "%s keeps its reporter", r.Problem)
 	}
 }
+
+// TestDebtImport_RerunAfterConvertChangesNothing: a store imported, then
+// converted to the event layout, takes the same table again with no new file,
+// whether it is read from the same path or from a renamed copy of it. The
+// README's path names where a row came from, not which finding it is.
+func TestDebtImport_RerunAfterConvertChangesNothing(t *testing.T) {
+	for _, name := range []string{"README.md", "README.import-copy.md"} {
+		t.Run(name, func(t *testing.T) {
+			readme := writeImportREADME(t, importREADME)
+			dir := filepath.Join(t.TempDir(), "debt")
+
+			out, err := runDebt(t, "import", readme, "--store", dir)
+			require.NoError(t, err, out)
+			out, err = runDebt(t, "convert", "--store", dir)
+			require.NoError(t, err, out)
+			require.Contains(t, out, "Converted")
+			before := storeSnapshot(t, dir)
+
+			again := filepath.Join(t.TempDir(), name)
+			require.NoError(t, os.WriteFile(again, []byte(importREADME), 0o644))
+			out, err = runDebt(t, "import", again, "--store", dir)
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "wrote 0 records (5 already in the store)")
+			assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")
+		})
+	}
+}
