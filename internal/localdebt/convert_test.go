@@ -465,3 +465,23 @@ func TestConvert_ReportsTheOptIn(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, res.OptedIn, "an opted-in store is not opted in again")
 }
+
+// TestConvert_WithNoUserCacheDir: a dry run needs the user cache dir to stage in
+// and says so when there is none; a real run stages in the store and does not.
+func TestConvert_WithNoUserCacheDir(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("LocalAppData", "")
+	if _, err := os.UserCacheDir(); err == nil {
+		t.Skip("this platform names a user cache dir without HOME")
+	}
+	dir := buildStore(t, layoutShards)
+
+	_, err := ConvertPlan(dir, quiet)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "staging localdebt conversion")
+
+	_, err = Convert(dir, quiet)
+	require.NoError(t, err)
+	assert.Empty(t, shardNames(t, dir))
+}
