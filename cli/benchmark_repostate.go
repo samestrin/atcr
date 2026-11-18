@@ -260,7 +260,7 @@ func executeRepoStateBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig,
 			// "unknown": a zero reads as "nothing retained" on the line the operator
 			// watches for growth, and a string retypes a key the doc tells them to
 			// watch numerically. internal/log/log.go:92-94 supports json format, so
-			// under ATCR_LOG_FORMAT=json a polymorphic retained_bytes errors or is
+			// under --log-format json a polymorphic retained_bytes errors or is
 			// silently dropped by the numeric monitor the size exists to enable —
 			// the same class of failure as the lying zero. Keeping the key monotypic
 			// (a number, or absent) leaves absence to mean "not measured", which is
