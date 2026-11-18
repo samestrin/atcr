@@ -313,6 +313,7 @@ func TestReadStreamHeaderAfterLeadingComment(t *testing.T) {
 func TestReadStreamProseNotSkipped(t *testing.T) {
 	data := "Here are my findings:\n" +
 		"GARBAGE|too|few\n" +
+		"HIGH\n" + // a severity with no `|` after it is prose, as in stream.parse
 		"HIGH|a.go:1|p|f|correctness\n" +
 		"HIGH|a.go:2|too short\n" +
 		"That is all.\n"
@@ -365,6 +366,8 @@ func TestReadStreamByNameTooWideSkipped(t *testing.T) {
 // declares it second is not read as all prose.
 func TestReadStreamByNameSeverityNotFirst(t *testing.T) {
 	data := "# Format: FILE:LINE|SEVERITY|PROBLEM|FIX|CATEGORY\n" +
+		"one-field prose\n" + // no SEVERITY column at all: prose, never an index panic
+		"a.go:9|HIGH\n" + // nothing after the severity: prose
 		"a.go:1|HIGH|p|f|correctness\n" +
 		"HIGH|a.go:2|p|f|correctness\n" + // severity in the file column: prose
 		"a.go:3|LOW|short\n"
