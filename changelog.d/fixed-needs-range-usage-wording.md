@@ -1,0 +1,1 @@
+- The usage errors raised when `--threat-map` or `--preview-url` is passed outside a git-range review no longer name `--diff-file`, a flag that does not exist. They now say the option cannot be combined with a baseline (`--all`/`--scope`) scan. (epic 117 T2)
