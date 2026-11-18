@@ -74,7 +74,9 @@ type Record struct {
 // left empty, so the caller can always record an outcome and an item is never
 // dropped. Turn order is strict — proposer, then challenger (given the proposer's
 // defense), then judge (given both) — so the same scripted completer is consumed
-// in seat order.
+// in seat order. secretGuard is the secret_guard policy every seat's request
+// is sent under (see buildDebateAgent); under block a seat whose prompt holds a
+// credential sends nothing and is recorded in Halted like any other failure.
 func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) Record {
 	rec := Record{Item: item, Cast: cast, Resolved: true, SingleModel: cast.SingleModel}
 
@@ -302,6 +304,9 @@ func nonOKStatus(status string) string {
 // Thinking is deliberately NOT gated the same way: it changes how much the
 // model reasons, not the shape of its reply, so every seat sends its own
 // declaration.
+//
+// secretGuard is the resolved secret_guard policy debateOne passes down; every
+// seat carries it.
 func buildDebateAgent(seat Caster, prompt, secretGuard string) fanout.Agent {
 	c := seat.Config
 	var responseFormat string
@@ -350,6 +355,11 @@ func buildDebateAgent(seat Caster, prompt, secretGuard string) fanout.Agent {
 			ThinkingLevel:    c.ThinkingLevel,
 			ThinkingStyle:    c.ThinkingStyle,
 			PreserveThinking: c.PreserveThinking,
+			// Epic 106.3 T2: the run's secret_guard policy, so llmclient.Chat
+			// warns, redacts or blocks a credential in the seat's prompt (the
+			// finding, and for the challenger and judge the earlier statements).
+			// Nothing scanned the prompt before, so AlreadyGuardedMessages stays 0.
+			SecretGuard: secretGuard,
 		},
 	}
 }
