@@ -64,12 +64,24 @@ func recordLoopInvocations(t *testing.T, policy string) []llmclient.Invocation {
 
 // Epic 106.2 T2: every tool-loop Chat call, the per-turn ones and the one in
 // requestFinalAnswer, carries the agent's secret_guard policy and counts the
-// guarded review prompt (message zero) as already guarded.
+// guarded review prompt (message zero) as already guarded. Under warn and
+// block a message is scanned once: a successful Chat sent the messages it was
+// given, warned about them or found them clean, so the next call counts them
+// as guarded too. Call 2 sends prompt, turn 1 and its tool result (3); the
+// final-answer call scans only what turn 2 added. Under redact the redacted
+// copy never reaches the loop's history, so every call redacts from message 1
+// again; off scans nothing and stays at 1.
 func TestToolLoop_SecretGuardOnEveryChatCall(t *testing.T) {
-	for _, policy := range []string{secretGuardOff, secretGuardWarn, secretGuardRedact, secretGuardBlock} {
+	want := map[string][]int{
+		secretGuardOff:    {1, 1, 1},
+		secretGuardWarn:   {1, 3, 3},
+		secretGuardRedact: {1, 1, 1},
+		secretGuardBlock:  {1, 3, 3},
+	}
+	for policy, guarded := range want {
 		for i, inv := range recordLoopInvocations(t, policy) {
 			assert.Equal(t, policy, inv.SecretGuard, "%s: call %d", policy, i+1)
-			assert.Equal(t, 1, inv.AlreadyGuardedMessages, "%s: call %d", policy, i+1)
+			assert.Equal(t, guarded[i], inv.AlreadyGuardedMessages, "%s: call %d", policy, i+1)
 		}
 	}
 }
@@ -79,7 +91,7 @@ func TestToolLoop_SecretGuardOnEveryChatCall(t *testing.T) {
 func TestToolLoop_SecretGuardDefaultsToWarn(t *testing.T) {
 	for i, inv := range recordLoopInvocations(t, "") {
 		assert.Equal(t, secretGuardWarn, inv.SecretGuard, "call %d", i+1)
-		assert.Equal(t, 1, inv.AlreadyGuardedMessages, "call %d", i+1)
+		assert.Equal(t, []int{1, 3, 3}[i], inv.AlreadyGuardedMessages, "call %d", i+1)
 	}
 }
 
