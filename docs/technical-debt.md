@@ -1167,13 +1167,17 @@ source, else `MEDIUM`. Every cluster of two or more is `needs_review` with its
 evidence and `file_line`, so the "same issue?" decision stays with the model — `atcr dedupe`
 never guesses that two nearby findings are the same defect.
 
-Input layouts: `# atcr-findings/v1` and `/v2`, a `# Format:` comment that names
+Input layouts: `# atcr-findings/v1` and `/v2` (the header may follow other
+comment lines at the top of the stream), a `# Format:` comment that names
 the columns (`FILE:LINE`, `PROBLEM`, `FIX`, `EST_MINUTES`, `REVIEWER`, …; a
 column with no home in a finding, such as `ORIGIN`, `RISK_CLASS` or `BLOCKING`,
 is dropped rather than shifted), and a headerless 5, 6, 8 or 10 column stream,
-which is accepted with a warning naming the stream. A row with fewer than 5
-columns or no severity/file counts in `summary.skipped`. An unknown version
-header is an error, never a silent parse.
+which is accepted with a warning naming the stream. As in `atcr reconcile`, a
+line that does not start with a severity and a `|` is prose and ignored. A row
+that does counts in `summary.skipped` when it has fewer than 5 columns, no
+file, more columns than its `# Format:` names, or, with no `# Format:`, a width
+other than 5, 6, 8 or 10 (an unescaped `|`); trailing empty columns are
+padding. An unknown version header is an error, never a silent parse.
 
 Flags: `--streams` (required, comma-separated), `--source-tags` (parallel to
 `--streams`; defaults to each stream's parent directory name), `--tolerance`
