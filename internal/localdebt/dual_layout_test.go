@@ -250,6 +250,49 @@ func TestBackfillJustifications_LeavesEventFilesAlone(t *testing.T) {
 	}
 }
 
+// TD b92b4e262cd389b9 — SkippedEventFiles counted event-held ids the shard path
+// deliberately skips (no SourceReport, or an empty justification), so the report
+// said "left unrepaired" for ids that never needed repair. Only an id that would
+// otherwise be SCANNED counts as skipped; the never-repairable ones are silent,
+// exactly as on a shard-only store.
+func TestBackfillJustifications_EventIDsThatNeverNeededRepairAreNotCounted(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "debt")
+	require.NoError(t, EnableEventLayout(store))
+
+	// One record per shape, all held in event files. The JSON mirrors the fixture
+	// in TestBackfillJustifications_LeavesEventFilesAlone.
+	rec := func(id, justification, sourceReport string) string {
+		return `{"schema_version":3,"id":"` + id + `","run_id":"2026-08-01T00:00:00Z-multi-agent","ts":"2026-08-01T00:00:00Z",` +
+			`"severity":"HIGH","file":"internal/thing.go","line":42,"problem":"p","fix":"f","category":"correctness",` +
+			`"est_minutes":10,"evidence":"e","reviewers":["dax"],"confidence":"HIGH",` +
+			`"justification":"` + justification + `"` + sourceReport + `}`
+	}
+	sr := `,"source_report":{"path":"sources/pool/raw/agent/dax/review.md","line":8}`
+	shapes := map[string]string{
+		// no SourceReport: the shard path skips it silently — so must the event path
+		"aaaa1111": rec("aaaa1111", "some narrative", ""),
+		// empty justification: nothing to repair — skipped silently on shards too
+		"bbbb2222": rec("bbbb2222", "", sr),
+		// the control: a stale excerpt with a SourceReport WOULD be scanned, so its
+		// event-held skip is real and must still be counted and reported
+		"cccc3333": rec("cccc3333", "stale narrative", sr),
+	}
+	for id, line := range shapes {
+		ev := filepath.Join(ItemsDir(store), id+".20260801T000000.000000000Z-000000000000.json")
+		require.NoError(t, os.WriteFile(ev, []byte(line+"\n"), 0o600))
+	}
+
+	for _, dry := range []bool{true, false} {
+		res, err := BackfillJustifications(store, filepath.Join(root, "reviews"), dry)
+		require.NoError(t, err)
+		assert.Equal(t, 1, res.SkippedEventFiles,
+			"only the id that would otherwise be scanned counts as left unrepaired (dry=%v)", dry)
+		assert.Zero(t, res.Scanned)
+		assert.Zero(t, res.Rewritten)
+	}
+}
+
 // An unreadable items directory or event file fails every read path, like an
 // unreadable shard, and the error never carries the absolute store path.
 func TestDualLayout_UnreadableEventsFailEveryReadPathRedacted(t *testing.T) {

@@ -92,6 +92,39 @@ func TestDebtCompact_EventOnlyStoreExplainsTheNoOp(t *testing.T) {
 	}
 }
 
+// TD b92b4e262cd389b9 — "all N record(s) are event files" was printed whenever
+// EventRecords == RecordsBefore, even when preserved shard lines remain on disk:
+// Preserved is excluded from RecordsBefore, so an event-only fold with a
+// newer-schema shard line beside it claimed the store was all event files while
+// a shard sat there untouched. The event-only wording is owed only when
+// Preserved == 0; otherwise the preserved lines must be accounted for.
+func TestDebtCompact_EventStoreWithPreservedShardLinesDoesNotClaimAllEventFiles(t *testing.T) {
+	a := openRec("2026-07-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	for _, dry := range []bool{false, true} {
+		dir := writeEventStore(t, 0, a)
+		shard := filepath.Join(dir, "2026-07.jsonl")
+		line := newerSchemaLine("future1") + "\n"
+		require.NoError(t, os.WriteFile(shard, []byte(line), 0o600))
+
+		args := []string{"compact", "--dir", dir}
+		if dry {
+			args = append(args, "--dry-run")
+		}
+		out, err := runDebt(t, args...)
+		require.NoError(t, err)
+		assert.NotContains(t, out, "are event files",
+			"a preserved shard line remains, so the store is not all event files (dry=%v)", dry)
+		assert.Contains(t, out, "Kept 1 record(s) written by a newer atcr version untouched", "dry=%v", dry)
+		assert.Contains(t, out, "Left 1 record(s) in event files untouched", "dry=%v", dry)
+		assert.NotContains(t, out, "No local TD store")
+		assert.NotContains(t, out, "ompact 1 records", "nothing was folded (dry=%v)", dry)
+
+		b, err := os.ReadFile(shard)
+		require.NoError(t, err)
+		assert.Equal(t, line, string(b), "the preserved shard line stays verbatim (dry=%v)", dry)
+	}
+}
+
 func TestDebtCompact_MixedStoreSaysEventFilesWereLeftAlone(t *testing.T) {
 	a := openRec("2026-06-14T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
 	ra := a
