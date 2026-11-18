@@ -533,7 +533,8 @@ func TestOrchestrateAutoFix_UsageLineOnError(t *testing.T) {
 }
 
 // TestOrchestrateAutoFix_UsageLineNoSummary: a review dir with no pool summary
-// says the usage is unavailable and still ends with a zero usage line.
+// says the usage is unavailable and prints no usage line, so the webhook runner
+// reports the job as unaccounted (ErrAutoFixNoUsage) instead of charging zero.
 func TestOrchestrateAutoFix_UsageLineNoSummary(t *testing.T) {
 	isolate(t)
 	id := verifyFixture(t, "nosummary", []reconcile.JSONFinding{
@@ -543,10 +544,23 @@ func TestOrchestrateAutoFix_UsageLineNoSummary(t *testing.T) {
 	var buf strings.Builder
 	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
 	require.NoError(t, err)
-	require.Contains(t, buf.String(), "auto-fix: token usage unavailable")
-	require.Equal(t,
-		"atcr-auto-fix-usage: tokens_in=0 tokens_out=0 scope=review-fanout not_counted=verify,debate,reconcile",
-		lastLine(buf.String()))
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), autoFixUsagePrefix)
+}
+
+// TestOrchestrateAutoFix_UsageLineUnreadableSummary: a pool summary that exists
+// but cannot be parsed is unavailable usage too, never a zero usage line.
+func TestOrchestrateAutoFix_UsageLineUnreadableSummary(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), []byte("{not json"), 0o644))
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "")
+	require.Error(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), autoFixUsagePrefix)
 }
 
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -
