@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -143,23 +144,27 @@ func writeField(b *strings.Builder, name, value string) {
 	fmt.Fprintf(b, "**%s:** %s\n", name, value)
 }
 
+// skepticOverrideRe is overrideRe for matching across a whole Problem or Evidence
+// rather than one line: (?s) lets the bounded gaps of the first alternative cross a
+// newline, and the \s runs in the others already do, so a phrase split over lines
+// still matches. The role prefix stays line-anchored with (?m), and its padding is
+// horizontal only so it cannot reach into a neighbouring line.
+var skepticOverrideRe = regexp.MustCompile(`(?is)` + overridePhrases + `|(?m:^[^\S\n]*(?:system|assistant|human)[^\S\n]*:)`)
+
 // filterSkepticEvidence returns the copy of a reviewer-authored Problem or Evidence
 // that the skeptic prompt embeds. Unlike sanitizeInterAgentText it keeps code
 // fences, command lines and every other line, because they are the evidence the
 // skeptic must check; it removes only control and format characters
-// (stripControlChars) and the instruction-override phrases themselves (overrideRe),
-// leaving the rest of each line. Control characters go first so a zero-width
-// character cannot split a phrase. Phrases are matched per line so overrideRe's
-// line-start role prefix applies to every line, and removal repeats until nothing
-// matches so it cannot join the text around a phrase into a new one; each pass
-// shortens the line, so the loop ends.
+// (stripControlChars) and the instruction-override phrases themselves
+// (skepticOverrideRe), leaving the rest of the text. Control characters go first so
+// a zero-width character cannot split a phrase. Phrases are matched against the
+// whole text so a newline cannot split one either, and removal repeats until
+// nothing matches so it cannot join the text around a phrase into a new one; every
+// match is non-empty, so each pass shortens the text and the loop ends.
 func filterSkepticEvidence(s string) string {
-	lines := strings.Split(stripControlChars(s), "\n")
-	for i, line := range lines {
-		for overrideRe.MatchString(line) {
-			line = overrideRe.ReplaceAllString(line, "")
-		}
-		lines[i] = line
+	s = stripControlChars(s)
+	for skepticOverrideRe.MatchString(s) {
+		s = skepticOverrideRe.ReplaceAllString(s, "")
 	}
-	return strings.Join(lines, "\n")
+	return s
 }
