@@ -529,7 +529,13 @@ func fakeLinear(t *testing.T) <-chan string {
 // Review, as Linear would.
 func postSignedLinear(t *testing.T, base string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"action":"update","type":"Issue","webhookTimestamp":%d,"data":{"id":"iss-1","team":{"id":"tm","key":"EST"},"state":{"id":"st-1","name":"In Review"}},"updatedFrom":{"stateId":"st-0"}}`, time.Now().UnixMilli())
+	postSignedLinearIssue(t, base, "iss-1")
+}
+
+// postSignedLinearIssue is postSignedLinear for the issue with id issue.
+func postSignedLinearIssue(t *testing.T, base, issue string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"action":"update","type":"Issue","webhookTimestamp":%d,"data":{"id":%q,"team":{"id":"tm","key":"EST"},"state":{"id":"st-1","name":"In Review"}},"updatedFrom":{"stateId":"st-0"}}`, time.Now().UnixMilli(), issue)
 	req, err := http.NewRequest(http.MethodPost, base+webhook.LinearWebhookPath, strings.NewReader(body))
 	require.NoError(t, err)
 	mac := hmac.New(sha256.New, []byte(whLinearSecret))
@@ -686,7 +692,8 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stub atcr binary is a POSIX shell script")
 	}
-	setup := func(t *testing.T, dailyTokenCap int) (stub, ran string, comments <-chan string) {
+	// setup writes a config with the given caps; a zero cap leaves its key out.
+	setup := func(t *testing.T, jobTokenCap, dailyTokenCap int) (stub, ran string, comments <-chan string) {
 		t.Helper()
 		isolate(t)
 		checkout := whPRFixture(t)
@@ -696,8 +703,8 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 			"      repos: [acme/widget]\n"+
 			"      push_token_env: "+whPushTokenEnv+"\n"+
 			"      daily_job_cap: 5\n"+
-			"      job_token_cap: 10\n"+
-			fmt.Sprintf("      daily_token_cap: %d\n", dailyTokenCap))
+			capLine("job_token_cap", jobTokenCap)+
+			capLine("daily_token_cap", dailyTokenCap))
 		t.Setenv(whLinearSecretEnv, whLinearSecret)
 		t.Setenv(whLinearKeyEnv, whLinearKey)
 		t.Setenv(whPushTokenEnv, whPushToken)
@@ -737,7 +744,7 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 	statePath := filepath.Join(".atcr", "webhook", "auto-fix-state.json")
 
 	t.Run("job over the job cap is reported and charged", func(t *testing.T) {
-		_, ran, posted := setup(t, 1000)
+		_, ran, posted := setup(t, 10, 1000)
 		base, stderr, stop := startWebhook(t)
 		postSignedLinear(t, base)
 		require.Eventually(t, func() bool {
@@ -753,8 +760,35 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 		assert.Empty(t, posted)
 	})
 
+	// With only daily_token_cap set, each job's usage is still charged, so the
+	// day's spend can reach the cap and refuse the next job.
+	t.Run("daily cap alone charges the job and refuses the next", func(t *testing.T) {
+		_, ran, posted := setup(t, 0, 25)
+		base, stderr, stop := startWebhook(t)
+		postSignedLinearIssue(t, base, "iss-1")
+		require.Eventually(t, func() bool {
+			state, err := webhook.OpenAutoFixState(statePath, 5)
+			return err == nil && state.Tokens(time.Now()) == 25
+		}, 60*time.Second, 20*time.Millisecond, "the job's usage was not charged; daemon stderr:\n%s", stderr.String())
+		require.FileExists(t, ran)
+		require.NoError(t, os.Remove(ran))
+
+		postSignedLinearIssue(t, base, "iss-2")
+		var comment string
+		select {
+		case comment = <-posted:
+		case <-time.After(60 * time.Second):
+			t.Fatalf("no refusal comment; daemon stderr:\n%s", stderr.String())
+		}
+		require.NoError(t, stop())
+
+		assert.Contains(t, comment, "daily token cap reached")
+		assert.NoFileExists(t, ran, "the job after the cap is reached runs no auto-fix")
+		assert.NotContains(t, stderr.String(), webhook.ErrAutoFixJobTokenCap.Error(), "no job cap is set")
+	})
+
 	t.Run("day at the daily cap refuses the next job", func(t *testing.T) {
-		_, ran, posted := setup(t, 25)
+		_, ran, posted := setup(t, 10, 25)
 		require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
 		seed, err := webhook.OpenAutoFixState(statePath, 5)
 		require.NoError(t, err)
@@ -775,6 +809,15 @@ func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
 		assert.NoFileExists(t, ran, "a token-capped claim runs no auto-fix")
 		assert.Contains(t, stderr.String(), webhook.ErrAutoFixDailyTokenCap.Error())
 	})
+}
+
+// capLine is a webhook.linear.auto_fix config line for key, or nothing for a
+// zero value.
+func capLine(key string, v int) string {
+	if v == 0 {
+		return ""
+	}
+	return fmt.Sprintf("      %s: %d\n", key, v)
 }
 
 func TestWebhookCmd_MissingPushTokenNamesTheVariable(t *testing.T) {
