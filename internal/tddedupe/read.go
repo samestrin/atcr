@@ -6,6 +6,7 @@ package tddedupe
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,9 +15,9 @@ import (
 	reconcile "github.com/samestrin/atcr/reconcile"
 )
 
-// versionPrefix starts every atcr-findings version header. A first line that
-// carries it goes to stream.ParseSource, which reads v1 and v2 and rejects any
-// other version.
+// versionPrefix starts every atcr-findings version header. A line in the
+// leading comment block that carries it goes to stream.ParseSource, which reads
+// v1 and v2 and rejects any other version.
 const versionPrefix = "# atcr-findings/"
 
 // legacyWarning is td-dedupe's text for a stream with no version header,
@@ -30,36 +31,44 @@ const minColumns = 5
 
 // ReadStream reads one td-stream file into reconcile findings.
 //
-// A stream whose first non-blank line is an atcr-findings v1 or v2 header is
-// read by stream.ParseSource; any other version is an error. A stream with no
-// header is read by the column names in its `# Format:` comment when it has one
-// (a name with no home in a finding, such as ORIGIN, RISK_CLASS or BLOCKING, is
-// dropped, never shifted into a neighbour), and otherwise by its 5, 6, 8 or 10
-// column width; either way warning names the tag. A row with fewer than 5
-// columns, or with an empty severity or file, is counted in skipped. An empty
-// reviewer becomes tag, and every category goes through
+// A stream with an atcr-findings v1 or v2 header in its leading comment block
+// is read by stream.ParseSource from the header on; any other version is an
+// error. A stream with no header is read by the column names in its `# Format:`
+// comment when it has one (a name with no home in a finding, such as ORIGIN,
+// RISK_CLASS or BLOCKING, is dropped, never shifted into a neighbour), and
+// otherwise by its 5, 6, 8 or 10 column width; either way warning names the
+// tag. As in stream.parse, a line that does not start with a severity and a
+// `|` is prose and ignored. A row with fewer than 5 columns, more than its
+// `# Format:` declares, a width other than 5, 6, 8 or 10 when there is no
+// `# Format:`, or an empty file is counted in skipped; trailing empty fields
+// are padding. An empty reviewer becomes tag, and every category goes through
 // stream.CanonicalCategory (epic 110 D2).
 func ReadStream(tag string, data []byte) (findings []reconcile.Finding, skipped int, warning string, err error) {
 	lines := strings.Split(string(data), "\n")
-	if strings.HasPrefix(firstNonBlank(lines), versionPrefix) {
-		return readVersioned(tag, data)
+	if i := headerLine(lines); i >= 0 {
+		return readVersioned(tag, []byte(strings.Join(lines[i:], "\n")))
 	}
 
 	warning = fmt.Sprintf("stream %q: %s", tag, legacyWarning)
 	cols := formatColumns(lines)
+	sevCol := max(0, slices.Index(cols, "SEVERITY"))
 	for _, line := range lines {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
+		}
+		fields := splitRow(t)
+		if sevCol >= len(fields)-1 || !isSeverity(fields[sevCol]) {
+			continue // prose
 		}
 		var (
 			f  reconcile.Finding
 			ok bool
 		)
 		if cols != nil {
-			f, ok = rowByName(t, cols)
+			f, ok = rowByName(fields, cols)
 		} else {
-			f, ok = rowByWidth(t)
+			f, ok = rowByWidth(fields)
 		}
 		if !ok {
 			skipped++
@@ -97,13 +106,35 @@ func finish(f reconcile.Finding, rawCategory, tag string) reconcile.Finding {
 	return f
 }
 
-func firstNonBlank(lines []string) string {
-	for _, l := range lines {
-		if t := strings.TrimSpace(l); t != "" {
-			return t
+// isSeverity is stream.parse's finding-row test applied to a row's SEVERITY
+// field (the first unless `# Format:` places it elsewhere), case-folded because
+// a headerless stream's severity is upper-cased on read. A line whose field is
+// anything else, or that has no `|` after it, is prose.
+func isSeverity(s string) bool {
+	switch strings.ToUpper(s) {
+	case "CRITICAL", "HIGH", "MEDIUM", "LOW":
+		return true
+	}
+	return false
+}
+
+// headerLine returns the index of the first line in the leading comment block
+// (blank and `#` lines, up to the first other line) that carries
+// versionPrefix, or -1 when there is none.
+func headerLine(lines []string) int {
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if t == "" {
+			continue
+		}
+		if !strings.HasPrefix(t, "#") {
+			return -1
+		}
+		if strings.HasPrefix(t, versionPrefix) {
+			return i
 		}
 	}
-	return ""
+	return -1
 }
 
 // formatColumns returns the upper-cased names a `# Format:` comment declares in
@@ -141,11 +172,21 @@ func splitRow(line string) []string {
 	return f
 }
 
+// trimPadding drops trailing empty fields while the row is wider than ok
+// allows, as stream.parse treats a trailing `|` as padding.
+func trimPadding(f []string, ok func(int) bool) []string {
+	for !ok(len(f)) && len(f) > minColumns && f[len(f)-1] == "" {
+		f = f[:len(f)-1]
+	}
+	return f
+}
+
 // rowByName maps a row onto a finding by the stream's declared column names.
-// A row shorter than the declaration leaves the missing columns empty.
-func rowByName(line string, cols []string) (reconcile.Finding, bool) {
-	f := splitRow(line)
-	if len(f) < minColumns {
+// A row shorter than the declaration leaves the missing columns empty; a row
+// wider than it is rejected, since an unescaped `|` would misalign its fields.
+func rowByName(fields, cols []string) (reconcile.Finding, bool) {
+	f := trimPadding(fields, func(n int) bool { return n <= len(cols) })
+	if len(f) < minColumns || len(f) > len(cols) {
 		return reconcile.Finding{}, false
 	}
 	var r reconcile.Finding
@@ -179,10 +220,10 @@ func rowByName(line string, cols []string) (reconcile.Finding, bool) {
 // 5, 6 and 8 columns share SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY; 6 adds
 // REVIEWER, 8 adds EST_MINUTES|EVIDENCE|REVIEWER. 10 is the legacy claude
 // layout SEVERITY|ORIGIN|RISK_CLASS|FILE:LINE|PROBLEM|FIX|CATEGORY|EST|EVIDENCE|SOURCE,
-// which carries no reviewer.
-func rowByWidth(line string) (reconcile.Finding, bool) {
-	f := splitRow(line)
-	if len(f) < minColumns {
+// which carries no reviewer. Any other width is rejected.
+func rowByWidth(fields []string) (reconcile.Finding, bool) {
+	f := trimPadding(fields, knownWidth)
+	if !knownWidth(len(f)) {
 		return reconcile.Finding{}, false
 	}
 	var r reconcile.Finding
@@ -196,16 +237,20 @@ func rowByWidth(line string) (reconcile.Finding, bool) {
 		r.Severity = strings.ToUpper(f[0])
 		r.File, r.Line = splitFileLine(f[1])
 		r.Problem, r.Fix, r.Category = f[2], f[3], f[4]
-		switch {
-		case len(f) >= 8:
+		switch len(f) {
+		case 8:
 			r.EstMinutes = estMinutes(f[5])
 			r.Evidence = f[6]
 			r.Reviewer = f[7]
-		case len(f) == 6:
+		case 6:
 			r.Reviewer = f[5]
 		}
 	}
 	return r, r.Severity != "" && r.File != ""
+}
+
+func knownWidth(n int) bool {
+	return n == 5 || n == 6 || n == 8 || n == 10
 }
 
 // splitFileLine splits FILE:LINE on the last colon, as stream's v1 reader
