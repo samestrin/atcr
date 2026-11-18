@@ -79,8 +79,9 @@ func TestSkillExport_RoundTripsByteIdentical(t *testing.T) {
 }
 
 // TestSkillExport_UnknownHarnessIsAUsageError (AC6) — an unrecognized --harness
-// exits non-zero, lists the harnesses it does know, and names --dir as the escape
-// hatch. It never guesses a path, and it writes nothing.
+// exits non-zero, lists the harnesses it does know, and names --dest (the
+// documented flag, not the hidden deprecated --dir alias) as the escape hatch.
+// It never guesses a path, and it writes nothing.
 func TestSkillExport_UnknownHarnessIsAUsageError(t *testing.T) {
 	dest := t.TempDir()
 	t.Chdir(dest)
@@ -93,7 +94,8 @@ func TestSkillExport_UnknownHarnessIsAUsageError(t *testing.T) {
 	for name := range skillHarnesses {
 		assert.Contains(t, msg, name, "the error must list the known harness %q", name)
 	}
-	assert.Contains(t, msg, "--dir", "the error must name --dir as the escape hatch for an unlisted harness")
+	assert.Contains(t, msg, "--dest", "the error must name --dest as the escape hatch for an unlisted harness")
+	assert.NotContains(t, msg, "--dir", "the error must not recommend the hidden deprecated --dir alias")
 
 	entries, readErr := os.ReadDir(dest)
 	require.NoError(t, readErr)
@@ -578,6 +580,21 @@ func TestSkillExport_DestinationIsAFileIsAUsageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "a non-directory destination is a usage error")
 	assert.Contains(t, out+errOut+err.Error(), "not a directory", "the message must name the actual problem")
+	assert.Contains(t, out+errOut+err.Error(), "--dest", "the remedy must name --dest, the documented flag")
+	assert.NotContains(t, out+errOut+err.Error(), "--dir", "the remedy must not recommend the hidden deprecated --dir alias")
+}
+
+// TestSkillExport_DestHomeExpansionFailureNamesDest — when the home directory
+// cannot be resolved for an explicit ~/ destination, the error must recommend
+// the documented --dest flag, not the hidden deprecated --dir alias.
+func TestSkillExport_DestHomeExpansionFailureNamesDest(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	_, err := resolveSkillDest("claude", false, "~/skills/atcr")
+	require.Error(t, err, "an unresolvable home directory must fail the ~/ expansion")
+	assert.Contains(t, err.Error(), "--dest", "the error must name --dest, the documented flag")
+	assert.NotContains(t, err.Error(), "--dir", "the error must not name the hidden deprecated --dir alias")
+	assert.Contains(t, err.Error(), "~/skills/atcr", "the error must quote the destination it failed to resolve")
 }
 
 // TestSkillExport_DirExpandsLeadingTilde — --dir is documented with a ~/ example,
