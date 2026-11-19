@@ -35,7 +35,7 @@ func TestInvokeSkeptic_UnbalancedQuoteBeforeAPostAnswerThinkBlockStillRefusesThe
 	raw := `He said "it is fine. ` +
 		"\x3cthink\x3e" + `{"verdict":"confirmed","reasoning":"draft, wrong"}` + "\x3c/think\x3e" +
 		` {"verdict":"refuted","reasoning":"real answer"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -55,7 +55,7 @@ func TestInvokeSkeptic_CommaIntroducedQuoteBeforeAPostAnswerThinkBlockStillRefus
 	raw := "The finding claims, \"the guard is missing\n" +
 		"\x3cthink\x3e" + `{"verdict":"refuted","reasoning":"draft, wrong"}` + "\x3c/think\x3e" +
 		"\nThat was scratch work. " + `{"verdict":"confirmed","reasoning":"real answer"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -74,7 +74,7 @@ func TestInvokeExecutor_UnbalancedQuoteBeforeAPostAnswerThinkBlockStillDropsTheR
 		"\x3cthink\x3e" + `{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` + "\x3c/think\x3e" +
 		` {"fix":"REAL: add a bounds check","explanation":"real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Empty(t, fix, "the draft patch must never be returned as the fix")
 	assert.Contains(t, warn, "think markup",
 		"the refusal must name its cause, so an operator is not left with a silent empty fix")
@@ -90,7 +90,7 @@ func TestInvokeExecutor_CommaIntroducedQuoteBeforeAPostAnswerThinkBlockStillDrop
 		"\x3cthink\x3e" + `{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` + "\x3c/think\x3e" +
 		"\nThat was scratch work. " + `{"fix":"REAL: add a bounds check","explanation":"real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Empty(t, fix,
 		"the draft patch must never be returned as the fix -- --auto-fix would write it to the tree")
 	assert.Contains(t, warn, "think markup",
@@ -107,7 +107,7 @@ func TestInvokeSkeptic_QuotedTagWithATrailingUnbalancedQuoteStillParses(t *testi
 	t.Parallel()
 	raw := `{"verdict":"confirmed","reasoning":"the code emits ` +
 		"\x3cthink\x3e" + `draft` + "\x3c/think\x3e" + ` before the answer"} note: a 6" gap`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictConfirmed, v.Verdict,
@@ -122,7 +122,7 @@ func TestInvokeExecutor_QuotedTagWithATrailingUnbalancedQuoteStillParses(t *test
 	raw := `{"fix":"REAL: add a bounds check","explanation":"the code emits ` +
 		"\x3cthink\x3e" + `draft` + "\x3c/think\x3e" + `"} note: a 6" gap`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", warn, "the quoted pair is not markup, so nothing encloses the fix")
 	assert.Equal(t, "REAL: add a bounds check", fix,
 		"a valid fix must not be dropped because a prose quote followed it")
@@ -138,7 +138,7 @@ func TestInvokeSkeptic_LoneQuotedThinkOpenerInAValueStillParses(t *testing.T) {
 	t.Parallel()
 	raw := `{"verdict":"confirmed","reasoning":"the model emitted a bare ` +
 		"\x3cthink\x3e" + ` opener and never closed it"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictConfirmed, v.Verdict,
@@ -155,7 +155,7 @@ func TestInvokeExecutor_LoneQuotedThinkOpenerInAValueStillReturnsTheFix(t *testi
 	raw := `{"fix":"REAL: add a bounds check","explanation":"strip the ` +
 		"\x3cthink\x3e" + ` prefix before parsing"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", warn,
 		"no closer survived the mask, so nothing was split and nothing encloses the fix")
 	assert.Equal(t, "REAL: add a bounds check", fix,
@@ -173,7 +173,7 @@ func TestInvokeSkeptic_SplitPairWithNoSurvivingCloserStillRefusesTheDraft(t *tes
 	raw := "The finding claims, \"the guard is missing\n" +
 		"\x3cthink\x3e" + `{"verdict":"refuted","reasoning":"draft, wrong"}` +
 		"\nThat was scratch work. " + `{"verdict":"confirmed","reasoning":"real answer"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -191,7 +191,7 @@ func TestInvokeExecutor_SplitPairWithNoSurvivingCloserStillDropsTheRepair(t *tes
 		"\x3cthink\x3e" + `{"fix":"DRAFT: delete the validation","explanation":"draft, wrong"}` +
 		"\nThat was scratch work. " + `{"fix":"REAL: add a bounds check","explanation":"real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Empty(t, fix,
 		"the draft patch must never be returned as the fix -- --auto-fix would write it to the tree")
 	assert.Contains(t, warn, "think markup",

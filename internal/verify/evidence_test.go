@@ -69,7 +69,7 @@ func TestVerifyFinding_ExecEvidenceStampedOnConfirm(t *testing.T) {
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: reproduced, OriginalBytes: len(reproduced)}}
 	f := reconcile.JSONFinding{File: "calc.go", Line: 10, Problem: "off-by-one"}
 
-	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true)
+	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true, "")
 	require.Equal(t, verdictConfirmed, ver.Verdict)
 	require.NotNil(t, ev, "a reproduced run on a confirmed verdict must yield execution evidence")
 	assert.Equal(t, 1, ev.ExitCode)
@@ -104,7 +104,7 @@ func TestVerifyFinding_ExecEvidenceRequiresDeterministicRepro(t *testing.T) {
 	}}
 	f := reconcile.JSONFinding{File: "calc.go", Line: 10, Problem: "off-by-one"}
 
-	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true)
+	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true, "")
 	require.Equal(t, verdictConfirmed, ver.Verdict, "the skeptic's own vote still confirms")
 	assert.Nil(t, ev, "a non-deterministic repro must not surface execution evidence")
 }
@@ -121,7 +121,7 @@ func TestVerifyFinding_NoEvidenceWhenRefuted(t *testing.T) {
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: reproduced, OriginalBytes: len(reproduced)}}
 	f := reconcile.JSONFinding{File: "calc.go", Line: 10, Problem: "off-by-one"}
 
-	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true)
+	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true, "")
 	require.Equal(t, verdictRefuted, ver.Verdict)
 	assert.Nil(t, ev, "a refuted verdict must not surface a Reproduced evidence block")
 }
