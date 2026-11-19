@@ -860,8 +860,12 @@ Flags: `--store`, `--dry-run`.
   month shards.
 - **Line order is the one thing the event layout cannot preserve.** An id whose
   records tie on timestamp and status breaks the tie by line order in a month
-  shard and by file name in the event layout, so such a store is refused.
-  Compacting the month shards first can remove the ambiguity.
+  shard and by file name in the event layout, so such a store is refused, and
+  the error says how to clear the tie: run `atcr debt compact`, then convert
+  again. Compaction folds each item to one record, which clears the tie, except
+  for tied resolutions with different reasons: compaction keeps every reason, so
+  remove the unwanted line from its month shard by hand, or keep the store on
+  month shards.
 - **A shard converts only when every line in it can become an event file.** A
   shard holding a corrupt or over-long line, a record from a newer atcr, or a
   record whose id or timestamp cannot name an event file is left whole and named
@@ -873,6 +877,15 @@ Flags: `--store`, `--dry-run`.
   Running `atcr debt convert` again finishes a conversion a crash left behind
   ("Finished an interrupted conversion") and throws away staging that never
   committed.
+- **A dry run stages outside the store, in the user cache dir.** It copies the
+  records it would move to a private (`0700`) directory under
+  `<user cache dir>/atcr/debt-convert/`, named for the store, and removes it
+  when it ends. A copy left by a crashed dry run is removed by the next
+  `atcr debt convert` on that store, dry or real.
+- **The run opts the store in even when no shard converts.** When every month
+  shard is left in place, later adds and resolutions still write event files,
+  and the output says so ("The store is now opted in to the event layout"; a
+  dry run says what a real run would do).
 - **A dry run, or a failure before the store is opted in, leaves the store
   exactly as it was.** A dry run writes nothing, and a failure during validation
   or the fold comparison happens before anything is enabled. Past that point the

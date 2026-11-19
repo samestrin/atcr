@@ -19,7 +19,10 @@ func newDebtConvertCmd() *cobra.Command {
 			"No record is lost: the store is folded before and after, and no shard is\n" +
 			"removed unless the two folds are identical; otherwise nothing changes.\n" +
 			"A shard holding a line this atcr cannot carry into an event file is left\n" +
-			"whole and reported. The conversion is one way; there is no command back.\n" +
+			"whole and reported. The store is opted in to the event layout even when\n" +
+			"no shard converts. A store where two records of one item tie on timestamp\n" +
+			"and status is refused; `atcr debt compact` first clears most such ties.\n" +
+			"The conversion is one way; there is no command back.\n" +
 			"Run it with --dry-run first to see what a real run would move.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runDebtConvert,
@@ -72,6 +75,13 @@ func runDebtConvert(cmd *cobra.Command, _ []string) error {
 		for _, k := range res.Kept {
 			_, _ = fmt.Fprintf(out, "  %s: %s\n", k.Name, k.Reason)
 		}
+	}
+	if res.OptedIn {
+		lead := "The store is now opted in"
+		if dryRun {
+			lead = "A real run opts the store in"
+		}
+		_, _ = fmt.Fprintf(out, "%s to the event layout: every later add and resolution writes an event file (items/).\n", lead)
 	}
 	if dryRun {
 		_, _ = fmt.Fprintln(out, "Dry run: the store was not modified.")

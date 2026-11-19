@@ -83,3 +83,26 @@ func TestDebtConvert_ErrorIsWrapped(t *testing.T) {
 	_, statErr := os.Stat(blocker)
 	assert.NoError(t, statErr, "a journal never removes a path outside the store")
 }
+
+// TestDebtConvert_SaysTheStoreIsOptedIn (TD row 8f8e6986e9550a96): when every
+// month shard is kept, the run still opts the store in to the event layout, and
+// the output says so rather than only "Nothing to convert".
+func TestDebtConvert_SaysTheStoreIsOptedIn(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "store")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-06.jsonl"), []byte("{not json\n"), 0o600))
+
+	out, err := runDebt(t, "convert", "--store", dir, "--dry-run")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Nothing to convert: no month shard can be carried into event files.")
+	assert.Contains(t, out, "A real run opts the store in to the event layout: every later add and resolution writes an event file (items/).")
+
+	out, err = runDebt(t, "convert", "--store", dir)
+	require.NoError(t, err)
+	assert.Contains(t, out, "The store is now opted in to the event layout: every later add and resolution writes an event file (items/).")
+	assert.True(t, localdebt.UsesEventLayout(dir))
+
+	out, err = runDebt(t, "convert", "--store", dir)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "opted in", "an opted-in store is not reported again")
+}
