@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/localdebt"
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // debtRefNow is a fixed reference instant so age-bucket tests are deterministic.
@@ -334,6 +335,28 @@ func TestRenderDebtDashboard_StripsControlSequencesAndNeutralizesHTML(t *testing
 	assert.NotContains(t, out, " ", "no line separator")
 	assert.NotContains(t, out, "<img", "raw HTML is escaped rather than rendered")
 	assert.Contains(t, out, "erase", "the surrounding finding text survives")
+}
+
+// TD row 8789c1e4f167b3cb: debtReportHeading re-implemented debtMarkdownCell's
+// cell-safety steps inline, so a fix to one could miss the other. Both share
+// debtMarkdownSafe: keepPipe=false escapes the pipe for table cells, keepPipe=true
+// keeps it for headings (a pipe cannot break a heading). The < > escaping and
+// the control-character strip stay in both.
+func TestDebtMarkdownSafe_SharedCellSafety(t *testing.T) {
+	in := " a\r\nb\nc | <b>d</b> \x1b[1A\u009bK\u2028e "
+	assert.Equal(t, `a b c \| &lt;b&gt;d&lt;/b&gt; [1AKe`, debtMarkdownSafe(in, false),
+		"cell mode: newlines collapse, pipe escapes, controls strip, HTML escapes, edges trim")
+	assert.Equal(t, "a b c | &lt;b&gt;d&lt;/b&gt; [1AKe", debtMarkdownSafe(in, true),
+		"heading mode: identical except the pipe is kept")
+
+	// debtMarkdownCell is exactly the shared helper in cell mode, and
+	// debtReportHeading is the shared helper in heading mode plus the token
+	// scrub it always applied, so neither renderer keeps a private copy.
+	for _, s := range []string{"", "plain", in, "|only pipes||", "<script>alert(1)</script>", "\ttabs\tand\x7fdel\x85c1"} {
+		assert.Equal(t, debtMarkdownSafe(s, false), debtMarkdownCell(s), "cell uses the shared helper: %q", s)
+		want := strings.TrimSpace(log.NewRedactor("").Redact(debtMarkdownSafe(s, true)))
+		assert.Equal(t, want, debtReportHeading("### "+s), "heading uses the shared helper: %q", s)
+	}
 }
 
 // The unknown row is emitted only when it is non-zero: a clean store's dashboard
