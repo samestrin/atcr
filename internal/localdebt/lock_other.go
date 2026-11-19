@@ -48,6 +48,10 @@ func withLock(dir, session string, fn func() error) error {
 
 	// Ensure the parent store directory exists — WITHOUT recreating a repo root
 	// that has since vanished (ensureStoreDir; TD internal/localdebt/root.go:123).
+	if err := checkStoreContainment(dir); err != nil {
+		return err
+	}
+	afterContainmentCheck()
 	if err := ensureStoreDir(dir); err != nil {
 		return fmt.Errorf("creating localdebt dir for lock: %w", err)
 	}
@@ -60,6 +64,9 @@ func withLock(dir, session string, fn func() error) error {
 			epoch := time.Now().Unix()
 			_ = os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=%s|epoch=%d", session, epoch)), 0o600)
 			defer func() { _ = os.RemoveAll(lockDir) }()
+			if err := checkStoreContainment(dir); err != nil {
+				return err
+			}
 			return fn()
 		}
 		if !os.IsExist(err) {

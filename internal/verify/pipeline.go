@@ -155,6 +155,17 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 	return runVerify(ctx, reviewDir, reg, opts, harness)
 }
 
+// secretGuardPolicy is the secret_guard policy the skeptic and executor prompts
+// are sent under: the registry's own, warn (registry.DefaultSecretGuard) when it
+// sets none. llmclient reads "" as off, so the default is resolved here rather
+// than left to the client.
+func secretGuardPolicy(reg *registry.Registry) string {
+	if p := strings.TrimSpace(reg.SecretGuard); p != "" {
+		return p
+	}
+	return registry.DefaultSecretGuard
+}
+
 // harnessFunc lazily builds the tool harness (chat completer + dispatcher) a
 // skeptic needs. It is the seam that lets tests drive the verify pipeline with a
 // scripted completer and a fake dispatcher instead of a real provider + git
@@ -163,6 +174,7 @@ type harnessFunc func() (fanout.ChatCompleter, Dispatcher, func(), error)
 
 func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
 	start := time.Now()
+	guard := secretGuardPolicy(reg)
 
 	// Stage/run identity for audit observers (Epic 35.0): skeptic and
 	// fix-executor calls are attributed to this verify run rather than landing
@@ -285,7 +297,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		go func(idx int, jb job) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			ver, vr, ev := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil)
+			ver, vr, ev := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil, guard)
 			jobResults[idx] = jobResult{ver: ver, vr: vr, ev: ev}
 		}(i, j)
 	}
@@ -621,7 +633,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 // any other error's text can carry a repository path.
 func harnessUnavailableReason(err error) string {
 	if errors.Is(err, ErrNoManifestHead) {
-		return "the review recorded no head commit to snapshot (a --diff-file review, a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD)"
+		return "the review recorded no head commit to snapshot (a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD)"
 	}
 	return "the repository snapshot at the review's head could not be built"
 }
@@ -640,7 +652,7 @@ func faultVerification(skeptic string, err error) *reclib.Verification {
 // unavailable it records unverifiable/tool_harness_unavailable; otherwise it
 // drives every selected skeptic through invokeSkeptic and aggregates the votes.
 // It never returns an error — failure isolation is the stage's contract.
-func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, VerificationResult, *reconcile.EvidenceExec) {
+func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool, guard string) (*reclib.Verification, VerificationResult, *reconcile.EvidenceExec) {
 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
 	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
 	base.TrippedBudgets = []string{}
@@ -666,7 +678,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		// run_script result is captured as execution evidence without changing the
 		// invokeSkeptic contract.
 		rec := &execEvidenceRecorder{inner: disp}
-		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, rec, exec)
+		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, rec, exec, guard)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but log it so the impossible case is visible if it

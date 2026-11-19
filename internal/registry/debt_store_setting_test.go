@@ -120,3 +120,15 @@ func TestLoadProjectDebtStore_UnreadableConfigIsAnError(t *testing.T) {
 	assert.Contains(t, err.Error(), ".atcr/config.yaml")
 	assert.NotContains(t, err.Error(), root)
 }
+
+// The user tier has the same rule: an unreadable registry is an error naming
+// the file by its label, never an unset value and never the absolute path.
+func TestLoadUserDebtStore_UnreadableRegistryIsAnError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "atcr", "registry.yaml"), 0o755))
+	_, err := LoadUserDebtStore()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry.yaml")
+	assert.NotContains(t, err.Error(), home)
+}

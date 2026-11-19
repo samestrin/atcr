@@ -98,10 +98,14 @@ func TestConvert_EventFilesAreTheShardLinesByteForByte(t *testing.T) {
 	require.NoError(t, err)
 
 	var got []string
-	for _, body := range snapshotEvents(t, dir) {
-		if body != "" { // the empty marker
-			got = append(got, body)
+	for name, body := range snapshotEvents(t, dir) {
+		// Dot-prefixed names are not events (IsEventEntry): the empty layout
+		// marker and items/.gitignore, which Convert now ships. Every actual
+		// event body — including a hypothetical empty one — is still compared.
+		if strings.HasPrefix(name, ".") {
+			continue
 		}
+		got = append(got, body)
 	}
 	assert.ElementsMatch(t, lines, got, "an event holds the shard line it came from, so no field is dropped")
 }

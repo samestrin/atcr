@@ -214,6 +214,99 @@ func TestInstallUnit_ReinstallMDFailurePreservesPriorYAML(t *testing.T) {
 	assert.Equal(t, priorYAML, string(got), "prior .yaml content restored, not left half-written or deleted")
 }
 
+// TestInstallUnit_PriorYAMLDirectoryAbortsBeforeWrite: a prior <name>.yaml that
+// exists but cannot be read (here a directory squats the path, so the read fails
+// with EISDIR) is neither a restorable prior unit nor a confirmed first-time
+// install. The install aborts at that read, before either file is touched.
+func TestInstallUnit_PriorYAMLDirectoryAbortsBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	yamlDest := filepath.Join(dir, "security", "owasp.yaml")
+	mdDest := filepath.Join(dir, "security", "owasp.md")
+	require.NoError(t, os.MkdirAll(yamlDest, 0o700))
+
+	srv := testServer(t, map[string]string{
+		"/security/owasp.yaml": validPersonaYAML,
+		"/security/owasp.md":   customPromptMD,
+	})
+
+	err := InstallUnit(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read prior persona")
+	assert.DirExists(t, yamlDest, "the squatting directory is left in place")
+	assert.NoFileExists(t, mdDest, "no .md written when the prior .yaml cannot be classified")
+}
+
+// skipIfRoot skips a test that relies on a 0o000 file being unreadable: root
+// reads it anyway.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+}
+
+// TestInstallUnit_UnreadablePriorYAMLMDFailureKeepsPriorYAML: a prior .yaml that
+// exists but is unreadable (EACCES) must not be treated as a first-time install.
+// Before the fix the .yaml was overwritten, the .md write then failed (a symlink
+// at <name>.md trips writeFileAtomic's guard), and the first-time rollback ran
+// os.Remove(yamlDest), deleting the persona file the user still had.
+func TestInstallUnit_UnreadablePriorYAMLMDFailureKeepsPriorYAML(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	yamlDest := filepath.Join(dir, "security", "owasp.yaml")
+	mdDest := filepath.Join(dir, "security", "owasp.md")
+	const priorYAML = "provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\nversion: \"0.9.0\"\n"
+	require.NoError(t, os.MkdirAll(filepath.Dir(yamlDest), 0o700))
+	require.NoError(t, os.WriteFile(yamlDest, []byte(priorYAML), 0o600))
+	require.NoError(t, os.Chmod(yamlDest, 0o000))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "sink"), mdDest))
+
+	srv := testServer(t, map[string]string{
+		"/security/owasp.yaml": validPersonaYAML,
+		"/security/owasp.md":   customPromptMD,
+	})
+
+	err := InstallUnit(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read prior persona")
+
+	require.NoError(t, os.Chmod(yamlDest, 0o600), "the prior .yaml must still exist")
+	got, rerr := os.ReadFile(yamlDest)
+	require.NoError(t, rerr)
+	assert.Equal(t, priorYAML, string(got), "prior .yaml neither overwritten nor deleted")
+	assert.NoFileExists(t, filepath.Join(dir, "sink"), "nothing written through the .md symlink")
+}
+
+// TestInstallUnit_UnreadablePriorYAMLBindingOnlyKeepsMD: the stale-prompt cleanup
+// uses the same classification as the rollback. A binding-only install over an
+// unreadable prior .yaml aborts before the .yaml is overwritten and before the
+// existing .md is removed.
+func TestInstallUnit_UnreadablePriorYAMLBindingOnlyKeepsMD(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	yamlDest := filepath.Join(dir, "security", "owasp.yaml")
+	mdDest := filepath.Join(dir, "security", "owasp.md")
+	const priorYAML = "provider: anthropic\nmodel: claude-sonnet-4-6\nrole: reviewer\nversion: \"0.9.0\"\n"
+	require.NoError(t, os.MkdirAll(filepath.Dir(yamlDest), 0o700))
+	require.NoError(t, os.WriteFile(yamlDest, []byte(priorYAML), 0o600))
+	require.NoError(t, os.Chmod(yamlDest, 0o000))
+	require.NoError(t, os.WriteFile(mdDest, []byte(customPromptMD), 0o600))
+
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": validPersonaYAML})
+
+	err := InstallUnit(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read prior persona")
+
+	require.NoError(t, os.Chmod(yamlDest, 0o600), "the prior .yaml must still exist")
+	got, rerr := os.ReadFile(yamlDest)
+	require.NoError(t, rerr)
+	assert.Equal(t, priorYAML, string(got), "prior .yaml not overwritten")
+	gotMD, merr := os.ReadFile(mdDest)
+	require.NoError(t, merr, "existing .md not removed")
+	assert.Equal(t, customPromptMD, string(gotMD))
+}
+
 // TestInstallUnit_RefusesSymlinkedIntermediateDir: a persona name is attacker-
 // influenced (it comes from the untrusted index) and may contain "/", so
 // personaPath + MkdirAll create nested dirs. If an intermediate component is a
