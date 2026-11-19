@@ -143,7 +143,7 @@ func TestRunOrdersByFileThenLine(t *testing.T) {
 
 func TestRunSummaryCountsSkippedRowsAndWarnings(t *testing.T) {
 	res := mustRun(t, Options{Tolerance: 3},
-		Stream{Tag: "legacy", Data: []byte("HIGH|a.go:1|p|f|correctness\nonly|three|cols\n")},
+		Stream{Tag: "legacy", Data: []byte("HIGH|a.go:1|p|f|correctness\nLOW|three|cols\n")},
 		Stream{Tag: "v1", Data: []byte(header)},
 	)
 	s := res.Summary

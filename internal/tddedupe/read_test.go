@@ -178,9 +178,14 @@ func TestReadStreamSkippedRows(t *testing.T) {
 	}
 }
 
+// A row with an empty severity does not start with a severity, so it is prose
+// and ignored, as stream.parse ignores it (EST-7267 Q1); a severity-prefixed
+// malformed row still counts.
 func TestReadStreamSkipsEmptySeverityOrFile(t *testing.T) {
 	data := "|a.go:1|p|f|correctness\n" +
 		"HIGH||p|f|correctness\n" +
+		"LOW|a.go:2|p|f|correctness|x|y\n" + // 7 columns: no layout
+
 		"# Format: ignored here, past the header block\n" +
 		"HIGH|a.go:3|p|f|correctness\n"
 	got, skipped, _ := mustRead(t, "s", data)
@@ -231,12 +236,14 @@ func TestReadStreamEmpty(t *testing.T) {
 	}
 }
 
-// By name, a row shorter than 5 columns or with no severity is skipped, as it
-// is by width.
+// By name, a row shorter than 5 columns or wider than the declaration is
+// skipped, as it is by width; a row with no severity is prose and ignored
+// (EST-7267 Q1).
 func TestReadStreamByNameSkipsShortAndNoSeverity(t *testing.T) {
 	data := "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY\n" +
 		"HIGH|a.go:1\n" +
 		"|a.go:2|p|f|c\n" +
+		"HIGH|a.go:2|p|f|c|extra\n" +
 		"HIGH|a.go:3|p|f|c\n"
 	got, skipped, _ := mustRead(t, "n", data)
 	if skipped != 2 || len(got) != 1 || got[0].Line != 3 {
@@ -266,5 +273,106 @@ func TestReadStreamFileLineEdges(t *testing.T) {
 		if len(got) != 2 || got[0].File != "a.go" || got[0].Line != 0 || got[1].File != "C:/x/a.go:12x" || got[1].Line != 0 {
 			t.Fatalf("%s: got %+v, want a.go:0 and C:/x/a.go:12x:0", name, got)
 		}
+	}
+}
+
+// A version header anywhere in the leading comment block routes the stream to
+// stream.ParseSource (row afc6605a9b54d0e6): a v1 header under a comment line
+// reads as v1 with no legacy warning, and an unknown version under a comment
+// line is still an error, never a legacy read.
+func TestReadStreamHeaderAfterLeadingComment(t *testing.T) {
+	data := "# written by the claude reviewer\n\n# atcr-findings/v1\n" +
+		"HIGH|a.go:12|nil deref|check nil|correctness|15|ev|claude\n" +
+		"HIGH|a.go:13|p|f|c|1|e|r|extra\n"
+	got, skipped, warn := mustRead(t, "c", data)
+	if warn != "" {
+		t.Fatalf("warn=%q, want no legacy warning for a v1 stream", warn)
+	}
+	if skipped != 1 {
+		t.Fatalf("skipped=%d, want the 9-column row counted as stream.ParseSource does", skipped)
+	}
+	wantFindings(t, got, []reconcile.Finding{
+		{Severity: "HIGH", File: "a.go", Line: 12, Problem: "nil deref", Fix: "check nil", Category: "correctness", EstMinutes: 15, Evidence: "ev", Reviewer: "claude"},
+	})
+
+	_, _, _, err := ReadStream("c", []byte("# a comment\n# atcr-findings/v3\nHIGH|a.go:1|p|f|c|1|e|r\n"))
+	if !errors.Is(err, stream.ErrUnknownVersion) {
+		t.Fatalf("v3 under a comment: error %v, want ErrUnknownVersion", err)
+	}
+
+	// A header after the first row is past the comment block: legacy read.
+	late := "HIGH|a.go:1|p|f|c\n# atcr-findings/v1\n"
+	if _, _, warn := mustRead(t, "c", late); warn == "" {
+		t.Fatal("a header after a row must not route to stream.ParseSource")
+	}
+}
+
+// A headerless line that does not start with a severity is prose, ignored as
+// stream.parse ignores it (row 887ced04802f1e39, EST-7267 Q1); a
+// severity-prefixed malformed row is still counted in skipped.
+func TestReadStreamProseNotSkipped(t *testing.T) {
+	data := "Here are my findings:\n" +
+		"GARBAGE|too|few\n" +
+		"HIGH\n" + // a severity with no `|` after it is prose, as in stream.parse
+		"HIGH|a.go:1|p|f|correctness\n" +
+		"HIGH|a.go:2|too short\n" +
+		"That is all.\n"
+	got, skipped, _ := mustRead(t, "s", data)
+	if skipped != 1 || len(got) != 1 {
+		t.Fatalf("skipped=%d findings=%d, want 1 (the short HIGH row) and 1", skipped, len(got))
+	}
+
+	named := "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY\nsome prose\nLOW|a.go:1\nLOW|a.go:2|p|f|c\n"
+	got, skipped, _ = mustRead(t, "s", named)
+	if skipped != 1 || len(got) != 1 {
+		t.Fatalf("by name: skipped=%d findings=%d, want 1 and 1", skipped, len(got))
+	}
+}
+
+// Without `# Format:` only the 5, 6, 8 and 10-column layouts are read; any
+// other width is an unescaped `|` and counts in skipped, as stream.parse
+// counts an over-wide row (row 66632b546b9f8255, EST-7267 Q2). Trailing empty
+// fields are padding, so a row written with a trailing `|` still reads.
+func TestReadStreamUnsupportedWidthSkipped(t *testing.T) {
+	for _, row := range []string{
+		"HIGH|a.go:1|p|f|correctness|x|y",               // 7
+		"HIGH|a.go:1|p|f|correctness|1|e|r|extra",       // 9
+		"HIGH|m|h|a.go:1|p|f|security|2|e|claude|extra", // 11
+	} {
+		got, skipped, _ := mustRead(t, "w", row+"\n")
+		if skipped != 1 || len(got) != 0 {
+			t.Fatalf("%q: skipped=%d findings=%d, want 1 and 0", row, skipped, len(got))
+		}
+	}
+	got, skipped, _ := mustRead(t, "w", "HIGH|a.go:1|p|f|correctness|bob|\nHIGH|a.go:2|p|f|c|1|e|r|\n")
+	if skipped != 0 || len(got) != 2 || got[0].Reviewer != "bob" || got[1].Reviewer != "r" {
+		t.Fatalf("trailing pipes: skipped=%d findings=%+v, want both rows read", skipped, got)
+	}
+}
+
+// With `# Format:` a row wider than the declaration counts in skipped instead
+// of keeping only the declared columns; trailing empty fields are padding.
+func TestReadStreamByNameTooWideSkipped(t *testing.T) {
+	data := "# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|REVIEWER\n" +
+		"HIGH|a.go:1|p|with|pipe|f|correctness|ann\n" +
+		"HIGH|a.go:2|p|f|correctness|ann||\n"
+	got, skipped, _ := mustRead(t, "n", data)
+	if skipped != 1 || len(got) != 1 || got[0].Line != 2 || got[0].Reviewer != "ann" {
+		t.Fatalf("skipped=%d findings=%+v, want the over-wide row skipped and a.go:2 read", skipped, got)
+	}
+}
+
+// The prose test reads the column `# Format:` names SEVERITY, so a stream that
+// declares it second is not read as all prose.
+func TestReadStreamByNameSeverityNotFirst(t *testing.T) {
+	data := "# Format: FILE:LINE|SEVERITY|PROBLEM|FIX|CATEGORY\n" +
+		"one-field prose\n" + // no SEVERITY column at all: prose, never an index panic
+		"a.go:9|HIGH\n" + // nothing after the severity: prose
+		"a.go:1|HIGH|p|f|correctness\n" +
+		"HIGH|a.go:2|p|f|correctness\n" + // severity in the file column: prose
+		"a.go:3|LOW|short\n"
+	got, skipped, _ := mustRead(t, "n", data)
+	if skipped != 1 || len(got) != 1 || got[0].Line != 1 || got[0].Severity != "HIGH" {
+		t.Fatalf("skipped=%d findings=%+v, want a.go:1 read and the short row skipped", skipped, got)
 	}
 }

@@ -315,7 +315,15 @@ webhook:
   `job_token_cap` caps the tokens one auto-fix job may spend, and
   `daily_token_cap` caps the tokens all auto-fix jobs may spend in one UTC
   day. Both default to no cap: zero or an absent key means no cap, and a
-  negative value is rejected at config load.
+  negative value is rejected at config load. The spend is the token usage
+  line `atcr review --auto-fix` ends with, which counts the initial review
+  fan-out only (verify, debate and reconcile spend are not counted). A job's
+  usage is only known once it has finished, so `job_token_cap` never stops a
+  job: one that goes over it is logged as over the cap and fails, and its spend
+  still counts toward the day. Once the day's spend reaches `daily_token_cap`,
+  the daemon posts a comment on the pull request naming the cap and starts no
+  job, as for `daily_job_cap`. Under either token cap, a job whose `atcr`
+  prints no usage line is logged as a failure, since its spend is unknown.
 - **A failed job keeps its claim.** The issue+state claim and the day's count
   are written before the job runs, so a job that fails afterwards — whether it
   never pushed a fix branch or failed after the first push — keeps both: the
@@ -325,7 +333,7 @@ webhook:
   status listed in `auto_fix.statuses`: the claim is per issue+state pair, so
   a different state is a new claim (which still spends one of the day's jobs).
 
-The claims and the day's count live in `.atcr/webhook/auto-fix-state.json`
+The claims, the day's count and the day's token spend live in `.atcr/webhook/auto-fix-state.json`
 under the project the daemon runs in, written before each job starts, so they
 survive a restart. A state file that cannot be read or parsed stops the daemon
 at startup rather than risking a duplicate fix.

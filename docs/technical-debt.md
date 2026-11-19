@@ -94,8 +94,10 @@ Every read path folds both layouts together — month shards in lexical order
 first, then event files in name order — so a store holding both reads as one
 backlog. Compaction and justification backfill treat event files as frozen:
 `atcr debt compact` never rewrites, moves or removes one, and `atcr debt
-backfill-justifications` skips any id held in an event file (reporting it as
-left unrepaired) rather than rewriting a file it cannot change. The event layout
+backfill-justifications` skips any id held in an event file that it would
+otherwise repair (reporting it as left unrepaired) rather than rewriting a file
+it cannot change; an id with no source report or an empty justification never
+needed repair and is skipped silently, as on a shard-only store. The event layout
 keeps full history and is not shrunk by compaction; the month-shard layout is
 the one `atcr debt compact` folds.
 
@@ -556,10 +558,11 @@ the status:
 A row's time and `run_id` come from the date of the `### [date] From: ...`
 section it sits under (`2026-11-06` or `November 6, 2026`), never from the
 clock. Running the import again on the same table therefore writes nothing,
-and a run that stopped part way writes only what is missing. Each record is
-filed with `origin: manual`, a `run_id` ending in `-import`, and a
-`source_report` holding the README path (relative to the repo root) and the
-section heading, which `atcr debt report` groups by.
+even from a renamed copy of the README (the rerun check ignores the path), and
+a run that stopped part way writes only what is missing. Each record is filed
+with `origin: manual`, a `run_id` ending in `-import`, and a `source_report`
+holding the README path (relative to the repo root) and the section heading,
+which `atcr debt report` groups by.
 
 Every item row ends up in exactly one of three lists, and the first line of the
 output counts them:
@@ -634,7 +637,10 @@ are required core data, and scrubbing an id would break the join contract).
 
 Renders every item in the store, in every status, as a Markdown report for
 people to read: one table per README section that `atcr debt import` read the
-items from. Dated sections come newest first, then undated ones; items that came
+items from. A section is keyed by its source README's path plus its heading, so
+two READMEs carrying the same `### [date] From: ...` heading keep separate
+sections. Dated sections come newest first, then undated ones, ties by heading
+then source path; items that came
 from no README section (filed by `atcr reconcile` or `atcr debt add`) come last,
 under **Not from a README section**. Within a table the most severe items come
 first, then by file and line.
@@ -687,6 +693,8 @@ is removed from the store; use `atcr debt compact` to fold it.
 `atcr debt group` computes its grouping on every run and never stores it: a
 theme smaller than `--min-group-size` is left in `ungrouped`, and every CRITICAL
 item gets its own group regardless of size.
+
+A regular `critical` theme and the CRITICAL-severity group are separate groups that can both carry `theme: "critical"`; `theme` is therefore not a unique key.
 
 #### Intended differences from the originals
 
@@ -852,8 +860,12 @@ Flags: `--store`, `--dry-run`.
   month shards.
 - **Line order is the one thing the event layout cannot preserve.** An id whose
   records tie on timestamp and status breaks the tie by line order in a month
-  shard and by file name in the event layout, so such a store is refused.
-  Compacting the month shards first can remove the ambiguity.
+  shard and by file name in the event layout, so such a store is refused, and
+  the error says how to clear the tie: run `atcr debt compact`, then convert
+  again. Compaction folds each item to one record, which clears the tie, except
+  for tied resolutions with different reasons: compaction keeps every reason, so
+  remove the unwanted line from its month shard by hand, or keep the store on
+  month shards.
 - **A shard converts only when every line in it can become an event file.** A
   shard holding a corrupt or over-long line, a record from a newer atcr, or a
   record whose id or timestamp cannot name an event file is left whole and named
@@ -864,14 +876,29 @@ Flags: `--store`, `--dry-run`.
   journal naming the shards to remove; past that point it only finishes the plan.
   Running `atcr debt convert` again finishes a conversion a crash left behind
   ("Finished an interrupted conversion") and throws away staging that never
-  committed.
+  committed. So does the next command that reads the store (`atcr debt list`,
+  `filter`, `compact` and the others), so a record is never counted twice in the
+  meantime; if it cannot finish the conversion it warns that some records may be
+  counted twice and reads the store as it stands. `atcr debt compact --dry-run`
+  and `atcr debt backfill-justifications --dry-run` write nothing, so they refuse
+  until the conversion is finished.
+- **A dry run stages outside the store, in the user cache dir.** It copies the
+  records it would move to a private (`0700`) directory under
+  `<user cache dir>/atcr/debt-convert/`, named for the store, and removes it
+  when it ends. A copy left by a crashed dry run is removed by the next
+  `atcr debt convert` on that store, dry or real.
+- **The run opts the store in even when no shard converts.** When every month
+  shard is left in place, later adds and resolutions still write event files,
+  and the output says so ("The store is now opted in to the event layout"; a
+  dry run says what a real run would do).
 - **A dry run, or a failure before the store is opted in, leaves the store
   exactly as it was.** A dry run writes nothing, and a failure during validation
   or the fold comparison happens before anything is enabled. Past that point the
   run has already enabled the event layout and written its commit journal, so a
   failure or crash while publishing the staged events and removing the shards
   can leave the store opted in with month shards and staged events still in
-  place. Running `atcr debt convert` again finishes that conversion. On a store
+  place. The next read of the store, or `atcr debt convert`, finishes that
+  conversion. On a store
   that already uses the event layout the command writes nothing and says so; on
   a store with no records it says there is nothing to convert.
 
@@ -946,7 +973,9 @@ On a store holding event files, ids held there are counted on their own, not in
 the partition: `N left unrepaired (held in event files, which are never
 rewritten)`. An event file is written once and never changed, so replaying an
 excerpt into a shard would report a rewrite that never took effect; the whole id
-is skipped, and the clause is absent when no id is held in an event file.
+is skipped. Only ids the pass would otherwise scan are counted — a record with
+no source report or an empty justification never needed repair — and the clause
+is absent when no such id is held in an event file.
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the
@@ -1056,9 +1085,13 @@ rows' file paths are relative to; default the repository root), `--coherence`,
 **Grounding** reports one of four statuses per row: `valid` (the file exists
 and the line is inside it), `file_missing` (the file does not exist, or the
 line is past its end — the `reason` field says which half failed),
-`symbol_not_found` (the row's Problem names a symbol — a `(name) ` anchor or a
-backticked identifier — that the file does not contain), and `no_file` (the row
-carries no file). The symbol is checked only when the Problem text names one.
+`symbol_not_found` (the row's Problem names a symbol that the file does not
+contain), and `no_file` (the row carries no file). The symbol is checked only
+when the Problem text names one: a leading `(name) ` anchor is the row's
+symbol; without one, the row is grounded when the file contains any backticked
+identifier in the Problem, and `symbol` names the first one found. A path that
+leaves the repository, lexically or through a symlink, is `file_missing` with
+reason `path is outside the repository`.
 
 **Coherence** (`--coherence`) scores each row's Fix against its Problem by the
 cosine of their embeddings from the `context_prefetch.semantic` embedding
@@ -1125,12 +1158,20 @@ store does not hold the id). It flags a lock for a second look when:
 ```bash
 atcr debt locks                      # table, with a count of flagged locks
 atcr debt locks --older-than 48h     # flag only locks older than two days
-atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}]}
+atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}], warnings: [{ref, remote, reason}]}
 ```
 
 Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
 `older-than` and/or `item-resolved`, and is an empty list for a lock nothing
 flags.
+
+A ref under `refs/atcr/debt-locks/` that cannot be read as a lock — its name is
+not a hex-encoded id, or its tag cannot be read or records a different id — is
+reported as a warning, in the human output and in the `warnings` list of
+`--json` (an empty list when there is nothing to warn about). Every other lock
+is still listed: one bad ref never hides the rest, and the listing still
+succeeds. Inspect or delete a warned-about ref with git; `locks` itself never
+changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To
@@ -1167,13 +1208,17 @@ source, else `MEDIUM`. Every cluster of two or more is `needs_review` with its
 evidence and `file_line`, so the "same issue?" decision stays with the model — `atcr dedupe`
 never guesses that two nearby findings are the same defect.
 
-Input layouts: `# atcr-findings/v1` and `/v2`, a `# Format:` comment that names
+Input layouts: `# atcr-findings/v1` and `/v2` (the header may follow other
+comment lines at the top of the stream), a `# Format:` comment that names
 the columns (`FILE:LINE`, `PROBLEM`, `FIX`, `EST_MINUTES`, `REVIEWER`, …; a
 column with no home in a finding, such as `ORIGIN`, `RISK_CLASS` or `BLOCKING`,
 is dropped rather than shifted), and a headerless 5, 6, 8 or 10 column stream,
-which is accepted with a warning naming the stream. A row with fewer than 5
-columns or no severity/file counts in `summary.skipped`. An unknown version
-header is an error, never a silent parse.
+which is accepted with a warning naming the stream. As in `atcr reconcile`, a
+line that does not start with a severity and a `|` is prose and ignored. A row
+that does counts in `summary.skipped` when it has fewer than 5 columns, no
+file, more columns than its `# Format:` names, or, with no `# Format:`, a width
+other than 5, 6, 8 or 10 (an unescaped `|`); trailing empty columns are
+padding. An unknown version header is an error, never a silent parse.
 
 Flags: `--streams` (required, comma-separated), `--source-tags` (parallel to
 `--streams`; defaults to each stream's parent directory name), `--tolerance`

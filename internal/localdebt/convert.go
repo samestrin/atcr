@@ -1,6 +1,8 @@
 package localdebt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +25,9 @@ import (
 // a month shard breaks a full tie (one id, one timestamp, one status) by line order,
 // the event layout by file name, so a store holding such a tie can fold differently
 // after conversion. Then the run refuses with ErrFoldChanged and changes nothing.
+// `atcr debt compact` folds such an item to one record, which clears the tie, unless
+// the tied records are resolutions with different reasons: compaction keeps every
+// reason, so that store stays on month shards until a line is removed by hand.
 //
 // A shard holding something this binary cannot carry into an event file is left
 // whole: a corrupt or over-long line, a record from a newer atcr, or a record whose
@@ -36,6 +41,18 @@ import (
 // that point the plan is verified and the run only finishes it: rename each staged
 // event into items/, remove each named shard, remove .convert/. The next run finishes
 // a COMMIT left by a crash (Resumed), and throws away staging that never got one.
+//
+// A run that dies while finishing leaves records in both a shard and an event file,
+// so every read would count them twice. The next read finishes the plan instead of
+// waiting for the next conversion: ReadAll and StreamSummaries take the store lock
+// for it (finishPendingConversion), and Compact and the justification backfill,
+// which already hold the lock, finish it there (finishPendingConversionLocked).
+// The lock is not reentrant, so a caller holding it reads with readAllLocked.
+//
+// A dry run writes nothing to the store, so it stages in dryRunStaging instead: a
+// 0700 directory of the user cache dir named for the store. The store lock makes it
+// one run's at a time, so every run, dry or real, removes the copy a crashed dry run
+// left there.
 const (
 	convertSubdir  = ".convert"
 	convertJournal = "COMMIT"
@@ -48,6 +65,10 @@ var ErrFoldChanged = errors.New("converting would change how the store folds")
 // convertAfterCommit is a test hook run after the COMMIT journal is written and
 // before the plan is finished; an error stops the run there, as a crash would.
 var convertAfterCommit func() error
+
+// convertAfterStage is a test hook run with the staging directory once every event
+// of the plan is staged there.
+var convertAfterStage func(stageDir string)
 
 // ConvertResult reports what a Convert or ConvertPlan call did, or would do.
 type ConvertResult struct {
@@ -63,6 +84,10 @@ type ConvertResult struct {
 	Items int
 	// Resumed is true when the run first finished an interrupted conversion.
 	Resumed bool
+	// OptedIn is true when the run opted the store in to the event layout (or, for
+	// a plan, would): every later write is an event file, even when no shard
+	// converted. A store already opted in is not opted in again.
+	OptedIn bool
 }
 
 // KeptShard is one .jsonl file a conversion leaves in place.
@@ -91,10 +116,19 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 	}
 	err := withLock(dir, "convert", func() error {
 		res.StoreFound = true
+		res.OptedIn = !UsesEventLayout(dir)
+		// The copy a crashed dry run left behind. A real run needs no cache dir, so
+		// one it cannot name has no copy to remove.
+		dryStage, stageErr := dryRunStaging(dir)
+		if stageErr == nil {
+			_ = os.RemoveAll(dryStage)
+		} else if dryRun {
+			return fmt.Errorf("staging localdebt conversion: %w", stageErr)
+		}
 		staging := filepath.Join(dir, convertSubdir)
 		if _, err := os.Stat(filepath.Join(staging, convertJournal)); err == nil {
 			if dryRun {
-				return errors.New("an interrupted conversion is pending; run `atcr debt convert` without --dry-run to finish it")
+				return errConversionPending
 			}
 			if err := finishConversion(dir); err != nil {
 				return err
@@ -106,7 +140,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			}
 		}
 
-		before, err := ReadAll(dir, opts)
+		before, err := readAllLocked(dir, opts)
 		if err != nil {
 			return err
 		}
@@ -125,8 +159,12 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 
 		stageDir := staging
 		if dryRun {
-			if stageDir, err = os.MkdirTemp("", "atcr-debt-convert-*"); err != nil {
-				return fmt.Errorf("staging localdebt conversion: %w", err)
+			stageDir = dryStage
+			if err := os.MkdirAll(filepath.Dir(stageDir), 0o700); err != nil {
+				return fmt.Errorf("staging localdebt conversion: %w", basePathErr(err))
+			}
+			if err := os.Mkdir(stageDir, 0o700); err != nil {
+				return fmt.Errorf("staging localdebt conversion: %w", basePathErr(err))
 			}
 			defer func() { _ = os.RemoveAll(stageDir) }()
 		} else if err := os.MkdirAll(staging, 0o700); err != nil {
@@ -142,6 +180,9 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			if err := os.WriteFile(filepath.Join(stageDir, ev.name), ev.line, 0o600); err != nil {
 				return discard(fmt.Errorf("staging localdebt event: %w", basePathErr(err)))
 			}
+		}
+		if convertAfterStage != nil {
+			convertAfterStage(stageDir)
 		}
 
 		files, err := convertedFiles(dir, plan.shards, stageDir)
@@ -179,6 +220,21 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 		return ConvertResult{}, err
 	}
 	return res, nil
+}
+
+// dryRunStaging is where a dry run on the store at dir stages its events:
+// <user cache dir>/atcr/debt-convert/<hash of the store's absolute path>.
+func dryRunStaging(dir string) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return filepath.Join(cache, "atcr", "debt-convert", hex.EncodeToString(sum[:8])), nil
 }
 
 // conversionPlan is what a conversion would move: the month shards it converts, the
@@ -345,7 +401,10 @@ func foldChangedError(ids []string) error {
 		more = fmt.Sprintf(" and %d more", len(ids)-len(shown))
 	}
 	return fmt.Errorf("%w for %d item(s): %s%s; nothing was changed. Records of one item with the same "+
-		"timestamp and status keep their line order in a month shard but not in the event layout",
+		"timestamp and status keep their line order in a month shard but not in the event layout. To clear "+
+		"the tie, run `atcr debt compact`, then convert again: it folds each item to one record. Tied "+
+		"resolutions with different reasons survive compaction; remove the unwanted line from its month "+
+		"shard by hand, or keep the store on month shards",
 		ErrFoldChanged, len(ids), strings.Join(shown, ", "), more)
 }
 
@@ -362,6 +421,42 @@ func writeConvertJournal(staging string, shards []string) error {
 	}
 	if err := os.Rename(tmp, filepath.Join(staging, convertJournal)); err != nil {
 		return fmt.Errorf("writing localdebt conversion journal: %w", basePathErr(err))
+	}
+	return nil
+}
+
+// errConversionPending is a dry run's answer to a committed conversion it may not
+// finish: its counts would include every record of the plan twice.
+var errConversionPending = errors.New("an interrupted conversion is pending; run `atcr debt convert` without --dry-run to finish it")
+
+// conversionPending reports whether the store at dir holds a committed conversion
+// that is not finished.
+func conversionPending(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, convertSubdir, convertJournal))
+	return err == nil
+}
+
+// finishPendingConversion finishes a committed conversion for a read path that does
+// not hold the store lock. A plan it cannot finish is reported to w and the store is
+// read as it stands, so a read-only store still reads.
+func finishPendingConversion(dir string, w io.Writer) {
+	if !conversionPending(dir) {
+		return
+	}
+	if err := withLock(dir, "convert-finish", func() error { return finishPendingConversionLocked(dir) }); err != nil {
+		_, _ = fmt.Fprintf(diagWriter(w), "localdebt: an interrupted conversion could not be finished (%v); "+
+			"some records may be counted twice until `atcr debt convert` finishes it\n", err)
+	}
+}
+
+// finishPendingConversionLocked finishes a committed conversion under the store
+// lock the caller holds.
+func finishPendingConversionLocked(dir string) error {
+	if !conversionPending(dir) {
+		return nil
+	}
+	if err := finishConversion(dir); err != nil {
+		return fmt.Errorf("finishing an interrupted localdebt conversion: %w", err)
 	}
 	return nil
 }

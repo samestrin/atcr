@@ -78,9 +78,10 @@ func (e *ValidationError) Unwrap() error { return e.Err }
 // reader never observes a partial write. When the persona is binding-only (no
 // co-located .md upstream), any stale <name>.md from a prior install is removed so
 // the on-disk unit always matches what was fetched — never a leftover custom
-// prompt fed into an LLM. On a first-time install (no prior <name>.yaml) nothing
-// is removed: a <name>.md that appears during the fetch belongs to another
-// process, not to a prior install of this unit.
+// prompt fed into an LLM. A first-time install (no prior <name>.yaml) is refused
+// instead: if a <name>.md already exists there, this install did not fetch or
+// validate it, so the install fails with an error naming that file and leaves it
+// untouched.
 //
 // A "bundle/"-prefixed name is rejected (defense in depth, mirroring Install): a
 // bundle must be expanded via InstallBundle, never round-tripped through the
@@ -133,35 +134,57 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 	if err := refuseSymlinkedIntermediate(yamlDest, name); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
-		return fmt.Errorf("failed to create personas directory: %w", err)
-	}
 	// Snapshot any prior YAML before it is overwritten. On a re-install/upgrade the
 	// existing unit is already valid, so if the co-located .md write fails after the
 	// .yaml has been replaced, the rollback must RESTORE the prior working YAML — not
 	// delete it, which would leave the user with no persona where one worked moments
 	// earlier. A first-time install has no prior YAML and is rolled back by removing
 	// the partial file, as before.
+	//
+	// The read is classified once, before anything is mutated: nil is a restorable
+	// prior unit, os.ErrNotExist a confirmed first-time install, and any other error
+	// (EACCES, EISDIR, a transient read failure) aborts. A prior .yaml that exists
+	// but cannot be read is neither, so guessing either way would delete the user's
+	// file on rollback or remove a .md that belongs to it.
 	priorYAML, priorErr := os.ReadFile(yamlDest)
+	hadPrior := priorErr == nil
+	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
+		return fmt.Errorf("failed to read prior persona %s: %w", yamlDest, priorErr)
+	}
+	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
+	// A first-time binding-only install must not adopt a <name>.md it did not
+	// fetch: the resolver pairs <name>.yaml with <name>.md by name, so writing the
+	// .yaml would feed that never-validated file into an LLM as this unit's
+	// prompt. Refuse before any write and leave the operator's file as it is; a
+	// path that cannot be inspected is treated as present.
+	if !hasMD && !hadPrior {
+		if _, err := os.Lstat(mdDest); err == nil {
+			return fmt.Errorf("refusing to install persona %q: %s already exists and was not written by this install; remove it or install a persona that ships its own prompt", name, mdDest)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("refusing to install persona %q: cannot inspect %s: %w", name, mdDest, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
+		return fmt.Errorf("failed to create personas directory: %w", err)
+	}
 	if err := writeFileAtomic(yamlDest, yamlData); err != nil {
 		return err
 	}
-	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
 	if hasMD {
 		if err := writeFileAtomic(mdDest, mdData); err != nil {
-			if priorErr == nil {
+			if hadPrior {
 				_ = writeFileAtomic(yamlDest, priorYAML) // restore the prior working unit
 			} else {
 				_ = os.Remove(yamlDest) // roll back a first-time partial unit
 			}
 			return err
 		}
-	} else if !errors.Is(priorErr, os.ErrNotExist) {
+	} else if hadPrior {
 		// Binding-only upstream: drop any stale co-located prompt from a prior
-		// install so the resolver never feeds an outdated custom prompt. Skipped
-		// on a first-time install (the .yaml did not exist before this write):
-		// there is no prior unit whose stale .md this could be, and removing one
-		// would delete a .md another process created during the fetch.
+		// install so the resolver never feeds an outdated custom prompt. A
+		// first-time install never reaches this branch with an existing .md: that
+		// case is refused earlier with an error naming the file, because a .md this
+		// install did not fetch and validate must never become the unit's prompt.
 		if err := os.Remove(mdDest); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("failed to remove stale persona prompt %s: %w", mdDest, err)
 		}

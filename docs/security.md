@@ -155,13 +155,17 @@ aborts the run rather than send a prompt holding a credential — and fails
 closed when the scan itself could not be trusted. Warnings and block errors
 name the agent, the secret kinds and the files, never the value.
 
-The guard covers the **review prompt only** — the payload (diff, claim ledger,
-context definitions, prefetched context) and the sprint-plan scope constraint
-sent to a review agent or its fallback. It does not scan persona text, and it
-does not scan tool-loop results, debate, verify or doctor traffic. One input
-to verify is covered: the deterministic SAST findings a review saves to
-`sast.json` (the scanner messages and rules the Fixer reads through the
-reconciled report) pass the same policy before the file is written.
+The guard covers the **review prompt and tool-loop results** — the payload
+(diff, claim ledger, context definitions, prefetched context) and the
+sprint-plan scope constraint sent to a review agent or its fallback, followed
+by the tool results and model turns added during the tool loop. The review
+prompt is scanned once when it is built; each later request scans the new
+messages under the same policy. Persona text is not scanned. Debate, verify
+and doctor traffic will be scanned once their callers set the policy (slice
+106.3); until then, those callers leave it unset. One input to verify is
+already covered: the deterministic SAST findings a review saves to `sast.json`
+(the scanner messages and rules the Fixer reads through the reconciled report)
+pass the same policy before the file is written.
 
 It is one layer of three, and the docs describe them together in
 [docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
@@ -288,5 +292,37 @@ func main() {
 `cli/hooks_external_test.go` registers an observer this way from a separate
 test package that sees only the exported API.
 
-See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`, and
-`cli.MainWithHooks` for the field-level contract.
+### The fix-applied observer
+
+`cli.Hooks` has a third field, `FixApplied`. A registered
+`cli.FixAppliedObserver` gets one `cli.FixApplied` per `atcr review --auto-fix`
+run whose patch applied and passed local validation. It fires once the fix is
+kept in the working tree and before any GitHub call, so a later GitHub failure
+does not take it back. A run that reverts does not fire it: an apply failure, a
+failed or timed-out validation, a validation command that cannot start, and the
+refusal to validate unsandboxed without `--no-sandbox` all report nothing.
+
+The report holds the run id (the same value as `ModelInvocation.RunID`) and, for
+each applied file, its path relative to the repository root and the unified diff
+applied to it, verbatim. That diff is model-written source code, so it is
+sensitive in the same way as `ModelInvocation`: redact it before you persist or
+forward it. The contract is the same as the other observers: no error return, a
+panic is recovered and reported on stderr, and the run keeps its exit code.
+
+```go
+type fixSink struct{}
+
+func (fixSink) OnFixApplied(ctx context.Context, fa cli.FixApplied) {
+	for _, f := range fa.Files {
+		// e.g. record fa.RunID, f.Path and a redacted f.Diff
+	}
+}
+
+func main() {
+	hooks := cli.Hooks{FixApplied: fixSink{}}
+	os.Exit(cli.MainWithHooks(context.Background(), os.Stdout, os.Stderr, hooks))
+}
+```
+
+See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`,
+`cli.FixApplied`, and `cli.MainWithHooks` for the field-level contract.

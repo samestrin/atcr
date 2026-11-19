@@ -529,7 +529,13 @@ func fakeLinear(t *testing.T) <-chan string {
 // Review, as Linear would.
 func postSignedLinear(t *testing.T, base string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"action":"update","type":"Issue","webhookTimestamp":%d,"data":{"id":"iss-1","team":{"id":"tm","key":"EST"},"state":{"id":"st-1","name":"In Review"}},"updatedFrom":{"stateId":"st-0"}}`, time.Now().UnixMilli())
+	postSignedLinearIssue(t, base, "iss-1")
+}
+
+// postSignedLinearIssue is postSignedLinear for the issue with id issue.
+func postSignedLinearIssue(t *testing.T, base, issue string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"action":"update","type":"Issue","webhookTimestamp":%d,"data":{"id":%q,"team":{"id":"tm","key":"EST"},"state":{"id":"st-1","name":"In Review"}},"updatedFrom":{"stateId":"st-0"}}`, time.Now().UnixMilli(), issue)
 	req, err := http.NewRequest(http.MethodPost, base+webhook.LinearWebhookPath, strings.NewReader(body))
 	require.NoError(t, err)
 	mac := hmac.New(sha256.New, []byte(whLinearSecret))
@@ -674,6 +680,154 @@ func TestWebhookCmd_LinearAutoFixStatusRunsAutoFix(t *testing.T) {
 	assert.Empty(t, reviewed, "an auto-fix status runs no review")
 	assert.FileExists(t, filepath.Join(".atcr", "webhook", "auto-fix-state.json"))
 	assert.NotContains(t, stderr.String(), whPushToken)
+	assert.NotContains(t, stderr.String(), webhook.ErrAutoFixNoUsage.Error(), "without a token cap a job's usage line is not required")
+}
+
+// Epic 105.2 T4: webhook.linear.auto_fix.job_token_cap and daily_token_cap
+// reach the auto-fix runner and state. A job whose usage line is over the job
+// cap is reported over it and charged to the state file; once the day's
+// charged tokens reach the daily cap the next event starts no job and posts the
+// refusal on the pull request.
+func TestWebhookCmd_LinearAutoFixTokenCapsReachStateAndRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub atcr binary is a POSIX shell script")
+	}
+	// setup writes a config with the given caps; a zero cap leaves its key out.
+	setup := func(t *testing.T, jobTokenCap, dailyTokenCap int) (stub, ran string, comments <-chan string) {
+		t.Helper()
+		isolate(t)
+		checkout := whPRFixture(t)
+		writeWebhookConfig(t, "agents: [bruce]\n"+whLinearConfig(checkout)+
+			"    auto_fix:\n"+
+			"      statuses: [In Review]\n"+
+			"      repos: [acme/widget]\n"+
+			"      push_token_env: "+whPushTokenEnv+"\n"+
+			"      daily_job_cap: 5\n"+
+			capLine("job_token_cap", jobTokenCap)+
+			capLine("daily_token_cap", dailyTokenCap))
+		t.Setenv(whLinearSecretEnv, whLinearSecret)
+		t.Setenv(whLinearKeyEnv, whLinearKey)
+		t.Setenv(whPushTokenEnv, whPushToken)
+		fakeLinear(t)
+
+		posted := make(chan string, 4)
+		gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Header.Get("Authorization") != "Bearer "+whPushToken:
+				http.NotFound(w, r)
+			case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+				_, _ = io.WriteString(w, `{"head":{"ref":"feature","repo":{"full_name":"acme/widget"}}}`)
+			case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+				var body struct {
+					Body string `json:"body"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				posted <- body.Body
+				w.WriteHeader(http.StatusCreated)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(gh.Close)
+		origGH := githubAPIURL
+		githubAPIURL = gh.URL
+		t.Cleanup(func() { githubAPIURL = origGH })
+
+		out := t.TempDir()
+		stub, ran = filepath.Join(out, "atcr"), filepath.Join(out, "ran")
+		require.NoError(t, os.WriteFile(stub, []byte(fmt.Sprintf("#!/bin/sh\necho 'atcr-auto-fix-usage: tokens_in=20 tokens_out=5'\n: > %q\n", ran)), 0o755))
+		origBin := autoFixBinary
+		autoFixBinary = stub
+		t.Cleanup(func() { autoFixBinary = origBin })
+		return stub, ran, posted
+	}
+	statePath := filepath.Join(".atcr", "webhook", "auto-fix-state.json")
+
+	t.Run("job over the job cap is reported and charged", func(t *testing.T) {
+		_, ran, posted := setup(t, 10, 1000)
+		base, stderr, stop := startWebhook(t)
+		postSignedLinear(t, base)
+		require.Eventually(t, func() bool {
+			return strings.Contains(stderr.String(), webhook.ErrAutoFixJobTokenCap.Error())
+		}, 60*time.Second, 20*time.Millisecond, "no over-cap report; daemon stderr:\n%s", stderr.String())
+		require.NoError(t, stop())
+
+		assert.FileExists(t, ran)
+		assert.Contains(t, stderr.String(), "used 25 tokens (in 20, out 5), cap 10")
+		state, err := webhook.OpenAutoFixState(statePath, 5)
+		require.NoError(t, err)
+		assert.Equal(t, 25, state.Tokens(time.Now()), "the runner charges the job's usage to the state file")
+		assert.Empty(t, posted)
+	})
+
+	// With only daily_token_cap set, each job's usage is still charged, so the
+	// day's spend can reach the cap and refuse the next job.
+	t.Run("daily cap alone charges the job and refuses the next", func(t *testing.T) {
+		_, ran, posted := setup(t, 0, 25)
+		base, stderr, stop := startWebhook(t)
+		postSignedLinearIssue(t, base, "iss-1")
+		require.Eventually(t, func() bool {
+			state, err := webhook.OpenAutoFixState(statePath, 5)
+			return err == nil && state.Tokens(time.Now()) == 25
+		}, 60*time.Second, 20*time.Millisecond, "the job's usage was not charged; daemon stderr:\n%s", stderr.String())
+		require.FileExists(t, ran)
+		require.NoError(t, os.Remove(ran))
+
+		// The usage is charged before the first job releases the pull
+		// request, so an event that arrives first is refused as busy (using
+		// no claim); send another, under a new issue, until one is refused
+		// by the cap.
+		var comment string
+		deadline := time.After(60 * time.Second)
+	wait:
+		for i := 2; ; i++ {
+			postSignedLinearIssue(t, base, fmt.Sprintf("iss-%d", i))
+			select {
+			case comment = <-posted:
+				break wait
+			case <-time.After(250 * time.Millisecond):
+			case <-deadline:
+				t.Fatalf("no refusal comment; daemon stderr:\n%s", stderr.String())
+			}
+		}
+		require.NoError(t, stop())
+
+		assert.Contains(t, comment, "daily token cap reached")
+		assert.NoFileExists(t, ran, "the job after the cap is reached runs no auto-fix")
+		assert.NotContains(t, stderr.String(), webhook.ErrAutoFixJobTokenCap.Error(), "no job cap is set")
+	})
+
+	t.Run("day at the daily cap refuses the next job", func(t *testing.T) {
+		_, ran, posted := setup(t, 10, 25)
+		require.NoError(t, os.MkdirAll(filepath.Dir(statePath), 0o755))
+		seed, err := webhook.OpenAutoFixState(statePath, 5)
+		require.NoError(t, err)
+		require.NoError(t, seed.AddTokens(25, time.Now()))
+
+		base, stderr, stop := startWebhook(t)
+		postSignedLinear(t, base)
+		var comment string
+		select {
+		case comment = <-posted:
+		case <-time.After(60 * time.Second):
+			t.Fatalf("no refusal comment; daemon stderr:\n%s", stderr.String())
+		}
+		require.NoError(t, stop())
+
+		assert.Contains(t, comment, "daily token cap reached")
+		assert.Contains(t, comment, "25 tokens")
+		assert.NoFileExists(t, ran, "a token-capped claim runs no auto-fix")
+		assert.Contains(t, stderr.String(), webhook.ErrAutoFixDailyTokenCap.Error())
+	})
+}
+
+// capLine is a webhook.linear.auto_fix config line for key, or nothing for a
+// zero value.
+func capLine(key string, v int) string {
+	if v == 0 {
+		return ""
+	}
+	return fmt.Sprintf("      %s: %d\n", key, v)
 }
 
 func TestWebhookCmd_MissingPushTokenNamesTheVariable(t *testing.T) {

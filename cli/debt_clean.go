@@ -88,8 +88,6 @@ func runDebtClean(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("read local debt store: %w", err)
 	}
 	summary, kept := summarizeDebtClean(localdebt.FoldSummaries(sums))
-	sums = nil
-	_ = sums
 	if err := sortDebtSummaries(kept, sortKeySeverity); err != nil {
 		return err
 	}
@@ -100,9 +98,6 @@ func runDebtClean(cmd *cobra.Command, _ []string) error {
 	recs, err := hydrateDebtListIDs(dir, ids, opts, nil)
 	if err != nil {
 		return err
-	}
-	if recs == nil {
-		recs = []localdebt.Record{}
 	}
 	doc := debtCleanDoc{Items: recs, Summary: summary}
 

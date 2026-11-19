@@ -676,3 +676,42 @@ func TestHooks_StampedStagesAreDocumented(t *testing.T) {
 			"stage %q is emitted but not documented on the exported Stage field", stage)
 	}
 }
+
+// --- the fix-applied adapter -----------------------------------------------
+
+// TestFixObserverAdapter_ConvertsEveryField: the exported report carries the
+// run id and each file's path and diff, in order, in a slice the consumer owns.
+func TestFixObserverAdapter_ConvertsEveryField(t *testing.T) {
+	obs := &recordingFixObserver{}
+	files := []hookobs.FixedFile{{Path: "a.go", Diff: "d1"}, {Path: "b/c.go", Diff: "d2"}}
+
+	fixObserverAdapter{observer: obs}.OnFixApplied(context.Background(), hookobs.FixReport{RunID: "r1", Files: files})
+
+	require.Len(t, obs.got, 1)
+	assert.Equal(t, FixApplied{RunID: "r1", Files: []AppliedFile{{Path: "a.go", Diff: "d1"}, {Path: "b/c.go", Diff: "d2"}}}, obs.got[0])
+	obs.got[0].Files[0].Path = "changed"
+	assert.Equal(t, "a.go", files[0].Path, "the adapter must copy Files, not share it")
+}
+
+// TestFixObserverAdapter_FieldCountsMatch fails the moment the internal and
+// exported shapes drift.
+func TestFixObserverAdapter_FieldCountsMatch(t *testing.T) {
+	assert.Equal(t, reflect.TypeOf(hookobs.FixReport{}).NumField(), reflect.TypeOf(FixApplied{}).NumField(),
+		"hookobs.FixReport and cli.FixApplied have drifted — map the new field in fixObserverAdapter")
+	assert.Equal(t, reflect.TypeOf(hookobs.FixedFile{}).NumField(), reflect.TypeOf(AppliedFile{}).NumField(),
+		"hookobs.FixedFile and cli.AppliedFile have drifted — map the new field in fixObserverAdapter")
+}
+
+// TestWithHooks_ZeroHooksAttachesNoFixObserver: as for the review observer, a
+// zero Hooks must not shadow a fix observer already on ctx.
+func TestWithHooks_ZeroHooksAttachesNoFixObserver(t *testing.T) {
+	var stderr bytes.Buffer
+	below := &recordingFixObserver{}
+	base := hookobs.WithFixObserver(context.Background(), fixObserverAdapter{observer: below}, &stderr)
+
+	ctx := withHooks(base, Hooks{}, &stderr)
+
+	require.NotPanics(t, func() { hookobs.FixApplied(ctx, hookobs.FixReport{RunID: "r"}) })
+	assert.Len(t, below.got, 1, "a zero Hooks must not attach a fix observer")
+	assert.Empty(t, stderr.String())
+}

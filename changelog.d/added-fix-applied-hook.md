@@ -1,0 +1,1 @@
+- Programs that embed `atcr` can register a `FixApplied` observer on `cli.Hooks`. It is called once for each `atcr review --auto-fix` run whose fix applied and passed local validation, with the run id and each changed file's path and applied diff, and never for a fix that was reverted (atcr-enterprise epic 19.0).

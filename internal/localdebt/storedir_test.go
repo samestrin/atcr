@@ -204,3 +204,124 @@ func TestStoreDir_ProjectDanglingSymlinkRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), root)
 }
+
+// A whitespace-only value is blank, and a blank value is unset in either tier:
+// the project tier falls through to the user tier, the user tier to the default.
+func TestStoreDir_WhitespaceOnlyValueIsUnset(t *testing.T) {
+	root, home := storeDirEnv(t)
+	ext := filepath.Join(home, "planning", "debt")
+	setProjectStore(t, root, "debt:\n  store: \" \"\n")
+	setUserStore(t, home, "debt:\n  store: "+ext+"\n")
+	got, err := StoreDir(root)
+	require.NoError(t, err)
+	assert.Equal(t, ext, got, "a blank project value is unset, so the user tier applies")
+
+	setUserStore(t, home, "debt:\n  store: \" \"\n")
+	got, err = StoreDir(root)
+	require.NoError(t, err)
+	assert.Equal(t, DefaultDir(root), got, "a blank user value is unset, so the default applies")
+}
+
+// A ".." segment is refused with its own message. containedIn and the clean-path
+// check would refuse most of these too, but with a reason that does not name
+// the ".." the operator wrote.
+func TestStoreDir_ProjectDotDotSegmentMessage(t *testing.T) {
+	for _, v := range []string{"..", "../planning/debt", "a/../../b", "a/../b"} {
+		t.Run(v, func(t *testing.T) {
+			root, _ := storeDirEnv(t)
+			setProjectStore(t, root, "debt:\n  store: '"+v+"'\n")
+			_, err := StoreDir(root)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), `must not contain ".."`)
+		})
+	}
+}
+
+// An unreadable user registry is an error, never a fall-through to the default
+// store: writing to .atcr/debt would hide that the configured store was missed.
+func TestStoreDir_UnreadableUserRegistryIsAnError(t *testing.T) {
+	root, home := storeDirEnv(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".config", "atcr", "registry.yaml"), 0o755))
+	_, err := StoreDir(root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registry.yaml")
+	assert.NotContains(t, err.Error(), home)
+}
+
+// A project store is checked for containment when it is resolved AND again
+// under the store lock before the first write: a link swapped in between (here
+// the intermediate "planning" directory replaced by a link out of the repo)
+// must not carry the write out of the repository.
+func TestStoreDir_ProjectSymlinkSwappedAfterResolveRefusedAtWrite(t *testing.T) {
+	root, _ := storeDirEnv(t)
+	outside := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "planning"), 0o755))
+	setProjectStore(t, root, "debt:\n  store: planning/debt\n")
+	dir, err := StoreDir(root)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Remove(filepath.Join(root, "planning")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "planning")))
+
+	err = Append(dir, sampleRecord("2026-06-14T10:00:00Z-abc"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside the repository")
+	assert.NotContains(t, err.Error(), root)
+	entries, rerr := os.ReadDir(outside)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "nothing may be written through the swapped link")
+}
+
+// The same swap made while the writer waits for the lock is caught by the
+// re-check made once the lock is held.
+func TestStoreDir_ProjectSymlinkSwappedWhileLockedRefused(t *testing.T) {
+	root, _ := storeDirEnv(t)
+	outside := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "planning", "debt"), 0o755))
+	setProjectStore(t, root, "debt:\n  store: planning/debt\n")
+	dir, err := StoreDir(root)
+	require.NoError(t, err)
+
+	// Mirror the store into outside, so the path stays valid after the swap.
+	require.NoError(t, os.MkdirAll(filepath.Join(outside, "debt"), 0o755))
+	ran := false
+	err = withLock(dir, "test", func() error {
+		ran = true
+		return nil
+	})
+	require.NoError(t, err)
+	require.True(t, ran, "an unswapped store is written as before")
+
+	swapped := false
+	afterContainmentCheck = func() {
+		if swapped {
+			return
+		}
+		swapped = true
+		require.NoError(t, os.RemoveAll(filepath.Join(root, "planning")))
+		require.NoError(t, os.Symlink(outside, filepath.Join(root, "planning")))
+	}
+	t.Cleanup(func() { afterContainmentCheck = func() {} })
+	ran = false
+	err = withLock(dir, "test", func() error {
+		ran = true
+		return nil
+	})
+	require.Error(t, err)
+	assert.False(t, ran, "fn must not run on a store that left the repository")
+	assert.Contains(t, err.Error(), "outside the repository")
+}
+
+// A user-tier store may sit anywhere, including behind a link out of the
+// repository; the write-time re-check applies to project stores only.
+func TestStoreDir_UserStoreBehindLinkStillWritable(t *testing.T) {
+	root, home := storeDirEnv(t)
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "planning")))
+	setUserStore(t, home, "debt:\n  store: planning/debt\n")
+	dir, err := StoreDir(root)
+	require.NoError(t, err)
+	require.NoError(t, Append(dir, sampleRecord("2026-06-14T10:00:00Z-abc")))
+	_, err = os.Stat(filepath.Join(outside, "debt", "2026-06.jsonl"))
+	require.NoError(t, err)
+}

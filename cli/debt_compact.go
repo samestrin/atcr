@@ -69,8 +69,11 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 	}
 	// An event-only store (Epic 92 event layout) has nothing compaction may touch:
 	// each event file is written once and kept as the item's history. Say why the
-	// run did nothing, or it reads as a store with nothing superseded.
-	if res.EventRecords == res.RecordsBefore {
+	// run did nothing, or it reads as a store with nothing superseded. The wording
+	// is owed only when Preserved == 0: preserved shard lines are excluded from
+	// RecordsBefore, so with any of them on disk the store is NOT all event files,
+	// and the none-superseded branch below reports both halves instead.
+	if res.EventRecords == res.RecordsBefore && res.Preserved == 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"Nothing to compact: all %d record(s) are event files (items/), which compaction never rewrites or removes; each event is kept as history.\n",
 			res.EventRecords)

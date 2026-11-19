@@ -174,7 +174,9 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    Added, Changed, Deprecated, Removed, Fixed, Security, and deletes the
    fragments it used (`changelog.d/README.md` stays). It fails, writing nothing,
    if a fragment name has no valid category, if `changelog.d/` has no fragments,
-   or if the version already has a section. Then update the compare links at
+   if the version already has a section, or if a fragment bullet is already in
+   `CHANGELOG.md` (a fragment an earlier run could not delete; it names each
+   one, and you delete it by hand). Then update the compare links at
    the end of `CHANGELOG.md` by hand: point `[Unreleased]` at `v0.6.0...HEAD`
    and add `[0.6.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v0.6.0`
    (previous tag on the left). Merge that PR to `main` **before** pushing the
