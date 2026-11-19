@@ -292,5 +292,37 @@ func main() {
 `cli/hooks_external_test.go` registers an observer this way from a separate
 test package that sees only the exported API.
 
-See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`, and
-`cli.MainWithHooks` for the field-level contract.
+### The fix-applied observer
+
+`cli.Hooks` has a third field, `FixApplied`. A registered
+`cli.FixAppliedObserver` gets one `cli.FixApplied` per `atcr review --auto-fix`
+run whose patch applied and passed local validation. It fires once the fix is
+kept in the working tree and before any GitHub call, so a later GitHub failure
+does not take it back. A run that reverts does not fire it: an apply failure, a
+failed or timed-out validation, a validation command that cannot start, and the
+refusal to validate unsandboxed without `--no-sandbox` all report nothing.
+
+The report holds the run id (the same value as `ModelInvocation.RunID`) and, for
+each applied file, its path relative to the repository root and the unified diff
+applied to it, verbatim. That diff is model-written source code, so it is
+sensitive in the same way as `ModelInvocation`: redact it before you persist or
+forward it. The contract is the same as the other observers: no error return, a
+panic is recovered and reported on stderr, and the run keeps its exit code.
+
+```go
+type fixSink struct{}
+
+func (fixSink) OnFixApplied(ctx context.Context, fa cli.FixApplied) {
+	for _, f := range fa.Files {
+		// e.g. record fa.RunID, f.Path and a redacted f.Diff
+	}
+}
+
+func main() {
+	hooks := cli.Hooks{FixApplied: fixSink{}}
+	os.Exit(cli.MainWithHooks(context.Background(), os.Stdout, os.Stderr, hooks))
+}
+```
+
+See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`,
+`cli.FixApplied`, and `cli.MainWithHooks` for the field-level contract.

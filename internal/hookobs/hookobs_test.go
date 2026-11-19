@@ -1202,7 +1202,9 @@ func TestWithReviewObserver_UncomparableStderrDoesNotPanic(t *testing.T) {
 
 type recordingFixObserver struct{ got []FixReport }
 
-func (r *recordingFixObserver) OnFixApplied(_ context.Context, rep FixReport) { r.got = append(r.got, rep) }
+func (r *recordingFixObserver) OnFixApplied(_ context.Context, rep FixReport) {
+	r.got = append(r.got, rep)
+}
 
 type panickingFixObserver struct{}
 

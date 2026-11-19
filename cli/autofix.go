@@ -14,6 +14,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/gitexec"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -632,6 +633,15 @@ func runAutoFix(ctx context.Context, out io.Writer, gh autoFixGitHub, run autoFi
 	// Validation passed — the tree is trustworthy. Drop the now-redundant backups
 	// (best-effort) and proceed to the remote mutation, which is unreachable above.
 	autofix.CleanupBackups(ctx, bm)
+
+	// The fix is now retained in the working tree, so report it here: after
+	// every revert path above, and before the GitHub steps below, whose failure
+	// does not undo the local apply.
+	fixed := make([]hookobs.FixedFile, len(run.Entries))
+	for i, e := range run.Entries {
+		fixed[i] = hookobs.FixedFile{Path: e.Path, Diff: e.Body}
+	}
+	hookobs.FixApplied(ctx, hookobs.FixReport{RunID: hookobs.CallFrom(ctx).RunID, Files: fixed})
 
 	// A pull request needs a non-empty base branch to merge into. Guard it BEFORE
 	// creating the branch/commit so a missing base can never leave an orphan
