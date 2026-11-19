@@ -225,6 +225,68 @@ func TestAppend_EventLayoutPreExistingStoreGetsGitignore(t *testing.T) {
 	assert.Contains(t, string(b), ".*.tmp-*", "the ignore pattern covers the CreateTemp names")
 }
 
+// Epic 122 F2(a): an existing ignore file is never truncated. EnableEventLayout
+// used to rewrite it on every call, dropping any line a clone had added.
+func TestEnableEventLayout_ExistingGitignoreNotTruncated(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	gi := filepath.Join(ItemsDir(dir), itemsGitignore)
+	custom := itemsGitignoreBody + "local-notes.txt\n"
+	require.NoError(t, os.WriteFile(gi, []byte(custom), 0o600))
+
+	require.NoError(t, EnableEventLayout(dir))
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
+
+	b, err := os.ReadFile(gi)
+	require.NoError(t, err)
+	assert.Equal(t, custom, string(b))
+}
+
+// countItemsReads swaps the readItemsDir seam for one that counts reads of the
+// store's items directory, restoring it at cleanup.
+func countItemsReads(t *testing.T, dir string) *int {
+	t.Helper()
+	n := new(int)
+	items := ItemsDir(dir)
+	orig := readItemsDir
+	readItemsDir = func(name string) ([]os.DirEntry, error) {
+		if name == items {
+			*n++
+		}
+		return orig(name)
+	}
+	t.Cleanup(func() { readItemsDir = orig })
+	return n
+}
+
+// Epic 122 F2(b): the crash-leftover sweep read items/ on every event write, so a
+// bulk append of N records into a store of M event files was O(N x M) dirent
+// reads under the store lock. It must run once per lock hold.
+func TestAppendBatch_EventLayoutReadsItemsOncePerLockHold(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	reads := countItemsReads(t, dir)
+
+	recs := []Record{
+		eventRec(idP, "2026-06-14T10:00:00Z", ""),
+		eventRec(idX, "2026-06-14T10:00:01Z", ""),
+		eventRec(idY, "2026-06-14T10:00:02Z", ""),
+		eventRec(idP, "2026-06-14T10:00:03Z", StatusResolved),
+	}
+	written, err := appendBatch(dir, recs)
+	require.NoError(t, err)
+	require.Equal(t, len(recs), written)
+	assert.Equal(t, 1, *reads, "one batch is one lock hold: items/ is swept once")
+	assert.Len(t, eventFiles(t, dir), len(recs))
+
+	// Each Append is its own lock hold, so each still sweeps (and reaps a leftover).
+	leftover := filepath.Join(ItemsDir(dir), ".x.json.tmp-1")
+	require.NoError(t, os.WriteFile(leftover, []byte("{"), 0o600))
+	require.NoError(t, Append(dir, eventRec(idX, "2026-06-15T10:00:00Z", "")))
+	assert.Equal(t, 2, *reads)
+	assert.NoFileExists(t, leftover)
+}
+
 // TestEventLayout_GitAddNeverStagesCrashLeftover is the harm the row names, end to
 // end: in a real git repository holding an event-layout store, a crash leftover
 // planted after the last commit must never be staged by `git add -A`, while a

@@ -94,6 +94,10 @@ func enableEventLayoutLocked(dir string) error {
 	return nil
 }
 
+// readItemsDir is the items/ read prepareItemsLocked sweeps with; a var so a test
+// can count the reads.
+var readItemsDir = os.ReadDir
+
 // isEventTempName reports whether a name in items/ is an in-flight or
 // crash-leftover event temp: dot-prefixed with the ".tmp-" infix CreateTemp
 // leaves. The marker and .gitignore carry no infix and never match.
@@ -114,7 +118,7 @@ func prepareItemsLocked(items string) {
 	if _, err := os.Stat(gi); os.IsNotExist(err) {
 		_ = os.WriteFile(gi, []byte(itemsGitignoreBody), 0o600)
 	}
-	entries, err := os.ReadDir(items)
+	entries, err := readItemsDir(items)
 	if err != nil {
 		return
 	}
