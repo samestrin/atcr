@@ -1,0 +1,1 @@
+- The Playwright browser run no longer drops screenshots silently when the sandbox image's `tar` cannot append (busybox): the run output names the screenshot tar failed on and how many were kept, and a later batch never recreates the archive over screenshots already packed. (epic 124)

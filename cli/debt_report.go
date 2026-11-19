@@ -101,24 +101,38 @@ func runDebtReport(cmd *cobra.Command, _ []string) error {
 	}
 }
 
+// debtReportKey identifies one README section: two READMEs can carry the same
+// `### [date] From: ...` heading, so the heading alone cannot key the group.
+type debtReportKey struct {
+	path    string
+	section string
+}
+
 // debtReportSection is one heading of the report and the records under it.
 type debtReportSection struct {
 	heading string
+	// path is the source README's path, ordering sections whose headings tie.
+	path string
+	// section is the raw stored section, the final tie-break: two raw sections
+	// can normalize to one heading and date, and map order must not leak out.
+	section string
 	// date is the section's RFC3339 date, empty when its heading has none.
 	date string
 	recs []localdebt.Record
 }
 
 // renderDebtReport renders folded records as Markdown, one table per README
-// section. It reads no clock and orders everything by content alone, so the
-// same store always renders the same bytes:
+// section, keyed on the source path plus the section so two READMEs sharing a
+// heading keep separate sections. It reads no clock and orders everything by
+// content alone, so the same store always renders the same bytes:
 //
-//   - dated sections newest first, then undated ones, ties by heading;
+//   - dated sections newest first, then undated ones, ties by heading, path and
+//     raw section;
 //   - the records from no section last;
 //   - within a section, most severe first, then by file, line and id.
 func renderDebtReport(recs []localdebt.Record) string {
 	red := log.NewRedactor("") // token scrub only, as the dashboard does
-	bySection := map[string]*debtReportSection{}
+	bySection := map[debtReportKey]*debtReportSection{}
 	var loose []localdebt.Record
 	for _, r := range recs {
 		heading := ""
@@ -129,11 +143,12 @@ func renderDebtReport(recs []localdebt.Record) string {
 			loose = append(loose, r)
 			continue
 		}
-		sec := bySection[heading]
+		key := debtReportKey{path: r.SourceReport.Path, section: r.SourceReport.Section}
+		sec := bySection[key]
 		if sec == nil {
 			date, _ := importSectionTime(r.SourceReport.Section)
-			sec = &debtReportSection{heading: heading, date: date}
-			bySection[heading] = sec
+			sec = &debtReportSection{heading: heading, path: key.path, section: key.section, date: date}
+			bySection[key] = sec
 		}
 		sec.recs = append(sec.recs, r)
 	}
@@ -149,7 +164,13 @@ func renderDebtReport(recs []localdebt.Record) string {
 		if a.date != b.date {
 			return a.date > b.date
 		}
-		return a.heading < b.heading
+		if a.heading != b.heading {
+			return a.heading < b.heading
+		}
+		if a.path != b.path {
+			return a.path < b.path
+		}
+		return a.section < b.section
 	})
 	if len(loose) > 0 {
 		sections = append(sections, &debtReportSection{heading: debtReportLooseSection, recs: loose})
@@ -194,16 +215,11 @@ func renderDebtReport(recs []localdebt.Record) string {
 
 // debtReportHeading turns a stored `### [date] From: ...` section into the text
 // of a report heading: the leading hashes go (the report sets its own level), and
-// the text is made safe as debtMarkdownCell makes a cell, except that a pipe is
-// kept, since it cannot break a heading.
+// the text is made safe by the shared debtMarkdownSafe in keepPipe mode, since a
+// pipe cannot break a heading.
 func debtReportHeading(section string) string {
 	s := strings.TrimLeft(strings.TrimSpace(section), "#")
-	s = strings.ReplaceAll(s, "\r\n", " ")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = sanitizeCell(s)
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return strings.TrimSpace(log.NewRedactor("").Redact(s))
+	return strings.TrimSpace(log.NewRedactor("").Redact(debtMarkdownSafe(s, true)))
 }
 
 // debtReportStatus names a record's status, with no status read as open.

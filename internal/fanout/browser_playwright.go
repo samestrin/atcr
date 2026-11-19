@@ -85,20 +85,25 @@ var playwrightConfigNames = []string{
 // directory into one tar, since RunSpec.Collect names files, not directories.
 // find hands the matches to the packing loop as argv, so a path holding a
 // newline stays one name; a count file keeps the screenshot cap across the
-// batches `find -exec ... {} +` may split the matches into. The first file
-// creates the tar and the rest append to it, using only POSIX find, sh and tar.
-// The command's exit status is preserved.
+// batches `find -exec ... {} +` may split the matches into. A file creates the
+// tar when there is none yet and appends to it otherwise. The pass needs find,
+// sh and a tar with create (-c) and append (-r); append is not in every tar
+// (busybox's has none), so a tar that fails stops the pass with a line on
+// stderr naming the file and the screenshots kept, and its own message is left
+// in the run output. The command's exit status is preserved.
 var playwrightRunShell = `export NODE_PATH=/src/node_modules PATH="/src/node_modules/.bin:$PATH" ` +
 	`PLAYWRIGHT_JSON_OUTPUT_NAME=` + playwrightReportPath + ` npm_config_yes=false; ` +
 	`[ -e node_modules ] || ln -s /src/node_modules node_modules 2>/dev/null; ` +
 	`mkdir -p ` + playwrightWorkDir + `; "$@"; _atcr_rc=$?; ` +
 	`rm -f ` + playwrightScreenshotsPath + ` ` + playwrightScreenshotsCount + `; ` +
-	`find ` + playwrightOutputDir + ` -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) ` +
+	`[ -d ` + playwrightOutputDir + ` ] && find ` + playwrightOutputDir + ` -type f \( -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' \) ` +
 	`-exec sh -c 'n=$(cat ` + playwrightScreenshotsCount + ` 2>/dev/null); n=${n:-0}; ` +
 	`for f; do [ "$n" -ge ` + fmt.Sprint(playwrightMaxScreenshots) + ` ] && break; ` +
-	`if [ "$n" -eq 0 ]; then tar -cf ` + playwrightScreenshotsPath + ` "$f"; ` +
-	`else tar -rf ` + playwrightScreenshotsPath + ` "$f"; fi 2>/dev/null && n=$((n+1)); done; ` +
-	`echo "$n" > ` + playwrightScreenshotsCount + `' sh {} + 2>/dev/null; ` +
+	`if [ -e ` + playwrightScreenshotsPath + ` ]; then m=append; tar -rf ` + playwrightScreenshotsPath + ` "$f"; ` +
+	`else m=create; tar -cf ` + playwrightScreenshotsPath + ` "$f"; fi || { ` +
+	`echo "atcr: screenshot pass: tar $m failed on $f; kept $n screenshot(s) in ` + playwrightScreenshotsPath + `" >&2; ` +
+	`n=` + fmt.Sprint(playwrightMaxScreenshots) + `; break; }; n=$((n+1)); done; ` +
+	`echo "$n" > ` + playwrightScreenshotsCount + `' sh {} +; ` +
 	`rm -f ` + playwrightScreenshotsCount + `; exit $_atcr_rc`
 
 // PlaywrightBackend is the BrowserBackend that runs a spec with

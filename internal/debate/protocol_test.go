@@ -82,7 +82,7 @@ func TestRunDebate_SilentProposerShortCircuitsRemainingSeats(t *testing.T) {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
 	}}
-	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 	assert.Len(t, cc.invocations(), 1,
 		"a silent proposer already decides the item as unresolved — the challenger and judge must not be invoked")
@@ -111,7 +111,7 @@ func TestRunDebate_ThinkOnlyProposerShortCircuitsRemainingSeats(t *testing.T) {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
 	}}
-	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 	assert.Len(t, cc.invocations(), 1,
 		"a think-only proposer is blank after the strip — the challenger and judge must not be invoked")
@@ -128,7 +128,7 @@ func TestRunDebate_DrivesThreeTurnsInOrder(t *testing.T) {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
 	}}
-	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 	assert.True(t, rec.Resolved)
 	assert.Equal(t, "proposer defends", rec.ProposerStatement)
@@ -156,7 +156,7 @@ func TestRunDebate_TruncatedReasoningSeatHaltsAndIsNotForwarded(t *testing.T) {
 	// the single-shot path; challenger and judge still run the tool loop.
 	cast := fcCast()
 	cast.Proposer.Config.SupportsFC = false
-	rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), cast, "", cc, &fakeDispatcher{}, nil)
 
 	assert.Equal(t, []string{LabelProposer}, rec.Halted)
 	assert.Empty(t, rec.ProposerStatement)
@@ -171,13 +171,13 @@ func TestRunDebate_HaltedJudgeRecorded(t *testing.T) {
 		{content: "challenger attacks"},
 		{err: errors.New("provider 500")},
 	}}
-	rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 	assert.Equal(t, []string{LabelJudge}, rec.Halted)
 	assert.Empty(t, rec.JudgeRaw)
 }
 
 func TestRunDebate_NilCompleterHaltsAllSeats(t *testing.T) {
-	rec := RunDebate(context.Background(), debateItem(), fcCast(), nil, &fakeDispatcher{}, nil)
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "", nil, &fakeDispatcher{}, nil)
 	assert.ElementsMatch(t, []string{LabelProposer, LabelChallenger, LabelJudge}, rec.Halted)
 }
 
@@ -190,7 +190,7 @@ func TestRunDebate_WritesTranscript(t *testing.T) {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
 	}}
-	RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, tr)
+	RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, tr)
 	require.NoError(t, tr.Close())
 
 	roles := transcriptRoles(t, path)
@@ -276,12 +276,12 @@ func TestBuildDebateAgent_ForwardsDeclaredMaxTokens(t *testing.T) {
 		Config: registry.AgentConfig{Provider: "p", Model: "judge-model", SupportsFC: true},
 	}
 
-	assert.Nil(t, buildDebateAgent(seat, "prompt").Invocation.MaxTokens,
+	assert.Nil(t, buildDebateAgent(seat, "prompt", "").Invocation.MaxTokens,
 		"no declaration means no cap is sent")
 
 	declared := 24000
 	seat.Config.MaxTokens = &declared
-	got := buildDebateAgent(seat, "prompt").Invocation.MaxTokens
+	got := buildDebateAgent(seat, "prompt", "").Invocation.MaxTokens
 	require.NotNil(t, got, "the seat's max_tokens declaration must reach the request")
 	assert.Equal(t, 24000, *got)
 }
@@ -297,11 +297,11 @@ func TestBuildDebateAgent_ForwardsReplayReasoningOff(t *testing.T) {
 		Config: registry.AgentConfig{Provider: "p", Model: "m", SupportsFC: true},
 	}
 
-	assert.False(t, buildDebateAgent(seat, "prompt").ReplayReasoningOff,
+	assert.False(t, buildDebateAgent(seat, "prompt", "").ReplayReasoningOff,
 		"an undeclared seat keeps the reasoning replay")
 
 	seat.Config.ReplayReasoning = registry.ReplayReasoningOff
-	assert.True(t, buildDebateAgent(seat, "prompt").ReplayReasoningOff,
+	assert.True(t, buildDebateAgent(seat, "prompt", "").ReplayReasoningOff,
 		"the seat's replay_reasoning: off must reach the tool loop")
 }
 
@@ -314,7 +314,7 @@ func judgeSeatResponseFormats(t *testing.T, cast Cast) []string {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
 	}}
-	RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	RunDebate(context.Background(), debateItem(), cast, "", cc, &fakeDispatcher{}, nil)
 	invs := cc.invocations()
 	require.Len(t, invs, 3, "one Chat call per seat")
 	return []string{invs[0].ResponseFormat, invs[1].ResponseFormat, invs[2].ResponseFormat}
@@ -403,7 +403,7 @@ func seatThinking(t *testing.T, cast Cast) [][3]string {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
 	}}
-	RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+	RunDebate(context.Background(), debateItem(), cast, "", cc, &fakeDispatcher{}, nil)
 	invs := cc.invocations()
 	require.Len(t, invs, 3, "one Chat call per seat")
 	out := make([][3]string, len(invs))
@@ -480,7 +480,7 @@ func TestRunDebate_PreserveThinkingPerSeat(t *testing.T) {
 		{content: "challenger attacks"},
 		{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
 	}}
-	RunDebate(context.Background(), debateItem(), c, cc, &fakeDispatcher{}, nil)
+	RunDebate(context.Background(), debateItem(), c, "", cc, &fakeDispatcher{}, nil)
 	invs := cc.invocations()
 	require.Len(t, invs, 3, "one Chat call per seat")
 	assert.Equal(t, []string{"on", "", "off"}, []string{invs[0].PreserveThinking, invs[1].PreserveThinking, invs[2].PreserveThinking})
@@ -509,7 +509,7 @@ func TestRunDebate_SalvagedStopReasonSeatHaltsAndIsNotForwarded(t *testing.T) {
 			}}
 			cast := fcCast()
 			cast.Proposer.Config.SupportsFC = false
-			rec := RunDebate(context.Background(), debateItem(), cast, cc, &fakeDispatcher{}, nil)
+			rec := RunDebate(context.Background(), debateItem(), cast, "", cc, &fakeDispatcher{}, nil)
 
 			assert.Equal(t, []string{LabelProposer}, rec.Halted, "a salvaged statement is no statement")
 			assert.Empty(t, rec.ProposerStatement)
@@ -580,7 +580,7 @@ func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 				{content: "challenger attacks"},
 				{content: realRuling},
 			}}
-			rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+			rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 			assert.Empty(t, rec.Halted, "the strip is additive: it must not change any seat's status")
 			assert.Equal(t, tc.wantStatement, rec.ProposerStatement)
@@ -609,7 +609,7 @@ func TestRunDebate_StripsThinkBlocksFromSeatContent(t *testing.T) {
 			{content: "challenger attacks"},
 			{content: `<think>{"outcome":"overturn","reasoning":"draft, wrong"}</think>` + realRuling},
 		}}
-		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 		assert.NotContains(t, rec.JudgeRaw, "<think>")
 		// The point of stripping JudgeRaw: parseRuling takes the first
@@ -638,7 +638,7 @@ func TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank(t *testing.T) {
 			{content: "challenger attacks"},
 			{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
 		}}
-		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 		assert.Empty(t, rec.ProposerStatement, "the whole reply was reasoning, so there is no statement")
 		assert.Empty(t, rec.Halted, "no StatusFailed-on-blank path exists, by design")
@@ -653,7 +653,7 @@ func TestRunDebate_ThinkOnlyReplyFromAnOKSeatIsAcceptedAsBlank(t *testing.T) {
 			{content: "challenger attacks"},
 			{content: "<think>only reasoning</think>"},
 		}}
-		rec := RunDebate(context.Background(), debateItem(), fcCast(), cc, &fakeDispatcher{}, nil)
+		rec := RunDebate(context.Background(), debateItem(), fcCast(), "", cc, &fakeDispatcher{}, nil)
 
 		assert.Empty(t, rec.JudgeRaw)
 		assert.Empty(t, rec.Halted)
