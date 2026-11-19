@@ -94,8 +94,10 @@ Every read path folds both layouts together — month shards in lexical order
 first, then event files in name order — so a store holding both reads as one
 backlog. Compaction and justification backfill treat event files as frozen:
 `atcr debt compact` never rewrites, moves or removes one, and `atcr debt
-backfill-justifications` skips any id held in an event file (reporting it as
-left unrepaired) rather than rewriting a file it cannot change. The event layout
+backfill-justifications` skips any id held in an event file that it would
+otherwise repair (reporting it as left unrepaired) rather than rewriting a file
+it cannot change; an id with no source report or an empty justification never
+needed repair and is skipped silently, as on a shard-only store. The event layout
 keeps full history and is not shrunk by compaction; the month-shard layout is
 the one `atcr debt compact` folds.
 
@@ -965,7 +967,9 @@ On a store holding event files, ids held there are counted on their own, not in
 the partition: `N left unrepaired (held in event files, which are never
 rewritten)`. An event file is written once and never changed, so replaying an
 excerpt into a shard would report a rewrite that never took effect; the whole id
-is skipped, and the clause is absent when no id is held in an event file.
+is skipped. Only ids the pass would otherwise scan are counted — a record with
+no source report or an empty justification never needed repair — and the clause
+is absent when no such id is held in an event file.
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the
@@ -1148,12 +1152,20 @@ store does not hold the id). It flags a lock for a second look when:
 ```bash
 atcr debt locks                      # table, with a count of flagged locks
 atcr debt locks --older-than 48h     # flag only locks older than two days
-atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}]}
+atcr debt locks --json               # {older_than, locks: [{id, holder, locked_at, status, flags, ref, remote}], warnings: [{ref, remote, reason}]}
 ```
 
 Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
 `older-than` and/or `item-resolved`, and is an empty list for a lock nothing
 flags.
+
+A ref under `refs/atcr/debt-locks/` that cannot be read as a lock — its name is
+not a hex-encoded id, or its tag cannot be read or records a different id — is
+reported as a warning, in the human output and in the `warnings` list of
+`--json` (an empty list when there is nothing to warn about). Every other lock
+is still listed: one bad ref never hides the rest, and the listing still
+succeeds. Inspect or delete a warned-about ref with git; `locks` itself never
+changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,6 +60,7 @@ func TestDebtLocks_FlagsOldAndResolvedNotFresh(t *testing.T) {
 	require.Contains(t, out, "older than 12h0m0s")
 	require.Contains(t, out, "item resolved")
 	require.Contains(t, out, "2 of 3 locks flagged")
+	require.NotContains(t, out, "warning(s)", "no warnings block when every ref is a valid lock")
 
 	require.Equal(t, before, remoteLockRefs(t, remote), "locks must never free a lock")
 }
@@ -117,9 +119,62 @@ func TestDebtLocks_NoLocks(t *testing.T) {
 	out, err := runDebt(t, "locks", "--store", stores[0])
 	require.NoError(t, err, out)
 	require.Contains(t, out, "No item locks")
+	require.NotContains(t, out, "warning(s)", "no warnings block when there are no bad refs")
 
 	rep, _ := debtLocksJSON(t, "--store", stores[0])
 	require.NotNil(t, rep.Locks, "--json prints an empty array, not null")
+	require.NotNil(t, rep.Warnings, "--json prints an empty warnings array, not null")
+	require.Empty(t, rep.Warnings)
+}
+
+// Epic 122 T4: one malformed ref under refs/atcr/debt-locks/ is a warning in
+// both outputs, never an error that hides every other lock.
+func TestDebtLocks_BadRefIsWarningInBothOutputs(t *testing.T) {
+	isolate(t)
+	remote, stores := itemLockClones(t, 1)
+	id := debtSampleRecords()[0].ID
+	_, err := localdebt.ItemLocker{Dir: stores[0], Holder: "alice"}.Lock(context.Background(), []string{id})
+	require.NoError(t, err)
+	runFixtureGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	badRef := localdebt.ItemLockRefPrefix + "not-hex"
+	runFixtureGit(t, remote, "update-ref", badRef, "HEAD")
+	before := remoteLockRefs(t, remote)
+
+	rep, rows := debtLocksJSON(t, "--store", stores[0])
+	require.Contains(t, rows, id, "the valid lock is still listed")
+	require.Len(t, rep.Warnings, 1)
+	require.Equal(t, badRef, rep.Warnings[0].Ref)
+	require.Equal(t, "origin", rep.Warnings[0].Remote)
+	require.Contains(t, rep.Warnings[0].Reason, "not an item lock ref")
+
+	out, err := runDebt(t, "locks", "--store", stores[0])
+	require.NoError(t, err, out)
+	require.Contains(t, out, id)
+	require.Contains(t, out, badRef)
+	require.Contains(t, out, "warning")
+
+	require.Equal(t, before, remoteLockRefs(t, remote), "locks must never change a ref, bad or not")
+}
+
+// With only a bad ref and no valid lock, the listing still succeeds and shows
+// the warning in both outputs.
+func TestDebtLocks_OnlyBadRefStillWarns(t *testing.T) {
+	isolate(t)
+	remote, stores := itemLockClones(t, 1)
+	runFixtureGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	badRef := localdebt.ItemLockRefPrefix + "not-hex"
+	runFixtureGit(t, remote, "update-ref", badRef, "HEAD")
+
+	out, err := runDebt(t, "locks", "--store", stores[0])
+	require.NoError(t, err, out)
+	require.Contains(t, out, "No item locks")
+	require.Contains(t, out, badRef)
+
+	rep, rows := debtLocksJSON(t, "--store", stores[0])
+	require.Empty(t, rows)
+	require.NotNil(t, rep.Locks)
+	require.Len(t, rep.Warnings, 1)
+	require.Equal(t, badRef, rep.Warnings[0].Ref)
 }
 
 func TestDebtLocks_BadOlderThanIsUsageError(t *testing.T) {
@@ -152,4 +207,43 @@ func TestDebtLocks_HelpSaysItNeverFrees(t *testing.T) {
 	flat := strings.Join(strings.Fields(out), " ")
 	require.Contains(t, flat, "never frees a lock")
 	require.Contains(t, flat, "no liveness check")
+}
+
+// failOnWrite fails the write that contains substr and accepts every other.
+type failOnWrite struct{ substr string }
+
+func (w failOnWrite) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.substr) {
+		return 0, errors.New("write failed")
+	}
+	return len(p), nil
+}
+
+// Every write in the human rendering reports its error, including the warning
+// lines, with and without locks in the table.
+func TestRenderDebtLocks_WriteErrors(t *testing.T) {
+	withLocks := debtLocksReport{
+		Locks:    []debtLockRow{{ID: "TD-1", Holder: "alice", LockedAt: "2026-11-06T12:00:00Z", Flags: []string{}}},
+		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Reason: "bad name"}},
+	}
+	noLocks := debtLocksReport{Warnings: withLocks.Warnings}
+	now := time.Now()
+	cases := []struct {
+		name string
+		rep  debtLocksReport
+		fail string
+	}{
+		{"no locks line", debtLocksReport{}, "No item locks"},
+		{"warnings header after no locks", noLocks, "warning(s)"},
+		{"warning line after no locks", noLocks, "not-hex: bad name"},
+		{"footer", withLocks, "locks flagged"},
+		{"warnings header", withLocks, "warning(s)"},
+		{"warning line", withLocks, "not-hex: bad name"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Error(t, renderDebtLocks(failOnWrite{substr: c.fail}, c.rep, time.Hour, now))
+		})
+	}
+	require.NoError(t, renderDebtLocks(failOnWrite{substr: "never matches"}, withLocks, time.Hour, now))
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -160,4 +161,60 @@ func TestDebtFilter_LegacyPipeRejected(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "items[")
 	assert.NotContains(t, stderr, "deprecated", "no deprecation notice for an encoder this command lacks")
+}
+
+// writeOnceAppender is a stderr sink that appends rec to the store on its first
+// write. The store's read path warns on a malformed line, so the first read of a
+// store carrying one triggers it: a writer landing mid-command, deterministically.
+type writeOnceAppender struct {
+	t    *testing.T
+	dir  string
+	rec  localdebt.Record
+	done bool
+}
+
+func (w *writeOnceAppender) Write(p []byte) (int, error) {
+	if !w.done {
+		w.done = true
+		require.NoError(w.t, localdebt.Append(w.dir, w.rec))
+	}
+	return len(p), nil
+}
+
+// TestDebtFilter_OneReadSummaryMatchesItems pins that summary and items come from
+// one read of the store: a record appended after the first read must not reach
+// items without reaching summary.matched (or the reverse).
+func TestDebtFilter_OneReadSummaryMatchesItems(t *testing.T) {
+	dir := debtFilterStore(t)
+	files, err := localdebt.RecordFiles(dir)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	f, err := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("not json\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	// An earlier month, so it lands in a new shard the in-flight read never lists.
+	late := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-09-01T10:00:00Z-x", Timestamp: "2026-09-01T10:00:00Z",
+		Severity: "CRITICAL", File: "late.go", Line: 1, EstMinutes: 1,
+		Confidence: "high", Problem: "p", Fix: "f", Category: "cat",
+	}
+	late.StampID()
+
+	cmd := newDebtCmd()
+	var out bytes.Buffer
+	sink := &writeOnceAppender{t: t, dir: dir, rec: late}
+	cmd.SetOut(&out)
+	cmd.SetErr(sink)
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetArgs([]string{"filter", "--dir", dir, "--max", "100"})
+	require.NoError(t, cmd.Execute())
+	require.True(t, sink.done, "the malformed line must trigger the mid-command write")
+
+	var got debtFilterDoc
+	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+	assert.Equal(t, got.Summary.Matched, len(got.Items), "summary.matched and items come from one read")
+	assert.Equal(t, []string{"e.go", "a.go"}, filesOf(got.Items), "the record written after the read is in neither")
 }

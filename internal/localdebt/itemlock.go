@@ -78,6 +78,16 @@ type ItemLock struct {
 	Remote string
 }
 
+// ItemLockWarning describes one ref under ItemLockRefPrefix that could not be
+// read as a lock: a malformed ref name, or a tag that cannot be read or does
+// not record the ref's id. List returns these alongside the valid locks so a
+// bad ref is shown, never hidden (epic 122 T4, owner decision 2026-11-18).
+type ItemLockWarning struct {
+	Ref    string
+	Remote string
+	Reason string
+}
+
 // ItemLocker locks and unlocks items of the store at Dir.
 type ItemLocker struct {
 	// Dir is the store directory. Its repository is found from Dir, or from its
@@ -289,17 +299,21 @@ func (l ItemLocker) Unlock(ctx context.Context, ids []string) ([]ItemLock, error
 // List reads every lock the store remote holds, oldest first, then by id. It
 // only reads: it checks no holder for liveness and never frees a lock (Epic 93
 // T2). Holder is not used. A ref under ItemLockRefPrefix whose name is not a
-// hex-encoded id, or whose tag is not a lock, is an error rather than skipped,
-// so a lock cannot drop out of the list unseen.
-func (l ItemLocker) List(ctx context.Context) ([]ItemLock, error) {
+// hex-encoded id, or whose tag cannot be read as a lock, is returned as an
+// ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
+// shown and never hides the rest (epic 122 T4, owner decision 2026-11-18;
+// before that it failed the whole listing). A remote that cannot be reached is
+// still an error: no listing can be made at all.
+func (l ItemLocker) List(ctx context.Context) ([]ItemLock, []ItemLockWarning, error) {
 	g, remote, err := l.open(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out, _, err := g.run(ctx, "", "ls-remote", "--refs", remote, ItemLockRefPrefix+"*")
 	if err != nil {
-		return nil, fmt.Errorf("read locks from %s: %w", remote, err)
+		return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
 	}
+	var warnings []ItemLockWarning
 	found := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		sha, ref, ok := strings.Cut(line, "\t")
@@ -308,14 +322,16 @@ func (l ItemLocker) List(ctx context.Context) ([]ItemLock, error) {
 		}
 		raw, err := hex.DecodeString(strings.TrimPrefix(ref, ItemLockRefPrefix))
 		if err != nil || len(raw) == 0 || ItemLockRef(string(raw)) != ref {
-			return nil, fmt.Errorf("read locks from %s: %s is not an item lock ref (its name is not an id in lowercase hex)", remote, ref)
+			warnings = append(warnings, ItemLockWarning{Ref: ref, Remote: remote, Reason: "not an item lock ref (its name is not an id in lowercase hex)"})
+			continue
 		}
 		found[string(raw)] = sha
 	}
-	read, err := fetchItemLocks(ctx, g, remote, found)
+	read, tagWarnings, err := fetchItemLocksLenient(ctx, g, remote, found)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	warnings = append(warnings, tagWarnings...)
 	locks := make([]ItemLock, 0, len(read))
 	for _, lk := range read {
 		locks = append(locks, lk.ItemLock)
@@ -326,7 +342,8 @@ func (l ItemLocker) List(ctx context.Context) ([]ItemLock, error) {
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	return locks, nil
+	slices.SortFunc(warnings, func(a, b ItemLockWarning) int { return strings.Compare(a.Ref, b.Ref) })
+	return locks, warnings, nil
 }
 
 // remoteItemLock is a lock read from the remote, with the tag object it names.
@@ -345,38 +362,69 @@ func readItemLocks(ctx context.Context, g itemLockRunner, remote string, ids []s
 	return fetchItemLocks(ctx, g, remote, found)
 }
 
-// fetchItemLocks fetches and parses the tag each id's ref names; found maps id
-// to tag object as listItemLockRefs returns it.
+// fetchItemLocks fetches and parses the tag each id's ref names, strictly: a
+// ref whose tag cannot be read as a lock fails the whole call. The mutation
+// paths (Lock, Unlock) use this, so they never act on a lock they cannot read.
 func fetchItemLocks(ctx context.Context, g itemLockRunner, remote string, found map[string]string) (map[string]remoteItemLock, error) {
-	fetch := make([]string, 0, len(found))
+	result, warnings, err := fetchItemLocksLenient(ctx, g, remote, found)
+	if err != nil {
+		return nil, err
+	}
+	if len(warnings) > 0 {
+		w := warnings[0]
+		// The ref came from found, so its suffix is valid hex of the id.
+		raw, _ := hex.DecodeString(strings.TrimPrefix(w.Ref, ItemLockRefPrefix))
+		return nil, fmt.Errorf("read lock %s (%s): %s", string(raw), w.Ref, w.Reason)
+	}
+	return result, nil
+}
+
+// fetchItemLocksLenient is fetchItemLocks with per-ref leniency for the
+// listing: a tag that cannot be read, parsed, or does not record the ref's id
+// becomes an ItemLockWarning instead of an error, and every other lock is
+// still returned. found maps id to tag object as listItemLockRefs returns it.
+// A failed fetch of the remote itself is still an error: nothing can be read.
+func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string, found map[string]string) (map[string]remoteItemLock, []ItemLockWarning, error) {
+	ids := make([]string, 0, len(found))
 	for id := range found {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	result := make(map[string]remoteItemLock, len(found))
+	if len(ids) == 0 {
+		return result, nil, nil
+	}
+	fetch := make([]string, 0, len(ids))
+	for _, id := range ids {
 		fetch = append(fetch, ItemLockRef(id))
 	}
-	slices.Sort(fetch)
-	result := make(map[string]remoteItemLock, len(found))
-	if len(fetch) == 0 {
-		return result, nil
-	}
 	if _, _, err := g.run(ctx, "", append([]string{"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote}, fetch...)...); err != nil {
-		return nil, fmt.Errorf("read locks from %s: %w", remote, err)
+		return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
 	}
-	for id, sha := range found {
+	var warnings []ItemLockWarning
+	for _, id := range ids {
 		ref := ItemLockRef(id)
-		body, _, err := g.run(ctx, "", "cat-file", "tag", sha)
+		warn := func(reason string) {
+			warnings = append(warnings, ItemLockWarning{Ref: ref, Remote: remote, Reason: reason})
+		}
+		body, _, err := g.run(ctx, "", "cat-file", "tag", found[id])
 		if err != nil {
-			return nil, fmt.Errorf("read lock %s (%s): %w", id, ref, err)
+			warn(err.Error())
+			continue
 		}
 		lk, err := parseItemLockTag(body)
 		if err != nil {
-			return nil, fmt.Errorf("read lock %s (%s): %w", id, ref, err)
+			warn(err.Error())
+			continue
 		}
 		if lk.ID != id {
-			return nil, fmt.Errorf("read lock %s (%s): the tag records id %q", id, ref, lk.ID)
+			warn(fmt.Sprintf("the tag records id %q", lk.ID))
+			continue
 		}
 		lk.Ref, lk.Remote = ref, remote
-		result[id] = remoteItemLock{ItemLock: lk, sha: sha}
+		result[id] = remoteItemLock{ItemLock: lk, sha: found[id]}
 	}
-	return result, nil
+	return result, warnings, nil
 }
 
 // listItemLockRefs returns the tag object each id's lock ref names on the
