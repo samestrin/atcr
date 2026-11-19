@@ -41,7 +41,7 @@ func TestInvokeSkeptic_MarksASurvivingVerdictTruncated(t *testing.T) {
 			toolCallTurn("read_file"),
 			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 		}}
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 		require.NoError(t, err)
 		require.Equal(t, verdictRefuted, v.Verdict, "precondition: the surviving-verdict path")
 		require.Contains(t, tripped, budgetToolBytes)
@@ -55,7 +55,7 @@ func TestInvokeSkeptic_MarksASurvivingVerdictTruncated(t *testing.T) {
 			toolCallTurn("read_file"),
 			{content: `{"verdict": "confirmed", "reasoning": "read the whole file"}`},
 		}}
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.Empty(t, tripped, "precondition: nothing tripped")
 		assert.False(t, v.Truncated, "an untruncated read must not be flagged, or the flag says nothing")
@@ -121,7 +121,7 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 	t.Run("the real verdict after a leading think block wins", func(t *testing.T) {
 		t.Parallel()
 		raw := `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>{"verdict": "refuted", "reasoning": "real answer"}`
-		v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		require.Empty(t, tripped, "precondition: nothing tripped, so the parse path is what is under test")
@@ -133,7 +133,7 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 	t.Run("a leading run of two think blocks yields the trailing answer", func(t *testing.T) {
 		t.Parallel()
 		raw := `<think>{"verdict": "confirmed", "reasoning": "draft one"}</think><think>{"verdict": "unverifiable", "reasoning": "draft two"}</think>{"verdict": "refuted", "reasoning": "real answer"}`
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictRefuted, v.Verdict,
@@ -150,7 +150,7 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 		raw := `<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` + "\n" +
 			`{ a decoy brace pair with no verdict key }` + "\n" +
 			`{"verdict": "refuted", "reasoning": "real answer"}`
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictRefuted, v.Verdict,
@@ -161,7 +161,7 @@ func TestInvokeSkeptic_StripsThinkBeforeParsingTheVerdict(t *testing.T) {
 	t.Run("a draft unverifiable does not outrank the real confirmed", func(t *testing.T) {
 		t.Parallel()
 		raw := `<think>{"verdict": "unverifiable", "reasoning": "draft, undecided"}</think>{"verdict": "confirmed", "reasoning": "real answer"}`
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictConfirmed, v.Verdict,

@@ -65,7 +65,7 @@ func scriptedCase(missed map[int]bool) func(i int) bool {
 		sk := testSkeptic()
 		sk.Config.SupportsFC = false // single-shot path: no tool loop, no FC warning
 		v, _, err := invokeSkeptic(context.Background(), sk, "prompt",
-			finalChat(fmt.Sprintf(`{"verdict":%q}`, verdict)), okDispatcher(), false)
+			finalChat(fmt.Sprintf(`{"verdict":%q}`, verdict)), okDispatcher(), false, "")
 		return err == nil && v != nil && v.Verdict == "confirmed"
 	}
 }

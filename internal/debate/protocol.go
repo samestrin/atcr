@@ -74,8 +74,10 @@ type Record struct {
 // left empty, so the caller can always record an outcome and an item is never
 // dropped. Turn order is strict — proposer, then challenger (given the proposer's
 // defense), then judge (given both) — so the same scripted completer is consumed
-// in seat order.
-func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) Record {
+// in seat order. secretGuard is the secret_guard policy every seat's request
+// is sent under (see buildDebateAgent); under block a seat whose prompt holds a
+// credential sends nothing and is recorded in Halted like any other failure.
+func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) Record {
 	rec := Record{Item: item, Cast: cast, Resolved: true, SingleModel: cast.SingleModel}
 
 	// One per-item sentinel tags every untrusted block (the finding and the prior
@@ -86,7 +88,7 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 	sentinel := newSentinel()
 
 	// Turn 1 — proposer defends the finding.
-	rec.ProposerStatement = rec.runTurn(ctx, cast.Proposer, 1, buildProposerPrompt(item, sentinel), cc, disp, tr)
+	rec.ProposerStatement = rec.runTurn(ctx, cast.Proposer, 1, buildProposerPrompt(item, sentinel), secretGuard, cc, disp, tr)
 
 	// A clean-but-blank proposer statement already decides the item: debateOne's
 	// silentArguingSeats guard discards it as unresolved before any ruling is
@@ -108,11 +110,11 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 
 	// Turn 2 — challenger attacks, seeing the proposer's defense.
 	rec.ChallengerStatement = rec.runTurn(ctx, cast.Challenger, 2,
-		buildChallengerPrompt(item, rec.ProposerStatement, sentinel), cc, disp, tr)
+		buildChallengerPrompt(item, rec.ProposerStatement, sentinel), secretGuard, cc, disp, tr)
 
 	// Turn 3 — judge rules, seeing both statements.
 	rec.JudgeRaw = rec.runTurn(ctx, cast.Judge, 3,
-		buildJudgePrompt(item, rec.ProposerStatement, rec.ChallengerStatement, sentinel), cc, disp, tr)
+		buildJudgePrompt(item, rec.ProposerStatement, rec.ChallengerStatement, sentinel), secretGuard, cc, disp, tr)
 
 	return rec
 }
@@ -159,8 +161,8 @@ func (rec *Record) recordTurnCause(label, content, reasoning, status string) {
 // runTurn drives one seat through the tool loop, records the turn to the
 // transcript, and returns the seat's statement. A halted seat appends its label
 // to rec.Halted and returns "".
-func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
-	content, reasoning, status := driveSeat(ctx, seat, prompt, cc, disp)
+func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
+	content, reasoning, status := driveSeat(ctx, seat, prompt, secretGuard, cc, disp)
 	rec.Asked = append(rec.Asked, seat.Label)
 	rec.recordTurnCause(seat.Label, content, string(reasoning), status)
 	tr.RecordTurn(TurnEvent{
@@ -194,12 +196,22 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt st
 // design question, not a mechanical port. Until it is answered, the operator is
 // warned instead: internal/doctor's smallWindowClause names this lane explicitly
 // alongside the verification one.
-func driveSeat(ctx context.Context, seat Caster, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (string, llmclient.Reasoning, string) {
+func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher) (string, llmclient.Reasoning, string) {
 	if cc == nil {
 		return "", "", fanout.StatusFailed
 	}
 	logger := log.FromContext(ctx)
-	agent := buildDebateAgent(seat, prompt)
+	// Guard the prompt here, not only in llmclient.Chat: a seat without
+	// function calling, or with no dispatcher, is sent down fanout's
+	// single-shot path (CompleteWithMeta), which never scans. Under block a
+	// prompt holding a credential, or one the scan could not check, is never
+	// sent and the seat halts like any other failed turn.
+	guarded, err := fanout.GuardOutbound(ctx, secretGuard, seat.Label+" seat "+seat.Agent, []fanout.OutboundText{{Label: seat.Label + " prompt", Text: prompt}})
+	if err != nil {
+		logger.Warn("debate: seat prompt not sent", "seat", seat.Label, "agent", seat.Agent, "err", err.Error())
+		return "", "", fanout.StatusFailed
+	}
+	agent := buildDebateAgent(seat, guarded[0], secretGuard)
 	opts := []fanout.EngineOption{fanout.WithLogger(logger)}
 	if disp != nil {
 		opts = append(opts, fanout.WithDispatcher(disp))
@@ -302,7 +314,10 @@ func nonOKStatus(status string) string {
 // Thinking is deliberately NOT gated the same way: it changes how much the
 // model reasons, not the shape of its reply, so every seat sends its own
 // declaration.
-func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
+//
+// secretGuard is the resolved secret_guard policy debateOne passes down; every
+// seat carries it. prompt must already be guarded under it (driveSeat does).
+func buildDebateAgent(seat Caster, prompt, secretGuard string) fanout.Agent {
 	c := seat.Config
 	var responseFormat string
 	if seat.Label == LabelJudge {
@@ -350,6 +365,12 @@ func buildDebateAgent(seat Caster, prompt string) fanout.Agent {
 			ThinkingLevel:    c.ThinkingLevel,
 			ThinkingStyle:    c.ThinkingStyle,
 			PreserveThinking: c.PreserveThinking,
+			// Epic 106.3 T2: the run's secret_guard policy, so llmclient.Chat
+			// warns, redacts or blocks a credential in what the tool loop adds
+			// (tool results, model turns). driveSeat already guarded the prompt
+			// itself, so it is counted as guarded and not scanned twice.
+			SecretGuard:            secretGuard,
+			AlreadyGuardedMessages: 1,
 		},
 	}
 }

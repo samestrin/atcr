@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -960,6 +961,28 @@ func TestDebtStoreDir_NoMarkerFallsBackToWorkingDir(t *testing.T) {
 	// and end at the store subdirectory, never a stale process-start directory.
 	assert.True(t, filepath.IsAbs(got), "the resolved store path is absolute, got %q", got)
 	assert.Equal(t, localdebt.DefaultDir(filepath.Dir(filepath.Dir(got))), got)
+}
+
+// When the working directory cannot be read (here it was removed under the
+// process), there is no root to walk from, so the store resolves against "."
+// exactly as it did before the walk existed, rather than failing the command.
+func TestDebtStoreDir_GetwdFailureFallsBackToRelativeDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows cannot remove the working directory of a live process")
+	}
+	t.Setenv("HOME", t.TempDir())
+	gone := filepath.Join(t.TempDir(), "gone")
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	t.Chdir(gone)
+	require.NoError(t, os.Remove(gone))
+	_, err := debtRepoRoot()
+	require.Error(t, err, "the precondition: Getwd fails in a removed directory")
+
+	cmd := newDebtListCmd()
+	require.NoError(t, cmd.Flags().Parse(nil))
+	got, err := debtStoreDir(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, localdebt.DefaultDir("."), got)
 }
 
 // An id filed by add from a SUBDIRECTORY is visible to list from that same
