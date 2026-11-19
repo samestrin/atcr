@@ -19,6 +19,7 @@ import (
 	"github.com/samestrin/atcr/internal/autofix"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/ghaction"
+	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -2055,4 +2056,146 @@ func TestReviewHelp_BoolFlagsRenderWithoutValueName(t *testing.T) {
 		assert.NotContains(t, f.Usage, "`",
 			"bool flag --%s usage must not contain a backquoted span — pflag renders it as a value name", f.Name)
 	})
+}
+
+// --- the fix-applied observer (epic 19.0 T1) --------------------------------
+
+type recordingFixObserver struct {
+	got []FixApplied
+}
+
+func (r *recordingFixObserver) OnFixApplied(_ context.Context, fa FixApplied) {
+	r.got = append(r.got, fa)
+}
+
+// fixObserverRun is a two-file host-path run whose validation command is
+// validate, so the same fixture drives both the pass and the revert case.
+func fixObserverRun(t *testing.T, validate string) (string, autoFixRun) {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "pkg"), 0o755))
+	for _, rel := range []string{"a.txt", "pkg/b.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, rel), []byte("old\n"), 0o644))
+	}
+	return root, autoFixRun{
+		Backend: autoFixBackend{
+			applyTarget:     root,
+			validateArgv:    []string{validate},
+			validateTimeout: 5 * time.Second,
+			owner:           "o", repo: "r", token: "tok",
+			noSandbox: true,
+		},
+		Entries: []payload.FileEntry{
+			{Path: "a.txt", Body: diffFor("a.txt")},
+			{Path: "pkg/b.txt", Body: diffFor("pkg/b.txt")},
+		},
+		BaseSHA: "base", Base: "main", Branch: "atcr/auto-fix", Title: "fix", Body: "b", Message: "m",
+	}
+}
+
+// TestRunAutoFix_FixAppliedFiresOnceAfterPassingValidation: a validated fix
+// reports exactly once, with the review's run id and every retained file's
+// repo-relative path and the exact diff that was applied to it.
+func TestRunAutoFix_FixAppliedFiresOnceAfterPassingValidation(t *testing.T) {
+	_, run := fixObserverRun(t, "true")
+	obs := &recordingFixObserver{}
+	ctx := withHooks(context.Background(), Hooks{FixApplied: obs}, io.Discard)
+	ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: "2026-11-19_feat-x", Stage: "review"})
+
+	require.NoError(t, runAutoFix(ctx, io.Discard, &fakeGitHub{}, run))
+
+	require.Len(t, obs.got, 1, "one passing auto-fix run reports once")
+	assert.Equal(t, FixApplied{
+		RunID: "2026-11-19_feat-x",
+		Files: []AppliedFile{
+			{Path: "a.txt", Diff: diffFor("a.txt")},
+			{Path: "pkg/b.txt", Diff: diffFor("pkg/b.txt")},
+		},
+	}, obs.got[0])
+}
+
+// TestRunAutoFix_FixAppliedFiresBeforeGitHub: the fix is retained in the
+// working tree once validation passes, so it is reported even when the later
+// GitHub step fails.
+func TestRunAutoFix_FixAppliedFiresBeforeGitHub(t *testing.T) {
+	_, run := fixObserverRun(t, "true")
+	obs := &recordingFixObserver{}
+	ctx := withHooks(context.Background(), Hooks{FixApplied: obs}, io.Discard)
+
+	err := runAutoFix(ctx, io.Discard, &fakeGitHub{commitErr: errors.New("boom")}, run)
+
+	require.Error(t, err)
+	require.Len(t, obs.got, 1)
+	assert.Empty(t, obs.got[0].RunID, "no run id on ctx reports an empty one")
+}
+
+// TestRunAutoFix_FixAppliedNotFiredOnRevert: every path that reverts the tree
+// (validation fails, validation cannot start, apply fails, unsandboxed refusal)
+// reports nothing.
+func TestRunAutoFix_FixAppliedNotFiredOnRevert(t *testing.T) {
+	cases := map[string]func(*autoFixRun){
+		"validation fails":        func(r *autoFixRun) { r.Backend.validateArgv = []string{"false"} },
+		"validation cannot start": func(r *autoFixRun) { r.Backend.validateArgv = []string{"/nonexistent/atcr-validate"} },
+		"apply fails": func(r *autoFixRun) {
+			r.Entries = append(r.Entries, payload.FileEntry{Path: "missing.txt", Body: diffFor("missing.txt")})
+		},
+		"no sandbox and no opt-out": func(r *autoFixRun) { r.Backend.noSandbox = false },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			root, run := fixObserverRun(t, "true")
+			mutate(&run)
+			obs := &recordingFixObserver{}
+			ctx := withHooks(context.Background(), Hooks{FixApplied: obs}, io.Discard)
+			ctx = hookobs.WithCall(ctx, hookobs.Call{RunID: "r1"})
+
+			require.Error(t, runAutoFix(ctx, io.Discard, &fakeGitHub{}, run))
+
+			assert.Empty(t, obs.got, "a reverted fix must not be reported")
+			got, err := os.ReadFile(filepath.Join(root, "a.txt"))
+			require.NoError(t, err)
+			assert.Equal(t, "old\n", string(got), "the tree was reverted")
+		})
+	}
+}
+
+// TestRunAutoFix_ZeroHooksUnchanged: a zero Hooks drives the same outcome,
+// output and GitHub sequence as a context with no hooks at all.
+func TestRunAutoFix_ZeroHooksUnchanged(t *testing.T) {
+	for _, validate := range []string{"true", "false"} {
+		t.Run(validate, func(t *testing.T) {
+			_, bareRun := fixObserverRun(t, validate)
+			var bareOut bytes.Buffer
+			bareGH := &fakeGitHub{}
+			bareErr := runAutoFix(context.Background(), &bareOut, bareGH, bareRun)
+
+			_, hookRun := fixObserverRun(t, validate)
+			var hookOut, stderr bytes.Buffer
+			hookGH := &fakeGitHub{}
+			hookErr := runAutoFix(withHooks(context.Background(), Hooks{}, &stderr), &hookOut, hookGH, hookRun)
+
+			assert.Equal(t, bareErr == nil, hookErr == nil)
+			assert.Equal(t, bareOut.String(), hookOut.String())
+			assert.Equal(t, *bareGH, *hookGH)
+			assert.Empty(t, stderr.String())
+		})
+	}
+}
+
+type panickingFixObserver struct{}
+
+func (panickingFixObserver) OnFixApplied(context.Context, FixApplied) { panic("observer broke") }
+
+// TestRunAutoFix_PanickingFixObserverDoesNotChangeOutcome: a broken observer
+// is reported on stderr and the run still opens its pull request.
+func TestRunAutoFix_PanickingFixObserverDoesNotChangeOutcome(t *testing.T) {
+	_, run := fixObserverRun(t, "true")
+	var stderr bytes.Buffer
+	gh := &fakeGitHub{}
+	ctx := withHooks(context.Background(), Hooks{FixApplied: panickingFixObserver{}}, &stderr)
+
+	require.NoError(t, runAutoFix(ctx, io.Discard, gh, run))
+
+	assert.Equal(t, 1, gh.createPR)
+	assert.Contains(t, stderr.String(), "fix-applied hook panicked")
 }
