@@ -567,6 +567,17 @@ func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFindi
 	return out
 }
 
+// secretGuardPolicy is the secret_guard policy debate seats are sent under:
+// the registry's, or the embedded default (warn) when it sets none. The
+// project tier is resolved only by the review's ResolveSettings, which Debate
+// does not run.
+func secretGuardPolicy(reg *registry.Registry) string {
+	if p := strings.TrimSpace(reg.SecretGuard); p != "" {
+		return p
+	}
+	return registry.DefaultSecretGuard
+}
+
 // debateOne casts and runs the debate for a single item, records its transcript,
 // and returns the recorded outcome. It never returns an error: an uncast item, a
 // halted seat, or an unparseable ruling all degrade to an unresolved ItemResult.
@@ -592,7 +603,7 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 	defer func() { _ = tr.Close() }()
 	ir.Transcript = filepath.Join(debateSubdir, id, "transcript.jsonl")
 
-	rec := RunDebate(ctx, item, cast, cc, disp, tr)
+	rec := RunDebate(ctx, item, cast, secretGuardPolicy(reg), cc, disp, tr)
 
 	if judgeHalted(rec.Halted) {
 		ir.Outcome = OutcomeUnresolved
