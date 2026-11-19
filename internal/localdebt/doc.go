@@ -78,6 +78,9 @@
 // repo-wide GOOS-guarded O_NOFOLLOW pass (precedent: internal/tools/open_unix.go /
 // open_other.go) is the correct venue if it is ever pursued; localdebt deliberately
 // does not diverge from its siblings here.
+// The one exception is items/.gitignore (events.go): in a shared store it can come
+// from the repository itself rather than from local write access, so it is
+// created O_EXCL|O_NOFOLLOW and a symlink at that name is never written through.
 //
 // # Deduplication contract
 //

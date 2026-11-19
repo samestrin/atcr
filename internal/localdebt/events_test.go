@@ -364,7 +364,7 @@ func TestWriteEventLocked_ItemsAsRegularFileIsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(ItemsDir(dir), []byte("not a dir"), 0o600))
 
 	rec := eventRec(idP, "2026-06-14T10:00:00Z", "")
-	err := writeEventLocked(dir, rec, eventLine(t, rec))
+	err := writeEventLocked(dir, rec, eventLine(t, rec), &itemsPrep{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "creating localdebt event")
 	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")

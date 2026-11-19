@@ -8,3 +8,7 @@ import "syscall"
 // FIFO, so the handle check in readSummary decides what is read. Same shape as
 // internal/stream/findingsfile_unix.go.
 const openNoFollowNonBlock = syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+
+// openNoFollow makes an open fail on a symlink. ensureItemsGitignore creates
+// with it so a link planted at items/.gitignore never redirects the write.
+const openNoFollow = syscall.O_NOFOLLOW
