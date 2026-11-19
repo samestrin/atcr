@@ -522,7 +522,10 @@ func TestItemUnlock_BadTagIsStillError(t *testing.T) {
 	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
 	itemLockGit(t, remote, "update-ref", ItemLockRef("TD-001"), "HEAD")
 	_, err := ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(ctx, []string{"TD-001"})
-	require.ErrorContains(t, err, "TD-001")
+	// Assert the refusal cause, not just the id: ErrItemNotLocked also names
+	// the id, so a lenient unlock that drops the unreadable lock must not pass.
+	require.ErrorContains(t, err, "read lock TD-001")
+	require.NotErrorIs(t, err, ErrItemNotLocked)
 	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Lock(ctx, []string{"TD-001"})
 	require.ErrorIs(t, err, ErrItemLocked)
 }

@@ -60,6 +60,7 @@ func TestDebtLocks_FlagsOldAndResolvedNotFresh(t *testing.T) {
 	require.Contains(t, out, "older than 12h0m0s")
 	require.Contains(t, out, "item resolved")
 	require.Contains(t, out, "2 of 3 locks flagged")
+	require.NotContains(t, out, "warning(s)", "no warnings block when every ref is a valid lock")
 
 	require.Equal(t, before, remoteLockRefs(t, remote), "locks must never free a lock")
 }
@@ -118,6 +119,7 @@ func TestDebtLocks_NoLocks(t *testing.T) {
 	out, err := runDebt(t, "locks", "--store", stores[0])
 	require.NoError(t, err, out)
 	require.Contains(t, out, "No item locks")
+	require.NotContains(t, out, "warning(s)", "no warnings block when there are no bad refs")
 
 	rep, _ := debtLocksJSON(t, "--store", stores[0])
 	require.NotNil(t, rep.Locks, "--json prints an empty array, not null")
