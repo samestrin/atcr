@@ -94,8 +94,10 @@ Every read path folds both layouts together — month shards in lexical order
 first, then event files in name order — so a store holding both reads as one
 backlog. Compaction and justification backfill treat event files as frozen:
 `atcr debt compact` never rewrites, moves or removes one, and `atcr debt
-backfill-justifications` skips any id held in an event file (reporting it as
-left unrepaired) rather than rewriting a file it cannot change. The event layout
+backfill-justifications` skips any id held in an event file that it would
+otherwise repair (reporting it as left unrepaired) rather than rewriting a file
+it cannot change; an id with no source report or an empty justification never
+needed repair and is skipped silently, as on a shard-only store. The event layout
 keeps full history and is not shrunk by compaction; the month-shard layout is
 the one `atcr debt compact` folds.
 
@@ -952,7 +954,9 @@ On a store holding event files, ids held there are counted on their own, not in
 the partition: `N left unrepaired (held in event files, which are never
 rewritten)`. An event file is written once and never changed, so replaying an
 excerpt into a shard would report a rewrite that never took effect; the whole id
-is skipped, and the clause is absent when no id is held in an event file.
+is skipped. Only ids the pass would otherwise scan are counted — a record with
+no source report or an empty justification never needed repair — and the clause
+is absent when no such id is held in an event file.
 
 Within a repaired id, only the **lines** still carrying the stale excerpt are
 written. One id can hold several lines — `debt resolve` appends a copy of the

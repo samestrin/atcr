@@ -1702,7 +1702,9 @@ func TestBackfillJustifications_ZeroValueSeamsDoNotPanic(t *testing.T) {
 // TD internal/localdebt/backfill.go:673 — readSummary's io.ReadAll error arm was
 // never reached. The summary here is a regular file whose reconciled_at WOULD own
 // the run, so only the read error stands between it and ownership: an open that
-// hands back the directory makes the read fail, and the summary must read as absent.
+// hands back the directory is refused by the descriptor check, and a write-only
+// handle passes that check (it IS regular) but fails the read itself — the
+// summary must read as absent either way.
 func TestReadSummary_ReadErrorIsTreatedAsAbsent(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
@@ -1712,12 +1714,36 @@ func TestReadSummary_ReadErrorIsTreatedAsAbsent(t *testing.T) {
 	assert.Empty(t, at, "a summary that cannot be read carries no reconciled_at")
 	assert.False(t, oversized, "a read error is not an oversized skip")
 
+	openWriteOnly := func(name string) (*os.File, error) { return os.OpenFile(name, os.O_WRONLY, 0) }
+	at, oversized = readSummary(reviewDir, openWriteOnly, slog.Default())
+	assert.Empty(t, at, "a regular handle that cannot be read carries no reconciled_at")
+	assert.False(t, oversized, "a read error is not an oversized skip")
+
 	c := &ownershipCache{open: openDir}
 	assert.False(t, c.owns(reviewDir, "2026-08-01T00:00:00Z-multi-agent"),
 		"an unreadable summary owns nothing, though its contents would have owned the run")
 	assert.Zero(t, c.oversized)
 	assert.True(t, (&ownershipCache{}).owns(reviewDir, "2026-08-01T00:00:00Z-multi-agent"),
-		"control: the same summary read through os.Open does own the run")
+		"control: the same summary read through the default open does own the run")
+}
+
+// The descriptor check's Stat error arm: an opener that hands back an
+// already-closed file owns nothing — the check must refuse it, not panic or read.
+func TestReadSummary_StatErrorIsTreatedAsAbsent(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
+	openClosed := func(name string) (*os.File, error) {
+		f, err := os.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		_ = f.Close()
+		return f, nil
+	}
+
+	at, oversized := readSummary(reviewDir, openClosed, slog.Default())
+	assert.Empty(t, at, "a handle whose Stat fails carries no reconciled_at")
+	assert.False(t, oversized, "a Stat error is not an oversized skip")
 }
 
 // TD internal/localdebt/backfill.go:453 — the walk and the summary open were package

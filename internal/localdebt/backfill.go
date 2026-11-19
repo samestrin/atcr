@@ -120,7 +120,10 @@ type BackfillResult struct {
 	SkippedRationaleBearing int
 
 	// SkippedEventFiles counts effective records whose id has at least one record in
-	// an event file (events.go). It sits outside the partition, like
+	// an event file (events.go) AND that would otherwise be scanned: a record with
+	// no SourceReport or an empty justification is one the shard path skips
+	// silently, and counting its event-held id here would report "left unrepaired"
+	// for an id that never needed repair. It sits outside the partition, like
 	// SkippedRationaleBearing. An event file is written once and never changed —
 	// its name is a hash of its bytes, and rewriting it in one clone is a merge
 	// conflict with every other — so this pass, which repairs in place, cannot
@@ -242,7 +245,7 @@ type backfillSeams struct {
 // defaultBackfillSeams is the real filesystem and the process-wide logger as it
 // stands when the pass starts.
 func defaultBackfillSeams() backfillSeams {
-	return backfillSeams{walk: filepath.WalkDir, open: os.Open, log: slog.Default()}
+	return backfillSeams{walk: filepath.WalkDir, open: openSummaryFile, log: slog.Default()}
 }
 
 // backfillJustifications is BackfillJustifications over the given seams.
@@ -350,12 +353,15 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 				res.SkippedRationaleBearing++
 				continue
 			}
-			if eventIDs[r.ID] {
-				res.SkippedEventFiles++
-				continue
-			}
 			sr := r.SourceReport
 			if sr == nil || sr.Path == "" || r.Justification == "" {
+				continue
+			}
+			// After the SourceReport/justification skip, not before: an id the shard
+			// path would skip silently never needed repair, so reporting it as "left
+			// unrepaired" here would overstate what the pass could not do.
+			if eventIDs[r.ID] {
+				res.SkippedEventFiles++
 				continue
 			}
 			res.Scanned++
@@ -652,7 +658,7 @@ const maxSummaryBytes = 1 << 20
 // pass itself asks ownershipCache.owns, which composes the same two functions but
 // reads each review dir's summary.json at most once per pass.
 func reviewDirOwnsRun(reviewDir, runID string) bool {
-	return runOwnedBy(reviewDir, readReconciledAt(reviewDir, os.Open, slog.Default()), runID)
+	return runOwnedBy(reviewDir, readReconciledAt(reviewDir, openSummaryFile, slog.Default()), runID)
 }
 
 // runOwnedBy is reviewDirOwnsRun's comparison over a reconciled_at already read. An
@@ -682,14 +688,25 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
 // or "" when the file is missing, not a regular file, unreadable, over
 // maxSummaryBytes, unparseable or carries none — every case reviewDirOwnsRun reads
-// as owning nothing. The Lstat comes before the open because opening a FIFO blocks
-// until a writer appears, and the backfill pass holds the store lock meanwhile; a
-// symlink is refused with it, as the producer refuses a non-regular review.md. An
-// oversized file is logged at debug on log, so the skip is visible when asked for.
-// open is how the file is opened, os.Open outside a test.
+// as owning nothing. The Lstat pre-checks the size and refuses a non-regular path,
+// but the path can change between the Lstat and the open, so the default open
+// (openSummaryFile) refuses a symlink and does not block on a FIFO, and readSummary
+// checks the opened DESCRIPTOR is regular — the backfill pass holds the store lock
+// meanwhile, so a blocked open would hold it too. An oversized file is logged at
+// debug on log, so the skip is visible when asked for. open is how the file is
+// opened, openSummaryFile outside a test.
 func readReconciledAt(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) string {
 	at, _ := readSummary(reviewDir, open, log)
 	return at
+}
+
+// openSummaryFile is the default summary.json open: read-only, refusing a
+// symlink (O_NOFOLLOW) and returning at once on a FIFO (O_NONBLOCK) on unix, so
+// a path swapped after the Lstat cannot redirect the read or block it while the
+// pass holds the store lock. readSummary's handle check decides what is read.
+// Same shape as internal/stream/findingsfile.go's readRegularFile.
+func openSummaryFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
 }
 
 // readSummary is readReconciledAt that also reports whether the file was skipped for
@@ -710,6 +727,13 @@ func readSummary(reviewDir string, open func(name string) (*os.File, error), log
 		return "", false
 	}
 	defer func() { _ = f.Close() }()
+	// The Lstat checked the path; the file can change before the open returns.
+	// The descriptor decides: a FIFO, directory or device handed back by the
+	// opener owns nothing, and reading it could block under the store lock.
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", false
+	}
 	// One byte PAST the cap, so a file exactly at it still reads whole and one that
 	// grew past it since the Lstat is still detectable by length.
 	data, err := io.ReadAll(io.LimitReader(f, maxSummaryBytes+1))
@@ -732,9 +756,9 @@ func readSummary(reviewDir string, open func(name string) (*os.File, error), log
 // nothing) for the life of one BackfillJustifications call. replayCandidates runs
 // once per record, and records from one review all ask that review's dir, so
 // without it every policy-refused candidate re-reads the same summary.json. open
-// and log are handed to readSummary; the zero value uses os.Open and the default
-// logger. oversized counts the summaries read that were over maxSummaryBytes, once
-// per review dir because each dir is read once.
+// and log are handed to readSummary; the zero value uses openSummaryFile and the
+// default logger. oversized counts the summaries read that were over maxSummaryBytes,
+// once per review dir because each dir is read once.
 type ownershipCache struct {
 	at        map[string]string
 	open      func(name string) (*os.File, error)
@@ -748,7 +772,7 @@ func (c *ownershipCache) owns(reviewDir, runID string) bool {
 	if !ok {
 		open, log := c.open, c.log
 		if open == nil {
-			open = os.Open
+			open = openSummaryFile
 		}
 		if log == nil {
 			log = slog.Default()
