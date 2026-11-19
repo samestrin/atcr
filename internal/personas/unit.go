@@ -78,9 +78,10 @@ func (e *ValidationError) Unwrap() error { return e.Err }
 // reader never observes a partial write. When the persona is binding-only (no
 // co-located .md upstream), any stale <name>.md from a prior install is removed so
 // the on-disk unit always matches what was fetched — never a leftover custom
-// prompt fed into an LLM. On a first-time install (no prior <name>.yaml) nothing
-// is removed: a <name>.md that appears during the fetch belongs to another
-// process, not to a prior install of this unit.
+// prompt fed into an LLM. A first-time install (no prior <name>.yaml) is refused
+// instead: if a <name>.md already exists there, this install did not fetch or
+// validate it, so the install fails with an error naming that file and leaves it
+// untouched.
 //
 // A "bundle/"-prefixed name is rejected (defense in depth, mirroring Install): a
 // bundle must be expanded via InstallBundle, never round-tripped through the
@@ -180,10 +181,10 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 		}
 	} else if hadPrior {
 		// Binding-only upstream: drop any stale co-located prompt from a prior
-		// install so the resolver never feeds an outdated custom prompt. Skipped
-		// on a first-time install (the .yaml did not exist before this write):
-		// there is no prior unit whose stale .md this could be, and removing one
-		// would delete a .md another process created during the fetch.
+		// install so the resolver never feeds an outdated custom prompt. A
+		// first-time install never reaches this branch with an existing .md: that
+		// case is refused earlier with an error naming the file, because a .md this
+		// install did not fetch and validate must never become the unit's prompt.
 		if err := os.Remove(mdDest); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("failed to remove stale persona prompt %s: %w", mdDest, err)
 		}
