@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/validation"
@@ -77,7 +78,37 @@ func projectStoreDir(root, v string) (string, error) {
 	if err := containedIn(root, dir); err != nil {
 		return reject(err.Error())
 	}
+	projectStores.Store(filepath.Clean(dir), root)
 	return dir, nil
+}
+
+// projectStores maps each directory projectStoreDir has handed out (cleaned) to
+// the repository root it must stay inside, so withLock can re-check containment
+// at write time without every caller passing the root along.
+var projectStores sync.Map
+
+// afterContainmentCheck runs between withLock's pre-lock containment check and
+// taking the lock. It is a var so a test can swap a link inside that window;
+// production leaves it empty.
+var afterContainmentCheck = func() {}
+
+// checkStoreContainment re-runs containedIn for a store that StoreDir resolved
+// from the project tier; any other directory (the user tier, --store, the
+// default) carries no containment rule and passes. withLock calls it before it
+// creates anything in the store and again once the lock is held, before fn, so a
+// link swapped in after resolve, or while the lock was awaited, is refused
+// rather than written through. What remains is the window between the last check
+// and each open inside fn, which only an os.Root anchored at the repository root
+// would close.
+func checkStoreContainment(dir string) error {
+	root, ok := projectStores.Load(filepath.Clean(dir))
+	if !ok {
+		return nil
+	}
+	if err := containedIn(root.(string), dir); err != nil {
+		return fmt.Errorf("localdebt store %s: %w", filepath.Base(dir), err)
+	}
+	return nil
 }
 
 // containedIn reports whether dir, with every symlink on its EXISTING prefix
@@ -85,9 +116,9 @@ func projectStoreDir(root, v string) (string, error) {
 // sits behind a link is not an escape). The part of dir that does not exist yet
 // holds no link to follow; Append will create it as plain directories.
 //
-// The check is made when the store is resolved. A link swapped in afterwards is
-// a race the committer of a config file cannot win alone: they would also need
-// write access to the working tree at the moment of the run.
+// The check is made when the store is resolved, and again by withLock before
+// the first write (checkStoreContainment), so a link swapped in between is
+// caught at write time too.
 func containedIn(root, dir string) error {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
