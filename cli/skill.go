@@ -64,17 +64,17 @@ func knownHarnesses() []string {
 //
 // An explicit dir wins outright and is used verbatim — it is the destination
 // directory itself, not a parent to append a skill name onto (matching every
-// other --dir/--output-dir in this CLI). Because it wins outright, harness is not
+// other --dest/--output-dir in this CLI). Because it wins outright, harness is not
 // validated when dir is set: that is precisely how an unlisted harness stays
 // reachable.
 func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 	if dir != "" {
-		// A quoted or config-supplied --dir '~/...' would otherwise create a
+		// A quoted or config-supplied --dest '~/...' would otherwise create a
 		// directory literally named `~` under the cwd. The flag's own help text
 		// uses a ~/ example, so it must expand like the table paths do.
 		expanded, err := expandHome(dir)
 		if err != nil {
-			return "", fmt.Errorf("resolving home directory in --dir %q: %w", dir, err)
+			return "", fmt.Errorf("resolving home directory in --dest %q: %w", dir, err)
 		}
 		return expanded, nil
 	}
@@ -82,7 +82,7 @@ func resolveSkillDest(harness string, user bool, dir string) (string, error) {
 	h, ok := skillHarnesses[harness]
 	if !ok {
 		return "", usageError(fmt.Errorf(
-			"unknown --harness %q: known harnesses are %s; for anything else pass --dir <path> to write the skill directory explicitly",
+			"unknown --harness %q: known harnesses are %s; for anything else pass --dest <path> to write the skill directory explicitly",
 			harness, strings.Join(knownHarnesses(), ", ")))
 	}
 
@@ -115,7 +115,7 @@ func dirIsNonEmpty(path string) (bool, error) {
 	}
 	if !info.IsDir() {
 		return false, usageError(fmt.Errorf(
-			"destination %s exists and is not a directory; pass --dir <path> to name a directory instead", path))
+			"destination %s exists and is not a directory; pass --dest <path> to name a directory instead", path))
 	}
 
 	entries, err := os.ReadDir(path)
