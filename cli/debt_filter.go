@@ -45,7 +45,7 @@ type debtFilterDoc struct {
 // newDebtFilterCmd is the deterministic selection step td-filter was: status,
 // mode, severity, confidence, then the --max cap. It is a command of its own, not
 // flags on `debt list`, so list's defaults (no cap, a table) stay untouched; it
-// shares debtFilter and selectDebtForList with it.
+// shares debtFilter and the severity order with it.
 func newDebtFilterCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "filter",
@@ -115,15 +115,33 @@ func runDebtFilter(cmd *cobra.Command, _ []string) error {
 		EstFloor:   floor,
 		EstCeil:    ceil,
 	}
-	summary, err := summarizeDebtFilter(cmd, f)
+	// One summary read feeds both halves of the document, so summary.matched and
+	// items cannot disagree when a writer lands mid-command (two reads could).
+	// Only the hydration of the selected ids reads full records.
+	dir, err := debtStoreDir(cmd)
 	if err != nil {
 		return err
 	}
-	summary.Max, summary.Mode = limit, mode
-
-	recs, err := selectDebtForList(cmd, f, sortKeySeverity, limit)
+	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
+	sums, err := localdebt.ReadSummaries(dir, opts)
 	if err != nil {
+		return fmt.Errorf("read local debt store: %w", err)
+	}
+	summary, selected := summarizeDebtFilter(localdebt.FoldSummaries(sums), f)
+	summary.Max, summary.Mode = limit, mode
+	if err := sortDebtSummaries(selected, sortKeySeverity); err != nil {
 		return err
+	}
+	if limit > 0 && len(selected) > limit {
+		selected = selected[:limit]
+	}
+	ids := make([]string, 0, len(selected))
+	for _, s := range selected {
+		ids = append(ids, s.ID)
+	}
+	recs, err := hydrateDebtListIDs(dir, ids, opts, nil)
+	if err != nil {
+		return fmt.Errorf("read local debt store: %w", err)
 	}
 	if recs == nil {
 		recs = []localdebt.Record{}
@@ -150,22 +168,16 @@ func splitFilterList(s string) []string {
 // summarizeDebtFilter counts the filter pipeline stage by stage, as td-filter's
 // summary does: total (the status scope), then rows the mode drops, then rows the
 // severity filter drops, then rows the confidence filter drops; matched is what
-// survives all of them, before the --max cap.
-func summarizeDebtFilter(cmd *cobra.Command, f debtFilter) (debtFilterSummary, error) {
-	dir, err := debtStoreDir(cmd)
-	if err != nil {
-		return debtFilterSummary{}, err
-	}
-	sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
-	if err != nil {
-		return debtFilterSummary{}, fmt.Errorf("read local debt store: %w", err)
-	}
+// survives all of them, before the --max cap. It returns those survivors too, so
+// the selection is the same set the count describes.
+func summarizeDebtFilter(folded []localdebt.Summary, f debtFilter) (debtFilterSummary, []localdebt.Summary) {
 	scope := debtFilter{Status: f.Status}
 	inMode := debtFilter{Status: f.Status, EstFloor: f.EstFloor, EstCeil: f.EstCeil}
 	inSev := inMode
 	inSev.Severity = f.Severity
 	var s debtFilterSummary
-	for _, sum := range localdebt.FoldSummaries(sums) {
+	var matched []localdebt.Summary
+	for _, sum := range folded {
 		v := viewOfSummary(sum)
 		if !scope.matchView(v) {
 			continue
@@ -183,8 +195,9 @@ func summarizeDebtFilter(cmd *cobra.Command, f debtFilter) (debtFilterSummary, e
 			continue
 		}
 		s.Matched++
+		matched = append(matched, sum)
 	}
-	return s, nil
+	return s, matched
 }
 
 func renderDebtDocJSON(w io.Writer, doc any) error {
