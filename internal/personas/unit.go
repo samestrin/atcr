@@ -150,13 +150,25 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
 		return fmt.Errorf("failed to read prior persona %s: %w", yamlDest, priorErr)
 	}
+	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
+	// A first-time binding-only install must not adopt a <name>.md it did not
+	// fetch: the resolver pairs <name>.yaml with <name>.md by name, so writing the
+	// .yaml would feed that never-validated file into an LLM as this unit's
+	// prompt. Refuse before any write and leave the operator's file as it is; a
+	// path that cannot be inspected is treated as present.
+	if !hasMD && !hadPrior {
+		if _, err := os.Lstat(mdDest); err == nil {
+			return fmt.Errorf("refusing to install persona %q: %s already exists and was not written by this install; remove it or install a persona that ships its own prompt", name, mdDest)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("refusing to install persona %q: cannot inspect %s: %w", name, mdDest, err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
 		return fmt.Errorf("failed to create personas directory: %w", err)
 	}
 	if err := writeFileAtomic(yamlDest, yamlData); err != nil {
 		return err
 	}
-	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
 	if hasMD {
 		if err := writeFileAtomic(mdDest, mdData); err != nil {
 			if hadPrior {
