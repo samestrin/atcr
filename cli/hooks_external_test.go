@@ -159,3 +159,12 @@ func TestExternal_ZeroHooksMatchesMain(t *testing.T) {
 	require.Equal(t, mainCode, hooksCode)
 	require.Equal(t, mainOut, hooksOut)
 }
+
+// fixSink compiles only if a separate package can implement the fix-applied
+// observer and register it with keyed fields, as the enterprise wrapper does.
+type fixSink struct{}
+
+func (fixSink) OnFixApplied(context.Context, cli.FixApplied) {}
+
+var _ = cli.Hooks{FixApplied: fixSink{}}
+var _ = cli.AppliedFile{Path: "a.go", Diff: "d"}

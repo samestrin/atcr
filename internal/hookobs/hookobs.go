@@ -413,6 +413,78 @@ func ReviewComplete(ctx context.Context, rep ReviewReport) {
 	s.observer.OnReviewComplete(ctx, rep)
 }
 
+// FixReport is one validated auto-fix: the files it left applied in the
+// working tree. It mirrors the exported cli.FixApplied; cli converts between
+// the two. It lives here beside ReviewReport so the fix observer shares the
+// review observer's carrier rules and stderr lock.
+type FixReport struct {
+	// RunID is the review id the fix belongs to, empty when none is known.
+	RunID string
+	// Files is every file the fix applied, in apply order.
+	Files []FixedFile
+}
+
+// FixedFile is one applied file: its repo-relative path and the unified diff
+// that was applied to it, verbatim.
+type FixedFile struct {
+	Path string
+	Diff string
+}
+
+// FixObserver receives one call per validated auto-fix. Like ReviewObserver it
+// has no error return and must be safe for concurrent use.
+type FixObserver interface {
+	OnFixApplied(context.Context, FixReport)
+}
+
+// fixState is reviewState's counterpart for the fix observer, under its own key
+// so attaching one observer cannot erase another.
+type fixState struct {
+	observer FixObserver
+	stderr   io.Writer
+	stderrMu *sync.Mutex
+}
+
+type fixKey struct{}
+
+// WithFixObserver returns ctx carrying obs, to be fired by FixApplied. It has
+// the same nil and stderr-lock rules as WithReviewObserver.
+func WithFixObserver(ctx context.Context, obs FixObserver, stderr io.Writer) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	mu := &sync.Mutex{}
+	if s, ok := fromContext(ctx); ok && s.stderrMu != nil && sameWriter(s.stderr, stderr) {
+		mu = s.stderrMu
+	}
+	return context.WithValue(ctx, fixKey{}, fixState{observer: obs, stderr: stderr, stderrMu: mu})
+}
+
+// FixApplied reports one validated auto-fix to the observer on ctx, if any. It
+// does nothing when no observer, or a nil one, is attached. A consumer panic is
+// recovered and reported on stderr exactly as in ReviewComplete.
+func FixApplied(ctx context.Context, rep FixReport) {
+	if ctx == nil {
+		return
+	}
+	s, ok := ctx.Value(fixKey{}).(fixState)
+	if !ok || s.observer == nil {
+		return
+	}
+	defer func() {
+		r := recover()
+		if r == nil || s.stderr == nil {
+			return
+		}
+		if s.stderrMu != nil {
+			s.stderrMu.Lock()
+			defer s.stderrMu.Unlock()
+		}
+		_, _ = fmt.Fprintf(s.stderr, "atcr: fix-applied hook panicked, continuing without it: %v\n", r)
+	}()
+	s.observer.OnFixApplied(ctx, rep)
+}
+
 // Client is the completer capability set the fan-out engine selects between by
 // type assertion. Wrap returns this interface so the no-observer path can hand
 // back the untouched *llmclient.Client: every method is present, so a value of
