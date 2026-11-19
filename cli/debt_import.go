@@ -256,9 +256,16 @@ func importSourcePath(readme string) string {
 
 // importKey is the identity of a record for the rerun check: its encoding with
 // the counters a fold or compaction stamps zeroed, so a compacted copy of an
-// imported record still matches the record the row imports as.
+// imported record still matches the record the row imports as. The README's
+// path is left out too: it names where a row was read from, not the finding,
+// so the same table read from a renamed copy writes nothing new.
 func importKey(rec localdebt.Record) string {
 	rec.Occurrences, rec.CountedThrough, rec.FirstSeen = 0, "", ""
+	if rec.SourceReport != nil {
+		src := *rec.SourceReport
+		src.Path = ""
+		rec.SourceReport = &src
+	}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		return ""
