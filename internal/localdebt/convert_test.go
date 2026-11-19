@@ -709,3 +709,16 @@ func TestFinishConversion_EventsSplitBetweenStagingAndItems(t *testing.T) {
 	requireConversionFinished(t, dir)
 	assert.Equal(t, before, foldedAll(t, dir))
 }
+
+// TestFinishConversion_AShardAlreadyRemoved: a run that died after removing some of
+// the named shards left nothing of them to check; the next run removes the rest.
+func TestFinishConversion_AShardAlreadyRemoved(t *testing.T) {
+	dir, before := halfFinishedConversion(t)
+	shards := shardNames(t, dir)
+	require.Len(t, shards, 2, "fixture: two month shards")
+	require.NoError(t, os.Remove(filepath.Join(dir, shards[0])))
+
+	require.NoError(t, finishConversion(dir))
+	requireConversionFinished(t, dir)
+	assert.Equal(t, before, foldedAll(t, dir))
+}

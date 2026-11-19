@@ -272,45 +272,52 @@ func planConversion(dir string) (conversionPlan, error) {
 			keep("not a month shard")
 			continue
 		}
-		var newer int
-		var lines [][]byte
-		recs, health, err := scanShard(filepath.Join(dir, name), ReadOpts{Writer: io.Discard},
-			func([]byte) { newer++ },
-			func(line []byte) { lines = append(lines, line) })
+		events, reason, err := shardEvents(filepath.Join(dir, name))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return plan, basePathErr(err)
 		}
-		switch {
-		case health.unrepresentable:
-			keep("holds a line too long to read")
-			continue
-		case health.malformed:
-			keep("holds a line that is not a valid record")
-			continue
-		case newer > 0:
-			keep("holds a record written by a newer atcr")
-			continue
-		}
-		events := make([]stagedEvent, 0, len(recs))
-		for i, r := range recs {
-			line := append(lines[i], '\n')
-			evName, err := eventFileName(r, line)
-			if err != nil {
-				break
-			}
-			events = append(events, stagedEvent{name: evName, line: line})
-		}
-		if len(events) < len(recs) {
-			keep("holds a record whose id or timestamp cannot name an event file")
+		if reason != "" {
+			keep(reason)
 			continue
 		}
 		plan.shards = append(plan.shards, name)
 		plan.events = append(plan.events, events...)
 	}
 	return plan, nil
+}
+
+// shardEvents returns the event file each record of the month shard at path becomes,
+// in line order, or the reason the shard cannot convert.
+func shardEvents(path string) (events []stagedEvent, reason string, err error) {
+	var newer int
+	var lines [][]byte
+	recs, health, err := scanShard(path, ReadOpts{Writer: io.Discard},
+		func([]byte) { newer++ },
+		func(line []byte) { lines = append(lines, line) })
+	if err != nil {
+		return nil, "", err
+	}
+	switch {
+	case health.unrepresentable:
+		return nil, "holds a line too long to read", nil
+	case health.malformed:
+		return nil, "holds a line that is not a valid record", nil
+	case newer > 0:
+		return nil, "holds a record written by a newer atcr", nil
+	}
+	events = make([]stagedEvent, 0, len(recs))
+	for i, r := range recs {
+		line := append(lines[i], '\n')
+		evName, err := eventFileName(r, line)
+		if err != nil {
+			return nil, "holds a record whose id or timestamp cannot name an event file", nil
+		}
+		events = append(events, stagedEvent{name: evName, line: line})
+	}
+	return events, "", nil
 }
 
 // convertedFiles lists the record files the store would hold after the conversion,
@@ -391,21 +398,26 @@ func foldDiff(before, after []Record) []string {
 	return ids
 }
 
-func foldChangedError(ids []string) error {
-	shown := ids
+// someNames lists the first five names, and how many more there are.
+func someNames(names []string) string {
+	shown := names
 	if len(shown) > 5 {
 		shown = shown[:5]
 	}
 	more := ""
-	if len(ids) > len(shown) {
-		more = fmt.Sprintf(" and %d more", len(ids)-len(shown))
+	if len(names) > len(shown) {
+		more = fmt.Sprintf(" and %d more", len(names)-len(shown))
 	}
-	return fmt.Errorf("%w for %d item(s): %s%s; nothing was changed. Records of one item with the same "+
+	return strings.Join(shown, ", ") + more
+}
+
+func foldChangedError(ids []string) error {
+	return fmt.Errorf("%w for %d item(s): %s; nothing was changed. Records of one item with the same "+
 		"timestamp and status keep their line order in a month shard but not in the event layout. To clear "+
 		"the tie, run `atcr debt compact`, then convert again: it folds each item to one record. Tied "+
 		"resolutions with different reasons survive compaction; remove the unwanted line from its month "+
 		"shard by hand, or keep the store on month shards",
-		ErrFoldChanged, len(ids), strings.Join(shown, ", "), more)
+		ErrFoldChanged, len(ids), someNames(ids))
 }
 
 // writeConvertJournal commits a verified plan: the COMMIT file naming the shards to
@@ -463,7 +475,9 @@ func finishPendingConversionLocked(dir string) error {
 
 // finishConversion carries out a committed plan. Every step is safe to repeat, so a
 // run that dies here is finished by the next one: publish the staged events, then
-// remove the named shards, then the staging directory and its journal.
+// remove the named shards, then the staging directory and its journal. It first
+// checks that every record of each named shard has its event staged or in items/
+// (checkConversionEvents), and changes nothing when one is missing.
 func finishConversion(dir string) error {
 	staging := filepath.Join(dir, convertSubdir)
 	b, err := os.ReadFile(filepath.Join(staging, convertJournal))
@@ -480,6 +494,9 @@ func finishConversion(dir string) error {
 		if s != filepath.Base(s) || !monthRe.MatchString(strings.TrimSuffix(s, shardExt)) || !strings.HasSuffix(s, shardExt) {
 			return fmt.Errorf("localdebt conversion journal names %q, which is not a month shard", s)
 		}
+	}
+	if err := checkConversionEvents(dir, staging, shards); err != nil {
+		return err
 	}
 	if err := enableEventLayoutLocked(dir); err != nil {
 		return err
@@ -505,4 +522,48 @@ func finishConversion(dir string) error {
 		return fmt.Errorf("removing localdebt conversion staging: %w", basePathErr(err))
 	}
 	return nil
+}
+
+// checkConversionEvents refuses a committed plan that would lose a record: the
+// journal names only shards, so the events of each are derived again from the shard
+// itself, and each must be staged or already in items/. A COMMIT can arrive without
+// its staged events (a partial `git add`, a merge that kept it, a synced shared
+// store), and a shard can change after its plan was committed. A shard already gone
+// has nothing left to lose.
+func checkConversionEvents(dir, staging string, shards []string) error {
+	var problems []string
+	for _, s := range shards {
+		events, reason, err := shardEvents(filepath.Join(dir, s))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("checking localdebt conversion: %w", basePathErr(err))
+		}
+		if reason != "" {
+			problems = append(problems, fmt.Sprintf("%s changed after the conversion was committed: it %s", s, reason))
+			continue
+		}
+		var missing []string
+		for _, ev := range events {
+			if !fileExists(filepath.Join(staging, ev.name)) && !fileExists(filepath.Join(ItemsDir(dir), ev.name)) {
+				missing = append(missing, ev.name)
+			}
+		}
+		if len(missing) > 0 {
+			problems = append(problems, fmt.Sprintf("%d event(s) of %s are neither staged nor in %s/: %s",
+				len(missing), s, itemsSubdir, someNames(missing)))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the committed localdebt conversion would lose records: %s; no shard was removed. "+
+		"Remove the store's %s/ directory to abandon the conversion (the shards keep every record), "+
+		"then run `atcr debt convert` again", strings.Join(problems, "; "), convertSubdir)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
