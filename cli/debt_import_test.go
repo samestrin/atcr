@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -353,6 +354,46 @@ func TestDebtImport_RerunAfterConvertChangesNothing(t *testing.T) {
 			again := filepath.Join(t.TempDir(), name)
 			require.NoError(t, os.WriteFile(again, []byte(importREADME), 0o644))
 			out, err = runDebt(t, "import", again, "--store", dir)
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "wrote 0 records (5 already in the store)")
+			assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")
+		})
+	}
+}
+
+// TestDebtImport_StoreWithAnAddedRecordReruns: the rerun check keys every
+// record in the store, and a record `atcr debt add` or reconcile wrote carries
+// no source_report. Such a record must not stop the import, and the imported
+// rows beside it must still be found.
+func TestDebtImport_StoreWithAnAddedRecordReruns(t *testing.T) {
+	for _, layout := range []string{"shards", "events"} {
+		t.Run(layout, func(t *testing.T) {
+			readme := writeImportREADME(t, importREADME)
+			dir := filepath.Join(t.TempDir(), "debt")
+			if layout == "events" {
+				require.NoError(t, localdebt.EnableEventLayout(dir))
+			}
+			out, err := runDebt(t, "import", readme, "--store", dir)
+			require.NoError(t, err, out)
+
+			ts := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+			runID, err := localdebt.ManualRunID(ts)
+			require.NoError(t, err)
+			added := localdebt.Record{
+				SchemaVersion: localdebt.SchemaVersion,
+				RunID:         runID,
+				Timestamp:     ts.Format(time.RFC3339),
+				Severity:      "LOW",
+				File:          "added.go",
+				Line:          3,
+				Problem:       "added by hand",
+				Origin:        localdebt.OriginManual,
+			}
+			added.StampID()
+			require.NoError(t, localdebt.Append(dir, added))
+			before := storeSnapshot(t, dir)
+
+			out, err = runDebt(t, "import", readme, "--store", dir)
 			require.NoError(t, err, out)
 			assert.Contains(t, out, "wrote 0 records (5 already in the store)")
 			assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")

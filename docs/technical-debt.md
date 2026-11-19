@@ -556,10 +556,11 @@ the status:
 A row's time and `run_id` come from the date of the `### [date] From: ...`
 section it sits under (`2026-11-06` or `November 6, 2026`), never from the
 clock. Running the import again on the same table therefore writes nothing,
-even from a renamed copy of the README (the rerun check ignores the path), and a run that stopped part way writes only what is missing. Each record is
-filed with `origin: manual`, a `run_id` ending in `-import`, and a
-`source_report` holding the README path (relative to the repo root) and the
-section heading, which `atcr debt report` groups by.
+even from a renamed copy of the README (the rerun check ignores the path), and
+a run that stopped part way writes only what is missing. Each record is filed
+with `origin: manual`, a `run_id` ending in `-import`, and a `source_report`
+holding the README path (relative to the repo root) and the section heading,
+which `atcr debt report` groups by.
 
 Every item row ends up in exactly one of three lists, and the first line of the
 output counts them:
