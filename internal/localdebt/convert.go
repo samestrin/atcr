@@ -42,6 +42,13 @@ import (
 // event into items/, remove each named shard, remove .convert/. The next run finishes
 // a COMMIT left by a crash (Resumed), and throws away staging that never got one.
 //
+// A run that dies while finishing leaves records in both a shard and an event file,
+// so every read would count them twice. The next read finishes the plan instead of
+// waiting for the next conversion: ReadAll and StreamSummaries take the store lock
+// for it (finishPendingConversion), and Compact and the justification backfill,
+// which already hold the lock, finish it there (finishPendingConversionLocked).
+// The lock is not reentrant, so a caller holding it reads with readAllLocked.
+//
 // A dry run writes nothing to the store, so it stages in dryRunStaging instead: a
 // 0700 directory of the user cache dir named for the store. The store lock makes it
 // one run's at a time, so every run, dry or real, removes the copy a crashed dry run
@@ -121,7 +128,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 		staging := filepath.Join(dir, convertSubdir)
 		if _, err := os.Stat(filepath.Join(staging, convertJournal)); err == nil {
 			if dryRun {
-				return errors.New("an interrupted conversion is pending; run `atcr debt convert` without --dry-run to finish it")
+				return errConversionPending
 			}
 			if err := finishConversion(dir); err != nil {
 				return err
@@ -133,7 +140,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			}
 		}
 
-		before, err := ReadAll(dir, opts)
+		before, err := readAllLocked(dir, opts)
 		if err != nil {
 			return err
 		}
@@ -414,6 +421,42 @@ func writeConvertJournal(staging string, shards []string) error {
 	}
 	if err := os.Rename(tmp, filepath.Join(staging, convertJournal)); err != nil {
 		return fmt.Errorf("writing localdebt conversion journal: %w", basePathErr(err))
+	}
+	return nil
+}
+
+// errConversionPending is a dry run's answer to a committed conversion it may not
+// finish: its counts would include every record of the plan twice.
+var errConversionPending = errors.New("an interrupted conversion is pending; run `atcr debt convert` without --dry-run to finish it")
+
+// conversionPending reports whether the store at dir holds a committed conversion
+// that is not finished.
+func conversionPending(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, convertSubdir, convertJournal))
+	return err == nil
+}
+
+// finishPendingConversion finishes a committed conversion for a read path that does
+// not hold the store lock. A plan it cannot finish is reported to w and the store is
+// read as it stands, so a read-only store still reads.
+func finishPendingConversion(dir string, w io.Writer) {
+	if !conversionPending(dir) {
+		return
+	}
+	if err := withLock(dir, "convert-finish", func() error { return finishPendingConversionLocked(dir) }); err != nil {
+		_, _ = fmt.Fprintf(diagWriter(w), "localdebt: an interrupted conversion could not be finished (%v); "+
+			"some records may be counted twice until `atcr debt convert` finishes it\n", err)
+	}
+}
+
+// finishPendingConversionLocked finishes a committed conversion under the store
+// lock the caller holds.
+func finishPendingConversionLocked(dir string) error {
+	if !conversionPending(dir) {
+		return nil
+	}
+	if err := finishConversion(dir); err != nil {
+		return fmt.Errorf("finishing an interrupted localdebt conversion: %w", err)
 	}
 	return nil
 }

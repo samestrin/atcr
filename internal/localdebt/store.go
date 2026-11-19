@@ -364,8 +364,17 @@ func drainLine(br *bufio.Reader) error {
 // month shards in lexical order, so they aggregate chronologically, then the event
 // files of the event layout) and returns the concatenated records (malformed lines
 // skipped per-file by ReadRecords). A missing directory is empty (nil, nil), not an
-// error — the "no backlog yet" state. Other files are ignored.
+// error — the "no backlog yet" state. Other files are ignored. A committed
+// conversion left unfinished is finished first (finishPendingConversion), so no
+// record is read twice; a caller holding the store lock uses readAllLocked.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
+	finishPendingConversion(dir, opts.Writer)
+	return readAllLocked(dir, opts)
+}
+
+// readAllLocked is ReadAll for a caller that holds the store lock, which
+// finishPendingConversion would wait on: withLock is not reentrant.
+func readAllLocked(dir string, opts ReadOpts) ([]Record, error) {
 	// A non-ENOENT ReadDir failure (e.g. a permission error) can carry an absolute
 	// dir path; RecordFiles reduces it to its base name so a username-bearing path is
 	// never embedded (matching the write path). The per-file ReadRecords error is
@@ -1648,6 +1657,11 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 	storeFound := hasShardFiles(dir)
 	err := withLock(dir, "compact-plan", func() error {
 		result.StoreFound = storeFound
+		// A dry run may not finish a committed conversion, and reading past one
+		// would count its records twice.
+		if conversionPending(dir) {
+			return errConversionPending
+		}
 		read, err := readAllPreserving(dir, opts)
 		if err != nil {
 			return err
@@ -1769,6 +1783,9 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	err := withLock(dir, "compact", func() error {
 		result.StoreFound = storeFound
 		sweepStaleTemps(dir)
+		if err := finishPendingConversionLocked(dir); err != nil {
+			return err
+		}
 		read, err := readAllPreserving(dir, opts)
 		if err != nil {
 			return err
