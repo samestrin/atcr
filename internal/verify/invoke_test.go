@@ -50,7 +50,7 @@ func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false
 	disp := okDispatcher()
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp, false)
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, "confirmed", v.Verdict, "degrade path should return the single-shot verdict, not unverifiable")
@@ -68,7 +68,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	sk.Config.TimeoutSecs = intPtr(30)
 	sk.Config.MaxRetries = intPtr(4)
 	sk.Config.InitialBackoffMs = intPtr(200)
-	a, derived := buildSkepticAgent(sk, "the prompt", false)
+	a, derived := buildSkepticAgent(sk, "the prompt", false, "")
 	assert.True(t, a.Tools)
 	assert.True(t, a.SupportsFC)
 	assert.False(t, derived, "a declared 4096 budget below the derived ceiling is the enforced number — its provenance is declared, not derived")
@@ -91,10 +91,10 @@ func TestBuildSkepticAgent_ForwardsReplayReasoningOff(t *testing.T) {
 	t.Parallel()
 	off := testSkeptic()
 	off.Config.ReplayReasoning = registry.ReplayReasoningOff
-	a, _ := buildSkepticAgent(off, "prompt", false)
+	a, _ := buildSkepticAgent(off, "prompt", false, "")
 	assert.True(t, a.ReplayReasoningOff, "replay_reasoning: off must reach the skeptic's agent")
 
-	a, _ = buildSkepticAgent(testSkeptic(), "prompt", false)
+	a, _ = buildSkepticAgent(testSkeptic(), "prompt", false, "")
 	assert.False(t, a.ReplayReasoningOff, "a default skeptic keeps replaying reasoning")
 }
 
@@ -109,7 +109,7 @@ func TestBuildSkepticAgent_ThinkingBudgetFitsUnderOutputCap(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	require.NotNil(t, a.Invocation.MaxTokens, "a thinking budget must not go on the wire without an output cap")
 	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
 	assert.Greater(t, *a.Invocation.MaxTokens, budget, "budget_tokens must be strictly below the max_tokens actually sent")
@@ -124,7 +124,7 @@ func TestBuildSkepticAgent_ThinkingBudgetClampedWhenAboveCap(t *testing.T) {
 	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelHigh, registry.ThinkingStyleAnthropic
 	sk.Config.MaxTokens = intPtr(8192) // high's 16384 budget cannot fit
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	require.NotNil(t, a.Invocation.MaxTokens)
 	assert.Equal(t, 8192, *a.Invocation.MaxTokens, "a declared cap is sent as-is")
 	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
@@ -141,7 +141,7 @@ func TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits(t *testing.T) {
 	sk.Config.SupportsFC = false // cap path runs on the single-shot (degrade) lane
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
 	sk.Config.MaxTokens = intPtr(1024) // low's 2048 budget cannot fit; nothing smaller exists
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	assert.Empty(t, a.Invocation.Thinking, "no anthropic budget fits under a 1024 cap — thinking must not be sent")
 	assert.Empty(t, a.Invocation.ThinkingLevel)
 	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
@@ -154,13 +154,13 @@ func TestBuildSkepticAgent_ThinkingDroppedWhenNothingFits(t *testing.T) {
 // cap is added only when a thinking budget needs one.
 func TestBuildSkepticAgent_NoCapForPlainUndeclaredSkeptic(t *testing.T) {
 	t.Parallel()
-	a, _ := buildSkepticAgent(testSkeptic(), "prompt", false)
+	a, _ := buildSkepticAgent(testSkeptic(), "prompt", false, "")
 	assert.Nil(t, a.Invocation.MaxTokens, "a skeptic with no thinking declaration keeps the provider default cap")
 	declared, _ := buildSkepticAgent(func() Skeptic {
 		sk := testSkeptic()
 		sk.Config.MaxTokens = intPtr(1234)
 		return sk
-	}(), "prompt", false)
+	}(), "prompt", false, "")
 	require.NotNil(t, declared.Invocation.MaxTokens)
 	assert.Equal(t, 1234, *declared.Invocation.MaxTokens, "a declared cap is forwarded verbatim")
 }
@@ -176,7 +176,7 @@ func TestBuildSkepticAgent_AnthropicThinkingStrippedForToolLoop(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic() // testSkeptic declares SupportsFC: true
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	assert.Empty(t, a.Invocation.Thinking, "an anthropic-thinking declaration must not reach the wire of a forced-tool lane")
 	assert.Empty(t, a.Invocation.ThinkingLevel)
 	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
@@ -192,7 +192,7 @@ func TestBuildSkepticAgent_AnthropicThinkingKeptForSingleShot(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false
 	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingStyleAnthropic
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	assert.Equal(t, registry.ThinkingOn, a.Invocation.Thinking, "single-shot degrade lane may carry thinking")
 	require.NotNil(t, a.Invocation.MaxTokens)
 	budget := registry.ThinkingBudgetTokens(a.Invocation.Thinking, a.Invocation.ThinkingLevel, a.Invocation.ThinkingStyle)
@@ -207,7 +207,7 @@ func TestBuildSkepticAgent_AnthropicOffKeepsUndeclaredCap(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false // the budget path runs on the single-shot lane
 	sk.Config.Thinking, sk.Config.ThinkingStyle = registry.ThinkingOff, registry.ThinkingStyleAnthropic
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	assert.Nil(t, a.Invocation.MaxTokens, "no budget means no cap is imposed: the provider default applies")
 	assert.Equal(t, registry.ThinkingOff, a.Invocation.Thinking)
 }
@@ -221,7 +221,7 @@ func TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded(t *testing.T
 	sk.Config.SupportsFC = false
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = registry.ThinkingOn, registry.ThinkingLevelLow, registry.ThinkingStyleAnthropic
 	sk.Config.MaxTokens = intPtr(12345) // low's 2048 budget fits under it
-	a, _ := buildSkepticAgent(sk, "prompt", false)
+	a, _ := buildSkepticAgent(sk, "prompt", false, "")
 	require.NotNil(t, a.Invocation.MaxTokens)
 	assert.Equal(t, 12345, *a.Invocation.MaxTokens, "a declared cap above the budget is forwarded verbatim")
 	assert.Equal(t, registry.ThinkingLevelLow, a.Invocation.ThinkingLevel, "a fitting level is not downgraded")
@@ -230,7 +230,7 @@ func TestBuildSkepticAgent_AnthropicDeclaredCapAboveBudgetForwarded(t *testing.T
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictConfirmed, v.Verdict)
@@ -241,7 +241,7 @@ func TestInvokeSkeptic_Confirms(t *testing.T) {
 func TestInvokeSkeptic_Refutes(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "refuted", "reasoning": "false positive"}`)
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictRefuted, v.Verdict)
 	assert.Equal(t, "skeptic-1", v.Skeptic)
@@ -254,7 +254,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
 		{content: `{"verdict": "confirmed", "reasoning": "verified via file read"}`},
 	}}
 	disp := okDispatcher()
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp, false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictConfirmed, v.Verdict)
 	assert.Equal(t, "verified via file read", v.Notes)
@@ -264,7 +264,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
 func TestInvokeSkeptic_ProviderError(t *testing.T) {
 	t.Parallel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err) // runtime failure NOT propagated
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
@@ -282,7 +282,7 @@ func TestInvokeSkeptic_UsesLogger(t *testing.T) {
 	ctx := log.NewContext(context.Background(), logger)
 
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictUnverifiable, v.Verdict)
 
@@ -298,7 +298,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before the first turn
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Equal(t, "skeptic-1", v.Skeptic)
@@ -307,7 +307,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
 func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
 	t.Parallel()
 	cc := finalChat("I don't know")
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "malformed_output")
@@ -317,7 +317,7 @@ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
 func TestInvokeSkeptic_EmptyResponse(t *testing.T) {
 	t.Parallel()
 	cc := finalChat("")
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "empty_response")
@@ -328,7 +328,7 @@ func TestInvokeSkeptic_BudgetTripMaxTurns(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.MaxTurns = intPtr(2)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "max_turns")
@@ -340,7 +340,7 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
 	sk.Config.ToolBudgetBytes = int64Ptr(10)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "tool_budget_bytes")
@@ -352,7 +352,7 @@ func TestInvokeSkeptic_BudgetTripTimeout(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.TimeoutSecs = intPtr(1)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), {delay: 2 * time.Second, content: `{"verdict":"confirmed"}`}}}
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, tripped, "timeout_secs", "timeout budget trip must be surfaced structurally")
@@ -366,7 +366,7 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.MaxTurns = intPtr(2)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
@@ -382,7 +382,7 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
 func TestInvokeSkeptic_TruncatedModelResponse(t *testing.T) {
 	t.Parallel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed","reasoning":"draft formed before the reply was cut off"}`, truncated: true}}}
-	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.NotEqual(t, verdictConfirmed, v.Verdict, "a verdict parsed from a truncated reply must not be confirmed")
@@ -401,7 +401,7 @@ func TestInvokeSkeptic_TruncatedModelResponse_ToolLoop(t *testing.T) {
 		toolCallTurn("read_file"),
 		{content: `{"verdict":"confirmed","reasoning":"draft"}`, truncated: true},
 	}}
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict, "a truncated tool-loop final answer must not become a real verdict")
@@ -413,7 +413,7 @@ func TestInvokeSkeptic_TruncatedModelResponse_ToolLoop(t *testing.T) {
 func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
 	t.Parallel()
 	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt",
-		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher(), false)
+		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictConfirmed, v.Verdict)
 	assert.Empty(t, tripped, "a clean verdict trips no budgets")
@@ -421,19 +421,19 @@ func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
 
 func TestInvokeSkeptic_NilContext(t *testing.T) {
 	t.Parallel()
-	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher(), false) //nolint:staticcheck // intentional nil-ctx guard test
+	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher(), false, "") //nolint:staticcheck // intentional nil-ctx guard test
 	require.Error(t, err)
 }
 
 func TestInvokeSkeptic_NilChatCompleter(t *testing.T) {
 	t.Parallel()
-	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher(), false)
+	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher(), false, "")
 	require.Error(t, err)
 }
 
 func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
 	t.Parallel()
-	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil, false)
+	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil, false, "")
 	require.Error(t, err)
 }
 
@@ -465,7 +465,7 @@ func TestInvokeSkeptic_ForwardsDeclaredMaxTokens(t *testing.T) {
 		sk.Config.MaxTokens = intPtr(24000)
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 
 		got := cc.lastInvocation().MaxTokens
@@ -478,7 +478,7 @@ func TestInvokeSkeptic_ForwardsDeclaredMaxTokens(t *testing.T) {
 		sk := testSkeptic()
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 
 		assert.Nil(t, cc.lastInvocation().MaxTokens,
@@ -510,7 +510,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &small
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20) // 4 MiB: far past a 32k window
 
-		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false, ""))
 		// Reserve the built-in output cap, the same number the review lane floors
 		// at — an undeclared agent is still promised the provider's own default.
 		want := payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens)
@@ -525,7 +525,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &large
 		sk.Config.ToolBudgetBytes = int64Ptr(4096)
 
-		assert.Equal(t, int64(4096), agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Equal(t, int64(4096), agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"the clamp is a ceiling, never a floor: an operator asking for less still gets less")
 	})
 
@@ -534,7 +534,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk := testSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
 
-		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"no declaration, no clamp — nothing is derived from a window nobody stated")
 	})
 
@@ -546,7 +546,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		// the state a declared window contradicts.
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, payload.DefaultOutputTokens),
-			agentBudget(buildSkepticAgent(sk, "prompt", false)),
+			agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"unlimited is not a smaller number — a declared window must bound it")
 	})
 
@@ -565,7 +565,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		// that bought no protection while making the enforced ceiling swing
 		// ~350000x across one token of window. The floor is what is forwarded now
 		// — still never a derived 0, which is what this subtest exists to prevent.
-		assert.Equal(t, minSkepticToolBudget, agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Equal(t, minSkepticToolBudget, agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"forwarding a derived 0 would mean UNLIMITED to the engine — the exact inversion of the clamp")
 	})
 
@@ -575,7 +575,7 @@ func TestBuildSkepticAgent_ClampsToolBudgetToDeclaredWindow(t *testing.T) {
 		sk.Config.ContextWindowTokens = &small
 		sk.Config.MaxTokens = intPtr(8000)
 
-		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false, ""))
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &small, 8000), got)
 		assert.Less(t, got, payload.EffectiveByteBudget(sk.Config.Model, &small, 0),
 			"tokens promised to the response are not available to tool output")
@@ -618,7 +618,7 @@ func TestInvokeSkeptic_LogsTheEnforcedCeiling(t *testing.T) {
 		{content: `{"verdict": "refuted", "reasoning": "one-byte view"}`},
 	}}
 
-	v, _, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false)
+	v, _, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictUnverifiable, v.Verdict)
 
@@ -641,7 +641,7 @@ func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 		// derived-provenance path this subtest is about (clarification Q1).
 		window := 32768
 		sk.Config.ContextWindowTokens = &window
-		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		agent, derived := buildSkepticAgent(sk, "prompt", false, "")
 		_, wantDerived := skepticToolBudget(sk.Config)
 		require.Equal(t, int64(71680), agent.ToolBudgetBytes)
 		require.True(t, derived)
@@ -654,7 +654,7 @@ func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 		window := 128000
 		sk.Config.ContextWindowTokens = &window
 		sk.Config.ToolBudgetBytes = int64Ptr(4096)
-		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		agent, derived := buildSkepticAgent(sk, "prompt", false, "")
 		require.Equal(t, int64(4096), agent.ToolBudgetBytes)
 		require.False(t, derived)
 	})
@@ -664,7 +664,7 @@ func TestBuildSkepticAgent_ProvenanceDescribesTheEnforcedBudget(t *testing.T) {
 		sk := testSkeptic()
 		window := 4096
 		sk.Config.ContextWindowTokens = &window
-		agent, derived := buildSkepticAgent(sk, "prompt", false)
+		agent, derived := buildSkepticAgent(sk, "prompt", false, "")
 		require.EqualValues(t, 1, agent.ToolBudgetBytes)
 		require.False(t, derived)
 	})
@@ -731,7 +731,7 @@ func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) 
 		// ToolBudgetBytes deliberately unset: the ceiling is entirely derived, so
 		// there is no operator intent for the trip to enforce.
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictRefuted, v.Verdict,
@@ -745,7 +745,7 @@ func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) 
 		sk := newSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(ceiling / 2) // smaller than the ceiling: the declaration wins
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", refutingTurns(), overrunDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -759,7 +759,7 @@ func TestInvokeSkeptic_DerivedToolBudgetTripDoesNotVoidTheVerdict(t *testing.T) 
 		sk.Config.MaxTurns = intPtr(2)
 		cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -812,7 +812,7 @@ func TestInvokeSkeptic_TripsOnFixedAndCumulativeOverruns(t *testing.T) {
 			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 		}}
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictRefuted, v.Verdict,
@@ -840,7 +840,7 @@ func TestInvokeSkeptic_TripsOnFixedAndCumulativeOverruns(t *testing.T) {
 			{content: `{"verdict": "refuted", "reasoning": "the two reads together covered the file"}`},
 		}}
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictRefuted, v.Verdict,
@@ -882,7 +882,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		// MaxTokens deliberately nil: the provider will apply its own default, so
 		// the ceiling must reserve something rather than pretend output is free.
 
-		got := agentBudget(buildSkepticAgent(sk, "prompt", false))
+		got := agentBudget(buildSkepticAgent(sk, "prompt", false, ""))
 		want := payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens)
 		require.Positive(t, want, "the fixture must leave input room, or the assertion below proves nothing")
 		assert.Equal(t, want, got,
@@ -901,7 +901,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		sk.Config.MaxTokens = &declared
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, declared),
-			agentBudget(buildSkepticAgent(sk, "prompt", false)),
+			agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"the declaration is the cap the provider will honour, so it is the cap to reserve")
 	})
 
@@ -910,7 +910,7 @@ func TestBuildSkepticAgent_ReservesTheSameOutputCapAsTheReviewLane(t *testing.T)
 		sk := testSkeptic()
 		sk.Config.ToolBudgetBytes = int64Ptr(4 << 20)
 
-		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Equal(t, int64(4<<20), agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"no declared window, no derivation — the reservation never enters the picture")
 	})
 }
@@ -957,7 +957,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 			require.Positive(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
 				"precondition: this window has input room once nothing is reserved, so a zero ceiling can only be the reservation's doing")
 
-			got := agentBudget(buildSkepticAgent(sk, "prompt", false))
+			got := agentBudget(buildSkepticAgent(sk, "prompt", false, ""))
 			assert.Positive(t, got,
 				"a declared window must still bound the tool loop — forwarding 0 hands the smallest-window skeptic an unlimited read")
 		})
@@ -970,7 +970,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 		sk.Config.ContextWindowTokens = &window
 
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
-			agentBudget(buildSkepticAgent(sk, "prompt", false)),
+			agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"the fallback is for windows that cannot afford the reservation, not a retreat from reserving at all")
 	})
 
@@ -988,7 +988,7 @@ func TestBuildSkepticAgent_ReservationNeverCostsTheCeilingItself(t *testing.T) {
 		// the window cannot hold the result at any declared size — and keeping it
 		// was what let one token of window swing the enforced ceiling ~350000x and
 		// flip the trip from verdict-voiding to verdict-preserving at the same time.
-		assert.Equal(t, minSkepticToolBudget, agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Equal(t, minSkepticToolBudget, agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"a declaration cannot make a window hold what it cannot hold — the floor is enforced instead")
 	})
 }
@@ -1324,7 +1324,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 
 		require.Zero(t, payload.EffectiveByteBudget(sk.Config.Model, &window, 0),
 			"precondition: this window has no input room even with nothing reserved")
-		assert.Positive(t, agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.Positive(t, agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"a declared window must never widen the tool loop it exists to bound")
 	})
 
@@ -1343,7 +1343,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		// unlimited state). What it prevents is this function handing its caller a
 		// sentinel the engine has no defined reading for.
 		assert.Equal(t, payload.EffectiveByteBudget(sk.Config.Model, &window, payload.DefaultOutputTokens),
-			agentBudget(buildSkepticAgent(sk, "prompt", false)),
+			agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"a negative budget must lose to the derived ceiling")
 	})
 
@@ -1356,7 +1356,7 @@ func TestBuildSkepticAgent_NeverForwardsTheEngineUnlimitedSentinel(t *testing.T)
 		// still reached loop.go unbounded — the exact outcome the parent test's
 		// name promises cannot happen. The floor closes it.
 
-		assert.EqualValues(t, 1, agentBudget(buildSkepticAgent(sk, "prompt", false)),
+		assert.EqualValues(t, 1, agentBudget(buildSkepticAgent(sk, "prompt", false, "")),
 			"a negative budget must reach the engine as the 1-byte floor, never as the 0-as-UNLIMITED sentinel")
 	})
 }
@@ -1438,7 +1438,7 @@ func TestInvokeSkeptic_FlooredWindowNeverRunsTheEngine(t *testing.T) {
 	}}
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "never dispatched"}}
 
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -1480,7 +1480,7 @@ func TestInvokeSkeptic_FlooredWindowYieldsUnverifiable(t *testing.T) {
 		{content: `{"verdict": "refuted", "reasoning": "answered from a one-byte view"}`},
 	}}
 
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -1529,7 +1529,7 @@ func TestInvokeSkeptic_DeclaredCeilingAboveTheDerivedOneIsNotEnforced(t *testing
 		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 	}}
 
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictRefuted, v.Verdict,
@@ -1573,7 +1573,7 @@ func TestInvokeSkeptic_TruncationIsNotLoggedAsAFailure(t *testing.T) {
 		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 	}}
 
-	v, tripped, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(ctx, sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictRefuted, v.Verdict, "fixture must exercise the surviving-verdict path")
 	require.Contains(t, tripped, "tool_budget_bytes")
@@ -1623,7 +1623,7 @@ func TestInvokeSkeptic_DeclaredCeilingAtTheDerivedOnePinsProvenance(t *testing.T
 		{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 	}}
 
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictRefuted, v.Verdict,
@@ -1640,11 +1640,11 @@ func TestBuildSkepticAgent_ForwardsResponseFormat(t *testing.T) {
 	sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
 
 	for _, exec := range []bool{false, true} {
-		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		a, _ := buildSkepticAgent(sk, "the prompt", exec, "")
 		assert.Equal(t, registry.ResponseFormatJSONObject, a.Invocation.ResponseFormat, "exec=%v", exec)
 	}
 
-	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false, "")
 	assert.Empty(t, undeclared.Invocation.ResponseFormat)
 }
 
@@ -1657,7 +1657,7 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 		sk.Config.ResponseFormat = registry.ResponseFormatJSONObject
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Equal(t, registry.ResponseFormatJSONObject, cc.lastInvocation().ResponseFormat,
 			"the declaration must reach the request, not stop at the Agent literal")
@@ -1667,7 +1667,7 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 		t.Parallel()
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Empty(t, cc.lastInvocation().ResponseFormat)
 	})
@@ -1684,7 +1684,7 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 			{content: `{"verdict":"refuted","reasoning":"the cited line does not do what the finding claims"}`},
 		}}
 
-		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		invs := cc.allInvocations()
@@ -1705,7 +1705,7 @@ func TestInvokeSkeptic_ForwardsDeclaredResponseFormat(t *testing.T) {
 		sk.Config.SupportsFC = false
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Zero(t, cc.chatCalls, "a non-FC skeptic must not enter the tool loop")
 		invs := cc.allInvocations()
@@ -1729,7 +1729,7 @@ func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
 		sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Equal(t, "on", cc.lastInvocation().Thinking,
 			"the declaration must reach the request, not stop at the Agent literal")
@@ -1741,7 +1741,7 @@ func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
 		t.Parallel()
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Empty(t, cc.lastInvocation().Thinking)
 		assert.Empty(t, cc.lastInvocation().ThinkingLevel)
@@ -1759,7 +1759,7 @@ func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
 			{content: `{"verdict":"confirmed","reasoning":"verified via file read"}`},
 		}}
 
-		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		invs := cc.allInvocations()
@@ -1781,7 +1781,7 @@ func TestInvokeSkeptic_ForwardsDeclaredThinking(t *testing.T) {
 		sk.Config.SupportsFC = false
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
 
-		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+		_, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		assert.Zero(t, cc.chatCalls, "a non-FC skeptic must not enter the tool loop")
 		invs := cc.allInvocations()
@@ -1802,13 +1802,13 @@ func TestBuildSkepticAgent_ForwardsThinking(t *testing.T) {
 	sk.Config.Thinking, sk.Config.ThinkingLevel, sk.Config.ThinkingStyle = "on", "low", "qwen"
 
 	for _, exec := range []bool{false, true} {
-		a, _ := buildSkepticAgent(sk, "the prompt", exec)
+		a, _ := buildSkepticAgent(sk, "the prompt", exec, "")
 		assert.Equal(t, "on", a.Invocation.Thinking, "exec=%v", exec)
 		assert.Equal(t, "low", a.Invocation.ThinkingLevel, "exec=%v", exec)
 		assert.Equal(t, "qwen", a.Invocation.ThinkingStyle, "exec=%v", exec)
 	}
 
-	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false, "")
 	assert.Empty(t, undeclared.Invocation.Thinking)
 	assert.Empty(t, undeclared.Invocation.ThinkingLevel)
 	assert.Empty(t, undeclared.Invocation.ThinkingStyle)
@@ -1848,12 +1848,12 @@ func TestBuildSkepticAgent_ForwardsPreserveThinking(t *testing.T) {
 			sk.Config.Thinking, sk.Config.ThinkingStyle, sk.Config.PreserveThinking = "on", tc.style, tc.preserve
 			sk.Config.SupportsFC = tc.supportsFC
 			for _, exec := range []bool{false, true} {
-				a, _ := buildSkepticAgent(sk, "the prompt", exec)
+				a, _ := buildSkepticAgent(sk, "the prompt", exec, "")
 				assert.Equal(t, tc.want, a.Invocation.PreserveThinking, "exec=%v", exec)
 			}
 		})
 	}
-	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false)
+	undeclared, _ := buildSkepticAgent(testSkeptic(), "the prompt", false, "")
 	assert.Empty(t, undeclared.Invocation.PreserveThinking)
 }
 
@@ -1873,7 +1873,7 @@ func TestInvokeSkeptic_SalvagedModelResponse(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{meta: &llmclient.Completion{Content: `{"verdict":"confirmed","reasoning":"draft parsed from chain-of-thought"}`, Salvaged: true}},
 	}}
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict, "a verdict parsed from salvaged reasoning must not be confirmed")
@@ -1898,7 +1898,7 @@ func TestInvokeSkeptic_StopReasonSalvageIsRefused(t *testing.T) {
 			Truncated:      false,
 		}},
 	}}
-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict, "a stop-reason salvage must not yield a terminal verdict")
@@ -1924,7 +1924,7 @@ func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing
 		raw := "Let me check.\n" +
 			`<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` +
 			"\n" + `{"verdict": "refuted", "reasoning": "real answer"}`
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -1938,7 +1938,7 @@ func TestInvokeSkeptic_RefusesAVerdictParsedFromNonLeadingThinkMarkup(t *testing
 		// string, so this is the skeptic quoting its subject matter, not markup
 		// enclosing a draft object.
 		raw := `{"verdict": "confirmed", "reasoning": "the handler drops text between <think> and </think>"}`
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictConfirmed, v.Verdict,
@@ -1957,7 +1957,7 @@ func TestInvokeSkeptic_NamesAThinkOnlyReplyInTheNote(t *testing.T) {
 	t.Parallel()
 	body := "I think the finding is real but I ran out of room"
 	raw := "<think>" + body
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -1979,7 +1979,7 @@ func TestInvokeSkeptic_ThinkOnlyReplyLogsItsOwnClass(t *testing.T) {
 	ctx := log.NewContext(context.Background(), logger)
 
 	raw := "<think>" + "I think the finding is real but I ran out of room"
-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.Equal(t, verdictUnverifiable, v.Verdict)
 

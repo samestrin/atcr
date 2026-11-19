@@ -243,7 +243,7 @@ func TestRepairStaysOffTheSharedWalkAndExecutorLane(t *testing.T) {
 func TestInvokeSkeptic_RepairableCutOffReplyStillRefused(t *testing.T) {
 	t.Parallel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{'verdict': 'refuted', 'reasoning': 'draft',}`, truncated: true}}}
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Equal(t, "response_truncated", v.Notes)
@@ -256,7 +256,7 @@ func TestInvokeSkeptic_CountsEachAcceptedRepair(t *testing.T) {
 	counter := func() int64 { return metrics.Counter(jsonRepairedVerdictMetric).Value() }
 	run := func(reply string) string {
 		cc := &fakeChatCompleter{turns: []chatTurn{{content: reply}}}
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false, "")
 		require.NoError(t, err)
 		return v.Verdict
 	}

@@ -209,7 +209,7 @@ func testExecProviderVal() registry.Provider {
 
 func TestInvokeExecutor_Success(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(`{"fix": "x", "explanation": "y"}`), okDispatcher(), 0, "", "")
 	assert.Equal(t, "x", fix)
 	assert.Equal(t, "", warn)
 }
@@ -217,7 +217,7 @@ func TestInvokeExecutor_Success(t *testing.T) {
 func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("boom")}}}
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0, "")
+		eligibleFinding()[0], cc, okDispatcher(), 0, "", "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode failed")
 	assert.Contains(t, warn, "boom")
@@ -233,7 +233,7 @@ func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
 		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
 	}}
 	fix, warn, _ := invokeExecutor(context.Background(), ex, testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0, "")
+		eligibleFinding()[0], cc, okDispatcher(), 0, "", "")
 	assert.Equal(t, "guard the nil deref", fix)
 	assert.Equal(t, "", warn)
 }
@@ -245,7 +245,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 	defer cancel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
 	fix, warn, _ := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0, "")
+		eligibleFinding()[0], cc, okDispatcher(), 0, "", "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "status: timeout")
 	assert.Contains(t, warn, "tripped budgets: timeout")
@@ -253,7 +253,7 @@ func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
 
 func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat("I could not find a fix"), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode parse error")
 }
@@ -301,7 +301,7 @@ func TestInvokeExecutor_SmellFeedbackReachesTheModel(t *testing.T) {
 
 	cc := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], cc, okDispatcher(), 0, feedback)
+		eligibleFinding()[0], cc, okDispatcher(), 0, feedback, "")
 	require.Equal(t, "raise the floor in severity.go", fix)
 	require.Equal(t, "", warn)
 
@@ -315,7 +315,7 @@ func TestInvokeExecutor_SmellFeedbackReachesTheModel(t *testing.T) {
 	// assertions above pin the injection rather than fixed prompt boilerplate.
 	clean := recordingChat(`{"fix": "raise the floor in severity.go", "explanation": "root cause"}`)
 	_, _, _ = invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], clean, okDispatcher(), 0, "")
+		eligibleFinding()[0], clean, okDispatcher(), 0, "", "")
 	cleanSent := clean.prompts()
 	assert.NotContains(t, cleanSent, smellRetryInstruction,
 		"a first attempt must not carry the retry instruction")
@@ -356,7 +356,7 @@ func TestParseExecutorResponse_NoJSON(t *testing.T) {
 func TestBuildExecutorAgent_ForwardsProviderAndBudget(t *testing.T) {
 	ex := agentExecConfig()
 	ex.MaxToolCalls = intPtr(7)
-	a := buildExecutorAgent(ex, testExecProviderVal(), "the prompt", 0)
+	a := buildExecutorAgent(ex, testExecProviderVal(), "the prompt", 0, "")
 	assert.True(t, a.Tools, "agent-mode executor must enable tools")
 	assert.True(t, a.SupportsFC, "agent-mode executor must declare function calling so the loop fires")
 	assert.Equal(t, 7, a.MaxTurns, "max_tool_calls maps to the agent MaxTurns budget")
@@ -368,7 +368,7 @@ func TestBuildExecutorAgent_ForwardsProviderAndBudget(t *testing.T) {
 }
 
 func TestBuildExecutorAgent_DefaultMaxTurnsWhenUnset(t *testing.T) {
-	a := buildExecutorAgent(agentExecConfig(), testExecProviderVal(), "p", 0)
+	a := buildExecutorAgent(agentExecConfig(), testExecProviderVal(), "p", 0, "")
 	assert.Equal(t, registry.DefaultExecutorMaxToolCalls, a.MaxTurns, "unset max_tool_calls defaults to 10")
 }
 
@@ -431,7 +431,7 @@ func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
 	restore := swapFanoutEngine(zeroResultEngine{})
 	defer restore()
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "engine returned no result")
 }
@@ -511,7 +511,7 @@ func TestInvokeExecutor_StripsThinkBeforeParsingTheFix(t *testing.T) {
 	t.Parallel()
 	raw := `<think>{"fix": "DRAFT: delete the validation", "explanation": "draft, wrong"}</think>{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", warn)
 	assert.Equal(t, "REAL: add a bounds check", fix,
 		"the draft fix inside the leading block must not be shipped as the patch")

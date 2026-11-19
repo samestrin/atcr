@@ -81,7 +81,7 @@ func TestInvokeSkeptic_CeilingBoundsTheFirstTurnDelivery(t *testing.T) {
 			{content: `{"verdict": "refuted", "reasoning": "the cited line does not do what the finding claims"}`},
 		}}
 
-		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+		v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 
@@ -121,7 +121,7 @@ func TestInvokeSkeptic_CeilingBoundsTheFirstTurnDelivery(t *testing.T) {
 			{content: `{"verdict": "refuted", "reasoning": "answered from an oversized read"}`},
 		}}
 
-		v, tripped, err := invokeSkeptic(context.Background(), skDeclared, "prompt", cc, disp, false)
+		v, tripped, err := invokeSkeptic(context.Background(), skDeclared, "prompt", cc, disp, false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictUnverifiable, v.Verdict,

@@ -192,7 +192,7 @@ func TestInvokeExecutor_ContentShapeDeclinesOpenWithTheRefusalPrefix(t *testing.
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "")
+				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "", "")
 			assert.Empty(t, fix, "a refused reply yields no patch")
 			require.NotEmpty(t, warn, "the refusal must carry a warn")
 			assert.True(t, strings.HasPrefix(warn, agentRefusalPrefix),
@@ -220,7 +220,7 @@ func TestGenerateFixes_PrefixOnlyDraftFixIsRefused(t *testing.T) {
 			reply := `{"fix":"DRAFT PATCH"}` + "\n" + closerTag() + "\n" + suffix
 
 			fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "")
+				eligibleFinding()[0], finalChat(reply), okDispatcher(), 0, "", "")
 			assert.Empty(t, fix, "the draft before the closer is not provably committed, so no patch")
 			assert.True(t, strings.HasPrefix(warn, agentRefusalPrefix),
 				"a content-shape decline must open with agentRefusalPrefix: "+warn)
