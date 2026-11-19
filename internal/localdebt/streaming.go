@@ -302,7 +302,11 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 // Nothing is accumulated here: a caller that only needs a set of ids retains
 // nothing but that set. Use ReadSummaries when the whole set is genuinely needed
 // at once (the fold), and ReadAll when full records are needed (rendering).
+//
+// Like ReadAll, it first finishes a committed conversion left unfinished
+// (finishPendingConversion), so it must not be called under the store lock.
 func StreamSummaries(dir string, opts ReadOpts, fn func(Summary) error) error {
+	finishPendingConversion(dir, opts.Writer)
 	files, err := RecordFiles(dir)
 	if err != nil {
 		return err

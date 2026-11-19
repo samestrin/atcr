@@ -252,6 +252,14 @@ func defaultBackfillSeams() backfillSeams {
 func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillSeams) (BackfillResult, error) {
 	var res BackfillResult
 	err := withLock(dir, "backfill-justifications", func() error {
+		// A committed conversion left unfinished holds its records twice: finish it,
+		// or, for a dry run, which writes nothing, refuse.
+		if dryRun && conversionPending(dir) {
+			return errConversionPending
+		}
+		if err := finishPendingConversionLocked(dir); err != nil {
+			return err
+		}
 		// ReadAll's records, in ReadAll's order (shards, then events), read as two
 		// halves so the ids held in event files are known: see SkippedEventFiles.
 		recs, err := readShardRecords(dir, ReadOpts{})

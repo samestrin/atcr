@@ -489,3 +489,103 @@ func TestConvert_WithNoUserCacheDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, shardNames(t, dir))
 }
+
+// halfFinishedConversion leaves the store as a run that died inside finishConversion
+// does: the plan committed, its staged events published into items/, and the month
+// shards it names not yet removed. Every record is then on disk twice.
+func halfFinishedConversion(t *testing.T) (dir string, before []Record) {
+	t.Helper()
+	dir = buildStore(t, layoutShards)
+	before = foldedAll(t, dir)
+
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	staging := filepath.Join(dir, convertSubdir)
+	staged, err := os.ReadDir(staging)
+	require.NoError(t, err)
+	for _, e := range staged {
+		if IsEventEntry(e) {
+			require.NoError(t, os.Rename(filepath.Join(staging, e.Name()), filepath.Join(ItemsDir(dir), e.Name())))
+		}
+	}
+	require.NotEmpty(t, shardNames(t, dir), "fixture: the shards are still in place")
+	_, err = os.Stat(filepath.Join(staging, convertJournal))
+	require.NoError(t, err, "fixture: the committed plan is on disk")
+	return dir, before
+}
+
+func requireConversionFinished(t *testing.T, dir string) {
+	t.Helper()
+	assert.Empty(t, shardNames(t, dir), "the committed plan was finished: its shards are gone")
+	_, err := os.Stat(filepath.Join(dir, convertSubdir))
+	assert.True(t, os.IsNotExist(err), "and so is its staging")
+}
+
+// TestReadPaths_FinishACommittedConversion (TD row 53b3fcda9fbe0a08): a conversion
+// that committed and then died is finished by the next read, not left for the next
+// `atcr debt convert`; until then every record is read twice and an item's
+// Occurrences reads high.
+func TestReadPaths_FinishACommittedConversion(t *testing.T) {
+	t.Run("ReadAll", func(t *testing.T) {
+		dir, before := halfFinishedConversion(t)
+		assert.Equal(t, before, foldedAll(t, dir), "no record is counted twice")
+		requireConversionFinished(t, dir)
+	})
+	t.Run("ReadSummaries", func(t *testing.T) {
+		dir, before := halfFinishedConversion(t)
+		got := foldedSummaries(t, dir)
+		require.Len(t, got, len(before))
+		for i, s := range got {
+			assert.Equal(t, before[i].ID, s.ID)
+			assert.Equal(t, before[i].Status, s.Status)
+		}
+		requireConversionFinished(t, dir)
+	})
+	t.Run("Compact", func(t *testing.T) {
+		dir, before := halfFinishedConversion(t)
+		res, err := Compact(dir, quiet)
+		require.NoError(t, err)
+		assert.Equal(t, len(dualHistory), res.RecordsBefore, "compaction read each record once")
+		requireConversionFinished(t, dir)
+		assert.Equal(t, before, foldedAll(t, dir))
+	})
+	t.Run("CompactPlan", func(t *testing.T) {
+		dir, _ := halfFinishedConversion(t)
+		snap := snapshotTree(t, dir)
+		_, err := CompactPlan(dir, quiet)
+		require.Error(t, err, "a dry run neither finishes the conversion nor counts its records twice")
+		assert.Contains(t, err.Error(), "interrupted")
+		assert.Equal(t, snap, snapshotTree(t, dir), "a dry run writes nothing")
+	})
+	t.Run("BackfillJustifications", func(t *testing.T) {
+		dir, before := halfFinishedConversion(t)
+		snap := snapshotTree(t, dir)
+		_, err := BackfillJustifications(dir, t.TempDir(), true)
+		require.Error(t, err, "a dry run does not finish the conversion")
+		assert.Contains(t, err.Error(), "interrupted")
+		assert.Equal(t, snap, snapshotTree(t, dir), "a dry run writes nothing")
+
+		_, err = BackfillJustifications(dir, t.TempDir(), false)
+		require.NoError(t, err)
+		requireConversionFinished(t, dir)
+		assert.Equal(t, before, foldedAll(t, dir))
+	})
+}
+
+// TestReadAll_WarnsWhenACommittedConversionCannotBeFinished: a read that cannot
+// finish the plan still reads, and says why its counts may be high.
+func TestReadAll_WarnsWhenACommittedConversionCannotBeFinished(t *testing.T) {
+	dir, _ := halfFinishedConversion(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, convertSubdir, convertJournal), []byte("{not json"), 0o600))
+
+	var diag strings.Builder
+	recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
+	require.NoError(t, err)
+	assert.Len(t, recs, 2*len(dualHistory), "the store is read as it stands")
+	assert.Contains(t, diag.String(), "interrupted conversion")
+	assert.Contains(t, diag.String(), "atcr debt convert")
+	assert.NotContains(t, diag.String(), dir, "the warning carries no absolute path")
+}

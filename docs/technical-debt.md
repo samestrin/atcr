@@ -876,7 +876,12 @@ Flags: `--store`, `--dry-run`.
   journal naming the shards to remove; past that point it only finishes the plan.
   Running `atcr debt convert` again finishes a conversion a crash left behind
   ("Finished an interrupted conversion") and throws away staging that never
-  committed.
+  committed. So does the next command that reads the store (`atcr debt list`,
+  `filter`, `compact` and the others), so a record is never counted twice in the
+  meantime; if it cannot finish the conversion it warns that some records may be
+  counted twice and reads the store as it stands. `atcr debt compact --dry-run`
+  and `atcr debt backfill-justifications --dry-run` write nothing, so they refuse
+  until the conversion is finished.
 - **A dry run stages outside the store, in the user cache dir.** It copies the
   records it would move to a private (`0700`) directory under
   `<user cache dir>/atcr/debt-convert/`, named for the store, and removes it
@@ -892,7 +897,8 @@ Flags: `--store`, `--dry-run`.
   run has already enabled the event layout and written its commit journal, so a
   failure or crash while publishing the staged events and removing the shards
   can leave the store opted in with month shards and staged events still in
-  place. Running `atcr debt convert` again finishes that conversion. On a store
+  place. The next read of the store, or `atcr debt convert`, finishes that
+  conversion. On a store
   that already uses the event layout the command writes nothing and says so; on
   a store with no records it says there is nothing to convert.
 
