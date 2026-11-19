@@ -49,6 +49,15 @@ func TestDebtRecluster_DocumentsEveryFlagAndKind(t *testing.T) {
 	}
 }
 
+func TestDebtGroup_DocumentsCriticalThemeCollision(t *testing.T) {
+	b, err := os.ReadFile(technicalDebtDocForRecluster)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(b),
+		"A regular `critical` theme and the CRITICAL-severity group are separate groups that can both carry `theme: \"critical\"`; `theme` is therefore not a unique key.",
+		"docs/technical-debt.md must warn consumers not to key groups by theme")
+}
+
 // TestTelemetryDoc_DocumentsEveryQualitySignalKey locks docs/telemetry.md to
 // the telemetry.QualitySignal wire schema: the backend validates the payload by
 // strict key-set equality, so a documented set that drifts from the shipped set

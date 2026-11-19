@@ -1,0 +1,1 @@
+- `atcr doctor`'s final error now names the agents (and their models) whose review-shaped reply was under the 16-token floor even when personas also failed to resolve. Before, a run with both causes named only the persona cause, sending the operator to the prompt files while the model that answered in a handful of tokens went unnamed. (epic 124 T4)

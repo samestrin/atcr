@@ -133,30 +133,40 @@ func writePersonaUnit(client HTTPClient, baseURL, name, yamlDest string, yamlDat
 	if err := refuseSymlinkedIntermediate(yamlDest, name); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
-		return fmt.Errorf("failed to create personas directory: %w", err)
-	}
 	// Snapshot any prior YAML before it is overwritten. On a re-install/upgrade the
 	// existing unit is already valid, so if the co-located .md write fails after the
 	// .yaml has been replaced, the rollback must RESTORE the prior working YAML — not
 	// delete it, which would leave the user with no persona where one worked moments
 	// earlier. A first-time install has no prior YAML and is rolled back by removing
 	// the partial file, as before.
+	//
+	// The read is classified once, before anything is mutated: nil is a restorable
+	// prior unit, os.ErrNotExist a confirmed first-time install, and any other error
+	// (EACCES, EISDIR, a transient read failure) aborts. A prior .yaml that exists
+	// but cannot be read is neither, so guessing either way would delete the user's
+	// file on rollback or remove a .md that belongs to it.
 	priorYAML, priorErr := os.ReadFile(yamlDest)
+	hadPrior := priorErr == nil
+	if priorErr != nil && !errors.Is(priorErr, os.ErrNotExist) {
+		return fmt.Errorf("failed to read prior persona %s: %w", yamlDest, priorErr)
+	}
+	if err := os.MkdirAll(filepath.Dir(yamlDest), 0o700); err != nil {
+		return fmt.Errorf("failed to create personas directory: %w", err)
+	}
 	if err := writeFileAtomic(yamlDest, yamlData); err != nil {
 		return err
 	}
 	mdDest := strings.TrimSuffix(yamlDest, ".yaml") + ".md"
 	if hasMD {
 		if err := writeFileAtomic(mdDest, mdData); err != nil {
-			if priorErr == nil {
+			if hadPrior {
 				_ = writeFileAtomic(yamlDest, priorYAML) // restore the prior working unit
 			} else {
 				_ = os.Remove(yamlDest) // roll back a first-time partial unit
 			}
 			return err
 		}
-	} else if !errors.Is(priorErr, os.ErrNotExist) {
+	} else if hadPrior {
 		// Binding-only upstream: drop any stale co-located prompt from a prior
 		// install so the resolver never feeds an outdated custom prompt. Skipped
 		// on a first-time install (the .yaml did not exist before this write):
