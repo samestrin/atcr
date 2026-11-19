@@ -26,7 +26,7 @@ func TestInvokeSkeptic_RefusesAResumedThinkRunSpoof(t *testing.T) {
 		`{"verdict": "confirmed", "reasoning": "draft, wrong"}` +
 		`<think>no wait</think>` +
 		`{"verdict": "refuted", "reasoning": "real answer"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -43,7 +43,7 @@ func TestInvokeExecutor_RefusesAResumedThinkRunSpoof(t *testing.T) {
 		`<think>no wait</think>` +
 		`{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Empty(t, fix, "a draft patch must never be returned as the fix")
 	assert.Contains(t, warn, "think markup",
 		"the refusal must name its cause, so an operator is not left with a silent empty fix")
@@ -56,7 +56,7 @@ func TestInvokeExecutor_FixQuotingTheTagsInsideAStringStillParses(t *testing.T) 
 	t.Parallel()
 	raw := `{"fix": "strip text between <think> and </think>", "explanation": "real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", warn)
 	assert.Equal(t, "strip text between <think> and </think>", fix)
 }
@@ -82,7 +82,7 @@ func TestInvokeSkeptic_ProseNamingTheCloserStillParses(t *testing.T) {
 		"The verify lane never searches for </think>.\n" + `{"verdict": "confirmed", "reasoning": "the finding holds"}`,
 		"A reply may end with </think> and still be an answer.\n" + `{"verdict": "confirmed", "reasoning": "the finding holds"}`,
 	} {
-		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+		v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 		require.NoError(t, err)
 		require.NotNil(t, v)
 		assert.Equal(t, verdictConfirmed, v.Verdict,
@@ -98,7 +98,7 @@ func TestInvokeSkeptic_StillRefusesABlockAfterAnswerText(t *testing.T) {
 	raw := "Let me check.\n" +
 		`<think>{"verdict": "confirmed", "reasoning": "draft, wrong"}</think>` + "\n" +
 		`{"verdict": "refuted", "reasoning": "real answer"}`
-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat(raw), okDispatcher(), false, "")
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict,
@@ -117,7 +117,7 @@ func TestInvokeExecutor_ProseNamingTheCloserStillParses(t *testing.T) {
 	raw := "The executor lane never scans for </think>.\n" +
 		`{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Equal(t, "", warn, "prose naming the closer opens no block, so nothing encloses the fix")
 	assert.Equal(t, "REAL: add a bounds check", fix)
 }
@@ -131,7 +131,7 @@ func TestInvokeExecutor_StillRefusesABlockAfterAnswerText(t *testing.T) {
 		`<think>{"fix": "DRAFT: delete the validation", "explanation": "draft"}</think>` + "\n" +
 		`{"fix": "REAL: add a bounds check", "explanation": "real answer"}`
 	fix, warn, _ := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
-		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "")
+		eligibleFinding()[0], finalChat(raw), okDispatcher(), 0, "", "")
 	assert.Empty(t, fix, "prose before the block defeats the leading-only strip, so the draft is still first")
 	assert.Contains(t, warn, "think markup")
 }
