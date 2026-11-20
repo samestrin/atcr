@@ -36,14 +36,16 @@ var shellLineRe = regexp.MustCompile(`^\s*(?:\$\s|#!|(?:sudo|rm|curl|wget|bash|s
 // overrideRe matches the instruction-override phrases that try to redirect the
 // receiving agent. Case-insensitive; the gaps are bounded so the first alternative
 // does not span unrelated clauses of a long line.
-var overrideRe = regexp.MustCompile(`(?i)` +
-	`\b(?:ignore|disregard|forget|override|bypass)\b.{0,40}?\b(?:previous|prior|above|earlier|preceding|all|any|your|the|system)\b.{0,40}?\b(?:instructions?|prompts?|rules|directives|guidelines|context)\b` +
+var overrideRe = regexp.MustCompile(`(?i)` + overridePhrases + `|^\s*(?:system|assistant|human)\s*:`)
+
+// overridePhrases is every overrideRe alternative except the line-start role
+// prefix, shared with the skeptic's whole-text variant (skepticOverrideRe).
+const overridePhrases = `\b(?:ignore|disregard|forget|override|bypass)\b.{0,40}?\b(?:previous|prior|above|earlier|preceding|all|any|your|the|system)\b.{0,40}?\b(?:instructions?|prompts?|rules|directives|guidelines|context)\b` +
 	`|\byou\s+are\s+now\b` +
 	`|\bnew\s+instructions?\s*:` +
 	`|\bsystem\s+prompt\b` +
 	`|\bpretend\s+(?:to\s+be|you\s+are)\b` +
-	`|</?\s*(?:system|assistant|user|human)\s*>` +
-	`|^\s*(?:system|assistant|human)\s*:`)
+	`|</?\s*(?:system|assistant|user|human)\s*>`
 
 // sanitizeInterAgentText returns s with fenced code blocks, shell/command lines,
 // instruction-override lines and control characters removed. See the block comment
