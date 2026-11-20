@@ -882,6 +882,14 @@ Flags: `--store`, `--dry-run`.
   counted twice and reads the store as it stands. `atcr debt compact --dry-run`
   and `atcr debt backfill-justifications --dry-run` write nothing, so they refuse
   until the conversion is finished.
+- **Finishing a conversion never removes a record it did not move.** Before
+  removing a shard the journal names, the run checks that every record in it has
+  its event file staged or already in `items/`. A journal can arrive without its
+  staged events (a partial `git add`, a merge that kept it, a synced shared
+  store), or a shard can change after the commit; then no shard is removed and the
+  error names the missing events. Remove `<store>/.convert/` to abandon that
+  conversion (the shards still hold every record), then run `atcr debt convert`
+  again.
 - **A dry run stages outside the store, in the user cache dir.** It copies the
   records it would move to a private (`0700`) directory under
   `<user cache dir>/atcr/debt-convert/`, named for the store, and removes it

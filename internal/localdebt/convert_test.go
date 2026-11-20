@@ -589,3 +589,207 @@ func TestReadAll_WarnsWhenACommittedConversionCannotBeFinished(t *testing.T) {
 	assert.Contains(t, diag.String(), "atcr debt convert")
 	assert.NotContains(t, diag.String(), dir, "the warning carries no absolute path")
 }
+
+// committedConversionWithoutStaging leaves the store as one whose COMMIT arrived
+// without its staged events (a partial `git add`, a merge that kept COMMIT, a synced
+// shared store): the plan is committed, nothing is staged, and the month shards it
+// names are the only copy of their records.
+func committedConversionWithoutStaging(t *testing.T) (dir string, before []Record) {
+	t.Helper()
+	dir = buildStore(t, layoutShards)
+	before = foldedAll(t, dir)
+
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	staging := filepath.Join(dir, convertSubdir)
+	staged, err := os.ReadDir(staging)
+	require.NoError(t, err)
+	for _, e := range staged {
+		if IsEventEntry(e) {
+			require.NoError(t, os.Remove(filepath.Join(staging, e.Name())))
+		}
+	}
+	_, err = os.Stat(filepath.Join(staging, convertJournal))
+	require.NoError(t, err, "fixture: the committed plan is on disk")
+	require.NotEmpty(t, shardNames(t, dir), "fixture: the shards are still in place")
+	return dir, before
+}
+
+// TestFinishConversion_KeepsAShardWhoseEventsAreAbsent (epic 122 F1): a committed
+// plan whose staged events are neither staged nor in items/ removes no shard, and
+// the error names the missing events. Before, the next read removed every shard
+// the journal named and lost their records.
+func TestFinishConversion_KeepsAShardWhoseEventsAreAbsent(t *testing.T) {
+	t.Run("finishConversion", func(t *testing.T) {
+		dir, before := committedConversionWithoutStaging(t)
+		shards := shardNames(t, dir)
+		plan, err := planConversion(dir)
+		require.NoError(t, err)
+
+		err = finishConversion(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), plan.events[0].name, "the error names a missing event")
+		assert.Contains(t, err.Error(), shards[0], "and the shard it keeps")
+		assert.Contains(t, err.Error(), convertSubdir, "and how to abandon the conversion")
+		assert.NotContains(t, err.Error(), dir, "the error carries no absolute path")
+		assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+		assert.Equal(t, before, foldedAll(t, dir), "no record is lost")
+	})
+	t.Run("ReadAll", func(t *testing.T) {
+		dir, before := committedConversionWithoutStaging(t)
+		shards := shardNames(t, dir)
+		var diag strings.Builder
+		recs, err := ReadAll(dir, ReadOpts{Writer: &diag})
+		require.NoError(t, err)
+		assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }), "no record is lost")
+		assert.Contains(t, diag.String(), "interrupted conversion")
+		assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+	})
+	t.Run("Convert", func(t *testing.T) {
+		dir, before := committedConversionWithoutStaging(t)
+		shards := shardNames(t, dir)
+		_, err := Convert(dir, quiet)
+		require.Error(t, err)
+		assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+		assert.Equal(t, before, foldedAll(t, dir), "no record is lost")
+	})
+}
+
+// TestFinishConversion_KeepsAShardChangedSinceTheCommit: a shard that gained a line
+// after the plan was committed holds a record no staged event carries, so it is kept.
+func TestFinishConversion_KeepsAShardChangedSinceTheCommit(t *testing.T) {
+	dir := buildStore(t, layoutShards)
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+
+	shards := shardNames(t, dir)
+	late := mustLine(t, eventRec(idY, "2026-07-30T09:00:00Z", StatusResolved))
+	f, err := os.OpenFile(filepath.Join(dir, shards[len(shards)-1]), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(late)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	err = finishConversion(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), shards[len(shards)-1])
+	assert.Contains(t, shardNames(t, dir), shards[len(shards)-1], "the changed shard is kept")
+}
+
+// TestFinishConversion_EventsSplitBetweenStagingAndItems: a run that died midway
+// through publishing left some events staged and the rest in items/; the next run
+// finishes the plan.
+func TestFinishConversion_EventsSplitBetweenStagingAndItems(t *testing.T) {
+	dir := buildStore(t, layoutShards)
+	before := foldedAll(t, dir)
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	staging := filepath.Join(dir, convertSubdir)
+	staged, err := os.ReadDir(staging)
+	require.NoError(t, err)
+	moved := 0
+	for i, e := range staged {
+		if IsEventEntry(e) && i%2 == 0 {
+			require.NoError(t, os.Rename(filepath.Join(staging, e.Name()), filepath.Join(ItemsDir(dir), e.Name())))
+			moved++
+		}
+	}
+	require.NotZero(t, moved, "fixture: some events were published")
+
+	require.NoError(t, finishConversion(dir))
+	requireConversionFinished(t, dir)
+	assert.Equal(t, before, foldedAll(t, dir))
+}
+
+// TestFinishConversion_AShardAlreadyRemoved: a run that died after removing some of
+// the named shards left nothing of them to check; the next run removes the rest.
+func TestFinishConversion_AShardAlreadyRemoved(t *testing.T) {
+	dir, before := halfFinishedConversion(t)
+	shards := shardNames(t, dir)
+	require.Len(t, shards, 2, "fixture: two month shards")
+	require.NoError(t, os.Remove(filepath.Join(dir, shards[0])))
+
+	require.NoError(t, finishConversion(dir))
+	requireConversionFinished(t, dir)
+	assert.Equal(t, before, foldedAll(t, dir))
+}
+
+// committedConversion leaves the store as a run that died right after it committed
+// its plan: every event staged, the shards in place.
+func committedConversion(t *testing.T) (dir string, before []Record) {
+	t.Helper()
+	dir = buildStore(t, layoutShards)
+	before = foldedAll(t, dir)
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	return dir, before
+}
+
+// TestFinishConversion_KeepsAShardThatCannotConvertAnyMore: a named shard that gained
+// a line the converter cannot carry has no event list to check; it is kept rather
+// than taken as having nothing to publish.
+func TestFinishConversion_KeepsAShardThatCannotConvertAnyMore(t *testing.T) {
+	dir, before := committedConversion(t)
+	shards := shardNames(t, dir)
+	shard := shards[len(shards)-1]
+	f, err := os.OpenFile(filepath.Join(dir, shard), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString("{not a record\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	err = finishConversion(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), shard+" changed after the conversion was committed")
+	assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+	recs, err := ReadAll(dir, quiet)
+	require.NoError(t, err)
+	assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }), "no record is lost")
+}
+
+// TestFinishConversion_OnlyARegularFileIsAnEvent: a directory or a dangling symlink
+// under an event's name is not that event. The publish loop skips the one and
+// renames the other into items/, so counting either as present would remove the
+// shard and lose its record.
+func TestFinishConversion_OnlyARegularFileIsAnEvent(t *testing.T) {
+	for _, odd := range []struct {
+		name string
+		make func(t *testing.T, path string)
+	}{
+		{"directory", func(t *testing.T, path string) { require.NoError(t, os.Mkdir(path, 0o700)) }},
+		{"dangling symlink", func(t *testing.T, path string) {
+			require.NoError(t, os.Symlink(filepath.Join(filepath.Dir(path), "nowhere"), path))
+		}},
+	} {
+		t.Run(odd.name, func(t *testing.T) {
+			dir, before := committedConversion(t)
+			shards := shardNames(t, dir)
+			staging := filepath.Join(dir, convertSubdir)
+			plan, err := planConversion(dir)
+			require.NoError(t, err)
+			ev := filepath.Join(staging, plan.events[0].name)
+			require.NoError(t, os.Remove(ev))
+			odd.make(t, ev)
+
+			err = finishConversion(dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), plan.events[0].name)
+			assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+			recs, err := ReadAll(dir, quiet)
+			require.NoError(t, err)
+			assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }), "no record is lost")
+		})
+	}
+}
