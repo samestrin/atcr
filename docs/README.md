@@ -62,6 +62,8 @@ single source of truth the website build consumes, so it links every doc in
 - [Agentic Consumption](agentic-consumption.md) — driving `atcr` from another
   autonomous agent via `--axi`: token-dense TOON output, exit codes, pagination,
   and stdout/stderr isolation.
+- [AXI audit](axi-audit.md) — evidence and justified or unjustified exceptions
+  for each of the ten Agent eXperience Interface principles.
 - [GitHub Action — PR Review](github-action.md) — posting reconciled findings to
   a pull request.
 - [Slack-triggered reviews (`atcr webhook`)](webhook.md) — the loopback-only
