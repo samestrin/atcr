@@ -1,5 +1,5 @@
 name: orson
-version: 1.2.0
+version: 1.2.1
 description: Gemma duplication and repo-wide redundancy reviewer (local long-context lens)
 provider: local
 model: local/gemma3-27b-it-q4_K_M

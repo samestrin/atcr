@@ -1,5 +1,5 @@
 name: liam
-version: 1.2.0
+version: 1.2.1
 description: Gemma invariant and state-consistency reviewer (local MoE thinking lens)
 provider: local
 model: local/gemma4-26b-a4b-it-q4_K_M
