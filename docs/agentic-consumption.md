@@ -25,6 +25,11 @@ AXI mode is exposed on these agent-facing surfaces:
 | `atcr reconcile` | `--axi` flag | a TOON object of the run values (`findings`, `sources`, `reconciled_dir`) |
 | `atcr verify` | `--axi` flag | a TOON object of the run values (`findings`, `confirmed`, `refuted`, `unverifiable`, `reconciled_dir`) |
 | `atcr status` | `--axi` flag | a TOON object of the review status (the `ReviewStatus` fields of the JSON document) |
+| `atcr debate` | `--axi` flag | a TOON object of the run values and next steps |
+| `atcr debt clean` | `--axi` flag | a token-dense TOON `{items, summary}` payload |
+| `atcr debt filter` | `--axi` flag | a token-dense TOON `{items, summary}` payload |
+| `atcr debt group` | `--axi` flag | a token-dense TOON `{groups, ungrouped, summary}` payload |
+| `atcr debt validate` | `--axi` flag | a token-dense TOON `{items, coherence}` payload |
 
 Note the two spellings are intentional and different: `review`/`resume` take the
 boolean `--axi` flag, while `report` selects AXI through its existing
@@ -43,9 +48,9 @@ Before this, atcr emitted a custom pipe-delimited variant (`findings[N|]{a|b}:`)
 | `atcr report` | `--format pipe` |
 | `atcr review --axi`, `atcr review --resume <id> --axi` | `--legacy-pipe` |
 | `atcr --axi` | `--legacy-pipe` |
-| every AXI surface above, including `report --format axi`, except `reconcile --axi`, `verify --axi` and `status --axi` | `ATCR_LEGACY_PIPE=1` |
+| every AXI surface above, including `report --format axi`, except `reconcile --axi`, `verify --axi`, `status --axi`, `debate --axi` and the `debt` AXI surfaces | `ATCR_LEGACY_PIPE=1` |
 
-`atcr reconcile --axi`, `atcr verify --axi` and `atcr status --axi` have no legacy pipe encoding: they reject `--legacy-pipe` as a usage error (exit 2) and ignore `ATCR_LEGACY_PIPE`. `ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
+`atcr reconcile --axi`, `atcr verify --axi`, `atcr status --axi`, `atcr debate --axi`, `atcr debt clean --axi`, `atcr debt filter --axi`, `atcr debt group --axi` and `atcr debt validate --axi` have no legacy pipe encoding: they reject `--legacy-pipe` as a usage error (exit 2) and ignore `ATCR_LEGACY_PIPE`. `ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
 
 ```
 warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.
