@@ -1003,3 +1003,12 @@ func TestLocalPresets_MatchCommunityPersonas(t *testing.T) {
 		}
 	}
 }
+
+// TestQuickstart_UnknownLocalPresetOpt: a caller that skips the command's
+// preset check still gets an error, not the 32 GB roster.
+func TestQuickstart_UnknownLocalPresetOpt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	err := runQuickstart(quickstartOpts{dir: t.TempDir(), preset: "local-16gb", in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown preset "local-16gb"`)
+}

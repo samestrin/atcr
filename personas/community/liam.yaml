@@ -1,7 +1,7 @@
 name: liam
-version: 1.1.0
-description: Llama heavyweight invariant and state-consistency reviewer (local 70B lens)
+version: 1.2.0
+description: Gemma invariant and state-consistency reviewer (local MoE thinking lens)
 provider: local
-model: local/llama3.3-70b
+model: local/gemma4-26b-a4b-it-q4_K_M
 persona: liam
 role: reviewer

@@ -344,9 +344,9 @@ brew install ollama
 ollama serve &                      # exposes an OpenAI-compatible endpoint on :11434
 
 # 2. Pull the model a persona binds (match the tier to your RAM/VRAM)
-ollama pull gemma3:27b              # gerald   (32 GB dense)
-# ollama pull qwen3:30b-a3b         # orson    (32 GB long-context)
-# ollama pull llama3.3:70b          # liam     (64 GB+ heavyweight)
+ollama pull gemma3:27b-it-q4_K_M        # orson (local-32gb and local-64gb); gerald by hand
+ollama pull gemma4:26b-a4b-it-q4_K_M    # liam  (local-32gb)
+# ollama pull qwen3.8:27b-q4_K_M        # liam  (local-64gb)
 
 # 3. REQUIRED even for a keyless local endpoint — see the note below
 export OLLAMA_API_KEY=local-no-key-needed
