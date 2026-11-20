@@ -107,13 +107,14 @@ func isTypedNil(w io.Writer) bool {
 // per record instead of a shard line; see events.go.
 func Append(dir string, rec Record) error {
 	return withLock(dir, "append", func() error {
-		return appendLocked(dir, rec)
+		return appendLocked(dir, rec, &itemsPrep{})
 	})
 }
 
 // appendLocked is Append's body without the lock: the caller must already hold
-// the store lock (withLock).
-func appendLocked(dir string, rec Record) error {
+// the store lock (withLock) and passes one itemsPrep per hold, so the items/
+// sweep runs once per hold rather than once per record (events.go).
+func appendLocked(dir string, rec Record, prep *itemsPrep) error {
 	month, err := monthFromRunID(rec.RunID)
 	if err != nil {
 		return err
@@ -150,7 +151,7 @@ func appendLocked(dir string, rec Record) error {
 
 	// An opted-in store writes the record as its own event file instead (events.go).
 	if UsesEventLayout(dir) {
-		return writeEventLocked(dir, rec, line)
+		return writeEventLocked(dir, rec, line, prep)
 	}
 	path := filepath.Join(dir, month+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -180,8 +181,9 @@ func appendBatch(dir string, recs []Record) (int, error) {
 	var errs []error
 	written := 0
 	lockErr := withLock(dir, "append", func() error {
+		prep := &itemsPrep{}
 		for _, rec := range recs {
-			if err := appendLocked(dir, rec); err != nil {
+			if err := appendLocked(dir, rec, prep); err != nil {
 				errs = append(errs, err)
 				continue
 			}

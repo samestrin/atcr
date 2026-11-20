@@ -3,6 +3,7 @@ package localdebt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -88,11 +89,56 @@ func enableEventLayoutLocked(dir string) error {
 	if err := f.Close(); err != nil {
 		return basePathErr(err)
 	}
-	if err := os.WriteFile(filepath.Join(items, itemsGitignore), []byte(itemsGitignoreBody), 0o600); err != nil {
-		return fmt.Errorf("writing localdebt items .gitignore: %w", basePathErr(err))
+	if err := ensureItemsGitignore(items); err != nil {
+		return fmt.Errorf("writing localdebt items .gitignore: %w", err)
 	}
 	return nil
 }
+
+// errGitignoreNotRegular refuses an items/.gitignore that is a symlink, directory
+// or other non-regular file.
+var errGitignoreNotRegular = errors.New("items .gitignore is not a regular file; refusing to write through it")
+
+// ensureItemsGitignore creates items/.gitignore if nothing is at that name. In a
+// shared store the name can be repository-supplied, so it is never written
+// through: a symlink (even a dangling one) or other non-regular entry is refused
+// with errGitignoreNotRegular, and the create is O_EXCL|O_NOFOLLOW so a link
+// planted after the Lstat fails the open instead of redirecting it. An existing
+// regular file is kept as it is, never truncated. Errors are path-redacted.
+func ensureItemsGitignore(items string) error {
+	gi := filepath.Join(items, itemsGitignore)
+	info, err := os.Lstat(gi)
+	if err == nil {
+		if info.Mode().IsRegular() {
+			return nil
+		}
+		return errGitignoreNotRegular
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return basePathErr(err)
+	}
+	return createItemsGitignore(gi)
+}
+
+// createItemsGitignore creates the ignore file at gi with O_EXCL|O_NOFOLLOW: any
+// entry already at the name, a symlink planted after ensureItemsGitignore's
+// Lstat included, fails the open instead of being truncated or followed.
+func createItemsGitignore(gi string) error {
+	f, err := os.OpenFile(gi, os.O_CREATE|os.O_EXCL|os.O_WRONLY|openNoFollow, 0o600)
+	if err != nil {
+		return basePathErr(err)
+	}
+	if _, err := f.WriteString(itemsGitignoreBody); err != nil {
+		_ = f.Close()
+		_ = os.Remove(gi)
+		return basePathErr(err)
+	}
+	return basePathErr(f.Close())
+}
+
+// readItemsDir is the items/ read prepareItemsLocked sweeps with; a var so a test
+// can count the reads.
+var readItemsDir = os.ReadDir
 
 // isEventTempName reports whether a name in items/ is an in-flight or
 // crash-leftover event temp: dot-prefixed with the ".tmp-" infix CreateTemp
@@ -101,20 +147,36 @@ func isEventTempName(name string) bool {
 	return strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")
 }
 
+// itemsPrep tracks whether prepareItemsLocked has run during one hold of the
+// store lock. The sweep reads all of items/, so running it per event made a bulk
+// append of N records into a store of M event files O(N x M) dirent reads under
+// the lock; every temp write happens under that same lock, so once per hold is
+// enough. The zero value has not run; a new hold takes a new itemsPrep.
+type itemsPrep struct{ done bool }
+
+// ensure runs prepareItemsLocked on the first call of the hold and does nothing
+// after. A failed prepare is not retried within the hold: it is best-effort, and
+// the next hold tries again.
+func (p *itemsPrep) ensure(items string) {
+	if p.done {
+		return
+	}
+	p.done = true
+	prepareItemsLocked(items)
+}
+
 // prepareItemsLocked ships items/.gitignore if missing and sweeps crash
 // leftovers before a new temp is created. The caller holds the store lock, and
 // every temp write happens under that same lock, so any leftover seen here
 // belongs to a dead process (a SIGKILL skips the deferred remove). Like
-// sweepStaleTemps (store.go), it runs on every locked write and removal is
-// best-effort: readers skip temps regardless, and a failed remove is retried by
-// the next write. Failures are left to CreateTemp to report, so a broken items
-// directory surfaces its own canonical error instead of a sweep error.
+// sweepStaleTemps (store.go), it runs on every lock hold that writes an event
+// (itemsPrep) and removal is best-effort: readers skip temps regardless, and a
+// failed remove is retried by the next hold. Failures are left to CreateTemp to
+// report, so a broken items directory surfaces its own canonical error instead of
+// a sweep error; a symlinked or otherwise non-regular .gitignore is left alone.
 func prepareItemsLocked(items string) {
-	gi := filepath.Join(items, itemsGitignore)
-	if _, err := os.Stat(gi); os.IsNotExist(err) {
-		_ = os.WriteFile(gi, []byte(itemsGitignoreBody), 0o600)
-	}
-	entries, err := os.ReadDir(items)
+	_ = ensureItemsGitignore(items)
+	entries, err := readItemsDir(items)
 	if err != nil {
 		return
 	}
@@ -153,16 +215,16 @@ func eventFileName(rec Record, line []byte) (string, error) {
 // the store lock and has run the write gate. The file is written to a dot-prefixed
 // temp name and renamed into place, so a reader never sees a partial event. A
 // rename onto an existing name replaces the same bytes: the name is a hash of them.
-// Before creating the temp it ships items/.gitignore and sweeps crash leftovers
-// (prepareItemsLocked), so a SIGKILL'd write can neither be committed by
+// Before the hold's first temp it ships items/.gitignore and sweeps crash
+// leftovers (prep.ensure), so a SIGKILL'd write can neither be committed by
 // `git add -A` nor accumulate in items/.
-func writeEventLocked(dir string, rec Record, line []byte) error {
+func writeEventLocked(dir string, rec Record, line []byte, prep *itemsPrep) error {
 	name, err := eventFileName(rec, line)
 	if err != nil {
 		return err
 	}
 	items := ItemsDir(dir)
-	prepareItemsLocked(items)
+	prep.ensure(items)
 	tmp, err := os.CreateTemp(items, "."+name+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("creating localdebt event: %w", basePathErr(err))
