@@ -546,7 +546,7 @@ func checkConversionEvents(dir, staging string, shards []string) error {
 		}
 		var missing []string
 		for _, ev := range events {
-			if !fileExists(filepath.Join(staging, ev.name)) && !fileExists(filepath.Join(ItemsDir(dir), ev.name)) {
+			if !isRegularFile(filepath.Join(staging, ev.name)) && !isRegularFile(filepath.Join(ItemsDir(dir), ev.name)) {
 				missing = append(missing, ev.name)
 			}
 		}
@@ -563,7 +563,10 @@ func checkConversionEvents(dir, staging string, shards []string) error {
 		"then run `atcr debt convert` again", strings.Join(problems, "; "), convertSubdir)
 }
 
-func fileExists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
+// isRegularFile reports whether path is a regular file. A directory or symlink under
+// an event's name is not that event: the publish loop skips a directory, and a
+// symlink can point anywhere, or nowhere.
+func isRegularFile(path string) bool {
+	fi, err := os.Lstat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
