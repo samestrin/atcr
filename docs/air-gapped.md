@@ -83,8 +83,9 @@ atcr init --offline       # scaffold from the embedded built-in personas only
 atcr quickstart --offline # same, for the default preset
 ```
 
-`atcr quickstart --preset local` never fetches — it scaffolds from the copies
-built into the binary. `atcr init --refresh-personas` also never fetches: it
+`atcr quickstart --preset local-32gb` (or `local-64gb`; `local` aliases
+`local-32gb`) never fetches — it scaffolds from the copies built into the
+binary. `atcr init --refresh-personas` also never fetches: it
 only overwrites built-in persona copies under `.atcr/personas` that differ
 from the embedded ones, which is how existing projects pick up a tuned
 `personas/_base.md`. The fetch source can also be re-pointed at an internal
@@ -122,18 +123,25 @@ From a fresh machine with a local Ollama server:
 
 ```sh
 export OLLAMA_API_KEY=local-no-key-needed   # required even for keyless local endpoints
-atcr quickstart --preset local              # no network, no key, telemetry off
-ollama pull gemma3:27b                      # gerald; pick the tiers your RAM allows
+atcr quickstart --preset local              # no network, no key, telemetry off (= local-32gb)
+ollama pull gemma3:27b-it-q4_K_M            # orson (both tiers)
+ollama pull gemma4:26b-a4b-it-q4_K_M        # liam (local-32gb)
 ```
 
 `--preset local` writes the `local` provider (`http://localhost:11434/v1`)
-and the `gerald`/`orson`/`liam` agents to `~/.config/atcr/registry.yaml`,
+and the `orson`/`liam` agents to `~/.config/atcr/registry.yaml`,
 scaffolds `.atcr/` with their personas from the embedded copies, and sets
-`telemetry: false` in `.atcr/config.yaml`. If the registry already exists it
+`telemetry: false` in `.atcr/config.yaml`. On a machine with 64 GB of GPU or
+unified memory, `--preset local-64gb` binds `liam` to `qwen3.8:27b-q4_K_M`
+instead (`ollama pull qwen3.8:27b-q4_K_M`); `orson` stays on
+`gemma3:27b-it-q4_K_M`. `gerald` is in neither preset — add it by hand if you
+want its lens. If the registry already exists it
 is not overwritten without `--force` — the block to merge is printed instead.
 See the "Local / Privacy-First" section of
 [personas-install.md](personas-install.md) for the per-tier persona table and
-the by-hand equivalent.
+the by-hand equivalent, and
+[local-models-benchmark.md](local-models-benchmark.md) for the scores behind
+the pick.
 
 Then keep the defaults that are already safe: leave the quality signal off,
 never pass `--sync-cloud`, and use `--offline` (or the preset) for any future

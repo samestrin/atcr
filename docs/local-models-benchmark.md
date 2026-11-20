@@ -1,10 +1,11 @@
 # Local Model Benchmark
 
 This page is the measurement sheet for choosing local reviewer models for two
-memory tiers. It is a **shell for an operator-run benchmark**: no measurements
-have been recorded here yet. Keep the results and the run-result JSON files
-together so a later model, quantization, Ollama, atcr, or hardware change can be
-compared like for like.
+memory tiers. The epic 113.1 runs are recorded below ([Results](#results)),
+and the owner's pick from them is recorded under [The pick](#the-pick-ac6).
+The method stays here so a later model, quantization, Ollama, atcr, or hardware
+change can be compared like for like: keep the results and the run-result JSON
+files together.
 
 ## Method
 
@@ -159,22 +160,131 @@ row.
 
 ## Results
 
-**No results recorded.** Every measurement cell below is intentionally empty.
-Add the run date and run-result filename in Notes when filling a row.
+Recorded 2026-11-20 from the operator's AC5 table (posted on EST-6869 with the
+owner's pick, card `cd872952`). Every row is `benchmarks/standard-v1`, all 17
+cases, one persona prompt for all candidates, atcr `5f8b6037` and the same
+suite reproducibility hash. The `gpu-32gb` tier ran 2026-11-14 on `ai.lan`
+(RTX 5090): all 7 candidates passed the smoke check and scored — none was
+dropped by it. The `unified-64gb` tier ran on `macmini-m4` over the nights
+ending 2026-11-20; `nemotron-3-nano-30b-a3b` failed there mid-suite (see its
+rows). The runs used the commands under
+[Operator commands](#operator-commands). The run-result JSON files are kept on
+the orchestrator under
+`~/bench113/{gpu-32gb,unified-64gb}/results/*/*-standard.json`.
 
-| Tier | Candidate | Doctor / thinking | Fit verdict | Category recall | Findings / case | Unmatched / case (upper bound) | p50 latency (ms) | Notes |
-|---|---|---|---|---|---|---|---|---|
-| `gpu-32gb` | `qwen3.8-27b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `gemma4-31b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `gemma4-26b-a4b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `qwen3.6-35b-a3b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `gpt-oss-20b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `nemotron-3-nano-30b-a3b` |  |  |  |  |  |  |  |
-| `gpu-32gb` | `gemma3-27b` (baseline) |  |  |  |  |  |  |  |
-| `unified-64gb` | `qwen3.8-27b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `gemma4-31b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `gemma4-26b-a4b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `qwen3.6-35b-a3b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `gpt-oss-20b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `nemotron-3-nano-30b-a3b` |  |  |  |  |  |  |  |
-| `unified-64gb` | `gemma3-27b` (baseline) |  |  |  |  |  |  |  |
+Cells carry category recall (`corroboration_rate`), unmatched findings per
+case (`unmatched_per_case`, an **upper bound** — see
+[False alarms](benchmark.md#false-alarms-an-upper-bound)), and p50 seconds per
+case, as posted. Latency is not comparable across tiers. The posted summary
+did not re-state the doctor/thinking verdicts, the `fit-v1` verdicts, or
+`findings_raised_avg`; those fields live in the retained run-result JSONs, not
+in this table. The hand-checked random sample of unmatched findings for the
+top candidates (part of AC5) is an operator step still owed as of 2026-11-20;
+the unmatched numbers below remain an upper bound until it is adjudicated.
+
+### `gerald` (secrets & data-egress)
+
+| Tier | Candidate | Category recall | Unmatched / case (upper bound) | p50 latency (s) | Notes |
+|---|---|---:|---:|---:|---|
+| `gpu-32gb` | `qwen3.8-27b` | .020 | 0.00 | 13.1 |  |
+| `gpu-32gb` | `gemma4-31b` | .020 | 0.00 | 10.7 |  |
+| `gpu-32gb` | `gemma4-26b-a4b` | .020 | 0.06 | 5.9 |  |
+| `gpu-32gb` | `qwen3.6-35b-a3b` | .020 | 0.00 | 7.5 |  |
+| `gpu-32gb` | `gpt-oss-20b` | .039 | 0.88 | 23.1 |  |
+| `gpu-32gb` | `nemotron-3-nano-30b-a3b` | .000 | 0.00 | 1.8 |  |
+| `gpu-32gb` | `gemma3-27b` (baseline) | .127 | 2.12 | 6.9 | best gerald recall on the tier |
+| `unified-64gb` | `qwen3.8-27b` | .020 | 0.00 | 132.1 |  |
+| `unified-64gb` | `gemma4-31b` | .020 | 0.12 | 128.6 |  |
+| `unified-64gb` | `gemma4-26b-a4b` | .020 | 0.00 | 40.1 |  |
+| `unified-64gb` | `qwen3.6-35b-a3b` | .000 | 0.00 | 46.0 |  |
+| `unified-64gb` | `gpt-oss-20b` | .020 | 0.12 | 51.6 |  |
+| `unified-64gb` | `nemotron-3-nano-30b-a3b` | — | — | — | FAIL: Ollama HTTP 500 "prediction aborted, token repeat limit reached" on case 9/17 (`freecad-freecad-pr-18688`), reproduced every night; not a context limit (28.5K of 65,536 tokens used) |
+| `unified-64gb` | `gemma3-27b` (baseline) | .167 | 1.24 | 110.9 | best gerald recall on the tier |
+
+**Follow-up run (hosted, not a local tier):** `gerald` on Synthetic
+`hf:openai/gpt-oss-120b`, `standard-v1`, 17 of 17 cases, same atcr `5f8b6037`
+and suite hash, `max_tokens` 32768, reasoning high: recall .020, unmatched
+0.29 per case, p50 13.7 s; the reply was clean (not truncated) on 15 of 17
+cases. Run files: orchestrator `~/bench113/synthetic-gptoss120b/`. .020 is
+below the `gemma3` baseline's .127, so this run did not bring `gerald` back
+into the presets. The owner also asked a follow-up question: check whether
+the thinking models' "clean" answers on `gerald` are a setup effect (JSON
+mode plus thinking).
+
+### `orson` (duplication & repo-wide redundancy)
+
+| Tier | Candidate | Category recall | Unmatched / case (upper bound) | p50 latency (s) | Notes |
+|---|---|---:|---:|---:|---|
+| `gpu-32gb` | `qwen3.8-27b` | .118 | 0.00 | 32.3 |  |
+| `gpu-32gb` | `gemma4-31b` | .137 | 0.00 | 17.6 |  |
+| `gpu-32gb` | `gemma4-26b-a4b` | .098 | 0.06 | 16.3 |  |
+| `gpu-32gb` | `qwen3.6-35b-a3b` | .098 | 0.00 | 13.3 |  |
+| `gpu-32gb` | `gpt-oss-20b` | .147 | 0.00 | 54.1 |  |
+| `gpu-32gb` | `nemotron-3-nano-30b-a3b` | .049 | 0.00 | 3.8 |  |
+| `gpu-32gb` | `gemma3-27b` (baseline) | .461 | 0.47 | 12.8 | **picked for `local-32gb`** |
+| `unified-64gb` | `qwen3.8-27b` | .118 | 0.00 | 231.2 |  |
+| `unified-64gb` | `gemma4-31b` | .137 | 0.00 | 252.8 |  |
+| `unified-64gb` | `gemma4-26b-a4b` | .118 | 0.00 | 87.9 |  |
+| `unified-64gb` | `qwen3.6-35b-a3b` | .098 | 0.18 | 61.5 |  |
+| `unified-64gb` | `gpt-oss-20b` | .069 | 0.06 | 247.7 |  |
+| `unified-64gb` | `nemotron-3-nano-30b-a3b` | — | — | — | FAIL: same HTTP 500 token-repeat abort as the gerald row, case 9/17, every night |
+| `unified-64gb` | `gemma3-27b` (baseline) | .431 | 0.71 | 157.3 | **picked for `local-64gb`** |
+
+### `liam` (invariants & state-consistency)
+
+| Tier | Candidate | Category recall | Unmatched / case (upper bound) | p50 latency (s) | Notes |
+|---|---|---:|---:|---:|---|
+| `gpu-32gb` | `qwen3.8-27b` | .118 | 1.12 | 85.2 |  |
+| `gpu-32gb` | `gemma4-31b` | .108 | 0.82 | 50.4 |  |
+| `gpu-32gb` | `gemma4-26b-a4b` | .118 | 0.65 | 34.1 | **picked for `local-32gb`** |
+| `gpu-32gb` | `qwen3.6-35b-a3b` | .108 | 0.59 | 24.8 |  |
+| `gpu-32gb` | `gpt-oss-20b` | .059 | 0.65 | 100.0 |  |
+| `gpu-32gb` | `nemotron-3-nano-30b-a3b` | .049 | 1.76 | 10.3 |  |
+| `gpu-32gb` | `gemma3-27b` (baseline) | .196 | 2.82 | 11.2 | higher recall, 2.82 unmatched/case vs the pick's 0.65 |
+| `unified-64gb` | `qwen3.8-27b` | .176 | 1.18 | 532.0 | **picked for `local-64gb`**; best liam recall on the tier |
+| `unified-64gb` | `gemma4-31b` | .108 | 0.71 | 458.0 |  |
+| `unified-64gb` | `gemma4-26b-a4b` | .157 | 0.53 | 222.5 |  |
+| `unified-64gb` | `qwen3.6-35b-a3b` | .098 | 0.88 | 126.7 |  |
+| `unified-64gb` | `gpt-oss-20b` | .127 | 0.71 | 430.9 |  |
+| `unified-64gb` | `nemotron-3-nano-30b-a3b` | — | — | — | FAIL: same HTTP 500 token-repeat abort as the gerald row, case 9/17, every night |
+| `unified-64gb` | `gemma3-27b` (baseline) | .157 | 1.82 | 92.8 |  |
+
+## The pick (AC6)
+
+Owner-approved 2026-11-20 (EST-6869, card `cd872952`). atcr fans out — each
+persona runs on its own server at the same time — so each persona takes its
+best model and the three need not share one. There is no local-only rule; the
+local runs were to get numbers.
+
+| Persona | `local-32gb` (`gpu-32gb`) | `local-64gb` (`unified-64gb`) |
+|---|---|---|
+| `orson` | `gemma3:27b-it-q4_K_M` | `gemma3:27b-it-q4_K_M` |
+| `liam` | `gemma4:26b-a4b-it-q4_K_M` | `qwen3.8:27b-q4_K_M` |
+| `gerald` | not in the preset | not in the preset |
+
+The scores that decided it (recall / unmatched per case / p50 s, from the
+tables above):
+
+- `orson`: `gemma3-27b` .461 / 0.47 / 12.8 on 32 GB and .431 / 0.71 / 157.3 on
+  64 GB — the best orson recall on both tiers by a wide margin.
+- `liam`, 32 GB: `gemma4-26b-a4b` .118 / 0.65 / 34.1. The `gemma3` baseline
+  scored higher recall (.196) but 2.82 unmatched findings per case against
+  0.65; the owner picked `gemma4-26b-a4b`.
+- `liam`, 64 GB: `qwen3.8-27b` .176 / 1.18 / 532.0 — the best liam recall on
+  the tier. `liam` no longer binds `llama3.3:70b` for tier A (AC6); that
+  binding is retired.
+- `gerald`: dropped from both local presets for now. Every newer local
+  candidate scored .000–.039 recall for gerald against the `gemma3` baseline
+  (.127 on 32 GB, .167 on 64 GB), and the hosted `gpt-oss-120b` follow-up run
+  scored .020 — also below the baseline. `gerald` can still be added by hand.
+
+Memory fit at the stated quantization (AC6): the picked tags carry 17.41 GB
+(`gemma3:27b-it-q4_K_M`), 17.99 GB (`gemma4:26b-a4b-it-q4_K_M`) and 17.74 GB
+(`qwen3.8:27b-q4_K_M`) of weights — all Q4_K_M, all under 32 GB — and each
+completed the full 17-case suite on its tier, so the review context and KV
+cache fit the tier's memory in the operator's runs. No picked model needs
+more than 32 GB for tier A or 64 GB for tier B.
+
+The `local` preset aliases **`local-32gb`**. The presets, the community
+persona files and `index.json` bind these tags in code (epic 113.1 T1,
+`cli/quickstart.go`); a test fails if two of those surfaces disagree.

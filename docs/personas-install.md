@@ -316,15 +316,15 @@ Claude/GPT/Gemini-tuned personas — each prompt-phrased per that provider's own
 
 ### Local / Privacy-First (zero data egress) — opt-in
 
-For privacy-conscious teams that refuse to send proprietary code to any external API, the library ships three personas tuned for a **local** endpoint (Ollama / llama.cpp / vLLM). Every byte of the review stays on your own hardware — no external network calls once the provider points at `localhost`. Each persona is tuned for a hardware tier:
+For privacy-conscious teams that refuse to send proprietary code to any external API, the library ships three personas tuned for a **local** endpoint (Ollama / llama.cpp / vLLM). Every byte of the review stays on your own hardware — no external network calls once the provider points at `localhost`. `atcr quickstart` wires them through two memory-tier presets, `local-32gb` and `local-64gb`, binding the models the epic 113.1 benchmark picked ([results and pick](local-models-benchmark.md)):
 
-| Persona | Tier | Bound model | Review lens |
-|---------|------|-------------|-------------|
-| `gerald` | 32 GB dense (file-by-file) | `local/gemma3-27b` | secrets & data-egress |
-| `orson` | 32 GB long-context (256k, full-repo) | `local/qwen3-30b-a3b` | duplication & repo-wide redundancy |
-| `liam` | 64 GB+ heavyweight (dual-GPU / M4 Pro) | `local/llama3.3-70b` | invariants & state-consistency |
+| Persona | Presets | Bound model | Review lens |
+|---------|---------|-------------|-------------|
+| `gerald` | none — add by hand | `local/gemma3-27b-it-q4_K_M` | secrets & data-egress |
+| `orson` | `local-32gb`, `local-64gb` | `local/gemma3-27b-it-q4_K_M` | duplication & repo-wide redundancy |
+| `liam` | `local-32gb`, `local-64gb` | `local/gemma4-26b-a4b-it-q4_K_M` | invariants & state-consistency |
 
-The **Bound model** column is the discovery id the persona registers under (namespaced so `search --model` finds it); it is not the string your local server answers to. When you wire the persona, set your agent's `model` to the exact tag you pulled — e.g. `gemma3:27b`, not `local/gemma3-27b` (see the config block below). The persona ships the tuned prompt; you supply the model binding.
+`gerald` is in neither preset because no local model beat its `gemma3` baseline in the benchmark; install it and bind it by hand if you want its lens. The **Bound model** column is the discovery id the persona registers under (namespaced so `search --model` finds it); it is not the string your local server answers to. When you wire the persona, set your agent's `model` to the exact tag you pulled — e.g. `gemma3:27b-it-q4_K_M`, not `local/gemma3-27b-it-q4_K_M` (see the config block below). A persona file and its index entry can name only one model, so `liam`'s discovery id names its 32 GB tag; the `local-64gb` preset binds `liam` to `qwen3.8:27b-q4_K_M` instead. The persona ships the tuned prompt; you supply the model binding.
 
 Discover them by their `local` provider — this is the primary, unambiguous path because it filters out cloud personas that share a vendor token:
 
@@ -332,9 +332,9 @@ Discover them by their `local` provider — this is the primary, unambiguous pat
 atcr personas search --provider local
 ```
 
-You can also search by model (`gemma`, `qwen`, or `llama`), but note that `qwen` returns both the local `orson` persona and the cloud `quinn` persona, which share the same vendor token. Use `--provider local` to disambiguate.
+You can also search by model — `gemma` matches all three local personas (and no cloud persona in the library today) — but `--provider local` stays the unambiguous filter as the library grows.
 
-**One command: `atcr quickstart --preset local`.** It makes no network call and asks for no key. It writes `.atcr/` with `gerald`, `orson` and `liam` as the roster (their prompts come from the copies built into atcr, never fetched), sets `telemetry: false` in `.atcr/config.yaml`, and writes the `local` provider and the three agents shown below to `~/.config/atcr/registry.yaml`, bound to the Ollama tags `gemma3:27b`, `qwen3:30b-a3b` and `llama3.3:70b`. As with the default quickstart, an existing registry is never overwritten without `--force`: the block is printed for you to merge instead, and an existing `.atcr/config.yaml` keeps its roster (telemetry is still switched off in it). It scaffolds no CI workflow, since a hosted runner has no Ollama server to reach. Then pull the models and export the placeholder key as in steps 1–3 below, and remove from the roster any persona whose model you do not pull.
+**One command: `atcr quickstart --preset local-32gb`** (or `--preset local-64gb` for 64 GB of GPU or unified memory; `--preset local` still works and means `local-32gb`). It makes no network call and asks for no key. It writes `.atcr/` with `orson` and `liam` as the roster (their prompts come from the copies built into atcr, never fetched), sets `telemetry: false` in `.atcr/config.yaml`, and writes the `local` provider and the two agents shown below to `~/.config/atcr/registry.yaml`, bound to the Ollama tags `gemma3:27b-it-q4_K_M` (orson, both tiers) and `gemma4:26b-a4b-it-q4_K_M` (liam, 32 GB) or `qwen3.8:27b-q4_K_M` (liam, 64 GB), with the `max_tokens`, thinking and `response_format` settings each model was [benchmarked with](local-models-benchmark.md). `gerald` is in neither preset — add it by hand if you want it. As with the default quickstart, an existing registry is never overwritten without `--force`: the block is printed for you to merge instead, and an existing `.atcr/config.yaml` keeps its roster (telemetry is still switched off in it). It scaffolds no CI workflow, since a hosted runner has no Ollama server to reach. Then pull the models and export the placeholder key as in steps 1–3 below, and remove from the roster any persona whose model you do not pull.
 
 **Or set it up by hand, entirely offline:**
 
@@ -352,7 +352,7 @@ ollama pull gemma4:26b-a4b-it-q4_K_M    # liam  (local-32gb)
 export OLLAMA_API_KEY=local-no-key-needed
 ```
 
-**Wire the `local` provider in `~/.config/atcr/registry.yaml`** (the persona's `provider: local` resolves to this block; see [providers.md](providers.md) for the canonical example):
+**Wire the `local` provider in `~/.config/atcr/registry.yaml`** (the persona's `provider: local` resolves to this block; see [providers.md](providers.md) for the canonical example). This is the agent block `--preset local-32gb` writes; `--preset local-64gb` differs only in `liam`'s model tag:
 
 ```yaml
 providers:
@@ -360,10 +360,21 @@ providers:
     base_url: http://localhost:11434/v1   # ollama, llama.cpp, vllm, ...
     api_key_env: OLLAMA_API_KEY           # must name an env var that is set — even locally
 agents:
-  gerald:
+  orson:
+    persona: orson
     provider: local
-    model: gemma3:27b                     # the tag you pulled with `ollama pull`
-    role: reviewer
+    model: gemma3:27b-it-q4_K_M           # the tag you pulled with `ollama pull`
+    max_tokens: 8192
+    response_format: json_object
+  liam:
+    persona: liam
+    provider: local
+    model: gemma4:26b-a4b-it-q4_K_M       # local-64gb binds qwen3.8:27b-q4_K_M instead
+    max_tokens: 32768
+    thinking_style: reasoning_effort
+    thinking: "on"
+    thinking_level: high
+    response_format: json_object
 ```
 
 > **`api_key_env` placeholder requirement.** atcr requires every provider to declare `api_key_env`, and it errors at invoke time if that env var is unset or empty — even for a local endpoint that needs no real key. Export any non-empty placeholder value (`export OLLAMA_API_KEY=local-no-key-needed`) so the review can run. The value is never sent anywhere your `base_url` does not point; with `base_url` on `localhost`, nothing leaves the machine.
