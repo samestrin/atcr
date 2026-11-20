@@ -1004,6 +1004,25 @@ func TestLocalPresets_MatchCommunityPersonas(t *testing.T) {
 	}
 }
 
+// TestLocalPresets_DocsNamePickedTags covers the docs half of epic 113.1 AC7:
+// docs/personas-install.md and docs/air-gapped.md name every picked tag and
+// both tier presets, so a future re-pick that forgets either guide fails here
+// instead of shipping stale install instructions. The `ollama pull` lines are
+// guarded separately by TestLocalPresets_MatchCommunityPersonas.
+func TestLocalPresets_DocsNamePickedTags(t *testing.T) {
+	for _, page := range []string{"personas-install.md", "air-gapped.md"} {
+		raw, err := os.ReadFile(filepath.Join("..", "docs", page))
+		require.NoError(t, err)
+		doc := string(raw)
+		for preset, agents := range localPresets {
+			assert.Contains(t, doc, preset, "docs/%s names preset %s", page, preset)
+			for _, a := range agents {
+				assert.Contains(t, doc, a.model, "docs/%s names the %s/%s tag %s", page, preset, a.name, a.model)
+			}
+		}
+	}
+}
+
 // TestQuickstart_UnknownLocalPresetOpt: a caller that skips the command's
 // preset check still gets an error, not the 32 GB roster.
 func TestQuickstart_UnknownLocalPresetOpt(t *testing.T) {
