@@ -117,6 +117,13 @@ func ensureItemsGitignore(items string) error {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return basePathErr(err)
 	}
+	return createItemsGitignore(gi)
+}
+
+// createItemsGitignore creates the ignore file at gi with O_EXCL|O_NOFOLLOW: any
+// entry already at the name, a symlink planted after ensureItemsGitignore's
+// Lstat included, fails the open instead of being truncated or followed.
+func createItemsGitignore(gi string) error {
 	f, err := os.OpenFile(gi, os.O_CREATE|os.O_EXCL|os.O_WRONLY|openNoFollow, 0o600)
 	if err != nil {
 		return basePathErr(err)

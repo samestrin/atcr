@@ -89,3 +89,41 @@ func TestEventLayout_GitignoreSymlinkTargetNeverTruncated(t *testing.T) {
 	assert.Equal(t, "keep me\n", string(b), "the symlink target is never truncated or rewritten")
 	assertStillSymlink(t, gi, target)
 }
+
+// Epic 122 F2(a), review: the Lstat check alone is not the guard; a link planted
+// between the Lstat and the open must fail the create itself. createItemsGitignore
+// is called directly with a symlink already at the name, as that race would leave
+// it, so only the O_EXCL|O_NOFOLLOW flags stand between it and the target.
+func TestCreateItemsGitignore_RefusesSymlinkPlantedAfterLstat(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		plantTarget bool
+	}{
+		{"dangling", false},
+		{"existing target", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			items := filepath.Join(root, "items")
+			require.NoError(t, os.MkdirAll(items, 0o700))
+			target := filepath.Join(root, "outside")
+			if tc.plantTarget {
+				require.NoError(t, os.WriteFile(target, []byte("keep me\n"), 0o600))
+			}
+			gi := filepath.Join(items, itemsGitignore)
+			require.NoError(t, os.Symlink(target, gi))
+
+			err := createItemsGitignore(gi)
+			require.Error(t, err, "the create must fail on a symlink at the name")
+			assert.NotContains(t, err.Error(), root, "the absolute path is redacted")
+			if tc.plantTarget {
+				b, rerr := os.ReadFile(target)
+				require.NoError(t, rerr)
+				assert.Equal(t, "keep me\n", string(b), "the target is not truncated")
+			} else {
+				assert.NoFileExists(t, target, "no file is created through the link")
+			}
+			assertStillSymlink(t, gi, target)
+		})
+	}
+}
