@@ -208,7 +208,44 @@ atcr review --resume latest --require-coverage 100
 
 ## Agent consumption (`--axi`)
 
-`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap tunable via `ATCR_AXI_MAX_LINES`. Available on `atcr review`, bare `atcr`, and as `atcr report --format axi`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
+`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap tunable via `ATCR_AXI_MAX_LINES`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
+
+Available on:
+
+- Bare `atcr --axi`
+- `atcr review --axi`
+- `atcr report --format axi`
+- `atcr reconcile --axi`
+- `atcr verify --axi`
+- `atcr debate --axi`
+- `atcr status --axi`
+- `atcr debt clean --axi`
+- `atcr debt filter --axi`
+- `atcr debt group --axi`
+- `atcr debt validate --axi`
+
+## Limits
+
+atcr assists code review; it does not prove code correct, replace tests or human review, or guarantee that a finding is real or that a clean report is safe. Model reviewers can miss defects and disagree, and confidence measures reviewer agreement rather than correctness. Hosted providers receive the review payload; use local models when code must not leave the machine.
+
+- **Size and coverage.** Binary files are excluded from baseline reviews. A file too large for a reviewer's context window is sent once and never retried, and failed, timed-out, or empty bins remain unreviewed. A partial baseline run still exits 0 by default, so read the coverage line or set `--require-coverage`. One persona's baseline plan is limited to 512 bins by default; raise `--max-units` or narrow `--scope` when a larger plan is refused.
+- **Execution and source changes.** Review and reporting do not execute model-authored code or modify source files. `--exec` opts into sandboxed reproduction; `--auto-fix` modifies the working tree, validates changes in a sandbox, and opens a pull request but never merges it. Auto-fix fails closed when no sandbox is available. `--no-sandbox` and `--allow-config-edits` are explicit danger opt-outs that remove those safeguards.
+- **AXI exceptions.** atcr does not yet satisfy every AXI principle. The exceptions below are copied verbatim from [docs/axi-audit.md](docs/axi-audit.md); "justified" records a deliberate compatibility or scope tradeoff, not conformance with the literal principle.
+
+1. **Exception 1 — principle 1, justified:** TOON is opt-in through `--axi` or `--format axi`, while human text or JSON remains the default to preserve the established human CLI and machine-consumer contracts (`cli/main.go:569-577`, `cli/report.go:34`, `TestRootCmd_AXIFlagRegisteredOnRoot`, `TestRootCmd_BareNonAXIIsTextNotPayload`).
+2. **Exception 2 — principle 2, unjustified:** findings and debt-item lists have fixed ten-column base schemas, review summaries have twelve base columns, and no AXI surface offers `--fields` or a three-to-four-field list projection (`internal/report/standard_axi.go:113-125`, `internal/report/render.go:232-239`, `cli/debt_filter.go:233-249`, `TestDebtFilter_AXI`).
+3. **Exception 3 — principle 3, unjustified:** AXI findings cells are cut to 500 runes with an ellipsis but carry neither original field size nor a hint that `--format json` is the full-content alternative (`internal/report/render.go:41-43`, `internal/report/render.go:657-671`, `internal/report/standard_axi.go:161-170`, `TestAXIText_SanitizesBeforeTruncating`).
+4. **Exception 4 — principle 3, unjustified:** a row-truncated findings payload reports `total` and `truncated` but its `help[]` never tells the agent to raise `ATCR_AXI_MAX_LINES` to retrieve the remainder (`internal/report/pagination.go:112-136`, `cli/report.go:168-172`, `cli/main.go:696-732`, `TestReportCmd_AXITruncatesAtEnvCap`).
+5. **Exception 5 — principle 3, unjustified:** debt clean, filter, and group put complete `problem` and `fix` strings in list rows without a preview cap, total size, or full-content escape hatch (`cli/debt_filter.go:233-249`, `cli/debt_clean.go:164-197`, `cli/debt_group.go:276-305`).
+6. **Exception 6 — principle 6, justified:** AXI failures remain plain diagnostics on stderr rather than structured errors on stdout so redirected stdout is always a successful payload and existing consumers branch on the unchanged exit code (`cli/main.go:157-162`, `cli/main.go:250-259`, `TestStatusCmd_AXIMissingReview`).
+7. **Exception 7 — principle 6, justified:** AXI retains atcr's additional exit 3 for sync-cloud authentication failure instead of collapsing every non-usage failure into exit 1 because CI already uses that narrower branch (`cli/main.go:238-265`, `TestAXIExitParity_AuthErrorExitsThree`).
+8. **Exception 8 — principle 6, unjustified:** unknown flags exit 2 but name neither the command's valid flags nor a targeted replacement unless an individual command has a special case (`cli/main.go:579-583`, `cli/debt_resolve.go:213-224`, real-binary probe of an unknown flag on AXI status printed only `atcr: unknown flag: --bogus` on stderr).
+9. **Exception 9 — principle 7, unjustified:** atcr has an installable Agent Skill but no `setup` command, SessionStart hook, or OpenCode plugin to inject its live home view at session start (`cli/main.go:593-623`, `cli/skill.go:44-51`, `docs/skill-usage.md:13-56`; repository searches for `ambient` and `SessionStart` found no session integration).
+10. **Exception 10 — principle 9, unjustified:** the four debt AXI renderers return immediately after `EncodeChecked` with no contextual `help[]`, including a capped debt filter with no hint to rerun with `--max 0` (`cli/debt_filter.go:209-230`, `cli/debt_clean.go:164-197`, `cli/debt_group.go:276-305`, `cli/debt_validate.go:151-155`).
+11. **Exception 11 — principle 10, unjustified:** `--version` and `-v` succeed but `-V` is rejected with exit 2 (`cli/main.go:430-431`, real-binary version probes; `TestVersion_FlagAndSubcommandAgree` covers only the long flag and subcommand).
+12. **Exception 12 — principle 10, unjustified:** all three successful version forms print `atcr version <version>` rather than the required bare version (`cli/main.go:430-431`, `cli/version.go:44-55`, `TestVersion_FlagAndSubcommandAgree`).
+13. **Exception 13 — principle 10, unjustified:** every visible command supports `--help`, but concise references such as `status --help` omit the principle's two-to-three usage examples (`cli/main.go:593-623`, real-binary probe of all 71 visible command paths and the `status --help` output).
+14. **Exception 14 — principle 6, justified:** human-only `debt add` and `quickstart` retain optional TTY wizards, while the AXI surfaces do not prompt and debt add provides a complete flag route that fails immediately for missing values off a TTY (`cli/debt_add.go:103-134`, `cli/debt_add.go:204-253`, `cli/quickstart.go:359-360`, `TestDebtAdd_MissingRequiredNonTTYIsUsageError`).
 
 ## Keeping personas current
 
@@ -309,6 +346,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/personas-install.md](docs/personas-install.md) — discovering and installing provider and community personas
 - [docs/personas-authoring.md](docs/personas-authoring.md) — writing and submitting your own community persona
 - [docs/agentic-consumption.md](docs/agentic-consumption.md) — driving atcr from another agent via `--axi`
+- [docs/axi-audit.md](docs/axi-audit.md) — the ten AXI principles, checkable evidence, and stated exceptions
 - [docs/clean-install-check.md](docs/clean-install-check.md) — the recorded clean-install walkthrough of the quickstart
 
 ## Repository layout
