@@ -29,7 +29,7 @@ type quickstartOpts struct {
 	force          bool
 	open           bool
 	fetchCommunity bool   // fetch-and-pin community personas; false scaffolds from embedded built-ins only (the safe default for tests). The command layer sets this from !--offline.
-	preset         string // "" for the synthetic cloud funnel, presetLocal for the local-model setup
+	preset         string // "" for the synthetic cloud funnel, or a local preset (presetLocal, presetLocal32GB, presetLocal64GB)
 	in             io.Reader
 	out            io.Writer
 	errOut         io.Writer
@@ -62,8 +62,8 @@ func newQuickstartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if preset != "" && preset != presetLocal {
-				return usageError(fmt.Errorf("unknown preset %q: the only preset is %q", preset, presetLocal))
+			if preset != "" && resolvePreset(preset) == "" {
+				return usageError(fmt.Errorf("unknown preset %q: the presets are %q, %q and %q", preset, presetLocal32GB, presetLocal64GB, presetLocal))
 			}
 			return runQuickstart(quickstartOpts{
 				dir:            ".",
@@ -80,32 +80,67 @@ func newQuickstartCmd() *cobra.Command {
 	cmd.Flags().Bool("force", false, "overwrite existing configuration and workflow files")
 	cmd.Flags().Bool("open", false, "open the provider signup page in a browser")
 	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
-	cmd.Flags().String("preset", "", `"local": set up local models (Ollama) with no network, no API key and telemetry off`)
+	cmd.Flags().String("preset", "", `"local-32gb" or "local-64gb": set up local models (Ollama) for that much GPU or unified memory, with no network, no API key and telemetry off; "local" is "local-32gb"`)
 	return cmd
 }
 
-// presetLocal is the `--preset local` value: an Ollama provider plus the
-// gerald/orson/liam local personas, scaffolded with no network and telemetry off.
-const presetLocal = "local"
+// The local presets: an Ollama provider plus the local personas picked for a
+// memory tier, scaffolded with no network and telemetry off. presetLocal is an
+// alias of the tier the epic 113.1 pick names.
+const (
+	presetLocal     = "local"
+	presetLocal32GB = "local-32gb"
+	presetLocal64GB = "local-64gb"
+)
 
-// localAgents is the --preset local roster: each local community persona and
-// the Ollama tag it is bound to (docs/personas-install.md, "Local /
-// Privacy-First"). The tag is what `ollama pull` fetches, not the persona's
-// namespaced discovery id.
-var localAgents = []struct{ name, model string }{
-	{"gerald", "gemma3:27b"},
-	{"orson", "qwen3:30b-a3b"},
-	{"liam", "llama3.3:70b"},
+// resolvePreset returns the local preset a --preset value names, following
+// the `local` alias, or "" when it names none.
+func resolvePreset(preset string) string {
+	if preset == presetLocal {
+		return presetLocal32GB
+	}
+	if _, ok := localPresets[preset]; ok {
+		return preset
+	}
+	return ""
 }
 
-// localRegistryYAML is the user registry --preset local writes: one `local`
-// provider on Ollama's OpenAI-compatible endpoint and one agent per local
-// persona. atcr requires api_key_env even for a keyless endpoint, so it names
+// localAgent is one agent of a local preset: a local community persona, the
+// Ollama tag it is bound to, and the registry fields that tag was benchmarked
+// with in benchmarks/local-candidates.yaml (a thinking model needs its
+// thinking fields and a max_tokens of at least 16384, or it returns an empty
+// review).
+type localAgent struct {
+	name, model                            string
+	maxTokens                              int
+	thinkingStyle, thinking, thinkingLevel string
+	responseFormat                         string
+}
+
+// localPresets is each local preset's roster: the epic 113.1 pick (owner,
+// 2026-11-20), one model per persona per tier, scored on benchmarks/standard-v1
+// (docs/local-models-benchmark.md). gerald is in neither tier: no candidate
+// beat its gemma3 baseline, and gemma3 went to orson. The tag is what
+// `ollama pull` fetches, not the persona's namespaced discovery id.
+var localPresets = map[string][]localAgent{
+	presetLocal32GB: {
+		{name: "orson", model: "gemma3:27b-it-q4_K_M", maxTokens: 8192, responseFormat: registry.ResponseFormatJSONObject},
+		{name: "liam", model: "gemma4:26b-a4b-it-q4_K_M", maxTokens: 32768, thinkingStyle: registry.ThinkingStyleReasoningEffort, thinking: registry.ThinkingOn, thinkingLevel: registry.ThinkingLevelHigh, responseFormat: registry.ResponseFormatJSONObject},
+	},
+	presetLocal64GB: {
+		{name: "orson", model: "gemma3:27b-it-q4_K_M", maxTokens: 8192, responseFormat: registry.ResponseFormatJSONObject},
+		{name: "liam", model: "qwen3.8:27b-q4_K_M", maxTokens: 32768, thinkingStyle: registry.ThinkingStyleReasoningEffort, thinking: registry.ThinkingOn, thinkingLevel: registry.ThinkingLevelHigh, responseFormat: registry.ResponseFormatJSONObject},
+	},
+}
+
+// localRegistryYAML is the user registry a local preset writes: one `local`
+// provider on Ollama's OpenAI-compatible endpoint and one agent per persona in
+// the tier. atcr requires api_key_env even for a keyless endpoint, so it names
 // OLLAMA_API_KEY and the wizard tells the user to export a placeholder.
-func localRegistryYAML() string {
+func localRegistryYAML(preset string) string {
 	var b strings.Builder
 	b.WriteString("# atcr user registry — see docs/registry.md\n")
-	b.WriteString("# Written by `atcr quickstart --preset local`. Every review goes to the Ollama\n")
+	fmt.Fprintf(&b, "# Written by `atcr quickstart --preset %s`. Every review goes to the Ollama\n", preset)
 	b.WriteString("# server on localhost; no code leaves this machine. Ollama needs no key, but\n")
 	b.WriteString("# atcr requires the env var to be set, so export a placeholder:\n")
 	b.WriteString("#   export OLLAMA_API_KEY=local-no-key-needed\n")
@@ -114,11 +149,20 @@ func localRegistryYAML() string {
 	b.WriteString("    base_url: http://localhost:11434/v1\n")
 	b.WriteString("    api_key_env: OLLAMA_API_KEY\n")
 	b.WriteString("agents:\n")
-	for _, a := range localAgents {
+	for _, a := range localPresets[preset] {
 		fmt.Fprintf(&b, "  %s:\n", a.name)
 		fmt.Fprintf(&b, "    persona: %s\n", a.name)
 		b.WriteString("    provider: local\n")
 		fmt.Fprintf(&b, "    model: %s\n", a.model)
+		fmt.Fprintf(&b, "    max_tokens: %d\n", a.maxTokens)
+		if a.thinkingStyle != "" {
+			fmt.Fprintf(&b, "    thinking_style: %s\n", a.thinkingStyle)
+			fmt.Fprintf(&b, "    thinking: %q\n", a.thinking)
+			fmt.Fprintf(&b, "    thinking_level: %s\n", a.thinkingLevel)
+		}
+		if a.responseFormat != "" {
+			fmt.Fprintf(&b, "    response_format: %s\n", a.responseFormat)
+		}
 	}
 	return b.String()
 }
@@ -140,7 +184,7 @@ func hasWorkspaceConfig(dir string) bool {
 // steps) sets up the synthetic provider, guides the user through the API-key env
 // var, and scaffolds a CI workflow.
 func runQuickstart(o quickstartOpts) error {
-	if o.preset == presetLocal {
+	if o.preset != "" {
 		return runQuickstartLocal(o)
 	}
 	// Layer onto an existing .atcr rather than aborting: `atcr init`'s writers are
@@ -194,15 +238,20 @@ func runQuickstart(o quickstartOpts) error {
 	return nil
 }
 
-// runQuickstartLocal is `atcr quickstart --preset local`. It scaffolds .atcr/
-// with the local personas as the roster (prompts from the embedded community
+// runQuickstartLocal is `atcr quickstart --preset local-32gb|local-64gb|local`.
+// It scaffolds .atcr/ with the tier's local personas as the roster (prompts from the embedded community
 // library, never fetched), turns telemetry off, and writes the local provider
 // and agents to the user registry. It makes no network call: there is no
 // community fetch, no signup link, and no CI workflow (a hosted runner has no
 // Ollama server to reach).
 func runQuickstartLocal(o quickstartOpts) error {
-	roster := make([]string, 0, len(localAgents))
-	for _, a := range localAgents {
+	preset := resolvePreset(o.preset)
+	if preset == "" {
+		return fmt.Errorf("unknown preset %q", o.preset)
+	}
+	agents := localPresets[preset]
+	roster := make([]string, 0, len(agents))
+	for _, a := range agents {
 		roster = append(roster, a.name)
 	}
 	cfgPath := registry.DefaultProjectConfigPath(o.dir)
@@ -218,13 +267,13 @@ func runQuickstartLocal(o quickstartOpts) error {
 	}
 	_, _ = fmt.Fprintf(o.out, "  set telemetry = false in %s\n", cfgPath)
 
-	if err := writeUserRegistry(o, localRegistryYAML(), "local provider + agents", roster); err != nil {
+	if err := writeUserRegistry(o, localRegistryYAML(preset), "local provider + agents", roster); err != nil {
 		return err
 	}
 
 	_, _ = fmt.Fprintln(o.out, "\nNext, start Ollama and pull the models (each persona needs its own):")
 	_, _ = fmt.Fprintln(o.out, "  ollama serve &")
-	for _, a := range localAgents {
+	for _, a := range agents {
 		_, _ = fmt.Fprintf(o.out, "  ollama pull %s   # %s\n", a.model, a.name)
 	}
 	_, _ = fmt.Fprintln(o.out, "  export OLLAMA_API_KEY=local-no-key-needed   # any non-empty value; Ollama ignores it")

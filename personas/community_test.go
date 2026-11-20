@@ -131,8 +131,8 @@ var communityPersonas = []communityPersona{
 	{Slug: "celeste", VendorToken: "kimi", Category: "dependency"},
 	{Slug: "glenna", VendorToken: "glm", Category: "observability"},
 	{Slug: "gerald", VendorToken: "gemma", Category: "secret"},
-	{Slug: "orson", VendorToken: "qwen", Category: "duplication"},
-	{Slug: "liam", VendorToken: "llama", Category: "invariant"},
+	{Slug: "orson", VendorToken: "gemma", Category: "duplication"},
+	{Slug: "liam", VendorToken: "gemma", Category: "invariant"},
 	{Slug: "simon", VendorToken: "claude", Category: "bloat"},
 	{Slug: "nadia", VendorToken: "qwen", Category: "security"},
 	{Slug: "felix", VendorToken: "claude", Category: "out-of-scope"},
@@ -418,7 +418,8 @@ func TestCommunityIndex_Registration(t *testing.T) {
 
 // TestCommunityIndex_CloudPersonaTagArity guards the roster tag schema: cloud
 // (openrouter) personas carry exactly 4 tags — [primary, secondary, vendor-token,
-// pool-class] — while only local personas add a 5th hardware-tier tag. Without
+// pool-class] — while only local personas add tier tags (one per local preset
+// they are in, checked against cli/quickstart.go by the cli tests). Without
 // this guard an off-schema 5-tag cloud entry ships silently and muddies tag
 // discovery (the simon "over-engineering" drift).
 func TestCommunityIndex_CloudPersonaTagArity(t *testing.T) {
@@ -599,8 +600,8 @@ func TestCommunityModel(t *testing.T) {
 // `ollama pull` tag the offline-setup docs must cite. The library's local
 // personas follow one convention: strip the `local/` provider namespace, then
 // turn the first hyphen (the family↔variant separator) into ollama's `:` tag
-// delimiter — local/gemma3-27b→gemma3:27b, local/qwen3-30b-a3b→qwen3:30b-a3b,
-// local/llama3.3-70b→llama3.3:70b. A future local persona that does not follow
+// delimiter — local/gemma3-27b-it-q4_K_M→gemma3:27b-it-q4_K_M,
+// local/gemma4-26b-a4b-it-q4_K_M→gemma4:26b-a4b-it-q4_K_M. A future local persona that does not follow
 // this convention surfaces here as a deliberate review point.
 func localModelToOllamaTag(model string) string {
 	return strings.Replace(strings.TrimPrefix(model, "local/"), "-", ":", 1)

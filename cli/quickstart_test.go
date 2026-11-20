@@ -2,16 +2,19 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -702,6 +705,12 @@ func (f failingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // home and every HTTP path wired to fail.
 func runPresetLocal(t *testing.T, home string, extra ...string) (dir string, out, errOut *bytes.Buffer, err error) {
 	t.Helper()
+	return runPreset(t, home, presetLocal, extra...)
+}
+
+// runPreset is runPresetLocal for any --preset value.
+func runPreset(t *testing.T, home, preset string, extra ...string) (dir string, out, errOut *bytes.Buffer, err error) {
+	t.Helper()
 	dir = t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HOME", home)
@@ -715,24 +724,46 @@ func runPresetLocal(t *testing.T, home string, extra ...string) (dir string, out
 
 	out, errOut = &bytes.Buffer{}, &bytes.Buffer{}
 	root := NewRootCmd()
-	root.SetArgs(append([]string{"quickstart", "--preset", "local"}, extra...))
+	root.SetArgs(append([]string{"quickstart", "--preset", preset}, extra...))
 	root.SetIn(strings.NewReader(quickstartInput))
 	root.SetOut(out)
 	root.SetErr(errOut)
 	return dir, out, errOut, root.Execute()
 }
 
-// TestQuickstart_PresetLocal_FreshHome covers Epic 36.3 AC1: on a fresh HOME
-// with a transport that fails on any request, `--preset local` exits 0, writes
-// a valid registry with a local provider and the gerald/orson/liam agents, sets
-// telemetry off, and makes no network call.
-func TestQuickstart_PresetLocal_FreshHome(t *testing.T) {
+// wantLocalAgent is the registry agent a local preset must write: the picked
+// Ollama tag and the fields benchmarks/local-candidates.yaml benchmarked it
+// with (epic 113.1 AC6).
+type wantLocalAgent struct {
+	model, thinkingStyle, thinking, thinkingLevel string
+	maxTokens                                     int
+}
+
+// wantLocalPresets is the owner's pick (epic 113.1 AC6, 2026-11-20): orson on
+// gemma3 in both tiers, liam on gemma4-26b-a4b (32 GB) or qwen3.8-27b (64 GB),
+// gerald in neither until a model beats its gemma3 baseline.
+var wantLocalPresets = map[string]map[string]wantLocalAgent{
+	"local-32gb": {
+		"orson": {model: "gemma3:27b-it-q4_K_M", maxTokens: 8192},
+		"liam":  {model: "gemma4:26b-a4b-it-q4_K_M", thinkingStyle: "reasoning_effort", thinking: "on", thinkingLevel: "high", maxTokens: 32768},
+	},
+	"local-64gb": {
+		"orson": {model: "gemma3:27b-it-q4_K_M", maxTokens: 8192},
+		"liam":  {model: "qwen3.8:27b-q4_K_M", thinkingStyle: "reasoning_effort", thinking: "on", thinkingLevel: "high", maxTokens: 32768},
+	},
+}
+
+// assertLocalPresetRun checks one `--preset` run on a fresh HOME: a valid
+// registry with only the local provider and the tier's agents, a roster that
+// resolves against it, telemetry off, and no cloud signup or CI workflow.
+func assertLocalPresetRun(t *testing.T, preset string, want map[string]wantLocalAgent) {
+	t.Helper()
 	home := t.TempDir()
-	dir, out, _, err := runPresetLocal(t, home)
+	dir, out, _, err := runPreset(t, home, preset)
 	require.NoError(t, err)
 
 	reg, err := registry.LoadRegistry(filepath.Join(home, ".config", "atcr", "registry.yaml"))
-	require.NoError(t, err, "--preset local writes a valid registry.yaml")
+	require.NoError(t, err, "--preset %s writes a valid registry.yaml", preset)
 	local, ok := reg.Providers["local"]
 	require.True(t, ok, "local provider is defined")
 	assert.Equal(t, "http://localhost:11434/v1", local.BaseURL)
@@ -740,21 +771,29 @@ func TestQuickstart_PresetLocal_FreshHome(t *testing.T) {
 	_, synthetic := reg.Providers["synthetic"]
 	assert.False(t, synthetic, "no cloud provider in the local preset")
 
-	wantModels := map[string]string{"gerald": "gemma3:27b", "orson": "qwen3:30b-a3b", "liam": "llama3.3:70b"}
-	require.Len(t, reg.Agents, len(wantModels))
-	for name, model := range wantModels {
+	require.Len(t, reg.Agents, len(want))
+	roster := make([]string, 0, len(want))
+	for name, w := range want {
+		roster = append(roster, name)
 		a, ok := reg.Agents[name]
 		require.True(t, ok, "agent %s is defined", name)
 		assert.Equal(t, "local", a.Provider, "agent %s binds the local provider", name)
-		assert.Equal(t, model, a.Model, "agent %s binds the Ollama tag", name)
+		assert.Equal(t, w.model, a.Model, "agent %s binds the picked Ollama tag", name)
 		assert.Equal(t, name, a.Persona)
+		assert.Equal(t, w.thinkingStyle, a.ThinkingStyle, "agent %s thinking_style", name)
+		assert.Equal(t, w.thinking, a.Thinking, "agent %s thinking", name)
+		assert.Equal(t, w.thinkingLevel, a.ThinkingLevel, "agent %s thinking_level", name)
+		assert.Equal(t, registry.ResponseFormatJSONObject, a.ResponseFormat, "agent %s response_format", name)
+		require.NotNil(t, a.MaxTokens, "agent %s max_tokens", name)
+		assert.Equal(t, w.maxTokens, *a.MaxTokens, "agent %s max_tokens", name)
 		assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", name+".md"), "the embedded %s prompt is scaffolded", name)
+		assert.Contains(t, out.String(), "ollama pull "+w.model, "the pull line for %s is printed", name)
 	}
 
 	// The roster must resolve against the registry, or the first review fails.
 	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"gerald", "orson", "liam"}, cfg.Agents)
+	assert.ElementsMatch(t, roster, cfg.Agents)
 	assert.NoError(t, cfg.ValidateAgainst(reg), "roster resolves against the local registry")
 
 	telemetry, err := registry.LoadTelemetrySetting(dir)
@@ -764,6 +803,18 @@ func TestQuickstart_PresetLocal_FreshHome(t *testing.T) {
 
 	assert.NotContains(t, out.String(), "Sign up for", "no cloud signup link in the local preset")
 	assert.NoFileExists(t, filepath.Join(dir, ".github", "workflows", "atcr.yml"), "no cloud CI workflow in the local preset")
+}
+
+// TestQuickstart_PresetLocal_FreshHome covers Epic 36.3 AC1 and epic 113.1
+// AC7: on a fresh HOME with a transport that fails on any request, each local
+// preset exits 0, writes a valid registry with a local provider and the tier's
+// picked agents, sets telemetry off, and makes no network call. `local` is an
+// alias of `local-32gb` (AC6).
+func TestQuickstart_PresetLocal_FreshHome(t *testing.T) {
+	for _, preset := range []string{"local-32gb", "local-64gb"} {
+		t.Run(preset, func(t *testing.T) { assertLocalPresetRun(t, preset, wantLocalPresets[preset]) })
+	}
+	t.Run("local", func(t *testing.T) { assertLocalPresetRun(t, "local", wantLocalPresets["local-32gb"]) })
 }
 
 // TestQuickstart_PresetLocal_ExistingRegistryNotOverwritten covers Epic 36.3
@@ -783,7 +834,7 @@ func TestQuickstart_PresetLocal_ExistingRegistryNotOverwritten(t *testing.T) {
 	assert.Equal(t, "# user's own registry\n", string(data), "existing registry left intact")
 	assert.Contains(t, errOut.String(), "not overwriting")
 	assert.Contains(t, out.String(), "  local:\n    base_url: http://localhost:11434/v1\n", "the local provider block is printed to merge")
-	for _, name := range []string{"gerald", "orson", "liam"} {
+	for _, name := range []string{"orson", "liam"} {
 		assert.Contains(t, out.String(), "  "+name+":\n", "agent %s is in the printed block", name)
 	}
 }
@@ -819,7 +870,7 @@ func TestQuickstart_PresetLocal_ExistingConfigGetsTelemetryOff(t *testing.T) {
 		errOut: errOut,
 	}))
 	assert.Contains(t, errOut.String(), "Using existing workspace")
-	assert.Contains(t, errOut.String(), "add gerald, orson, liam to the agents list", "the user is told the kept roster lacks the local agents")
+	assert.Contains(t, errOut.String(), "add orson, liam to the agents list", "the user is told the kept roster lacks the local agents")
 	telemetry, err := registry.LoadTelemetrySetting(dir)
 	require.NoError(t, err)
 	require.NotNil(t, telemetry)
@@ -837,4 +888,127 @@ func TestQuickstart_UnknownPreset_IsUsageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown preset "cloud"`)
 	assert.Equal(t, exitUsage, exitCode(err), "an unknown preset is a usage error")
+}
+
+// presetTierTag is the index.json tag a local persona carries when it is in a
+// preset, and presetBenchTier the benchmarks/local-candidates.yaml tier the
+// preset's tags were scored on.
+var (
+	presetTierTag   = map[string]string{presetLocal32GB: "tier-32gb", presetLocal64GB: "tier-64gb"}
+	presetBenchTier = map[string]string{presetLocal32GB: "gpu-32gb", presetLocal64GB: "unified-64gb"}
+)
+
+// TestLocalPresets_MatchBenchmarkProfiles covers epic 113.1 AC7: every agent a
+// local preset writes runs its tag with the profile it was benchmarked with.
+// A tag missing from benchmarks/local-candidates.yaml, a tag not scored on the
+// preset's tier, or a max_tokens/thinking/response_format field that differs
+// from the candidate's fails here.
+func TestLocalPresets_MatchBenchmarkProfiles(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "benchmarks", "local-candidates.yaml"))
+	require.NoError(t, err)
+	var file struct {
+		Candidates []struct {
+			OllamaTag      string   `yaml:"ollama_tag"`
+			Tiers          []string `yaml:"tiers"`
+			ThinkingStyle  string   `yaml:"thinking_style"`
+			Thinking       string   `yaml:"thinking"`
+			ThinkingLevel  string   `yaml:"thinking_level"`
+			MaxTokens      int      `yaml:"max_tokens"`
+			ResponseFormat string   `yaml:"response_format"`
+		} `yaml:"candidates"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &file))
+
+	require.Len(t, localPresets, len(presetTierTag), "every local preset has a tier tag and a benchmark tier")
+	for preset, agents := range localPresets {
+		require.NotEmpty(t, agents, "preset %s has agents", preset)
+		for _, a := range agents {
+			var found bool
+			for _, c := range file.Candidates {
+				if c.OllamaTag != a.model {
+					continue
+				}
+				found = true
+				assert.Contains(t, c.Tiers, presetBenchTier[preset], "%s/%s: %s was not benchmarked on the preset's tier", preset, a.name, a.model)
+				assert.Equal(t, c.MaxTokens, a.maxTokens, "%s/%s max_tokens", preset, a.name)
+				assert.Equal(t, c.ThinkingStyle, a.thinkingStyle, "%s/%s thinking_style", preset, a.name)
+				assert.Equal(t, c.Thinking, a.thinking, "%s/%s thinking", preset, a.name)
+				assert.Equal(t, c.ThinkingLevel, a.thinkingLevel, "%s/%s thinking_level", preset, a.name)
+				assert.Equal(t, c.ResponseFormat, a.responseFormat, "%s/%s response_format", preset, a.name)
+			}
+			assert.True(t, found, "%s/%s: %s is not a candidate in benchmarks/local-candidates.yaml", preset, a.name, a.model)
+		}
+	}
+}
+
+// TestLocalPresets_MatchCommunityPersonas covers epic 113.1 AC7: the presets,
+// the community persona files, index.json and docs/personas-install.md name
+// the same tags. A local persona's index.json tier tags are exactly the
+// presets it is in; one in the `local` alias tier binds that tier's tag in its
+// persona file and index entry (local/<family>-<variant> for <family>:<variant>);
+// every preset tag has an `ollama pull` line in the install guide.
+func TestLocalPresets_MatchCommunityPersonas(t *testing.T) {
+	assert.Equal(t, presetLocal32GB, resolvePreset(presetLocal), "`local` aliases the tier the pick names (AC6)")
+
+	raw, err := os.ReadFile(filepath.Join("..", "personas", "community", "index.json"))
+	require.NoError(t, err)
+	var index []struct {
+		Name     string   `json:"name"`
+		Path     string   `json:"path"`
+		Provider string   `json:"provider"`
+		Model    string   `json:"model"`
+		Tags     []string `json:"tags"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &index))
+
+	tagOf := func(preset, name string) (string, bool) {
+		for _, a := range localPresets[preset] {
+			if a.name == name {
+				return a.model, true
+			}
+		}
+		return "", false
+	}
+
+	localPersonas := map[string]bool{}
+	for _, e := range index {
+		if e.Provider != "local" {
+			continue
+		}
+		localPersonas[e.Name] = true
+		for preset, tierTag := range presetTierTag {
+			_, in := tagOf(preset, e.Name)
+			assert.Equal(t, in, slices.Contains(e.Tags, tierTag), "index.json %s: tag %q must be present exactly when it is in preset %s", e.Name, tierTag, preset)
+		}
+
+		yraw, err := os.ReadFile(filepath.Join("..", "personas", "community", e.Path))
+		require.NoError(t, err)
+		var y struct {
+			Model string `yaml:"model"`
+		}
+		require.NoError(t, yaml.Unmarshal(yraw, &y))
+		assert.Equal(t, e.Model, y.Model, "%s: persona file and index.json model", e.Name)
+
+		if tag, in := tagOf(resolvePreset(presetLocal), e.Name); in {
+			assert.Equal(t, "local/"+strings.Replace(tag, ":", "-", 1), e.Model, "%s: index.json model names the `local` tier tag", e.Name)
+		}
+	}
+
+	doc, err := os.ReadFile(filepath.Join("..", "docs", "personas-install.md"))
+	require.NoError(t, err)
+	for preset, agents := range localPresets {
+		for _, a := range agents {
+			assert.True(t, localPersonas[a.name], "%s/%s is a provider:local persona in index.json", preset, a.name)
+			assert.Contains(t, string(doc), "ollama pull "+a.model, "docs/personas-install.md documents the %s/%s pull", preset, a.name)
+		}
+	}
+}
+
+// TestQuickstart_UnknownLocalPresetOpt: a caller that skips the command's
+// preset check still gets an error, not the 32 GB roster.
+func TestQuickstart_UnknownLocalPresetOpt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	err := runQuickstart(quickstartOpts{dir: t.TempDir(), preset: "local-16gb", in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown preset "local-16gb"`)
 }

@@ -1,7 +1,7 @@
 name: orson
-version: 1.1.0
-description: Qwen long-context duplication and repo-wide redundancy reviewer (local 256k lens)
+version: 1.2.0
+description: Gemma duplication and repo-wide redundancy reviewer (local long-context lens)
 provider: local
-model: local/qwen3-30b-a3b
+model: local/gemma3-27b-it-q4_K_M
 persona: orson
 role: reviewer
