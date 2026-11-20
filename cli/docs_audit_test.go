@@ -36,6 +36,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/telemetry"
 	"github.com/samestrin/atcr/internal/telemetrytest"
 	"github.com/samestrin/atcr/internal/verify"
@@ -2750,4 +2751,591 @@ func TestDocExampleTelemetryEscapeFails(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), fmt.Sprintf("exit %d", docsExampleEscapeExit))
 	require.Contains(t, err.Error(), "telemetry send escaped the test-host allowlist")
+}
+
+// ---------------------------------------------------------------------------
+// Epic 114 T4: keep the AXI audit, the catalog entry and the README honest.
+//
+// Three drift guards over the epic-114 documentation set:
+//   (a) every path:line cited in docs/axi-audit.md names an existing file with
+//       at least that many lines;
+//   (b) every numbered exception clause in docs/axi-catalog-entry.yaml's
+//       `exception` string is anchored to the README `Limits` section, and the
+//       Limits entries stay verbatim copies of the audit's exceptions (the
+//       README's own "copied verbatim" claim);
+//   (c) the README `Agent consumption` --axi command list matches the compiled
+//       command tree in BOTH directions (plan 114 AC2): every listed command
+//       registers --axi (report's `--format axi` is checked against the format
+//       enum instead), and every command that registers a local --axi is
+//       listed.
+// ---------------------------------------------------------------------------
+
+// fileLineCitation is one `path:line` or `path:line-line` evidence reference in
+// a document, with the document line it appears on for error messages.
+type fileLineCitation struct {
+	path    string
+	start   int
+	end     int
+	docLine int
+}
+
+// reFileLineCitation matches a repo-relative file path (it must carry a file
+// extension, so prose times and URL schemes never match) followed by :line or
+// :line-line.
+var reFileLineCitation = regexp.MustCompile(`\b([A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?\b`)
+
+// fileLineCitations extracts every path:line citation from md.
+func fileLineCitations(md string) []fileLineCitation {
+	var out []fileLineCitation
+	for _, m := range reFileLineCitation.FindAllStringSubmatchIndex(md, -1) {
+		start, _ := strconv.Atoi(md[m[4]:m[5]])
+		end := start
+		if m[6] >= 0 {
+			end, _ = strconv.Atoi(md[m[6]:m[7]])
+		}
+		out = append(out, fileLineCitation{
+			path:    md[m[2]:m[3]],
+			start:   start,
+			end:     end,
+			docLine: 1 + strings.Count(md[:m[0]], "\n"),
+		})
+	}
+	return out
+}
+
+// validateFileLineCitations checks each citation against the tree rooted at
+// root: the path must name an existing regular file, the range must be
+// well-formed (1 <= start <= end), and the file must have at least `end` lines.
+func validateFileLineCitations(root string, cits []fileLineCitation) []string {
+	var errs []string
+	type fileInfo struct {
+		lines int
+		err   string // non-empty when the path cannot supply lines
+	}
+	cache := map[string]fileInfo{}
+	for _, c := range cits {
+		where := fmt.Sprintf("line %d cites %s:%d", c.docLine, c.path, c.start)
+		if c.end != c.start {
+			where = fmt.Sprintf("line %d cites %s:%d-%d", c.docLine, c.path, c.start, c.end)
+		}
+		if c.start < 1 || c.end < c.start {
+			errs = append(errs, where+": malformed line range")
+			continue
+		}
+		fi, ok := cache[c.path]
+		if !ok {
+			info, err := os.Stat(filepath.Join(root, c.path))
+			switch {
+			case err != nil || info.IsDir():
+				fi.err = "no such file in the repository"
+			default:
+				b, err := os.ReadFile(filepath.Join(root, c.path))
+				if err != nil {
+					fi.err = "unreadable file: " + err.Error()
+				} else {
+					fi.lines = strings.Count(string(b), "\n")
+					if len(b) > 0 && b[len(b)-1] != '\n' {
+						fi.lines++ // a final line without a trailing newline still counts
+					}
+				}
+			}
+			cache[c.path] = fi
+		}
+		if fi.err != "" {
+			errs = append(errs, where+": "+fi.err)
+			continue
+		}
+		if c.end > fi.lines {
+			errs = append(errs, fmt.Sprintf("%s: the file has only %d lines", where, fi.lines))
+		}
+	}
+	return errs
+}
+
+// TestAXIAuditCitesOnlyExistingFileLines is guard (a): every path:line cited in
+// docs/axi-audit.md must name an existing file with at least that many lines.
+// A citation to a deleted, renamed or shortened file turns CI red instead of
+// shipping an audit whose evidence no longer resolves.
+func TestAXIAuditCitesOnlyExistingFileLines(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "axi-audit.md"))
+	if err != nil {
+		t.Fatalf("docs/axi-audit.md must exist (epic 114 T1): %v", err)
+	}
+	cits := fileLineCitations(string(b))
+	if len(cits) == 0 {
+		t.Fatal("docs/axi-audit.md cites no path:line evidence; the audit's claims must stay checkable")
+	}
+	for _, e := range validateFileLineCitations(root, cits) {
+		t.Errorf("docs/axi-audit.md %s", e)
+	}
+}
+
+// exceptionEntry is one numbered AXI exception as written in the audit's
+// `## Exceptions` list and copied into the README `Limits` section.
+type exceptionEntry struct {
+	num       int
+	principle int
+	verdict   string
+	text      string
+}
+
+var reExceptionEntry = regexp.MustCompile(`(?m)^(\d+)\. \*\*Exception (\d+) — principle (\d+), (justified|unjustified):\*\* (.+)$`)
+
+// parseExceptionEntries reads the numbered exception entries of a section. The
+// list number and the "Exception N" number must agree, and a number may appear
+// only once.
+func parseExceptionEntries(section string) (map[int]exceptionEntry, []string) {
+	out := map[int]exceptionEntry{}
+	var errs []string
+	for _, m := range reExceptionEntry.FindAllStringSubmatch(section, -1) {
+		listNum, _ := strconv.Atoi(m[1])
+		num, _ := strconv.Atoi(m[2])
+		principle, _ := strconv.Atoi(m[3])
+		if listNum != num {
+			errs = append(errs, fmt.Sprintf("list item %d is labeled Exception %d; the numbers must agree", listNum, num))
+			continue
+		}
+		if _, dup := out[num]; dup {
+			errs = append(errs, fmt.Sprintf("Exception %d appears more than once", num))
+			continue
+		}
+		out[num] = exceptionEntry{num: num, principle: principle, verdict: m[4], text: m[5]}
+	}
+	return out, errs
+}
+
+// catalogExceptionClauses splits the catalog entry's `exception` scalar into
+// its numbered `(N)` clauses. The catalog condenses the audit's sentences, so
+// each clause is the unit that must stay anchored to a README Limits entry.
+// Trailing group labels ("Justified:", "Unjustified gaps:") are presentation,
+// not clause content.
+func catalogExceptionClauses(s string) (map[int]string, []string) {
+	re := regexp.MustCompile(`\((\d+)\)\s*`)
+	locs := re.FindAllStringSubmatchIndex(s, -1)
+	if len(locs) == 0 {
+		return nil, []string{"the exception string has no numbered (N) clauses"}
+	}
+	out := map[int]string{}
+	var errs []string
+	for i, loc := range locs {
+		num, _ := strconv.Atoi(s[loc[2]:loc[3]])
+		end := len(s)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		text := strings.TrimSpace(s[loc[1]:end])
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(strings.TrimSuffix(text, "Unjustified gaps:")), "Justified:"))
+		text = strings.TrimSpace(strings.TrimRight(text, " ;."))
+		if text == "" {
+			errs = append(errs, fmt.Sprintf("exception clause (%d) is empty", num))
+			continue
+		}
+		if _, dup := out[num]; dup {
+			errs = append(errs, fmt.Sprintf("exception clause (%d) appears more than once", num))
+			continue
+		}
+		out[num] = text
+	}
+	return out, errs
+}
+
+// exceptionWords normalizes a clause or entry for content comparison:
+// lowercase, backticks and quotes removed (the catalog writes --axi bare where
+// the audit backticks it), whitespace collapsed, edge punctuation trimmed.
+func exceptionWords(s string) []string {
+	s = strings.NewReplacer("`", "", "'", "", `"`, "").Replace(strings.ToLower(s))
+	var out []string
+	for _, w := range strings.Fields(s) {
+		if w = strings.Trim(w, ".,;:()[]"); w != "" {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// longestCommonWordRun returns the length of the longest contiguous run of
+// words shared by a and b.
+func longestCommonWordRun(a, b []string) int {
+	best := 0
+	prev := make([]int, len(b)+1)
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		for j := 1; j <= len(b); j++ {
+			if a[i-1] == b[j-1] {
+				cur[j] = prev[j-1] + 1
+				if cur[j] > best {
+					best = cur[j]
+				}
+			}
+		}
+		prev = cur
+	}
+	return best
+}
+
+// minExceptionWordRun anchors a catalog clause to its README Limits entry. The
+// catalog paraphrases the audit (none of its clauses is a verbatim substring of
+// the README), so containment cannot be asserted; a shared contiguous run of at
+// least this many words ties the clause to the actual sentence rather than to
+// mere topic overlap. Every real clause/entry pair at the audit's revision
+// scores 6 or more; an unrelated sentence scores below the floor.
+const minExceptionWordRun = 5
+
+// TestAXICatalogExceptionsAppearInReadmeLimits is guard (b): every numbered
+// exception clause in docs/axi-catalog-entry.yaml's `exception` string must
+// appear in the README `Limits` section. "Appear" is checked three ways,
+// because the catalog condenses the audit's wording while the README copies it
+// verbatim:
+//   - the catalog clause numbers and the Limits entry numbers are the same set
+//     (deleting a Limits line, or dropping a clause from the entry, is red);
+//   - each Limits entry stays verbatim-equal to the audit's exception of the
+//     same number — the README's own "copied verbatim from docs/axi-audit.md"
+//     claim — so a rewritten Limits line is red even if it keeps the number;
+//   - each catalog clause shares a contiguous word run of at least
+//     minExceptionWordRun words with its Limits entry, so a clause rewritten to
+//     say something else is red even while its number survives.
+func TestAXICatalogExceptionsAppearInReadmeLimits(t *testing.T) {
+	root := repoRootDir(t)
+	read := func(rel string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(b)
+	}
+	var entries []struct {
+		Admission struct {
+			Exception string `yaml:"exception"`
+		} `yaml:"admission"`
+	}
+	if err := yaml.Unmarshal([]byte(read("docs/axi-catalog-entry.yaml")), &entries); err != nil {
+		t.Fatalf("docs/axi-catalog-entry.yaml must parse: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Admission.Exception == "" {
+		t.Fatal("docs/axi-catalog-entry.yaml must hold one entry with a non-empty admission.exception string")
+	}
+	limits, ok := markdownSection(read("README.md"), regexp.MustCompile(`^Limits$`))
+	if !ok {
+		t.Fatal("README.md has no `## Limits` section (epic 114 T3)")
+	}
+	auditExceptions, ok := markdownSection(read("docs/axi-audit.md"), regexp.MustCompile(`^Exceptions$`))
+	if !ok {
+		t.Fatal("docs/axi-audit.md has no `## Exceptions` section (epic 114 T1)")
+	}
+
+	clauses, clauseErrs := catalogExceptionClauses(entries[0].Admission.Exception)
+	limitsEntries, limitsErrs := parseExceptionEntries(limits)
+	auditEntries, auditErrs := parseExceptionEntries(auditExceptions)
+	for _, e := range append(append(clauseErrs, limitsErrs...), auditErrs...) {
+		t.Errorf("%s", e)
+	}
+	if len(clauses) == 0 || len(limitsEntries) == 0 || len(auditEntries) == 0 {
+		t.Fatal("the catalog exception string, the README Limits section and the audit Exceptions section must all carry numbered exceptions")
+	}
+
+	for n := range clauses {
+		if _, ok := limitsEntries[n]; !ok {
+			t.Errorf("catalog exception (%d) has no numbered entry in the README Limits section", n)
+		}
+	}
+	for n := range limitsEntries {
+		if _, ok := clauses[n]; !ok {
+			t.Errorf("README Limits exception %d is not named in the catalog exception string; the two must not drift apart", n)
+		}
+		ae, ok := auditEntries[n]
+		if !ok {
+			t.Errorf("README Limits exception %d has no counterpart in docs/axi-audit.md", n)
+			continue
+		}
+		le := limitsEntries[n]
+		if le.principle != ae.principle || le.verdict != ae.verdict || le.text != ae.text {
+			t.Errorf("README Limits exception %d is no longer verbatim from docs/axi-audit.md; the section claims the exceptions are copied verbatim", n)
+		}
+	}
+	for n := range auditEntries {
+		if _, ok := limitsEntries[n]; !ok {
+			t.Errorf("docs/axi-audit.md exception %d is missing from the README Limits section", n)
+		}
+	}
+	for n, clause := range clauses {
+		le, ok := limitsEntries[n]
+		if !ok {
+			continue // already reported above
+		}
+		if run := longestCommonWordRun(exceptionWords(clause), exceptionWords(le.text)); run < minExceptionWordRun {
+			t.Errorf("catalog exception (%d) no longer matches README Limits exception %d (longest shared word run %d < %d); the clause and the Limits entry must state the same exception", n, n, run, minExceptionWordRun)
+		}
+	}
+}
+
+// axiListForward checks the listed half of guard (c): every `atcr ...`
+// invocation the Agent consumption section lists must address a real command
+// and carry --axi registered on that very command (a local flag, not one
+// inherited from an ancestor), or --format axi on a command whose --format
+// enum admits axi. It returns the errors plus the coverage the reverse check
+// needs: the set of listed command paths ("" is the bare root) and whether
+// `report --format axi` was listed.
+func axiListForward(section string) (errs []string, listed map[string]bool, listedReportAXI bool) {
+	listed = map[string]bool{}
+	cmds := canonicalCommands()
+	invs := atcrInvocations(section, cmds)
+	if len(invs) == 0 {
+		return []string{"the Agent consumption section lists no `atcr ...` invocations"}, listed, false
+	}
+	for _, tokens := range invs {
+		cur := NewRootCmd()
+		var path []string
+		bad := false
+		for _, tok := range tokens {
+			if strings.HasPrefix(tok, "-") {
+				break
+			}
+			var next *cobra.Command
+			for _, sub := range cur.Commands() {
+				if sub.Name() == tok {
+					next = sub
+					break
+				}
+			}
+			if next == nil {
+				errs = append(errs, fmt.Sprintf("the Agent consumption list names `atcr %s` but %q is not a real command", strings.Join(tokens, " "), tok))
+				bad = true
+				break
+			}
+			cur = next
+			path = append(path, tok)
+		}
+		if bad {
+			continue
+		}
+		hasAXI, hasFormatAXI := false, false
+		for i, tok := range tokens {
+			switch {
+			case tok == "--axi":
+				hasAXI = true
+			case tok == "--format=axi", tok == "--format" && i+1 < len(tokens) && tokens[i+1] == "axi":
+				hasFormatAXI = true
+			}
+		}
+		switch {
+		case hasFormatAXI:
+			if cur.LocalFlags().Lookup("format") == nil {
+				errs = append(errs, fmt.Sprintf("the Agent consumption list gives `atcr %s` a --format axi route, but that command has no --format flag", strings.Join(path, " ")))
+				continue
+			}
+			if !report.ValidFormat(report.FormatAXI) {
+				errs = append(errs, "the Agent consumption list advertises `--format axi` but the report format enum no longer admits axi")
+				continue
+			}
+			listedReportAXI = true
+		case hasAXI:
+			if cur.LocalFlags().Lookup("axi") == nil {
+				errs = append(errs, fmt.Sprintf("the Agent consumption list names `atcr %s --axi` but that command does not register --axi", strings.Join(path, " ")))
+				continue
+			}
+			listed[strings.Join(path, " ")] = true
+		default:
+			errs = append(errs, fmt.Sprintf("the Agent consumption list names `atcr %s` without --axi or --format axi", strings.Join(tokens, " ")))
+		}
+	}
+	return errs, listed, listedReportAXI
+}
+
+// axiListOmissions checks the reverse half of guard (c) (plan 114 AC2: the
+// list "matches the code"): every command registering a local --axi must be
+// listed, and while the format enum admits axi, `report --format axi` must be
+// listed too. Deleting a bullet (e.g. `debt validate`) is red.
+func axiListOmissions(listed map[string]bool, listedReportAXI bool) []string {
+	var errs []string
+	var walk func(c *cobra.Command, path []string)
+	walk = func(c *cobra.Command, path []string) {
+		if c.LocalFlags().Lookup("axi") != nil && !listed[strings.Join(path, " ")] {
+			name := strings.Join(path, " ")
+			if name == "" {
+				name = "(bare atcr)"
+			}
+			errs = append(errs, fmt.Sprintf("`atcr %s` registers --axi but the Agent consumption list omits it", name))
+		}
+		for _, sub := range c.Commands() {
+			// Fresh slice per child: no shared backing array between siblings.
+			childPath := make([]string, len(path)+1)
+			copy(childPath, path)
+			childPath[len(path)] = sub.Name()
+			walk(sub, childPath)
+		}
+	}
+	walk(NewRootCmd(), nil)
+	if report.ValidFormat(report.FormatAXI) && !listedReportAXI {
+		errs = append(errs, "the report format enum admits axi but the Agent consumption list omits `atcr report --format axi`")
+	}
+	return errs
+}
+
+// TestReadmeAXICommandListMatchesCompiledTree is guard (c): the README Agent
+// consumption section's --axi command list matches the compiled command tree
+// in both directions.
+func TestReadmeAXICommandListMatchesCompiledTree(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	section, ok := markdownSection(string(b), regexp.MustCompile(`^Agent consumption`))
+	if !ok {
+		t.Fatal("README.md has no `## Agent consumption` section")
+	}
+	errs, listed, listedReportAXI := axiListForward(section)
+	errs = append(errs, axiListOmissions(listed, listedReportAXI)...)
+	for _, e := range errs {
+		t.Errorf("%s", e)
+	}
+}
+
+// TestFileLineCitationValidation is the both-ways test for guard (a)'s
+// validator: real files and ranges pass; a missing file, a shortened file, a
+// range past the end, a reversed range and line zero are each rejected.
+func TestFileLineCitationValidation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n\nvar X = 1\n") // 3 lines
+	writeFile(t, filepath.Join(root, "b.md"), "one\ntwo")                 // 2 lines, no trailing newline
+
+	good := []fileLineCitation{
+		{path: "a.go", start: 1, end: 3, docLine: 1},
+		{path: "a.go", start: 2, end: 2, docLine: 2},
+		{path: "b.md", start: 2, end: 2, docLine: 3},
+	}
+	require.Empty(t, validateFileLineCitations(root, good))
+
+	for _, tc := range []struct {
+		name string
+		cit  fileLineCitation
+		want string
+	}{
+		{"missing file", fileLineCitation{path: "nope.go", start: 1, end: 1, docLine: 4}, "no such file"},
+		{"past end", fileLineCitation{path: "a.go", start: 4, end: 4, docLine: 5}, "only 3 lines"},
+		{"range past end", fileLineCitation{path: "a.go", start: 2, end: 9, docLine: 6}, "only 3 lines"},
+		{"reversed range", fileLineCitation{path: "a.go", start: 3, end: 1, docLine: 7}, "malformed line range"},
+		{"line zero", fileLineCitation{path: "a.go", start: 0, end: 0, docLine: 8}, "malformed line range"},
+		{"directory is not a file", fileLineCitation{path: ".", start: 1, end: 1, docLine: 9}, "no such file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateFileLineCitations(root, []fileLineCitation{tc.cit})
+			require.Len(t, errs, 1)
+			require.Contains(t, errs[0], tc.want)
+		})
+	}
+}
+
+// TestFileLineCitationsExtraction pins the extractor: backticked single lines
+// and ranges are captured with their document line, while URL paths without a
+// line number and prose are not.
+func TestFileLineCitationsExtraction(t *testing.T) {
+	md := "# Audit\n\nSee `cli/main.go:569-577` and `go.mod:40`.\nA [link](https://x.example/docs/axi-audit.md) is not a citation.\n`skills/atcr/SKILL.md:14`\n"
+	got := fileLineCitations(md)
+	require.Equal(t, []fileLineCitation{
+		{path: "cli/main.go", start: 569, end: 577, docLine: 3},
+		{path: "go.mod", start: 40, end: 40, docLine: 3},
+		{path: "skills/atcr/SKILL.md", start: 14, end: 14, docLine: 5},
+	}, got)
+}
+
+// TestCatalogExceptionClauses pins the clause splitter both ways: numbered
+// clauses are read with group labels stripped, and a string with no clauses, a
+// duplicate number or an empty clause is rejected.
+func TestCatalogExceptionClauses(t *testing.T) {
+	good := "Three stated exceptions. Justified: (1) alpha beta gamma; (6) delta epsilon. Unjustified gaps: (2) zeta eta theta."
+	clauses, errs := catalogExceptionClauses(good)
+	require.Empty(t, errs)
+	require.Equal(t, map[int]string{1: "alpha beta gamma", 6: "delta epsilon", 2: "zeta eta theta"}, clauses)
+
+	for _, tc := range []struct {
+		name string
+		s    string
+		want string
+	}{
+		{"no clauses", "Fourteen stated exceptions, all fine.", "no numbered (N) clauses"},
+		{"duplicate", "(1) alpha; (1) beta.", "appears more than once"},
+		{"empty clause", "(1) ; (2) beta.", "clause (1) is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errs := catalogExceptionClauses(tc.s)
+			require.NotEmpty(t, errs)
+			require.Contains(t, strings.Join(errs, "\n"), tc.want)
+		})
+	}
+}
+
+// TestExceptionWordRunAnchor pins the content anchor both ways: a paraphrase
+// that keeps a contiguous run of the real sentence passes, an unrelated
+// sentence fails, and the floor itself is exact (a run of minExceptionWordRun
+// words passes, one word fewer fails).
+func TestExceptionWordRunAnchor(t *testing.T) {
+	entry := "TOON is opt-in through `--axi` or `--format axi`, while human text or JSON remains the default to preserve the established human CLI and machine-consumer contracts (`cli/main.go:569-577`)."
+	clause := "TOON is opt-in through --axi or --format axi, while human text or JSON stays the default to preserve the human CLI and machine-consumer contracts"
+	require.GreaterOrEqual(t, longestCommonWordRun(exceptionWords(clause), exceptionWords(entry)), minExceptionWordRun)
+
+	unrelated := "the debt store keeps every record forever and never prunes old shards"
+	require.Less(t, longestCommonWordRun(exceptionWords(unrelated), exceptionWords(entry)), minExceptionWordRun)
+
+	a := exceptionWords("one two three four five six")
+	require.Equal(t, minExceptionWordRun, longestCommonWordRun(a, exceptionWords("zero one two three four five")))
+	require.Equal(t, minExceptionWordRun-1, longestCommonWordRun(a, exceptionWords("zero one two three four")))
+}
+
+// TestAXIListForwardValidation is the both-ways test for guard (c)'s listed
+// half: real --axi commands and the report format route pass; a command
+// without the flag, an inherited-only flag, an unknown command and a listing
+// with no AXI route at all are each rejected.
+func TestAXIListForwardValidation(t *testing.T) {
+	good := "Available on:\n\n- Bare `atcr --axi`\n- `atcr debt validate --axi`\n- `atcr report --format axi`\n"
+	errs, listed, listedReportAXI := axiListForward(good)
+	require.Empty(t, errs)
+	require.True(t, listed[""])
+	require.True(t, listed["debt validate"])
+	require.True(t, listedReportAXI)
+
+	for _, tc := range []struct {
+		name    string
+		section string
+		want    string
+	}{
+		{"command without the flag", "- `atcr init --axi`\n", "does not register --axi"},
+		{"flag is local, not inherited", "- `atcr config --axi`\n", "does not register --axi"},
+		{"unknown command", "- `atcr frobnicate --axi`\n", "not a real command"},
+		{"no axi route", "- `atcr review`\n", "without --axi or --format axi"},
+		{"format route on a command without --format", "- `atcr review --format axi`\n", "no --format flag"},
+		{"empty list", "Available on: nothing yet.\n", "lists no `atcr ...` invocations"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs, _, _ := axiListForward(tc.section)
+			require.NotEmpty(t, errs)
+			require.Contains(t, strings.Join(errs, "\n"), tc.want)
+		})
+	}
+}
+
+// TestAXIListOmissions pins the reverse half of guard (c): a fully listed tree
+// has no omissions, while dropping a registered command's bullet (the
+// `debt validate` case the issue names) or the report format route is red.
+func TestAXIListOmissions(t *testing.T) {
+	full := map[string]bool{
+		"": true, "review": true, "reconcile": true, "verify": true, "debate": true, "status": true,
+		"debt clean": true, "debt filter": true, "debt group": true, "debt validate": true,
+	}
+	require.Empty(t, axiListOmissions(full, true))
+
+	withoutValidate := map[string]bool{}
+	for k, v := range full {
+		withoutValidate[k] = v
+	}
+	delete(withoutValidate, "debt validate")
+	errs := axiListOmissions(withoutValidate, true)
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0], "debt validate")
+
+	errs = axiListOmissions(full, false)
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0], "report --format axi")
 }
