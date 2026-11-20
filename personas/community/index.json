@@ -111,7 +111,7 @@
   },
   {
     "name": "orson",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Gemma duplication and repo-wide redundancy reviewer (local long-context lens)",
     "path": "orson.yaml",
     "provider": "local",
@@ -121,7 +121,7 @@
   },
   {
     "name": "liam",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "description": "Gemma invariant and state-consistency reviewer (local MoE thinking lens)",
     "path": "liam.yaml",
     "provider": "local",

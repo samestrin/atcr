@@ -596,6 +596,38 @@ func TestCommunityModel(t *testing.T) {
 	require.Error(t, err)
 }
 
+// modelFamilyRe matches a model-family name at the start of a word. It covers
+// every roster VendorToken plus llama and mistral, families a local persona
+// was bound to in the past. The leading \b keeps "ollama" from matching llama.
+var modelFamilyRe = regexp.MustCompile(`(?i)\b(claude|gpt|gemini|gemma|deepseek|qwen|kimi|glm|llama|mistral)`)
+
+// TestCommunityPersonas_PromptNamesOnlyBoundFamily guards the epic 113.1 drift:
+// T1 rebound orson (Qwen) and liam (Llama) to Gemma in their yaml, but their
+// prompts and vendor-guidance comments still told the model it was Qwen or
+// Llama. Every model family a prompt names must appear in its yaml `model:`.
+// A prompt may name no family at all, which is how liam stays correct across
+// local presets that bind it to different families per hardware tier.
+func TestCommunityPersonas_PromptNamesOnlyBoundFamily(t *testing.T) {
+	for _, p := range communityPersonas {
+		t.Run(p.Slug, func(t *testing.T) {
+			raw, err := os.ReadFile(communityPath(p.Slug + ".yaml"))
+			require.NoErrorf(t, err, "read yaml %s", p.Slug)
+			var meta struct {
+				Model string `yaml:"model"`
+			}
+			require.NoErrorf(t, yaml.Unmarshal(raw, &meta), "parse yaml %s", p.Slug)
+			model := strings.ToLower(meta.Model)
+
+			text, err := os.ReadFile(communityPath(p.Slug + ".md"))
+			require.NoErrorf(t, err, "read prompt %s", p.Slug)
+			for _, m := range modelFamilyRe.FindAllString(string(text), -1) {
+				require.Containsf(t, model, strings.ToLower(m),
+					"persona %q prompt names model family %q but its yaml binds %q", p.Slug, m, meta.Model)
+			}
+		})
+	}
+}
+
 // localModelToOllamaTag maps a community index `local/<model>` slug to the
 // `ollama pull` tag the offline-setup docs must cite. The library's local
 // personas follow one convention: strip the `local/` provider namespace, then
