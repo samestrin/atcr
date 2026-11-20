@@ -722,3 +722,74 @@ func TestFinishConversion_AShardAlreadyRemoved(t *testing.T) {
 	requireConversionFinished(t, dir)
 	assert.Equal(t, before, foldedAll(t, dir))
 }
+
+// committedConversion leaves the store as a run that died right after it committed
+// its plan: every event staged, the shards in place.
+func committedConversion(t *testing.T) (dir string, before []Record) {
+	t.Helper()
+	dir = buildStore(t, layoutShards)
+	before = foldedAll(t, dir)
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	_, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	return dir, before
+}
+
+// TestFinishConversion_KeepsAShardThatCannotConvertAnyMore: a named shard that gained
+// a line the converter cannot carry has no event list to check; it is kept rather
+// than taken as having nothing to publish.
+func TestFinishConversion_KeepsAShardThatCannotConvertAnyMore(t *testing.T) {
+	dir, before := committedConversion(t)
+	shards := shardNames(t, dir)
+	shard := shards[len(shards)-1]
+	f, err := os.OpenFile(filepath.Join(dir, shard), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString("{not a record\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	err = finishConversion(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), shard+" changed after the conversion was committed")
+	assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+	recs, err := ReadAll(dir, quiet)
+	require.NoError(t, err)
+	assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }), "no record is lost")
+}
+
+// TestFinishConversion_OnlyARegularFileIsAnEvent: a directory or a dangling symlink
+// under an event's name is not that event. The publish loop skips the one and
+// renames the other into items/, so counting either as present would remove the
+// shard and lose its record.
+func TestFinishConversion_OnlyARegularFileIsAnEvent(t *testing.T) {
+	for _, odd := range []struct {
+		name string
+		make func(t *testing.T, path string)
+	}{
+		{"directory", func(t *testing.T, path string) { require.NoError(t, os.Mkdir(path, 0o700)) }},
+		{"dangling symlink", func(t *testing.T, path string) {
+			require.NoError(t, os.Symlink(filepath.Join(filepath.Dir(path), "nowhere"), path))
+		}},
+	} {
+		t.Run(odd.name, func(t *testing.T) {
+			dir, before := committedConversion(t)
+			shards := shardNames(t, dir)
+			staging := filepath.Join(dir, convertSubdir)
+			plan, err := planConversion(dir)
+			require.NoError(t, err)
+			ev := filepath.Join(staging, plan.events[0].name)
+			require.NoError(t, os.Remove(ev))
+			odd.make(t, ev)
+
+			err = finishConversion(dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), plan.events[0].name)
+			assert.Equal(t, shards, shardNames(t, dir), "no shard is removed")
+			recs, err := ReadAll(dir, quiet)
+			require.NoError(t, err)
+			assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }), "no record is lost")
+		})
+	}
+}
