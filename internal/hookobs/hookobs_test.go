@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -1197,4 +1198,43 @@ func TestWithReviewObserver_UncomparableStderrDoesNotPanic(t *testing.T) {
 		ctx = WithReviewObserver(ctx, &recordingReviewObserver{}, sliceWriter{})
 	})
 	ReviewComplete(ctx, sampleReport())
+}
+
+type recordingFixObserver struct{ got []FixReport }
+
+func (r *recordingFixObserver) OnFixApplied(_ context.Context, rep FixReport) {
+	r.got = append(r.got, rep)
+}
+
+type panickingFixObserver struct{}
+
+func (panickingFixObserver) OnFixApplied(context.Context, FixReport) { panic("boom") }
+
+func TestFixApplied_NoObserverIsNoop(t *testing.T) {
+	require.NotPanics(t, func() { FixApplied(context.Background(), FixReport{RunID: "r"}) })
+	require.NotPanics(t, func() {
+		FixApplied(WithFixObserver(context.Background(), nil, io.Discard), FixReport{RunID: "r"})
+	})
+}
+
+func TestFixApplied_ReachesObserver(t *testing.T) {
+	obs := &recordingFixObserver{}
+	ctx := WithFixObserver(context.Background(), obs, io.Discard)
+
+	FixApplied(ctx, FixReport{RunID: "r1", Files: []FixedFile{{Path: "a", Diff: "d"}}})
+
+	require.Len(t, obs.got, 1)
+	require.Equal(t, "r1", obs.got[0].RunID)
+}
+
+func TestFixApplied_PanickingObserverRecovered(t *testing.T) {
+	var stderr bytes.Buffer
+	ctx := WithFixObserver(context.Background(), panickingFixObserver{}, &stderr)
+
+	require.NotPanics(t, func() { FixApplied(ctx, FixReport{RunID: "r"}) })
+	require.Contains(t, stderr.String(), "fix-applied hook panicked")
+
+	require.NotPanics(t, func() {
+		FixApplied(WithFixObserver(context.Background(), panickingFixObserver{}, nil), FixReport{})
+	})
 }

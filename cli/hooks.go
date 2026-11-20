@@ -309,6 +309,43 @@ type Hooks struct {
 	// review, after its artifacts are written. A failed review does not fire
 	// it, and neither does a standalone `atcr reconcile`.
 	ReviewComplete ReviewCompleteObserver
+
+	// FixApplied observes `atcr review --auto-fix`: one call per run whose
+	// patch applied and passed local validation, after its backups are dropped
+	// and before any GitHub call. A run that reverts — apply failure,
+	// validation failure, validation that cannot run — does not fire it.
+	FixApplied FixAppliedObserver
+}
+
+// FixApplied is one validated auto-fix: the files it left applied in the
+// working tree.
+//
+// SENSITIVE DATA. Diff is source code, verbatim, written by a model; it can
+// carry anything the code under review does. Everything ModelInvocation says
+// about redacting before persisting applies here identically.
+type FixApplied struct {
+	// RunID is the review id, as in ModelInvocation.RunID. Empty when the
+	// fix ran outside a review that stamped one.
+	RunID string
+	// Files is every file the fix applied, in apply order. Validation is
+	// all-or-nothing, so a reported fix never carries a file that was reverted.
+	Files []AppliedFile
+}
+
+// AppliedFile is one file of an applied fix.
+type AppliedFile struct {
+	// Path is relative to the repository root, as named in the diff.
+	Path string
+	// Diff is the unified diff applied to Path, verbatim.
+	Diff string
+}
+
+// FixAppliedObserver receives one call per validated auto-fix. It has the same
+// contract as ReviewCompleteObserver: safe for concurrent use, prompt, no
+// error return, and a panic is recovered and reported on stderr without
+// changing the run's outcome.
+type FixAppliedObserver interface {
+	OnFixApplied(context.Context, FixApplied)
 }
 
 // ReviewReport is the summary of one completed review. It carries no diff
@@ -457,6 +494,24 @@ func (a reviewObserverAdapter) OnReviewComplete(ctx context.Context, in hookobs.
 	a.observer.OnReviewComplete(ctx, rep)
 }
 
+// fixObserverAdapter is the only place hookobs.FixReport and FixApplied meet.
+type fixObserverAdapter struct {
+	observer FixAppliedObserver
+}
+
+func (a fixObserverAdapter) OnFixApplied(ctx context.Context, in hookobs.FixReport) {
+	fa := FixApplied{RunID: in.RunID}
+	// Copied, not shared, so a consumer that writes to the slice cannot reach
+	// back into the producer's value.
+	if len(in.Files) > 0 {
+		fa.Files = make([]AppliedFile, len(in.Files))
+		for i, f := range in.Files {
+			fa.Files[i] = AppliedFile{Path: f.Path, Diff: f.Diff}
+		}
+	}
+	a.observer.OnFixApplied(ctx, fa)
+}
+
 // adaptToolCalls converts the internal tool-call shape into the exported one.
 func adaptToolCalls(calls []hookobs.ToolCall) []ModelToolCall {
 	if len(calls) == 0 {
@@ -486,6 +541,10 @@ func withHooks(ctx context.Context, hooks Hooks, stderr io.Writer) context.Conte
 	}
 	if hooks.ReviewComplete != nil {
 		ctx = hookobs.WithReviewObserver(ctx, reviewObserverAdapter{observer: hooks.ReviewComplete}, stderr)
+	}
+	// Attached only when set, for the same reason as the review observer.
+	if hooks.FixApplied != nil {
+		ctx = hookobs.WithFixObserver(ctx, fixObserverAdapter{observer: hooks.FixApplied}, stderr)
 	}
 	return ctx
 }
