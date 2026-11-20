@@ -1,0 +1,1 @@
+- The README now states atcr's review, size, execution, and safety limits, lists all AXI output commands, and carries the AXI audit's exceptions and a link to the full audit. (epic 114)
