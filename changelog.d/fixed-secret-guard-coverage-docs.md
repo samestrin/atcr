@@ -1,0 +1,1 @@
+- `docs/security.md` and `docs/providers.md` now say that debate seats and the verify skeptic and fix-executor prompts are scanned by `secret_guard` under the registry's policy, and that doctor probes are not scanned; they had called that coverage planned. The README now says `atcr init` writes nine reviewer personas plus their shared `_base.md` template (epic 114).

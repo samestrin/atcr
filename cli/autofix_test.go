@@ -25,6 +25,7 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
+	"github.com/samestrin/atcr/internal/webhook"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -546,7 +547,7 @@ func TestOrchestrateAutoFix_UsageLineNoSummary(t *testing.T) {
 	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
 	require.NoError(t, err)
 	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
-	require.NotContains(t, buf.String(), autoFixUsagePrefix)
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
 }
 
 // TestOrchestrateAutoFix_UsageLineUnreadableSummary: a pool summary that exists
@@ -561,7 +562,7 @@ func TestOrchestrateAutoFix_UsageLineUnreadableSummary(t *testing.T) {
 	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "")
 	require.Error(t, err)
 	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
-	require.NotContains(t, buf.String(), autoFixUsagePrefix)
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
 }
 
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -

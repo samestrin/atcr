@@ -10,7 +10,7 @@ import (
 // Epic 35.20 AC8: docs/providers.md and docs/security.md must state the
 // secret_guard setting, its default and tiers, the gitleaks vs built-in
 // fallback, the fail-closed block behavior, the review prompt and tool-loop
-// scope, the planned caller-policy coverage, and the three-layer model
+// scope, the debate/verify coverage and the doctor exclusion, and the three-layer model
 // (pre-commit scanner, egress guard, presidio).
 // CHANGELOG.md's Unreleased section must carry the entry.
 //
@@ -39,7 +39,8 @@ func TestSecretGuardDoc_ProvidersPrivacySection(t *testing.T) {
 		{"review prompt and tool-loop results", "the review prompt and subsequent tool-loop traffic must be covered"},
 		{"sprint-plan scope constraint", "the guard also scans the scope constraint; the doc must say so"},
 		{"Persona text is not scanned", "persona text is rendered after the scan; the doc must not claim it is covered"},
-		{"Debate, verify and doctor traffic will be scanned once their callers set the policy (slice 106.3)", "the planned coverage and its caller-policy precondition must be stated"},
+		{"Debate seats and the verify skeptic and fix-executor prompts are scanned too", "debate and verify set the policy (epic 106.3); the doc must say they are covered"},
+		{"Doctor probes are not scanned", "doctor sends no policy; the doc must not claim it is covered"},
 		{"never the value", "the no-secret-material-in-output property must be stated"},
 		{"pre-commit", "layer 1 of the three-layer model"},
 		{"egress guard", "layer 2 of the three-layer model"},
@@ -49,6 +50,8 @@ func TestSecretGuardDoc_ProvidersPrivacySection(t *testing.T) {
 			t.Errorf("docs/providers.md's Privacy and redaction section must state %q: %s", must.phrase, must.why)
 		}
 	}
+	require.NotContains(t, section, "will be scanned once their callers set the policy",
+		"debate and verify already set the policy; the doc must not call that coverage planned")
 }
 
 func TestSecretGuardDoc_SecurityPage(t *testing.T) {
@@ -57,7 +60,8 @@ func TestSecretGuardDoc_SecurityPage(t *testing.T) {
 		{"`secret_guard`", "the security page must name the setting"},
 		{"review prompt and tool-loop results", "the security page must state that the review prompt and subsequent tool-loop traffic are covered"},
 		{"Persona text is not scanned", "the security page must not claim persona text is covered"},
-		{"Debate, verify and doctor traffic will be scanned once their callers set the policy (slice 106.3)", "the security page must state the planned coverage and its caller-policy precondition"},
+		{"Debate seats and the verify skeptic and fix-executor prompts are scanned too", "debate and verify set the policy (epic 106.3); the security page must say they are covered"},
+		{"Doctor probes are not scanned", "doctor sends no policy; the security page must not claim it is covered"},
 		{"pre-commit", "layer 1 of the three-layer model"},
 		{"egress guard", "layer 2 of the three-layer model"},
 		{"presidio", "layer 3 of the three-layer model"},
@@ -67,6 +71,8 @@ func TestSecretGuardDoc_SecurityPage(t *testing.T) {
 			t.Errorf("docs/security.md must state %q: %s", must.phrase, must.why)
 		}
 	}
+	require.NotContains(t, doc, "will be scanned once their callers set the policy",
+		"debate and verify already set the policy; the security page must not call that coverage planned")
 }
 
 // The entry sits in whichever section the release cut put it in, so this reads
