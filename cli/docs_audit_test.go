@@ -3241,6 +3241,43 @@ func TestFileLineCitationsExtraction(t *testing.T) {
 	}, got)
 }
 
+// TestParseExceptionEntries pins the entry parser both ways: a well-numbered
+// section is read with principle, verdict and text intact, and a list number
+// that disagrees with its "Exception N" label or a duplicated Exception N is
+// rejected. The duplicate guard is load-bearing: without it the second entry
+// would silently overwrite the first and guard (b) would stay green.
+func TestParseExceptionEntries(t *testing.T) {
+	good := "1. **Exception 1 — principle 3, justified:** alpha beta gamma.\n" +
+		"2. **Exception 2 — principle 1, unjustified:** delta epsilon.\n"
+	entries, errs := parseExceptionEntries(good)
+	require.Empty(t, errs)
+	require.Equal(t, map[int]exceptionEntry{
+		1: {num: 1, principle: 3, verdict: "justified", text: "alpha beta gamma."},
+		2: {num: 2, principle: 1, verdict: "unjustified", text: "delta epsilon."},
+	}, entries)
+
+	for _, tc := range []struct {
+		name string
+		s    string
+		want string
+	}{
+		{"list number mismatch", "1. **Exception 2 — principle 3, justified:** alpha.\n", "list item 1 is labeled Exception 2"},
+		{"duplicate exception number", "1. **Exception 1 — principle 3, justified:** first wins.\n1. **Exception 1 — principle 3, justified:** must not overwrite.\n", "Exception 1 appears more than once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errs := parseExceptionEntries(tc.s)
+			require.Len(t, errs, 1)
+			require.Contains(t, errs[0], tc.want)
+		})
+	}
+
+	// On a duplicate the first entry is kept, not silently last-won.
+	dup := "1. **Exception 1 — principle 3, justified:** first wins.\n1. **Exception 1 — principle 3, justified:** must not overwrite.\n"
+	entries, errs = parseExceptionEntries(dup)
+	require.NotEmpty(t, errs)
+	require.Equal(t, "first wins.", entries[1].text)
+}
+
 // TestCatalogExceptionClauses pins the clause splitter both ways: numbered
 // clauses are read with group labels stripped, and a string with no clauses, a
 // duplicate number or an empty clause is rejected.
