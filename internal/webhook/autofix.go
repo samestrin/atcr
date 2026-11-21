@@ -27,10 +27,12 @@ const (
 	autoFixLogChunk = 64 << 10
 	// autoFixLogLineRunes caps one logged output line, after redaction.
 	autoFixLogLineRunes = 1000
-	// autoFixUsagePrefix starts the token usage line `atcr review --auto-fix`
-	// ends with. It must match autoFixUsagePrefix in cli/autofix.go.
-	autoFixUsagePrefix = "atcr-auto-fix-usage:"
 )
+
+// AutoFixUsagePrefix starts the token usage line `atcr review --auto-fix` ends
+// with. cli/autofix.go writes the line with this constant and the runner reads
+// it back, so the writer and the reader cannot drift apart.
+const AutoFixUsagePrefix = "atcr-auto-fix-usage:"
 
 var (
 	// ErrNoPushToken is returned when the push-token variable is not named or
@@ -202,7 +204,7 @@ func (r *AutoFixRunner) chargeUsage(label string, out *autoFixLogWriter) error {
 // It must start the line and carry tokens_in and tokens_out once each, as
 // non-negative integers; other fields are ignored.
 func parseAutoFixUsage(line string) (in, out int, ok bool) {
-	rest, found := strings.CutPrefix(line, autoFixUsagePrefix)
+	rest, found := strings.CutPrefix(line, AutoFixUsagePrefix)
 	if !found {
 		return 0, 0, false
 	}

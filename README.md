@@ -62,7 +62,7 @@ atcr review && atcr reconcile
 atcr report --format md
 ```
 
-Prefer to wire a provider by hand? `atcr init` scaffolds the project config and the nine editable personas into `.atcr/`; then point a provider + agents at any OpenAI-compatible endpoint in `~/.config/atcr/registry.yaml` (see [docs/registry.md](docs/registry.md)) and export its key (for example `export OPENROUTER_API_KEY=sk-...`).
+Prefer to wire a provider by hand? `atcr init` scaffolds the project config, the nine editable reviewer personas and their shared `_base.md` template into `.atcr/`; then point a provider + agents at any OpenAI-compatible endpoint in `~/.config/atcr/registry.yaml` (see [docs/registry.md](docs/registry.md)) and export its key (for example `export OPENROUTER_API_KEY=sk-...`).
 
 ### Choosing a provider
 
@@ -94,7 +94,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config and 
 | `atcr report` | Render md / json / checklist / sarif / axi views over the reconciled findings |
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
 | `atcr status` | Print a review's progress as JSON while it runs and after: personas finished so far, each persona's chunk progress and last activity, and the latest finished stage (`fanout` → `reviewed` → `reconciled` → `verified` → `debated`) — see [docs/status.md](docs/status.md) |
-| `atcr init` | Write `.atcr/config.yaml` and the nine default personas (editable) into `.atcr/personas/`, recording what it wrote in `.atcr/personas/.stamp.json`; `--refresh-personas` overwrites built-in copies that have fallen behind the embedded ones (see [Keeping personas current](#keeping-personas-current)) |
+| `atcr init` | Write `.atcr/config.yaml`, the nine default reviewer personas and their shared `_base.md` template (all editable) into `.atcr/personas/`, recording what it wrote in `.atcr/personas/.stamp.json`; `--refresh-personas` overwrites built-in copies that have fallen behind the embedded ones (see [Keeping personas current](#keeping-personas-current)) |
 | `atcr quickstart` | Interactive onboarding: scaffold `.atcr/` (reusing `init`), set up the synthetic provider + API-key env var, and scaffold a CI workflow (`--open`, `--force`, `--offline`); `--preset local` instead sets up the local Ollama provider and the `gerald`/`orson`/`liam` personas with no network call and telemetry off |
 | `atcr config` | Update project configuration in `.atcr/config.yaml` via `atcr config set <telemetry\|quality_signal> <true\|false>` |
 | `atcr serve` | Run the MCP stdio server over the same engine |
@@ -355,7 +355,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - `cli/` — the importable command tree (all subcommand logic)
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `report`, `mcp`, `verify`, `debate`, `autofix`, `sandbox`, `scorecard`, `telemetry`, and more)
 - `reconcile/` — the deterministic reconciler as a standalone Go module (importable as a library; wired into the build via `go.work`)
-- `personas/` — the nine embedded default personas + `_base.md`
+- `personas/` — the nine embedded default reviewer personas, `_base.md`, and `nora.md` (the threat-model mapper prompt, not a reviewer and not installed by `atcr init`)
 - `skills/atcr/` — the atcr Agent Skill (host review + orchestration); it is embedded in the binary, so `atcr skill export` installs it
 - `docs/` — user documentation
 - `examples/` — CI gate script, a live-audit example, and sample executor registries

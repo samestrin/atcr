@@ -21,6 +21,7 @@ import (
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
+	"github.com/samestrin/atcr/internal/webhook"
 	"github.com/spf13/cobra"
 )
 
@@ -786,10 +787,6 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 	return err
 }
 
-// autoFixUsagePrefix starts the usage line an `atcr review --auto-fix` run ends
-// with. The webhook auto-fix runner reads the line to enforce its token caps.
-const autoFixUsagePrefix = "atcr-auto-fix-usage:"
-
 // writeAutoFixUsage prints the machine-readable usage line:
 //
 //	atcr-auto-fix-usage: tokens_in=<n> tokens_out=<n> scope=review-fanout not_counted=verify,debate,reconcile
@@ -812,7 +809,7 @@ func writeAutoFixUsage(out io.Writer, reviewDir string) {
 		outTokens += a.TokensOut
 	}
 	_, _ = fmt.Fprintf(out, "%s tokens_in=%d tokens_out=%d scope=review-fanout not_counted=verify,debate,reconcile\n",
-		autoFixUsagePrefix, in, outTokens)
+		webhook.AutoFixUsagePrefix, in, outTokens)
 }
 
 func orchestrateAutoFixRun(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
