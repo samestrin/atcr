@@ -98,12 +98,16 @@ func TestDocs_PayloadModesToolAgentSection(t *testing.T) {
 }
 
 // AC 06-04 S3 + Edge 1: README documents the 3-10× cost guidance and links to
-// docs/registry.md for the budget fields.
+// docs/registry.md for the budget fields. No committed measurement backs the
+// range, so the README must present it as an estimate bounded by the default
+// max_turns of 10, not as an observed figure.
 func TestDocs_ReadmeCostGuidance(t *testing.T) {
 	data, err := os.ReadFile("../../README.md")
 	require.NoError(t, err)
 	content := string(data)
 	assert.Contains(t, content, "3-10×", "README missing the 3-10× cost guidance")
+	assert.Contains(t, content, "an estimate, not a measurement", "README must label the 3-10× range an estimate")
+	assert.NotContains(t, content, "typically consumes 3-10×", "README must not state the unmeasured range as typical")
 	assert.Contains(t, content, "docs/registry.md", "README must link to docs/registry.md for budgets")
 	assert.Truef(t, strings.Contains(content, "tool"), "README should mention tool agents")
 }

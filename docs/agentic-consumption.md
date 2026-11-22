@@ -284,7 +284,7 @@ byte-clean file. Under `--axi`:
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
   logs, governed by [`ATCR_LOG_LEVEL` and `--log-format`](logging.md) and passed
-  through the same redaction sink. Structured errors also go to stderr, not
+  through the same redaction sink. Error diagnostics also go to stderr, not
   stdout (axi.md Principle 6 reconciliation), so an agent branches on the exit
   code and never has to parse stdout for an error case.
 
@@ -389,8 +389,10 @@ different document, the anonymized public submission, and is always JSON
 
 Three commands are left out on purpose. `atcr range` and `atcr status` print
 JSON and nothing else, so a flag would change nothing. `atcr trust` authorizes
-providers; it is not a report. `atcr audit-report`, `atcr benchmark fit` and
-`atcr personas search` print reports with no machine-readable form yet.
+providers; it is not a report. Four more print reports with no `--json` yet:
+`atcr audit-report`, `atcr benchmark fit`, `atcr debt report` (use
+`atcr debt list --json` for the machine-readable form) and
+`atcr personas search`.
 `cli/json_convention_test.go` walks the command tree and fails when a new
 report-producing command has no `--json`.
 
