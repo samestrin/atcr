@@ -136,7 +136,7 @@ Environment variables:
 - `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. AST grouping covers Go, Python, TypeScript/JavaScript, PHP, Rust, Bash, Java, Kotlin, C/C++, and C#; any other file type falls back to line proximity. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
 - `ATCR_TIER4_INDEX_MAX_FILES` — overrides the 5000-file cap on the Tier 4 symbol index `atcr reconcile` builds when resolving findings whose cited file does not exist. A tracked tree over the cap disables Tier 4 for the run (counted by `atcr_tier4_index_unavailable_total`); set this to a positive integer to raise or lower the cap. An unparseable or non-positive value falls back to the default.
 - `ATCR_TELEMETRY` — names the **enabled** state (note the inverse direction vs. `ATCR_DISABLE_AST_GROUPING`): `ATCR_TELEMETRY=0` disables the anonymous usage ping. See [docs/telemetry.md](docs/telemetry.md).
-- `ATCR_API_KEY` — API key for `--sync-cloud` telemetry uploads; a missing or rejected key exits with code **3**.
+- `ATCR_API_KEY` — API key for `--sync-cloud` telemetry uploads; a missing or rejected key exits with code **3** when `--cloud-endpoint` is set (without `--cloud-endpoint` the run exits **2** first, as a usage error).
 - `ATCR_AXI_MAX_LINES` — caps `--axi` output before truncation (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).
 
 ### Redirecting output for orchestrators (`--output-dir`)
@@ -240,7 +240,7 @@ atcr assists code review; it does not prove code correct, replace tests or human
 6. **Exception 6 — principle 6, justified:** AXI failures remain plain diagnostics on stderr rather than structured errors on stdout so redirected stdout is always a successful payload and existing consumers branch on the unchanged exit code (`cli/main.go:157-162`, `cli/main.go:250-259`, `TestStatusCmd_AXIMissingReview`).
 7. **Exception 7 — principle 6, justified:** AXI retains atcr's additional exit 3 for sync-cloud authentication failure instead of collapsing every non-usage failure into exit 1 because CI already uses that narrower branch (`cli/main.go:238-265`, `TestAXIExitParity_AuthErrorExitsThree`).
 8. **Exception 8 — principle 6, unjustified:** unknown flags exit 2 but name neither the command's valid flags nor a targeted replacement unless an individual command has a special case (`cli/main.go:579-583`, `cli/debt_resolve.go:213-224`, real-binary probe of an unknown flag on AXI status printed only `atcr: unknown flag: --bogus` on stderr).
-9. **Exception 9 — principle 7, unjustified:** atcr has an installable Agent Skill but no `setup` command, SessionStart hook, or OpenCode plugin to inject its live home view at session start (`cli/main.go:593-623`, `cli/skill.go:44-51`, `docs/skill-usage.md:13-56`; repository searches for `ambient` and `SessionStart` found no session integration).
+9. **Exception 9 — principle 7, unjustified:** atcr has an installable Agent Skill but no `setup` command, SessionStart hook, or OpenCode plugin to inject its live home view at session start, and the skill's command examples need `atcr` already on `PATH` instead of a form that runs without a global install, such as `go run github.com/samestrin/atcr/cmd/atcr@<version>`, as the principle's non-interactive-commands rule asks (`cli/main.go:593-623`, `cli/skill.go:44-51`, `docs/skill-usage.md:13-56`, `skills/atcr/SKILL.md:20`; repository searches for `ambient` and `SessionStart` found no session integration).
 10. **Exception 10 — principle 9, unjustified:** the four debt AXI renderers return immediately after `EncodeChecked` with no contextual `help[]`, including a capped debt filter with no hint to rerun with `--max 0` (`cli/debt_filter.go:209-230`, `cli/debt_clean.go:164-197`, `cli/debt_group.go:276-305`, `cli/debt_validate.go:151-155`).
 11. **Exception 11 — principle 10, unjustified:** `--version` and `-v` succeed but `-V` is rejected with exit 2 (`cli/main.go:430-431`, real-binary version probes; `TestVersion_FlagAndSubcommandAgree` covers only the long flag and subcommand).
 12. **Exception 12 — principle 10, unjustified:** all three successful version forms print `atcr version <version>` rather than the required bare version (`cli/main.go:430-431`, `cli/version.go:44-55`, `TestVersion_FlagAndSubcommandAgree`).
@@ -281,7 +281,7 @@ A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlayin
 
 Set `tools: true` on a function-calling-capable agent to turn it from a single-shot reviewer into a bounded, multi-turn **tool-using agent**: it can `read_file`, `grep`, and `list_files` across a read-only, path-jailed snapshot of the repo to verify a suspicion before reporting it. The payload becomes the starting point of the review, not the whole picture — see [docs/payload-modes.md](docs/payload-modes.md).
 
-Tool agents are not free. We estimate a tool-using reviewer makes **3-10× the provider calls** of a single-shot reviewer (one call per turn, plus the final answer, capped by the default `max_turns` of 10). That range is an estimate, not a measurement: atcr has no committed benchmark of it. Cost scales with how much exploration the model does. Each agent is bounded by per-agent budgets — `max_turns`, `tool_budget_bytes`, and `timeout_secs` — documented in [docs/registry.md](docs/registry.md). Enable `tools` selectively (your strongest models, your highest-value lanes) rather than across the whole roster, and tune the budgets to cap spend. A `tools: true` agent on a model without `supports_function_calling: true` degrades cleanly to the single-shot path.
+Tool agents are not free. We estimate a tool-using reviewer makes **3-10× the provider calls** of a single-shot reviewer (up to 11 calls with the default `max_turns` of 10: one call per turn, plus one forced final answer when the turn budget runs out). That range is an estimate, not a measurement: atcr has no committed benchmark of it. Cost scales with how much exploration the model does. Each agent is bounded by per-agent budgets — `max_turns`, `tool_budget_bytes`, and `timeout_secs` — documented in [docs/registry.md](docs/registry.md). Enable `tools` selectively (your strongest models, your highest-value lanes) rather than across the whole roster, and tune the budgets to cap spend. A `tools: true` agent on a model without `supports_function_calling: true` degrades cleanly to the single-shot path.
 
 ## CI integration
 
@@ -291,7 +291,7 @@ atcr is a PR gate with no glue code: `--fail-on <severity>` returns a nonzero ex
 atcr review && atcr reconcile --fail-on high   # exit 1 if HIGH+ findings survive
 ```
 
-Exit codes: **0** success · **1** failure (including a `--fail-on` threshold violation) · **2** usage or configuration error · **3** authentication failure (`--sync-cloud` missing or rejected `ATCR_API_KEY`) · **4** drift (`atcr debt dashboard --check` or `atcr debt report --check` found the `--output` file stale or missing: regenerate it and re-stage).
+Exit codes: **0** success · **1** failure (including a `--fail-on` threshold violation) · **2** usage or configuration error · **3** authentication failure (`--sync-cloud` with `--cloud-endpoint` and a missing or rejected `ATCR_API_KEY`; without `--cloud-endpoint` it exits 2) · **4** drift (`atcr debt dashboard --check` or `atcr debt report --check` found the `--output` file stale or missing: regenerate it and re-stage).
 
 GitHub Actions:
 
@@ -354,7 +354,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - `cmd/atcr/` — thin binary entry-point shim
 - `cli/` — the importable command tree (all subcommand logic)
 - `internal/` — engine packages (`gitrange`, `payload`, `registry`, `llmclient`, `fanout`, `stream`, `report`, `mcp`, `verify`, `debate`, `autofix`, `sandbox`, `scorecard`, `telemetry`, and more)
-- `reconcile/` — the deterministic reconciler as a standalone Go module (importable as a library; wired into the build via `go.work`)
+- `reconcile/` — the deterministic reconciler as a standalone Go module (importable as a library; the root `go.mod` pins a tagged release of it, and a local, uncommitted `go.work` can point the build at the in-tree copy during co-development)
 - `personas/` — the nine embedded default reviewer personas, `_base.md`, and `nora.md` (the threat-model mapper prompt, not a reviewer and not installed by `atcr init`)
 - `skills/atcr/` — the atcr Agent Skill (host review + orchestration); it is embedded in the binary, so `atcr skill export` installs it
 - `docs/` — user documentation

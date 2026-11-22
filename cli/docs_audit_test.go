@@ -3415,3 +3415,60 @@ func TestAXIListOmissions(t *testing.T) {
 	require.Len(t, errs, 1)
 	require.Contains(t, errs[0], "report --format axi")
 }
+
+// negatedExitStatusReads finds shell examples that read $? inside the then-branch
+// of `if ! cmd; then`. The `!` negates the status, so $? there is always 0 and a
+// failure that "propagates" its exit code exits 0 instead (epic 114 AC3 round 4:
+// the agentic-consumption.md sweeper did exactly this).
+func negatedExitStatusReads(md string) []string {
+	var out []string
+	lines := strings.Split(md, "\n")
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if !strings.HasPrefix(t, "if ! ") || !strings.HasSuffix(t, "then") {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			b := strings.TrimSpace(lines[j])
+			if b == "fi" || b == "else" || strings.HasPrefix(b, "elif ") {
+				break
+			}
+			if strings.Contains(b, "$?") {
+				out = append(out, fmt.Sprintf("line %d reads $? under the negated test on line %d; it is always 0 there", j+1, i+1))
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TestDocsShellExamplesNeverReadNegatedStatus keeps every shell example in the
+// docs and README from reading $? after `if !`, where it is always 0.
+func TestDocsShellExamplesNeverReadNegatedStatus(t *testing.T) {
+	root := repoRootDir(t)
+	paths, err := filepath.Glob(filepath.Join(root, "docs", "*.md"))
+	require.NoError(t, err)
+	paths = append(paths, filepath.Join(root, "README.md"), filepath.Join(root, "skills", "atcr", "SKILL.md"))
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		require.NoError(t, err)
+		rel, _ := filepath.Rel(root, p)
+		for _, e := range negatedExitStatusReads(string(b)) {
+			t.Errorf("%s %s", rel, e)
+		}
+	}
+}
+
+// TestNegatedExitStatusReadsChecker pins the checker both ways: the sweeper's
+// original bad block is caught, and the fixed form and a plain negated test that
+// never reads $? both pass.
+func TestNegatedExitStatusReadsChecker(t *testing.T) {
+	bad := "    if ! atcr report --format axi > findings.toon 2> report.log; then\n      rc=$?\n      exit \"$rc\"\n    fi\n"
+	require.Len(t, negatedExitStatusReads(bad), 1)
+
+	fixed := "    atcr report --format axi > findings.toon 2> report.log\n    rc=$?\n    if [ \"$rc\" -ne 0 ]; then\n      exit \"$rc\"\n    fi\n"
+	require.Empty(t, negatedExitStatusReads(fixed))
+
+	noRead := "if ! atcr debt dashboard --output docs/debt-report.md --check; then\n  echo \"stale\"\n  exit 1\nfi\n"
+	require.Empty(t, negatedExitStatusReads(noRead))
+}

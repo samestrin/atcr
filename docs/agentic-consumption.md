@@ -122,7 +122,7 @@ review_summary[1]{id,dir,agents_succeeded,agents_total,agents_failed,agents_time
   2026-07-18_main,.atcr/reviews/2026-07-18_main,3,3,0,0,9,2,0,1,1,0
 ```
 
-The header declares the fixed column order with the standard comma delimiter; the single data row carries the run id, the review directory, and ten bare-integer counts. `findings_total` is the raw pre-reconcile fan-out count, and the four `findings_<severity>` columns break it down by severity. To act on the reconciled
+The header declares the fixed column order with the standard comma delimiter; the single data row carries the run id, the review directory, and ten bare-integer counts. A multi-bin baseline run (`--all` or `--scope`) appends four more integer columns after `findings_low`: `bins_reviewed`, `bins_planned`, `files_covered` and `files_in_scope` (see [Baseline review](../README.md#baseline-review---all----scope)); a diff or bulk review never declares them. `findings_total` is the raw pre-reconcile fan-out count, and the four `findings_<severity>` columns break it down by severity. To act on the reconciled
 findings, read `atcr report --format axi` against the same review directory —
 `findings_total` is a fan-out metric, not the deduplicated reconciled count. One
 exception: a `review --resume <id> --axi` run that finds nothing pending (the
@@ -143,7 +143,7 @@ suggestions.
 
 ### The `report --format axi` findings payload
 
-`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes), followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)) and a `help` line naming the usual next commands (see [Next-step suggestions](#next-step-suggestions)):
+`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes). Optional columns follow `id`, declared only when at least one finding carries the signal, in this order: `disagreement`, `verification.verdict`, `verification.skeptic`, `verification.notes`, `verification.challenge_survived`, `evidence_exec.command`, `evidence_exec.exit_code`, `evidence_exec.output_excerpt`, `fix_warning` and `fix_review`. The rows are followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)) and a `help` line naming the usual next commands (see [Next-step suggestions](#next-step-suggestions)):
 
 ```
 findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:
@@ -180,7 +180,7 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
 
   No `Next:` line is written, on stderr or as a `--log-format json` record.
 - `atcr verify --axi` replaces its `verified N finding(s)` line with one TOON
-  object of the same values, followed by the same `help` array:
+  object of the same values, followed by a `help` array:
 
   ```
   findings: 4
@@ -325,8 +325,9 @@ case $status in
     # Findings survived the gate. Read them as an AXI payload (stdout only).
     # report returns 2 for a usage/config fault (bad anchor, absent findings.json)
     # and 1 for an internal render fault — propagate whichever actually occurred.
-    if ! atcr report --format axi > findings.toon 2> report.log; then
-      rc=$?
+    atcr report --format axi > findings.toon 2> report.log
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
       echo "report failed (exit $rc); see report.log" >&2
       exit "$rc"
     fi
