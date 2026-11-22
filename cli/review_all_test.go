@@ -284,7 +284,8 @@ func TestReviewAll_NothingChangedExitsZero(t *testing.T) {
 	code, out := execCmdCapture(t, "review", "--all") // pass 2: every file unchanged
 	assert.Equal(t, 0, code, "a no-change re-run is a successful no-op, not a usage error")
 	assert.Contains(t, out, "unchanged since last review")
-	assert.Contains(t, out, "--fresh", "the notice must point at the full-rescan escape hatch")
+	assert.Contains(t, out, "--no-file-cache", "the notice must point at the full-rescan escape hatch")
+	assert.NotContains(t, out, "--fresh", "--fresh is the hidden deprecated alias; the hint names its replacement")
 }
 
 // AC 04-04 Scenario 1 / Edge Case 2: `--all --fresh` bypasses the skip index and

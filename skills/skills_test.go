@@ -310,9 +310,9 @@ func TestSkill_NoAbsoluteOrClaudePaths(t *testing.T) {
 // check; this list is a package-local guard only.
 var dispatcherCommands = []string{
 	"review", "reconcile", "dedupe", "verify", "diff-smell", "debate", "report", "quality-report", "github",
-	"range", "status", "init", "quickstart", "serve", "doctor",
+	"range", "status", "init", "quickstart", "serve", "webhook", "doctor",
 	"trust", "scorecard", "leaderboard", "benchmark", "personas",
-	"models", "debt", "history", "audit-report", "skill", "config", "version",
+	"models", "debt", "ignore", "history", "audit-report", "skill", "config", "version",
 }
 
 // TestSkill_DispatcherRoutingTable (AC 01-01) — every live Cobra command is
@@ -337,13 +337,29 @@ func TestSkill_DispatcherRoutingTable(t *testing.T) {
 // TestSkill_DescriptionEnumeratesRoutedCommands — the frontmatter description's
 // command enumeration must keep pace with the routing surface: quality-report
 // and config were routed without the description listing them, so a maintainer
-// scanning only the description would not see either command.
+// scanning only the description would not see either command. dedupe, webhook
+// and ignore drifted the same way, so the check now covers every routed command.
 func TestSkill_DescriptionEnumeratesRoutedCommands(t *testing.T) {
 	desc := frontmatterField(t, SkillMD, "description")
-	for _, name := range []string{"quality-report", "config", "skill"} {
+	for _, name := range dispatcherCommands {
 		assert.Regexp(t, regexp.MustCompile(`\b`+regexp.QuoteMeta(name)+`\b`), desc,
 			"frontmatter description must enumerate the %q command", name)
 	}
+}
+
+// TestSkill_BackgroundReviewFlowIsSafe — three ways the routed review flow went
+// wrong in practice: a background `atcr review` prints its id only after the
+// fan-out ends, so polling must not wait on a captured id; a "nothing to review"
+// run creates no review and leaves .atcr/latest on an older one; and
+// skipped_sources holds full paths, so an exact match on the relative host path
+// never fires.
+func TestSkill_BackgroundReviewFlowIsSafe(t *testing.T) {
+	assert.NotContains(t, SkillMD, "Capture the printed review id",
+		"review prints its id only after fan-out; a background run has none to capture")
+	assert.Contains(t, SkillMD, "`--id <id>`", "the flow must offer pre-assigning the review id")
+	assert.Contains(t, SkillMD, "nothing to review", "the flow must halt on a run that created no review")
+	assert.Contains(t, SkillMD, "an entry ending in `sources/host/findings.toon`",
+		"skipped_sources entries are full paths; match on the suffix")
 }
 
 // TestSkill_ReviewFlowRoutable (AC 01-02) — the review orchestration remains

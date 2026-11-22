@@ -114,6 +114,25 @@ func TestQuickstart_Offline_ZeroNetwork(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, ".atcr", "personas", "bruce.md"))
 }
 
+// TestQuickstart_OmitsInitRegistryNextStep: quickstart writes the registry
+// itself, so the init step it reuses must not tell the user to go define one.
+func TestQuickstart_OmitsInitRegistryNextStep(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	out := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir:            t.TempDir(),
+		fetchCommunity: false,
+		in:             strings.NewReader(quickstartInput),
+		out:            out,
+		errOut:         &bytes.Buffer{},
+	}))
+	assert.NotContains(t, out.String(), "Next: define providers and agents")
+}
+
 // TestQuickstart_FetchAndPin_InstallsCommunity covers AC 01-02 Scenario 2:
 // runQuickstart (online) inherits the fetch-and-pin behavior — a community
 // persona advertised in the index is installed into the community pin dir before
@@ -281,19 +300,22 @@ func TestQuickstart_RegistryGuard_SkipsExistingWithoutForce(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
 	require.NoError(t, os.WriteFile(regPath, []byte("# user's own registry\n"), 0o644))
 
-	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
 	require.NoError(t, runQuickstart(quickstartOpts{
 		dir:    dir,
 		in:     strings.NewReader(quickstartInput),
-		out:    out,
-		errOut: &bytes.Buffer{},
+		out:    &bytes.Buffer{},
+		errOut: errOut,
 	}))
 
 	// The existing registry must be untouched (no clobber).
 	data, err := os.ReadFile(regPath)
 	require.NoError(t, err)
 	assert.Equal(t, "# user's own registry\n", string(data), "existing registry left intact")
-	assert.Contains(t, out.String(), "registry.yaml", "user is told the snippet was not applied")
+	// The notice goes to stderr. This once checked stdout for "registry.yaml",
+	// which only init's "Next: define providers" hint satisfied; quickstart no
+	// longer prints that hint.
+	assert.Contains(t, errOut.String(), "A registry already exists at "+regPath, "user is told the snippet was not applied")
 }
 
 func TestQuickstart_ScaffoldsWorkflow(t *testing.T) {

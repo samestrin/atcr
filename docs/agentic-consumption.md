@@ -388,7 +388,7 @@ different document, the anonymized public submission, and is always JSON
 ([scorecard.md](scorecard.md#atcr-leaderboard-export---output-path)).
 
 Three commands are left out on purpose. `atcr range` and `atcr status` print
-JSON and nothing else, so a flag would change nothing. `atcr trust` authorizes
+JSON by default (`atcr status --axi` prints TOON instead), so a flag would change nothing. `atcr trust` authorizes
 providers; it is not a report. Four more print reports with no `--json` yet:
 `atcr audit-report`, `atcr benchmark fit`, `atcr debt report` (use
 `atcr debt list --json` for the machine-readable form) and

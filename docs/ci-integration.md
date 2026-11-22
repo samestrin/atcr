@@ -15,6 +15,8 @@ One-shot equivalent — `atcr review --fail-on high` resolves the range, fans ou
 | Run completed, no findings at/above `--fail-on` threshold | 0 |
 | Run completed, findings at/above threshold survive reconciliation | 1 (gate failure) |
 | Usage or configuration error (empty range, invalid `--fail-on`, missing API key env var, config invalid) | 2 |
+| `--sync-cloud` authentication failure (missing or empty key, or a remote 401/403) | 3 |
+| `atcr debt dashboard --check` or `atcr debt report --check`: the generated file is out of date or missing | 4 (regenerate and re-stage) |
 
 The gate failure (1) and the usage/configuration error (2) are distinct codes, so CI can tell "the panel found a real problem" apart from "atcr was invoked wrong."
 

@@ -56,7 +56,7 @@ var DefaultMaxRepoBytes int64 = 512 << 20
 
 // binarySniffBytes is how much of a tracked file the baseline walker inspects to
 // decide it is non-text (Epic 35.16.14 fix F3): a NUL byte in this prefix marks
-// the file binary, the same 8 KiB window git's own buffer_is_binary reads.
+// the file binary. git's own buffer_is_binary reads 8000 bytes, not 8 KiB.
 const binarySniffBytes = 8 << 10
 
 // binarySkipLogNames caps how many skipped binary paths the walker's one
