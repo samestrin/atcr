@@ -773,8 +773,13 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		// the last completed review is a successful no-op (the common CI re-run
 		// path), not the exit-2 usage error an empty repository gets. Exit 0 with
 		// a notice pointing at the --no-file-cache escape hatch; nothing was scaffolded.
+		// Under --axi the notice goes to stderr so stdout stays payload-only.
 		if errors.Is(err, fanout.ErrAllFilesUnchanged) {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%v; nothing to review (use --no-file-cache to force a full re-scan)\n", err)
+			w := cmd.OutOrStdout()
+			if axiMode {
+				w = cmd.ErrOrStderr()
+			}
+			_, _ = fmt.Fprintf(w, "%v; nothing to review (use --no-file-cache to force a full re-scan)\n", err)
 			return nil
 		}
 		return usageError(err)
