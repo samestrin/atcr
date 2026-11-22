@@ -7,7 +7,7 @@ The skill is [`skills/atcr/SKILL.md`](../skills/atcr/SKILL.md) — a `/atcr <com
 ## Prerequisites
 
 - The `atcr` binary on your `PATH` — `go install github.com/samestrin/atcr/cmd/atcr@latest` (Go 1.25+), or build from source (`go build -o atcr ./cmd/atcr`), then move it onto `PATH`.
-- A configured registry (`~/.config/atcr/registry.yaml`) and project config (`.atcr/config.yaml`) — run `atcr init` to scaffold both. Even with a single pool agent (or none), the host review provides a second source.
+- A configured registry (`~/.config/atcr/registry.yaml`) and project config (`.atcr/config.yaml`) — run `atcr quickstart` to scaffold both (`atcr init` writes only `.atcr/`). Even with a single pool agent (or none), the host review provides a second source.
 - For PR-reference input only: the `gh` CLI, authenticated (`gh auth status`).
 
 ## Installation
@@ -73,7 +73,7 @@ Baseline runs (`--all` / `--scope`) consult a per-file content-hash index and sk
 The skill then:
 
 1. Pre-flights the range (`atcr range`) — **skipped in baseline mode** (`--all` / `--scope`), which has no range to resolve.
-2. Starts the pool review in the background (`atcr review`) and polls `atcr status <id>` until it completes (10s interval, 10-minute default timeout; [status.md](status.md) describes the JSON it reads).
+2. Starts the pool review in the background (`atcr review --id <id>`, since a background review prints its id only when the fan-out ends) and polls `atcr status <id>` until it completes; a `nothing to review` run halts with an offer to re-run with `--no-file-cache` (10s interval, 10-minute default timeout; [status.md](status.md) describes the JSON it reads).
 3. Performs the host review and writes `.atcr/reviews/<id>/sources/host/findings.toon` (needs atcr v0.4.0 or later; the skill checks `atcr version` first).
 4. Reconciles all sources (`atcr reconcile <id>`).
 5. Optionally adjudicates gray-zone ambiguous clusters and re-reconciles.

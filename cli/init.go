@@ -60,6 +60,9 @@ func newInitCmd() *cobra.Command {
 			if err := runInit(".", force, out, errOut); err != nil {
 				return err
 			}
+			// Printed here, not in runInit: quickstart reuses runInit and then
+			// writes the registry itself, so the hint belongs to plain init only.
+			_, _ = fmt.Fprintln(out, "Next: define providers and agents in ~/.config/atcr/registry.yaml (see docs/registry.md)")
 			if offline {
 				// Scaffold from embedded built-ins only; make zero network calls.
 				return nil
@@ -584,7 +587,6 @@ func runInitRoster(dir string, force bool, roster []string, personaText func(str
 	for _, path := range created {
 		_, _ = fmt.Fprintf(out, "  created %s\n", path)
 	}
-	_, _ = fmt.Fprintln(out, "Next: define providers and agents in ~/.config/atcr/registry.yaml (see docs/registry.md)")
 	return nil
 }
 
