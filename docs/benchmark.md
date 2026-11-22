@@ -197,6 +197,21 @@ The array is **run-result-only**: it is not carried into the `export` envelope, 
 the public reviewer row is unchanged. Only the standard (category-scored) tier emits
 it; a `repo-state-v1` run-result omits the key.
 
+**Adjudicating the unmatched findings.** The run-result's `unmatched_findings` array
+lists every finding behind those counts, so a person can judge "true positive the
+matcher missed" against "real false alarm" without keeping the temporary review
+directories. Each entry has `model`, `persona`, `case_id`, `index` (the finding's
+1-based position among that reviewer's findings for the case, in pool order, rows the
+parser could not align last), `category`, `file`, `line` and `message` (the PROBLEM
+text, cut at 1000 characters; for an unalignable row, the raw row). A reviewer's
+entries number exactly its `unmatched`. The key is omitted when nothing was unmatched.
+It does not change scoring, the reproducibility hash, `unmatched_per_case` or the
+public scorecard. The checkpoint's per-case `raised` list stays the cheap index for
+choosing which cases to inspect, and the checkpoint now also stores these rows so a
+resumed run reports the same array. A case replayed from a checkpoint written before
+this field existed is listed in `unmatched_not_recorded`; its unmatched findings are
+absent from `unmatched_findings`, so an empty result is not "none" for those cases.
+
 ### Reproducibility
 
 `run` stamps `generated_at` from the wall clock, but the **scoring is
@@ -830,8 +845,8 @@ emits and the order the documented positional join depends on.
 }
 ```
 
-`reviewer_vocabulary`, `out_of_vocabulary_rate` and `reviewer_false_alarms` are
-**run-result-only** — they are not carried into the submission envelope.
+`reviewer_vocabulary`, `out_of_vocabulary_rate`, `reviewer_false_alarms` and
+`unmatched_findings` are **run-result-only** — they are not carried into the submission envelope.
 `reviewer_false_alarms` is described under [False alarms](#false-alarms-an-upper-bound).
 
 `suite_case_ids` and `reviewer_coverage` **are** carried, as of `submission_schema` 2,

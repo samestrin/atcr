@@ -192,3 +192,18 @@ func TestBuildSubmission_DoesNotPublishFalseAlarms(t *testing.T) {
 	assert.NotContains(t, string(data), "false_alarms")
 	assert.NotContains(t, string(data), "unmatched")
 }
+
+// UnmatchedIndexes must agree with FalseAlarms on which findings matched,
+// including family matches and empty categories.
+func TestUnmatchedIndexes_AgreesWithMatchCase(t *testing.T) {
+	cases := []CaseScore{
+		{Expected: []string{"security"}, Raised: []string{"security", "performance", ""}},
+		{Expected: []string{"maintainability"}, Raised: []string{"style", "Style "}},
+		{Expected: nil, Raised: []string{"security"}},
+		{Expected: []string{"security"}},
+	}
+	for _, c := range cases {
+		assert.Len(t, UnmatchedIndexes(c.Expected, c.Raised), len(c.Raised)-matchCase(c).matched, "%v", c)
+	}
+	assert.Equal(t, []int{1, 2}, UnmatchedIndexes(cases[0].Expected, cases[0].Raised))
+}

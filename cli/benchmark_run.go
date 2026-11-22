@@ -386,6 +386,9 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 	// fits holds every replicate's fit row, pre-scrub, in (case, replicate, agent)
 	// order — the same order fresh execution and checkpoint replay both produce.
 	var fits []benchmark.ReviewerFit
+	// unmatchedNotRecorded names replayed cases whose checkpoint entry predates
+	// unmatched-finding rows.
+	var unmatchedNotRecorded []string
 
 	for i, c := range m.Cases {
 		var diff []byte
@@ -416,6 +419,9 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 				if rep == 1 {
 					if err := replayCheckpointCase(accs, &order, entry, c.ExpectedCategories); err != nil {
 						return nil, err
+					}
+					if !entry.UnmatchedRecorded {
+						unmatchedNotRecorded = append(unmatchedNotRecorded, c.ID)
 					}
 				}
 				fits = append(fits, checkpointFitRows(entry)...)
@@ -489,6 +495,10 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 			if err != nil {
 				return fail(fmt.Errorf("reading findings for case %s: %w", caseLabel, err))
 			}
+			rowsByReviewer, err := readBenchmarkCaseRows(res.Dir)
+			if err != nil {
+				return fail(fmt.Errorf("reading finding rows for case %s: %w", caseLabel, err))
+			}
 
 			// Iterate the full agent roster (including failed agents, which raised
 			// nothing) so every reviewer is scored on every case — a missed case is
@@ -510,6 +520,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 				}
 
 				outcome := fanout.ReviewerOutcome(a, len(raised))
+				unmatched := unmatchedRows(c.ExpectedCategories, raised, rowsByReviewer[a.Agent], c.ID)
 
 				// Only replicate 1 is folded into the score, so the fold still sees one
 				// outcome per (identity, case) and never trips the duplicate-case
@@ -521,6 +532,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 						caseID:        c.ID,
 						expected:      c.ExpectedCategories,
 						raised:        raised,
+						unmatched:     unmatched,
 						usageReported: usageReported,
 						costUSD:       cost,
 						latencyMS:     latency,
@@ -542,6 +554,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 					Model:         model,
 					Persona:       persona,
 					Raised:        raised,
+					Unmatched:     unmatched,
 					UsageReported: usageReported,
 					CostUSD:       cost,
 					LatencyMS:     latency,
@@ -569,8 +582,9 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 					// Recorded so a resume reproduces the uninterrupted run's coverage rows
 					// byte-for-byte; without it a fully replayed run publishes no gate tag
 					// where a fresh one publishes false.
-					GroundingEnabled: summary.GroundingEnabled,
-					Replicate:        rep,
+					GroundingEnabled:  summary.GroundingEnabled,
+					Replicate:         rep,
+					UnmatchedRecorded: true,
 				})
 				if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 					return fail(fmt.Errorf("writing checkpoint for case %s: %w", caseLabel, werr))
@@ -585,6 +599,7 @@ func executeBenchmarkRunReplicates(ctx context.Context, cfg *fanout.ReviewConfig
 		return nil, err
 	}
 	rr.Fit = publicFit(fits)
+	rr.UnmatchedNotRecorded = unmatchedNotRecorded
 	return rr, nil
 }
 
@@ -598,6 +613,7 @@ var (
 	prepareReviewFromDiff     = fanout.PrepareReviewFromDiff
 	readPoolSummary           = fanout.ReadPoolSummary
 	readBenchmarkCaseFindings = readCaseFindings
+	readBenchmarkCaseRows     = readCaseRows
 )
 
 // fitRow projects one reviewer's record of one case run onto its pre-scrub
@@ -712,8 +728,13 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 
 	reviewers := make([]benchmark.ReviewerScore, 0, len(rows))
 	coverage := make([]benchmark.ReviewerCoverage, 0, len(rows))
+	var unmatched []benchmark.UnmatchedFinding
 	for _, r := range rows {
 		acc, id := r.acc, r.id
+		for _, u := range acc.unmatched {
+			u.Model, u.Persona = id.model, id.persona
+			unmatched = append(unmatched, u)
+		}
 		reviewers = append(reviewers, benchmark.ReviewerScore{
 			Model:        id.model,
 			Persona:      id.persona,
@@ -760,9 +781,11 @@ func buildRunResult(accs map[reviewerKey]*reviewerAcc, order []reviewerKey, m *b
 		Vocabulary: benchmark.PerReviewerVocabulary(reviewers),
 		// Unmatched findings per reviewer, from the same slice, so a finding is
 		// unmatched here exactly when Score did not count it as matched.
-		FalseAlarms:  benchmark.FalseAlarms(reviewers),
-		SuiteCaseIDs: suiteCaseIDs,
-		Coverage:     coverage,
+		FalseAlarms: benchmark.FalseAlarms(reviewers),
+		// The rows behind FalseAlarms' counts, for adjudication. Score-neutral.
+		UnmatchedFindings: unmatched,
+		SuiteCaseIDs:      suiteCaseIDs,
+		Coverage:          coverage,
 	}, nil
 }
 
@@ -916,9 +939,10 @@ func sortScoredRows(rows []scoredRow) {
 // that could drift from it.
 type reviewerAcc struct {
 	cases         []benchmark.CaseScore
-	caseIDs       []string       // suite case ids this identity actually scored, in case order
-	outcomes      map[string]int // benchmark.Outcome* -> number of this identity's cases
-	fallbackCases int            // cases fanout served from a fallback rather than the primary
+	unmatched     []benchmark.UnmatchedFinding // identity-less; buildRunResult stamps the scrubbed identity
+	caseIDs       []string                     // suite case ids this identity actually scored, in case order
+	outcomes      map[string]int               // benchmark.Outcome* -> number of this identity's cases
+	fallbackCases int                          // cases fanout served from a fallback rather than the primary
 	// agents records which LANES folded into this identity, purely so the
 	// duplicate-case diagnostic can name the colliding lanes. The accepted
 	// raw-identity merge (two lanes, same model AND persona, DISJOINT case sets) is
@@ -951,6 +975,7 @@ type reviewerCaseOutcome struct {
 	caseID        string
 	expected      []string
 	raised        []string
+	unmatched     []benchmark.UnmatchedFinding
 	usageReported bool
 	costUSD       float64
 	latencyMS     int64
@@ -1024,6 +1049,7 @@ func applyReviewerOutcome(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 	acc.agents[o.agent] = struct{}{}
 	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: o.expected, Raised: o.raised})
 	acc.caseIDs = append(acc.caseIDs, o.caseID)
+	acc.unmatched = append(acc.unmatched, o.unmatched...)
 	if acc.outcomes == nil {
 		acc.outcomes = map[string]int{}
 	}
@@ -1068,6 +1094,7 @@ func replayCheckpointCase(accs map[reviewerKey]*reviewerAcc, order *[]reviewerKe
 			caseID:        entry.CaseID,
 			expected:      expected,
 			raised:        r.Raised,
+			unmatched:     r.Unmatched,
 			usageReported: r.UsageReported,
 			costUSD:       r.CostUSD,
 			latencyMS:     r.LatencyMS,
@@ -1122,6 +1149,54 @@ func readCaseFindings(reviewDir string) (map[string][]string, error) {
 		out[skippedRowReviewer(s.Content)] = append(out[skippedRowReviewer(s.Content)], "")
 	}
 	return out, nil
+}
+
+// readCaseRows is readCaseFindings' companion: the same findings, in the same
+// per-reviewer order (skipped rows last), but as rows carrying file, line and text
+// instead of bare categories, so index i here is category i there.
+func readCaseRows(reviewDir string) (map[string][]benchmark.UnmatchedFinding, error) {
+	parsed, err := stream.ReadPoolFindings(filepath.Join(reviewDir, "sources", "pool"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string][]benchmark.UnmatchedFinding{}, nil
+		}
+		return nil, withFindingsPath(err)
+	}
+	out := make(map[string][]benchmark.UnmatchedFinding, len(parsed.Findings))
+	for _, f := range parsed.Findings {
+		out[f.Reviewer] = append(out[f.Reviewer], benchmark.UnmatchedFinding{
+			Category: f.Category, File: f.File, Line: f.Line, Message: f.Problem,
+		})
+	}
+	for _, s := range parsed.Skipped {
+		r := skippedRowReviewer(s.Content)
+		out[r] = append(out[r], benchmark.UnmatchedFinding{Message: s.Content})
+	}
+	return out, nil
+}
+
+// unmatchedRows selects, from one reviewer's rows for one case, those whose category
+// matched no expected category, stamping case id and position. When rows and raised
+// disagree in length (a stubbed reader), it falls back to category-only rows so the
+// count still equals the scorer's unmatched total.
+func unmatchedRows(expected, raised []string, rows []benchmark.UnmatchedFinding, caseID string) []benchmark.UnmatchedFinding {
+	idx := benchmark.UnmatchedIndexes(expected, raised)
+	if len(idx) == 0 {
+		return nil
+	}
+	out := make([]benchmark.UnmatchedFinding, 0, len(idx))
+	for _, i := range idx {
+		u := benchmark.UnmatchedFinding{Category: raised[i]}
+		if len(rows) == len(raised) {
+			u = rows[i]
+		}
+		u.CaseID, u.Index = caseID, i+1
+		if r := []rune(u.Message); len(r) > benchmark.MaxUnmatchedMessage {
+			u.Message = string(r[:benchmark.MaxUnmatchedMessage])
+		}
+		out = append(out, u)
+	}
+	return out
 }
 
 // skippedRowReviewer recovers the REVIEWER column from a skipped (unparseable)

@@ -1872,3 +1872,87 @@ func TestCheckpoint_EmptyRosterRoundTripsNonNil(t *testing.T) {
 	assert.Contains(t, err.Error(), "records an empty reviewer roster",
 		"the round-tripped value takes the named branch, not the nil guard")
 }
+
+// EST-8083: the unmatched findings behind the false-alarm count are kept with their
+// case, category, file, line and text, and the count and the rows always agree.
+func TestBuildRunResult_KeepsUnmatchedFindingRows(t *testing.T) {
+	rows := []benchmark.UnmatchedFinding{
+		{Category: "correctness", File: "a.go", Line: 3, Message: "matched one"},
+		{Category: "performance", File: "b.go", Line: 9, Message: "slow loop"},
+	}
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	raised := []string{"correctness", "performance"}
+	require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+		model: "m", persona: "p", caseID: "case-01",
+		expected: []string{"correctness"}, raised: raised,
+		unmatched: unmatchedRows([]string{"correctness"}, raised, rows, "case-01"),
+		outcome:   benchmark.OutcomeFindings,
+	}))
+	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
+
+	rr, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.NoError(t, err)
+	require.Len(t, rr.UnmatchedFindings, rr.FalseAlarms[0].Unmatched)
+	assert.Equal(t, benchmark.UnmatchedFinding{
+		Model: "m", Persona: "p", CaseID: "case-01", Index: 2,
+		Category: "performance", File: "b.go", Line: 9, Message: "slow loop",
+	}, rr.UnmatchedFindings[0])
+
+	// JSON round trip.
+	b, err := json.Marshal(rr)
+	require.NoError(t, err)
+	var back benchmark.RunResult
+	require.NoError(t, json.Unmarshal(b, &back))
+	assert.Equal(t, rr.UnmatchedFindings, back.UnmatchedFindings)
+}
+
+func TestBuildRunResult_NoUnmatchedWritesNoRows(t *testing.T) {
+	accs := map[reviewerKey]*reviewerAcc{}
+	var order []reviewerKey
+	require.NoError(t, applyReviewerOutcome(accs, &order, reviewerCaseOutcome{
+		model: "m", persona: "p", caseID: "case-01",
+		expected: []string{"correctness"}, raised: []string{"correctness"},
+		unmatched: unmatchedRows([]string{"correctness"}, []string{"correctness"}, nil, "case-01"),
+		outcome:   benchmark.OutcomeFindings,
+	}))
+	m := &benchmark.Manifest{Suite: "s", SuiteVersion: "1", Cases: []benchmark.Case{{ID: "case-01", ExpectedCategories: []string{"correctness"}}}}
+	rr, err := buildRunResult(accs, order, m, time.Unix(0, 0))
+	require.NoError(t, err)
+	assert.Empty(t, rr.UnmatchedFindings)
+	assert.Equal(t, 0, rr.FalseAlarms[0].Unmatched)
+	b, _ := json.Marshal(rr)
+	assert.NotContains(t, string(b), "unmatched_findings")
+}
+
+func TestUnmatchedRows_TruncatesAndFallsBackWithoutRows(t *testing.T) {
+	long := strings.Repeat("x", benchmark.MaxUnmatchedMessage+50)
+	got := unmatchedRows([]string{"security"}, []string{"performance"},
+		[]benchmark.UnmatchedFinding{{Category: "performance", Message: long}}, "c")
+	require.Len(t, got, 1)
+	assert.Len(t, []rune(got[0].Message), benchmark.MaxUnmatchedMessage)
+	// Row list out of step with raised: category-only rows, count still right.
+	got = unmatchedRows([]string{"security"}, []string{"performance"}, nil, "c")
+	require.Len(t, got, 1)
+	assert.Equal(t, "performance", got[0].Category)
+	assert.Equal(t, 1, got[0].Index)
+}
+
+// readCaseRows must stay index-aligned with readCaseFindings, or unmatchedRows would
+// attach one finding's text to another's category.
+func TestReadCaseRows_AlignedWithReadCaseFindings(t *testing.T) {
+	dir := t.TempDir()
+	writeSiblingPool(t, dir,
+		"HIGH|a.go:4|first problem|f|correctness|15|ev|greta",
+		"LOW|b.go:9|second problem|f|performance|15|ev|greta",
+		"MEDIUM|c.go:1|unaligned|too|many|columns|here|x|y|z|greta")
+	cats, err := readCaseFindings(dir)
+	require.NoError(t, err)
+	rows, err := readCaseRows(dir)
+	require.NoError(t, err)
+	require.Len(t, rows["greta"], len(cats["greta"]))
+	for i, c := range cats["greta"] {
+		assert.Equal(t, c, rows["greta"][i].Category)
+	}
+	assert.Equal(t, benchmark.UnmatchedFinding{Category: "performance", File: "b.go", Line: 9, Message: "second problem"}, rows["greta"][1])
+}
