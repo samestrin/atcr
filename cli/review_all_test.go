@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	goaxi "github.com/samestrin/go-axi"
+
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -286,6 +288,35 @@ func TestReviewAll_NothingChangedExitsZero(t *testing.T) {
 	assert.Contains(t, out, "unchanged since last review")
 	assert.Contains(t, out, "--no-file-cache", "the notice must point at the full-rescan escape hatch")
 	assert.NotContains(t, out, "--fresh", "--fresh is the hidden deprecated alias; the hint names its replacement")
+}
+
+// AC3 round 5: under --axi the "nothing to review" no-op keeps stdout
+// payload-only. The notice goes to stderr; stdout carries only the help[] block,
+// which decodes as TOON. The legacy pipe payload gets no help, so its stdout is
+// empty.
+func TestReviewAll_NothingChangedAXIKeepsStdoutPayloadOnly(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--all")) // pass 1: reviews all, writes index
+
+	code, stdout, stderr := execCmdSplit(t, "review", "--all", "--axi")
+	require.Equal(t, 0, code, "a no-change re-run is a successful no-op under --axi too")
+	assert.NotContains(t, stdout, "nothing to review", "the human notice must not reach axi stdout")
+	assert.Contains(t, stderr, "nothing to review", "the notice moves to stderr under --axi")
+	assert.Contains(t, stderr, "--no-file-cache")
+	assert.Contains(t, stdout, "help[", "stdout still carries the next-step help block")
+	_, err := goaxi.Decode(strings.NewReader(stdout))
+	require.NoErrorf(t, err, "axi stdout must decode as TOON: %q", stdout)
+	assertNoANSIOrMarkdown(t, stdout)
+
+	code, stdout, stderr = execCmdSplit(t, "review", "--all", "--axi", "--legacy-pipe")
+	require.Equal(t, 0, code)
+	assert.Empty(t, stdout, "the legacy pipe payload carries no notice and no help")
+	assert.Contains(t, stderr, "nothing to review")
 }
 
 // AC 04-04 Scenario 1 / Edge Case 2: `--all --fresh` bypasses the skip index and
