@@ -353,6 +353,20 @@ func TestInit_Offline_ZeroNetworkFallsBackToBuiltins(t *testing.T) {
 		"embedded built-in personas still scaffolded offline")
 }
 
+// TestInit_PrintsRegistryNextStep: plain `atcr init` writes only .atcr/, so it
+// points the user at the registry it did not write.
+func TestInit_PrintsRegistryNextStep(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	oldClient := personasClient
+	personasClient = failingHTTPClient{t}
+	t.Cleanup(func() { personasClient = oldClient })
+
+	out, err := execute(t, "init", "--offline")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Next: define providers and agents in ~/.config/atcr/registry.yaml")
+}
+
 // --- AC 01-02: init/quickstart fetch-and-pin --------------------------------
 
 // unitServer serves a mock community registry: index.json plus the per-path

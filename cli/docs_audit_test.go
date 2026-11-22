@@ -2871,6 +2871,45 @@ func TestAXIAuditCitesOnlyExistingFileLines(t *testing.T) {
 	}
 }
 
+// TestAXICatalogEntryCitationsResolveAndAreReviewed extends guard (a) to
+// docs/axi-catalog-entry.yaml: every path:line in its source_observations must
+// resolve, and every file they cite must be listed in reviewed_components, the
+// set of components the entry says it inspected.
+func TestAXICatalogEntryCitationsResolveAndAreReviewed(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "axi-catalog-entry.yaml"))
+	if err != nil {
+		t.Fatalf("docs/axi-catalog-entry.yaml must exist (epic 114 T2): %v", err)
+	}
+	var entries []struct {
+		Admission struct {
+			ReviewedComponents []string `yaml:"reviewed_components"`
+			SourceObservations []string `yaml:"source_observations"`
+		} `yaml:"admission"`
+	}
+	if err := yaml.Unmarshal(b, &entries); err != nil || len(entries) != 1 {
+		t.Fatalf("docs/axi-catalog-entry.yaml must parse as one entry: %v", err)
+	}
+	reviewed := map[string]bool{}
+	for _, c := range entries[0].Admission.ReviewedComponents {
+		reviewed[c] = true
+	}
+	cits := fileLineCitations(strings.Join(entries[0].Admission.SourceObservations, "\n"))
+	if len(cits) == 0 {
+		t.Fatal("source_observations cite no path:line evidence")
+	}
+	for _, e := range validateFileLineCitations(root, cits) {
+		t.Errorf("docs/axi-catalog-entry.yaml source_observations %s", e)
+	}
+	missing := map[string]bool{}
+	for _, c := range cits {
+		if !reviewed[c.path] && !missing[c.path] {
+			missing[c.path] = true
+			t.Errorf("docs/axi-catalog-entry.yaml source_observations cite %s, which reviewed_components does not list", c.path)
+		}
+	}
+}
+
 // exceptionEntry is one numbered AXI exception as written in the audit's
 // `## Exceptions` list and copied into the README `Limits` section.
 type exceptionEntry struct {
