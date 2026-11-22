@@ -50,10 +50,10 @@ Before this, atcr emitted a custom pipe-delimited variant (`findings[N|]{a|b}:`)
 | `atcr --axi` | `--legacy-pipe` |
 | every AXI surface above, including `report --format axi`, except `reconcile --axi`, `verify --axi`, `status --axi`, `debate --axi` and the `debt` AXI surfaces | `ATCR_LEGACY_PIPE=1` |
 
-`atcr reconcile --axi`, `atcr verify --axi`, `atcr status --axi`, `atcr debate --axi`, `atcr debt clean --axi`, `atcr debt filter --axi`, `atcr debt group --axi` and `atcr debt validate --axi` have no legacy pipe encoding: they reject `--legacy-pipe` as a usage error (exit 2) and ignore `ATCR_LEGACY_PIPE`. `ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one notice to stderr (never stdout), and the exit code does not change:
+`atcr reconcile --axi`, `atcr verify --axi`, `atcr status --axi`, `atcr debate --axi`, `atcr debt clean --axi`, `atcr debt filter --axi`, `atcr debt group --axi` and `atcr debt validate --axi` have no legacy pipe encoding: they reject `--legacy-pipe` as a usage error (exit 2) and ignore `ATCR_LEGACY_PIPE`. `ATCR_LEGACY_PIPE=1` is a global switch over the AXI surface only; non-AXI formats ignore it. Every legacy route writes one warning to stderr (never stdout), and the exit code does not change. It is a log record, so it honors `--log-format` and `ATCR_LOG_LEVEL`, and it names the switch that turned the legacy path on (`--legacy-pipe`, `ATCR_LEGACY_PIPE` or `--format pipe`). In the default text format it reads:
 
 ```
-warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON.
+time=... level=WARN msg="warning: pipe-delimited AXI output is deprecated and will be removed in a future release; migrate to standard TOON. (enabled by ATCR_LEGACY_PIPE)"
 ```
 
 The legacy path keeps its old bytes exactly, including its old pagination contract (header `N` is the true total, no `total:` line). It will be removed in a future release.
@@ -230,7 +230,7 @@ The authoritative table is in [CI Integration → Exit semantics](ci-integration
 it is not duplicated here. In short:
 
 - **0** — run completed, no findings at/above the `--fail-on` threshold.
-- **1** — gate failure: findings at/above threshold survived reconciliation.
+- **1** — failure, including a gate failure (findings at/above threshold survived reconciliation) and an internal fault such as a render or harness error.
 - **2** — usage or configuration error (bad flags, empty range, invalid config).
 - **3** — authentication failure (`--sync-cloud` with a missing/invalid key). A
   `--sync-cloud` run that omits the required `--cloud-endpoint` exits **2**

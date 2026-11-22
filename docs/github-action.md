@@ -40,6 +40,9 @@ jobs:
         with:
           fetch-depth: 0   # REQUIRED: atcr needs full history to resolve the merge-base
 
+      # REQUIRED: a fresh runner has no user registry (see "atcr configuration").
+      - run: install -D -m 644 .github/atcr/registry.yaml "$HOME/.config/atcr/registry.yaml"
+
       - uses: samestrin/atcr@v1
         with:
           openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
@@ -69,9 +72,15 @@ jobs:
 ### atcr configuration
 
 `atcr review` needs an agent/provider registry (see [registry.md](registry.md)).
-The consumer repository must carry atcr configuration (a committed
-`registry.yaml` / project config) or rely on `atcr init` defaults. The Action
-builds and invokes the binary; it does not provision a registry for you.
+The runner must have a user-tier registry: `~/.config/atcr/registry.yaml`, or
+`ATCR_REGISTRY_URL` pointing at a shared one. A committed `.atcr/registry.yaml`
+is only an overlay on the user registry, and `atcr init` writes no registry, so
+on a fresh runner without one `atcr review` exits 2 with `registry not found`.
+Commit your registry (it names key env vars, never keys) and copy it into place
+in a step before the Action, for example
+`install -D -m 644 .github/atcr/registry.yaml "$HOME/.config/atcr/registry.yaml"`.
+The Action builds and invokes the binary; it does not provision a registry for
+you.
 
 ## How findings render
 
