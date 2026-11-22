@@ -9,7 +9,7 @@ import (
 
 func TestWorkflowYAML_ReviewOnlySynthetic(t *testing.T) {
 	m := &Manifest{Provider: Provider{Name: "synthetic", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"}}
-	out := WorkflowYAML(m)
+	out := WorkflowYAML(m, "")
 
 	// Wired to the synthetic key secret and runs a review.
 	assert.Contains(t, out, "LLM_SYNTHETIC_API_KEY: ${{ secrets.LLM_SYNTHETIC_API_KEY }}")
@@ -25,7 +25,7 @@ func TestWorkflowYAML_ReviewOnlySynthetic(t *testing.T) {
 
 func TestWorkflowYAML_NoExpressionInRunLine(t *testing.T) {
 	m := &Manifest{Provider: Provider{Name: "synthetic", APIKeyEnv: "LLM_SYNTHETIC_API_KEY"}}
-	out := WorkflowYAML(m)
+	out := WorkflowYAML(m, "")
 
 	// GitHub hardening: a ${{ }} expression must never be inlined into a run:
 	// shell line (it is substituted before the shell runs). The base ref is

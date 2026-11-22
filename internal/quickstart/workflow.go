@@ -12,7 +12,13 @@ import (
 // merge gate; the published composite action (samestrin/atcr@v1) is the path for
 // the full pipeline. The secret name tracks the manifest's api_key_env so the
 // scaffold stays consistent with the generated registry.
-func WorkflowYAML(m *Manifest) string {
+//
+// registryYAML is the user registry quickstart wrote (RegistryYAML). The workflow
+// writes it to the runner's ~/.config/atcr/registry.yaml before the review: a
+// fresh runner has no user registry, and a committed .atcr/registry.yaml is only
+// an overlay on one, so without this step `atcr review` exits 2 "registry not
+// found". It holds only the key env var NAME, never a key, so it is safe to commit.
+func WorkflowYAML(m *Manifest, registryYAML string) string {
 	env := m.Provider.APIKeyEnv
 	var b strings.Builder
 	b.WriteString("# .github/workflows/atcr.yml — scaffolded by `atcr quickstart`.\n")
@@ -51,6 +57,21 @@ func WorkflowYAML(m *Manifest) string {
 	b.WriteString("          go-version: '1.25'\n")
 	b.WriteString("      - name: Install atcr\n")
 	b.WriteString("        run: go install github.com/samestrin/atcr/cmd/atcr@latest\n")
+	b.WriteString("      - name: Write the atcr user registry\n")
+	b.WriteString("        # A fresh runner has no ~/.config/atcr/registry.yaml, and a committed\n")
+	b.WriteString("        # .atcr/registry.yaml only overlays one. This is the registry quickstart\n")
+	b.WriteString("        # wrote; it names the key env var, never the key.\n")
+	b.WriteString("        run: |\n")
+	b.WriteString("          mkdir -p \"$HOME/.config/atcr\"\n")
+	b.WriteString("          cat > \"$HOME/.config/atcr/registry.yaml\" <<'ATCR_REGISTRY'\n")
+	for _, line := range strings.Split(strings.TrimRight(registryYAML, "\n"), "\n") {
+		if line == "" {
+			b.WriteString("\n")
+			continue
+		}
+		b.WriteString("          " + line + "\n")
+	}
+	b.WriteString("          ATCR_REGISTRY\n")
 	b.WriteString("      - name: Review\n")
 	b.WriteString("        env:\n")
 	fmt.Fprintf(&b, "          %s: ${{ secrets.%s }}\n", env, env)

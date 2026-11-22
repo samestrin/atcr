@@ -224,7 +224,8 @@ func runQuickstart(o quickstartOpts) error {
 	// The project roster init just wrote lists the persona names; define one
 	// synthetic-bound agent per persona so the roster resolves.
 	roster := builtins.Names()
-	if err := writeUserRegistry(o, quickstart.RegistryYAML(manifest, roster), "synthetic provider + agents", roster); err != nil {
+	regYAML := quickstart.RegistryYAML(manifest, roster)
+	if err := writeUserRegistry(o, regYAML, "synthetic provider + agents", roster); err != nil {
 		return err
 	}
 
@@ -232,7 +233,7 @@ func runQuickstart(o quickstartOpts) error {
 		return err
 	}
 
-	if err := scaffoldWorkflow(o, manifest); err != nil {
+	if err := scaffoldWorkflow(o, manifest, regYAML); err != nil {
 		return err
 	}
 	return nil
@@ -285,10 +286,10 @@ func runQuickstartLocal(o quickstartOpts) error {
 // guard is per-file: an existing workflow is never overwritten without --force,
 // and a skip only skips this file — it never aborts the wizard (the .atcr and
 // registry setup already ran). A genuine write/stat error is returned.
-func scaffoldWorkflow(o quickstartOpts, m *quickstart.Manifest) error {
+func scaffoldWorkflow(o quickstartOpts, m *quickstart.Manifest, registryYAML string) error {
 	wfPath := filepath.Join(o.dir, ".github", "workflows", "atcr.yml")
 
-	existed, err := createExclusive(wfPath, []byte(quickstart.WorkflowYAML(m)), 0o644, o.force)
+	existed, err := createExclusive(wfPath, []byte(quickstart.WorkflowYAML(m, registryYAML)), 0o644, o.force)
 	if err != nil {
 		return err
 	}
