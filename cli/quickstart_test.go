@@ -407,6 +407,18 @@ func TestQuickstart_PrintsSignupLink(t *testing.T) {
 	assert.Contains(t, out.String(), "https://synthetic.new/", "signup link is shown")
 }
 
+// TestQuickstart_SignupLinkPlainWhenNotTTY: an OSC 8 hyperlink is a terminal
+// escape, so piped or captured output gets the bare URL with no escape bytes.
+func TestQuickstart_SignupLinkPlainWhenNotTTY(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	out := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: t.TempDir(), in: strings.NewReader(quickstartInput), out: out, errOut: &bytes.Buffer{},
+	}))
+	assert.Contains(t, out.String(), "https://synthetic.new/")
+	assert.NotContains(t, out.String(), "\x1b", "no OSC 8 escape when stdout is not a terminal")
+}
+
 func TestQuickstart_Open_InvokesOpenFn(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
