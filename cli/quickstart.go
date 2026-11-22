@@ -345,7 +345,11 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 	env := m.Provider.APIKeyEnv
 	link := m.SignupLink()
 
-	_, _ = fmt.Fprintf(o.out, "\nSign up for a %s API key:\n  %s\n", m.Provider.Name, osc8(link))
+	shown := link
+	if writerIsTerminal(o.out) {
+		shown = osc8(link) // a terminal escape: piped or captured output gets the bare URL
+	}
+	_, _ = fmt.Fprintf(o.out, "\nSign up for a %s API key:\n  %s\n", m.Provider.Name, shown)
 	if o.open {
 		openFn := o.openFn
 		if openFn == nil {
