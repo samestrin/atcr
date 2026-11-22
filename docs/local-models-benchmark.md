@@ -178,9 +178,24 @@ case (`unmatched_per_case`, an **upper bound** — see
 case, as posted. Latency is not comparable across tiers. The posted summary
 did not re-state the doctor/thinking verdicts, the `fit-v1` verdicts, or
 `findings_raised_avg`; those fields live in the retained run-result JSONs, not
-in this table. The hand-checked random sample of unmatched findings for the
-top candidates (part of AC5) is an operator step still owed as of 2026-11-20;
-the unmatched numbers below remain an upper bound until it is adjudicated.
+in this table. The hand-checked random sample of unmatched findings for the top candidates
+(part of AC5) was attempted on 2026-11-22 against the retained run artifacts
+and could not be adjudicated. `<cand>-standard.json` keeps per-persona totals
+only and `<cand>-standard.checkpoint.json` keeps per case only the raised
+category words, so no finding's text, file or line survives a run. Three
+independent read-only reviews (orson `gemma3-27b` gpu-32gb; liam
+`gemma4-26b-a4b` gpu-32gb; liam `qwen3.8-27b` unified-64gb; seed 0, sample
+min(15, total) = 8 / 11 / 15) rebuilt the unmatched list from the checkpoints
+with the equivalence rules and reproduced the published counts exactly (8 of
+102 findings; 11 of 17; 20 of 28), but every sampled item was unclear: a
+category word cannot be checked against code, so 0 true positives, 0 false
+alarms, all unclear. Every unmatched `liam` finding uses liam's own vocabulary
+(contract, api-contract, state, invariant, race, resource-leak, type) that
+`equivalence.go` keeps out of `correctness`, and one is the routing label
+`out-of-scope`, so for `liam` the unmatched column mostly measures vocabulary
+mismatch, not false alarms. The numbers below remain a category-level upper
+bound. Keeping each finding's text/file/line in the run result is follow-up
+debt (see the debt issue linked from EST-7815).
 
 ### `gerald` (secrets & data-egress)
 
