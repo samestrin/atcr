@@ -30,23 +30,23 @@ Accept any one of:
 - **PR URL** — `https://github.com/<owner>/<repo>/pull/<n>`. Resolve refs with `gh pr view <n> --json baseRefName,headRefName`, then pass them as `--base`/`--head`.
 - **No input** — review the current branch against the detected default branch (run with no range flags).
 - **Whole repository** — a request to review the *codebase* rather than a change ("review this repo", "onboard this project", "there is no PR history"). Pass `--all`: every non-ignored, git-tracked file is reviewed as a full-repository baseline scan.
-- **A subtree** — a request scoped to one directory ("review `internal/auth`"). Pass `--dir <path>`, repo-root-relative: every non-ignored, git-tracked file under that directory is reviewed as a scoped baseline scan.
+- **A subtree** — a request scoped to one directory ("review `internal/auth`"). Pass `--scope <path>`, repo-root-relative: every non-ignored, git-tracked file under that directory is reviewed as a scoped baseline scan.
 
-If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, PR URL, or a baseline scope (--all / --dir <path>).`
+If the input is none of these and does not resolve, halt: `Invalid range: <input>. Provide a git range (base..head), branch name, PR URL, or a baseline scope (--all / --scope <path>).`
 
-**Baseline mode has no diff range.** `--all` and `--dir` are mutually exclusive with `--base`, `--head`, and `--merge-commit`, and with each other — never compose them. A baseline scan reviews files as they stand, so there is no base to diff against; combining them is a usage error, not a narrowing.
+**Baseline mode has no diff range.** `--all` and `--scope` are mutually exclusive with `--base`, `--head`, and `--merge-commit`, and with each other — never compose them. A baseline scan reviews files as they stand, so there is no base to diff against; combining them is a usage error, not a narrowing.
 
-Baseline runs consult a per-file content-hash index and skip any in-scope file whose content is unchanged since it was last reviewed, so a re-run costs only what actually changed. Pass `--fresh` to bypass that index and re-review every in-scope file regardless.
+Baseline runs consult a per-file content-hash index and skip any in-scope file whose content is unchanged since it was last reviewed, so a re-run costs only what actually changed. Pass `--no-file-cache` to bypass that index and re-review every in-scope file regardless.
 
 ## Orchestration Steps
 
 Run these in order. Each step is a single `atcr` CLI invocation; never reach into the engine directly.
 
-1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.` **Skip this step entirely in baseline mode** (`--all` / `--dir`): there is no range to resolve, so go straight to step 2.
+1. **Pre-flight the range** — `atcr range [--base X --head Y | --merge-commit SHA]`. This prints resolution JSON. If it fails with an empty range, halt: `Range is empty: no changes between <base> and <head>. Nothing to review.` **Skip this step entirely in baseline mode** (`--all` / `--scope`): there is no range to resolve, so go straight to step 2.
 
-2. **Start the review (background)** — `atcr review [--base X --head Y | --all | --dir <path>] [--fresh]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it. A baseline scan covers the whole repository or subtree rather than a diff, so expect it to take proportionally longer than a range review.
+2. **Start the review (background)** — `atcr review [--base X --head Y | --all | --scope <path>] [--no-file-cache]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it. A baseline scan covers the whole repository or subtree rather than a diff, so expect it to take proportionally longer than a range review.
 
-3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); these are defaults only — no CLI flag, env var, or config key controls them, but the user may override them in the request and you adjust your own polling loop. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
+3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); these are defaults only — no CLI flag, env var, or config key controls them, but the user may override them in the request and you adjust your own polling loop. Stop polling when `status` is any terminal state: `completed`, `failed`, `interrupted` or `stale`. Only `completed` continues to step 4. On `failed`, `interrupted` or `stale`, halt with that status: `Review <id> ended <status>. Check 'atcr status <id>' for details.` (`atcr review --resume <id>` continues any of the three by running only the pending agents; ask the user before paying for it. A long `--all` / `--scope` run can read `stale` while its bins are still finishing, so report the agents' `last_activity_at` times too.) On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
 
 4. **Host review (your +1 pass)** — read the payload from `.atcr/reviews/<id>/payload/` and write your findings to `.atcr/reviews/<id>/sources/host/findings.toon` (load `host-review.md` on demand for the full instructions). This needs atcr v0.4.0 or later (checked under Prerequisites). The host-review step reads only files under the review directory and issues no atcr calls of its own.
 
@@ -60,7 +60,7 @@ If the pool partially fails (some agents error, at least one succeeds), reconcil
 
 ## Commands
 
-Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `leaderboard`, `skill`, `config`) expose them via `atcr <command> --help`; never invent subcommand names. For machine-readable output from a reporting command (`report`, `quality-report`, `history`, `scorecard`, `leaderboard`, `debt dashboard`, `personas list`), pass `--json` (`audit-report` has no machine-readable output yet); `atcr --help` lists the reporting commands under one `Reporting Commands` heading.
+Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an `atcr <command>` CLI invocation — never a direct engine call — and runs as a single `atcr` subprocess, except the two multi-step routes (`review` per *Orchestration Steps*, `debt resolve` per `debt-resolve.md`). If invoked with no command, list the commands below and ask which to run; do not silently default to the review flow. Top-level commands that own subcommands (`personas`, `models`, `debt`, `benchmark`, `leaderboard`, `skill`, `config`) expose them via `atcr <command> --help`; never invent subcommand names. For machine-readable output from a reporting command (`report`, `quality-report`, `history`, `scorecard`, `leaderboard`, `debt dashboard`, `personas list`), pass `--json` (`audit-report`, `benchmark fit`, `debt report` and `personas search` have no `--json` yet; use `debt list --json` for debt); `atcr --help` lists the reporting commands under one `Reporting Commands` heading.
 
 | Command | What it does |
 |---------|--------------|
@@ -90,7 +90,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr ignore` | Suppress a false-positive finding in future reconciles: `atcr ignore <finding-id> --reason <why>` appends a rule to `.atcr/ignore.yaml` |
 | `atcr history` | Show finding history over time as a markdown table |
 | `atcr audit-report` | Render a one-page compliance report for a PR's review runs |
-| `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dir <path>] [--force]` writes the skill directory to your harness's skills location. If the destination exists and is not empty, the command exits 2 — surface its message and ask the user before re-running with `--force`, and report any stale-file warning it prints on stderr |
+| `atcr skill` | Install this Agent Skill from the binary; `atcr skill export [--harness <name>] [--user] [--dest <path>] [--force]` writes the skill directory to your harness's skills location. If the destination exists and is not empty, the command exits 2 — surface its message and ask the user before re-running with `--force`, and report any stale-file warning it prints on stderr |
 | `atcr config` | Update project config; `atcr config set <telemetry\|quality_signal> <true\|false>` toggles the anonymous usage-ping opt-out or the community quality-signal opt-in |
 | `atcr version` | Print the atcr version |
 

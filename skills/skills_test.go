@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -588,7 +589,7 @@ func TestSkill_DebtRowDocumentsResolve(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Epic 35.5 — baseline review (--all / --dir) reaches the dispatcher.
+// Epic 35.5 — baseline review (--all / --scope) reaches the dispatcher.
 // ---------------------------------------------------------------------------
 
 // TestSkill_BaselineReviewRoutes (AC4) — Epic 35.0 shipped full-repository and
@@ -602,7 +603,7 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 	// green on the single mutual-exclusivity sentence alone, so deleting both
 	// route bullets would not fail the test — exactly the regression AC4 names.
 	inputs := skillSection(t, "## Input Format", "## Orchestration Steps")
-	for _, flag := range []string{"--all", "--dir"} {
+	for _, flag := range []string{"--all", "--scope"} {
 		assert.Contains(t, inputs, "`"+flag+"`",
 			"the Input Format section must document the %s baseline input", flag)
 	}
@@ -614,7 +615,7 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 	// The routes must also be reachable from the orchestration the agent runs,
 	// not merely listed as accepted input.
 	steps := skillSection(t, "## Orchestration Steps", "## Commands")
-	for _, flag := range []string{"--all", "--dir", "--fresh"} {
+	for _, flag := range []string{"--all", "--scope", "--no-file-cache"} {
 		assert.Contains(t, steps, flag,
 			"the Orchestration Steps must show %s on the atcr review invocation", flag)
 	}
@@ -626,8 +627,49 @@ func TestSkill_BaselineReviewRoutes(t *testing.T) {
 
 	// The file-hash index skip is the one baseline behavior a user must know
 	// about to get a re-review of unchanged files.
-	assert.Contains(t, SkillMD, "`--fresh`",
-		"SKILL.md must document the --fresh file-hash-index bypass for baseline mode")
+	assert.Contains(t, SkillMD, "`--no-file-cache`",
+		"SKILL.md must document the --no-file-cache file-hash-index bypass for baseline mode")
+}
+
+// TestSkill_NoHiddenDeprecatedFlags — `atcr review --dir`/`--fresh` and
+// `atcr skill export --dir` are hidden deprecated aliases (cli/review.go,
+// cli/skill.go). An agent following SKILL.md must be taught the current
+// flags, so no deprecated alias may appear anywhere in the file.
+func TestSkill_NoHiddenDeprecatedFlags(t *testing.T) {
+	assert.Empty(t, deprecatedFlagsIn(SkillMD),
+		"SKILL.md must use --scope, --no-file-cache and --dest, not their deprecated aliases")
+	assert.Contains(t, SkillMD, "atcr skill export [--harness <name>] [--user] [--dest <path>] [--force]",
+		"the skill row must show --dest on atcr skill export")
+}
+
+// deprecatedFlagsIn returns the hidden deprecated flags md names.
+func deprecatedFlagsIn(md string) []string {
+	var found []string
+	for _, flag := range []string{"--dir", "--fresh"} {
+		if regexp.MustCompile(regexp.QuoteMeta(flag) + `\b`).MatchString(md) {
+			found = append(found, flag)
+		}
+	}
+	return found
+}
+
+// TestSkill_DeprecatedFlagGuardCatchesAliases — the guard must flag the
+// shipped-before-the-fix wording and pass the current flag names.
+func TestSkill_DeprecatedFlagGuardCatchesAliases(t *testing.T) {
+	assert.Equal(t, []string{"--dir", "--fresh"},
+		deprecatedFlagsIn("`atcr review [--all | --dir <path>] [--fresh]`"))
+	assert.Empty(t, deprecatedFlagsIn("`atcr review [--all | --scope <path>] [--no-file-cache]` and `skill export --dest <path>`"))
+}
+
+// TestSkill_StatusPollStopsOnEveryTerminalState — a run ends completed,
+// failed, interrupted or stale (internal/fanout/status.go). Polling only for
+// the first two loops an interrupted or stale run until the timeout.
+func TestSkill_StatusPollStopsOnEveryTerminalState(t *testing.T) {
+	steps := skillSection(t, "## Orchestration Steps", "## Commands")
+	for _, st := range []string{fanout.RunCompleted, fanout.RunFailed, fanout.RunInterrupted, fanout.RunStale} {
+		assert.Contains(t, steps, "`"+st+"`",
+			"the status poll step must stop on the %s terminal state", st)
+	}
 }
 
 // missingExclusivityFlags returns the baseline/range flags not named on the
@@ -644,7 +686,7 @@ func missingExclusivityFlags(md string) []string {
 		}
 	}
 	var missing []string
-	for _, flag := range []string{"--all", "--dir", "--base", "--head", "--merge-commit"} {
+	for _, flag := range []string{"--all", "--scope", "--base", "--head", "--merge-commit"} {
 		if !strings.Contains(sentence, flag) {
 			missing = append(missing, flag)
 		}
@@ -660,9 +702,9 @@ func missingExclusivityFlags(md string) []string {
 // names.
 func TestSkill_ExclusivityGuardIsSentenceScoped(t *testing.T) {
 	stripped := "Inputs: `--base` and `--head` select a range, or `--merge-commit`.\n" +
-		"Orchestration: run with --all or --dir.\n" +
+		"Orchestration: run with --all or --scope.\n" +
 		"Note: baseline and range are mutually exclusive.\n"
-	assert.Equal(t, []string{"--all", "--dir", "--base", "--head", "--merge-commit"},
+	assert.Equal(t, []string{"--all", "--scope", "--base", "--head", "--merge-commit"},
 		missingExclusivityFlags(stripped),
 		"a bare exclusivity sentence must be flagged even when the flags appear elsewhere in the file")
 
