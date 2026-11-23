@@ -96,6 +96,22 @@ func TestMarkStartFailedAndClear(t *testing.T) {
 	assert.Equal(t, RunInProgress, st.Status)
 }
 
+// ClearStartError is a no-op on the ordinary resume, whose manifest has no
+// start_error: it writes nothing. A missing manifest is an error.
+func TestClearStartError_NoOpAndMissingManifest(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"base":"a","head":"b","roster":["greta"],"partial":false}`
+	writeManifestOnly(t, dir, body)
+	p := &PreparedReview{ID: "x", Dir: dir}
+	require.NoError(t, p.ClearStartError())
+	got, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	require.NoError(t, err)
+	assert.Equal(t, body, string(got), "no start_error means no rewrite")
+
+	missing := &PreparedReview{ID: "y", Dir: filepath.Join(dir, "absent")}
+	require.Error(t, missing.ClearStartError())
+}
+
 // --- Epic 1.5: stale inference for dead reviews ---
 
 // withNow swaps the package clock for deterministic stale-window assertions.

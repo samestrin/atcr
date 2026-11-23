@@ -461,6 +461,12 @@ func TestReviewCmd_MissingAPIKeyRecordsFailedStart(t *testing.T) {
 	assert.Equal(t, fanout.RunFailed, st.CurrentStage)
 	assert.Contains(t, st.StartError, "API key env var not set: ATCR_TEST_REVIEW_KEY")
 
+	code, out = execCmdCapture(t, "status", "--axi")
+	require.Equal(t, 0, code, out)
+	assert.Contains(t, out, "status: failed\n")
+	assert.Contains(t, out, "current_stage: failed\n")
+	assert.Contains(t, out, `start_error: "API key env var not set: ATCR_TEST_REVIEW_KEY"`)
+
 	code, out = execCmdCapture(t, "reconcile")
 	assert.Equal(t, 2, code, out)
 	assert.Contains(t, out, "failed to start")
