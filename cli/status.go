@@ -124,5 +124,8 @@ func statusAXIPayload(st *fanout.ReviewStatus) toon.Object {
 		}
 		fields = append(fields, toon.Field{Key: "agents", Value: rows})
 	}
+	if st.StartError != "" {
+		fields = append(fields, toon.Field{Key: "start_error", Value: goaxi.SanitizeString(st.StartError)})
+	}
 	return toon.NewObject(fields...)
 }

@@ -811,6 +811,10 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	}
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
+		// The review dir is already scaffolded: record the cause so `atcr status`
+		// reports failed, not in_progress until the stale deadline (EST-8137).
+		// Best-effort; the exit-2 error is the primary signal.
+		_ = prep.MarkStartFailed(err)
 		return err // no slot can authenticate → exit 2 before any provider call
 	}
 
@@ -1339,7 +1343,8 @@ func boolFlag(cmd *cobra.Command, name string) bool {
 // partial success (≥1 agent) is a binding exit-0 contract. Runs after
 // PrepareReview (slots carry the resolved chains), so a doomed run leaves its
 // scaffolded review dir behind — consistent with the artifacts-preserved
-// contract, and reconcile/report reject in-progress reviews.
+// contract. runReview records the error as the manifest's start_error, so
+// status reports the review failed and reconcile rejects it.
 func preflightAPIKeys(slots []fanout.Slot) error {
 	seen := map[string]bool{}
 	var missing []string

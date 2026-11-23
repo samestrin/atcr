@@ -295,6 +295,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no pending slot can authenticate → exit 2 before any provider call
 	}
+	// A review whose first run failed this preflight carries a start_error; it
+	// is starting now, so status must read in_progress again (EST-8137).
+	if err := prep.ClearStartError(); err != nil {
+		return err
+	}
 
 	if !axiMode { // gated under --axi: stdout stays payload-only
 		// A baseline resume names how many bins it re-leases, the unit a resumed

@@ -74,7 +74,7 @@ func TestReadReviewStatus_SummaryOverridesStartError(t *testing.T) {
 }
 
 // MarkStartFailed records the cause on disk without clobbering other manifest
-// fields, and ClearStartError removes it again (a resume that passes preflight).
+// fields, and ClearStartError removes it again on disk and in memory (a resume that passes preflight).
 func TestMarkStartFailedAndClear(t *testing.T) {
 	dir := t.TempDir()
 	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"timeout_secs":600,"partial":false}`)
@@ -86,7 +86,8 @@ func TestMarkStartFailedAndClear(t *testing.T) {
 	assert.Equal(t, 600, m.TimeoutSecs, "the narrow write keeps the on-disk fields")
 	assert.Equal(t, "no key", p.manifest.StartError)
 
-	require.NoError(t, ClearStartError(dir))
+	require.NoError(t, p.ClearStartError())
+	assert.Empty(t, p.manifest.StartError, "or the finalizing write would restore it")
 	m, err = ReadManifest(dir)
 	require.NoError(t, err)
 	assert.Empty(t, m.StartError)

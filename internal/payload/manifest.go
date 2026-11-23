@@ -78,6 +78,13 @@ type Manifest struct {
 	// lets older readers ignore it.
 	Interrupted bool `json:"interrupted,omitempty"`
 
+	// StartError records why a scaffolded review never started its fan-out (the
+	// CLI's API key preflight runs after the scaffold, EST-8137). With no
+	// summary.json, ReadReviewStatus reports such a review failed with this text
+	// instead of in_progress until the stale deadline. A resume that passes the
+	// preflight clears it. omitempty keeps a normal manifest byte-identical.
+	StartError string `json:"start_error,omitempty"`
+
 	// Stages records which review stages ran. Reserved for the agentic stages
 	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
