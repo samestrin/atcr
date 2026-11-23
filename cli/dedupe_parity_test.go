@@ -561,7 +561,9 @@ func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, fi
 }
 
 // applyDedupeSkippedDeviation rewrites summary.skipped, a JSON number, when a
-// "skipped" row's from value is its decimal spelling.
+// "skipped" row's from value is its decimal spelling. A matching row whose `to`
+// does not parse as a number fails the test: silently ignoring it would leave
+// the golden's old count in place and hide the typo behind an unrelated diff.
 func applyDedupeSkippedDeviation(t testing.TB, summary map[string]any, deviations []dedupeDeviation, applied map[int]bool) {
 	got, ok := summary["skipped"].(float64)
 	if !ok {
@@ -571,10 +573,14 @@ func applyDedupeSkippedDeviation(t testing.TB, summary map[string]any, deviation
 		if d.field != "skipped" || d.from != strconv.FormatFloat(got, 'f', -1, 64) {
 			continue
 		}
-		if to, err := strconv.ParseFloat(d.to, 64); err == nil {
-			summary["skipped"] = to
-			applied[d.index] = true
+		to, err := strconv.ParseFloat(d.to, 64)
+		if err != nil {
+			t.Errorf("%s: skipped deviation %q->%q: `to` value %q does not parse as a number: %v",
+				dedupeParityDiffDoc, d.from, d.to, d.to, err)
+			return
 		}
+		summary["skipped"] = to
+		applied[d.index] = true
 		return
 	}
 }
