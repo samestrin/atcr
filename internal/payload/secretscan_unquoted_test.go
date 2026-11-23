@@ -162,3 +162,44 @@ func TestBuiltinRules_PasswordGateNoFalsePositives(t *testing.T) {
 		}
 	}
 }
+
+// Second review of PR #922: values that hold a placeholder word are examples,
+// not passwords; removing the placeholder-word guard must fail this test.
+func TestBuiltinRules_PasswordPlaceholderWordsStayClean(t *testing.T) {
+	for _, text := range []string{
+		"password: yourSecretHere",
+		"password: examplepw",
+		"password: xxxxpass",
+		"password = dummyvalue",
+		"password: sampleValue1",
+		"password: changemeNow",
+		"password = placeholder",
+	} {
+		if hits := scanBuiltin(text); len(hits) != 0 {
+			t.Errorf("scanBuiltin(%q) = %+v, want no hit", text, hits)
+		}
+	}
+}
+
+// An all-digit value of eight or more is a plausible committed password (a
+// PIN-style or numeric one), so it is flagged under a password name; short
+// numbers stay settings, and a non-password key holding digits stays clean.
+func TestBuiltinRules_NumericPasswords(t *testing.T) {
+	for _, line := range []struct{ text, secret string }{
+		{"DB_PASSWORD=" + "1234" + "5678\n", "1234" + "5678"},
+		{"password: " + "20260" + "41799\n", "20260" + "41799"},
+	} {
+		assertCovered(t, line.text, scanBuiltin(line.text), line.secret)
+	}
+	for _, text := range []string{
+		"id = 12345678",
+		"timeout_ms: 123456789",
+		"password_timeout = 3600",
+		"passwordMinLength = 12",
+		"password: --------",
+	} {
+		if hits := scanBuiltin(text); len(hits) != 0 {
+			t.Errorf("scanBuiltin(%q) = %+v, want no hit", text, hits)
+		}
+	}
+}
