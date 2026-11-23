@@ -269,7 +269,7 @@ One run can mix payloads — the frontier model reads the `diff`, the local 8B g
 
 Payloads are also filtered, promoted, and sized automatically:
 
-- **Ignore filtering.** Changed files matching the repo-root `.gitignore` or `.atcrignore` are excluded from payloads by default; `--no-ignore` opts out.
+- **Ignore filtering.** Changed files matching the repo-root `.gitignore` or `.atcrignore` are excluded from payloads by default; `--no-ignore` opts out. Credential files (`.env*`, `.netrc`, SSH private keys, `.pem`/`.key` files and similar; see [providers.md](docs/providers.md#privacy-and-redaction-pii--secrets)) are always excluded.
 - **Automatic per-file escalation.** Complex files (high churn, many hunks, high cyclomatic complexity) are promoted up the ladder — `diff` → `blocks` → `files` — and payloads are prepended with an AST skeleton of the changed files' HEAD version so a `diff`-mode reviewer still sees the surrounding structure. Tunable via the `payload_escalation` registry block; `manifest.json` records what each reviewer actually saw per file.
 - **Per-model sizing.** Each reviewer's payload is sized to its own model's context window with the output budget reserved; when a payload still overflows, the `on_overflow` policy applies (`chunk` default / `truncate` / `fail`; `fallback` is recognized but not yet dispatched), and `max_sprint_plan_bytes` caps the `--sprint-plan` injection. See [docs/registry.md](docs/registry.md).
 

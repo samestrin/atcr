@@ -169,12 +169,27 @@ verify is covered: the deterministic SAST findings a review saves to
 `sast.json` (the scanner messages and rules the Fixer reads through the
 reconciled report) pass the same policy before the file is written.
 
+Before the scan, credential files never enter a payload at all: `.env` and
+`.env.*`, `.envrc`, `.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`,
+`.pypirc`, `credentials`, SSH private keys and `.pem`/`.key`/`.p12`/`.pfx`/
+`.jks`/`.keystore` files are dropped in diff and full-repo mode, even with
+`--no-ignore`.
+
 It is one layer of three, and the docs describe them together in
 [docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
 **pre-commit** secret scanner keeps credentials out of the diff at commit time,
 atcr's **egress guard** is the last checkpoint before a prompt leaves the
 machine, and **presidio** at the proxy masks residual PII that is not a
 credential.
+
+## atcr's own state directory: symlinks are refused
+
+atcr writes its own state under fixed repository paths, and a cloned
+repository can ship any of them as a symlink. `atcr review` refuses to create
+a review directory when `.atcr` or `.atcr/reviews` is a symlink, and
+`atcr init` (including `--force` and `--refresh-personas`) refuses when `.atcr`
+or `.atcr/personas` is one, so neither writes outside the project. An explicit
+`--output-dir` that is a symlink is refused the same way.
 
 ## Summary
 

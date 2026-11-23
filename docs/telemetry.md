@@ -75,7 +75,10 @@ To opt out: set ATCR_TELEMETRY=0, or run `atcr config set telemetry false`.
 ```
 
 To record that it has been shown, atcr writes `telemetry_notice_shown: true` into
-`.atcr/config.yaml`, **creating that file if it does not exist**. A config that
+`.atcr/config.yaml`, **creating that file if it does not exist**. Outside a
+repository (no `.git` or `.atcr` directory in the working directory or above
+it, such as your home directory or `/tmp`) nothing is written, so the notice
+prints on every run there. A config that
 holds nothing but this record (and any `atcr config set` opt-outs) is not a
 workspace yet: `atcr init` and `atcr quickstart` replace it with the scaffolded
 config and carry those settings over. This key is bookkeeping only — nothing reads it to decide whether to transmit, and deleting it
