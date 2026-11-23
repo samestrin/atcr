@@ -18,11 +18,16 @@ func writeIgnore(t *testing.T, dir, name, content string) {
 
 func TestNewIgnoreMatcher_NoFiles(t *testing.T) {
 	m := newIgnoreMatcher(t.TempDir(), log.Discard())
-	if m.active() {
-		t.Fatal("expected inactive matcher when no ignore files exist")
+	// active() is true for every matcher (the credential-file rule always
+	// applies), so "no sources" is checked on the sources themselves.
+	if m.git != nil || m.atcr != nil {
+		t.Fatal("expected no ignore sources when no ignore files exist")
 	}
 	if m.match("anything.go") {
-		t.Fatal("inactive matcher must not match")
+		t.Fatal("a matcher with no sources must not match ordinary files")
+	}
+	if !m.match(".env") {
+		t.Fatal("the credential-file rule must apply with no ignore files")
 	}
 }
 
@@ -122,7 +127,7 @@ func TestNewIgnoreMatcher_NilLoggerUnreadableFiles(t *testing.T) {
 		}
 	}()
 	m := newIgnoreMatcher(dir, nil)
-	if m.active() {
+	if m.git != nil || m.atcr != nil {
 		t.Fatal("unreadable sources must stay disabled")
 	}
 }

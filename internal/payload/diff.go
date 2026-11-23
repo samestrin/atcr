@@ -272,14 +272,15 @@ func newGitRunner(ctx context.Context, repo string) *gitRunner {
 }
 
 // matcher returns the runner's repo-root ignore matcher, loading it once from
-// g.dir. Returns nil when filtering is disabled (--no-ignore) so callers skip
-// the partition entirely.
+// g.dir. Under --no-ignore it is credential-only: the ignore files are skipped
+// but credential files are still kept out of the payload.
 func (g *gitRunner) matcher() *ignoreMatcher {
-	if g.noIgnore {
-		return nil
-	}
 	if !g.ignoreReady {
-		g.ignore = newIgnoreMatcher(g.dir, g.log())
+		if g.noIgnore {
+			g.ignore = credentialMatcher()
+		} else {
+			g.ignore = newIgnoreMatcher(g.dir, g.log())
+		}
 		g.ignoreReady = true
 	}
 	return g.ignore
