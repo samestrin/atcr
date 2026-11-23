@@ -372,7 +372,9 @@ func drainLine(br *bufio.Reader) error {
 // conversion left unfinished is finished first (finishPendingConversion), so no
 // record is read twice; a caller holding the store lock uses readAllLocked.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
-	finishPendingConversion(dir, opts.Writer)
+	if err := finishPendingConversion(dir, opts.Writer); err != nil {
+		return nil, err
+	}
 	return readAllLocked(dir, opts)
 }
 
@@ -1592,11 +1594,15 @@ func hasShardFiles(dir string) bool {
 // storeAbsent reports that dir holds no record files and no pending conversion,
 // so Compact and CompactPlan return before withLock, which would create the
 // directory, its lock and (for Compact) a watermark: a missing or mistyped store
-// stays missing. A dir that cannot be listed is not absent; the locked path
-// reports its error.
+// stays missing. A dir that cannot be listed, or whose conversion journal cannot be
+// checked, is not absent; the locked path reports its error.
 func storeAbsent(dir string) bool {
 	files, err := RecordFiles(dir)
-	return err == nil && len(files) == 0 && !conversionPending(dir)
+	if err != nil || len(files) > 0 {
+		return false
+	}
+	pending, err := conversionPending(dir)
+	return err == nil && !pending
 }
 
 // Compact reads all records in dir, folds them by ID to keep only the effective
@@ -1686,7 +1692,11 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 		result.StoreFound = storeFound
 		// A dry run may not finish a committed conversion, and reading past one
 		// would count its records twice.
-		if conversionPending(dir) {
+		pending, err := conversionPending(dir)
+		if err != nil {
+			return err
+		}
+		if pending {
 			return errConversionPending
 		}
 		read, err := readAllPreserving(dir, opts)

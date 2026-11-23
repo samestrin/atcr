@@ -25,9 +25,9 @@ import (
 // a month shard breaks a full tie (one id, one timestamp, one status) by line order,
 // the event layout by file name, so a store holding such a tie can fold differently
 // after conversion. Then the run refuses with ErrFoldChanged and changes nothing.
-// `atcr debt compact` folds such an item to one record, which clears the tie, unless
-// the tied records are resolutions with different reasons: compaction keeps every
-// reason, so that store stays on month shards until a line is removed by hand.
+// `atcr debt compact` clears most ties by folding the item to one record, but not
+// when the tied records are resolutions with different reasons: compaction keeps
+// every reason, so that store stays on month shards until a line is removed by hand.
 //
 // A shard holding something this binary cannot carry into an event file is left
 // whole: a corrupt or over-long line, a record from a newer atcr, or a record whose
@@ -97,7 +97,9 @@ type KeptShard struct {
 }
 
 // Convert converts the store at dir to the event layout; see the package comment
-// above. It runs under the store lock, so no append lands mid-conversion.
+// above. It runs under the store lock, so no append lands mid-conversion. On an
+// error the result still reports what the run did; OptedIn in particular is true
+// when the run opted the store in before it failed.
 func Convert(dir string, opts ReadOpts) (ConvertResult, error) {
 	return convert(dir, opts, false)
 }
@@ -126,7 +128,11 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			return fmt.Errorf("staging localdebt conversion: %w", stageErr)
 		}
 		staging := filepath.Join(dir, convertSubdir)
-		if _, err := os.Stat(filepath.Join(staging, convertJournal)); err == nil {
+		pending, err := conversionPending(dir)
+		if err != nil {
+			return err
+		}
+		if pending {
 			if dryRun {
 				return errConversionPending
 			}
@@ -217,7 +223,11 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 		return nil
 	})
 	if err != nil {
-		return ConvertResult{}, err
+		// A failed run reports an opt-in only when it made one: a refused or dry
+		// run opted nothing in, and a run that failed past enableEventLayoutLocked
+		// (or while finishing a resumed plan) did.
+		res.OptedIn = res.OptedIn && !dryRun && UsesEventLayout(dir)
+		return res, err
 	}
 	return res, nil
 }
@@ -413,8 +423,8 @@ func someNames(names []string) string {
 
 func foldChangedError(ids []string) error {
 	return fmt.Errorf("%w for %d item(s): %s; nothing was changed. Records of one item with the same "+
-		"timestamp and status keep their line order in a month shard but not in the event layout. To clear "+
-		"the tie, run `atcr debt compact`, then convert again: it folds each item to one record. Tied "+
+		"timestamp and status keep their line order in a month shard but not in the event layout. "+
+		"`atcr debt compact` clears most ties: run `atcr debt compact`, then convert again. Tied "+
 		"resolutions with different reasons survive compaction; remove the unwanted line from its month "+
 		"shard by hand, or keep the store on month shards",
 		ErrFoldChanged, len(ids), someNames(ids))
@@ -442,30 +452,42 @@ func writeConvertJournal(staging string, shards []string) error {
 var errConversionPending = errors.New("an interrupted conversion is pending; run `atcr debt convert` without --dry-run to finish it")
 
 // conversionPending reports whether the store at dir holds a committed conversion
-// that is not finished.
-func conversionPending(dir string) bool {
+// that is not finished. Only a journal that does not exist means none is pending: a
+// journal that cannot be checked (EACCES, say) may name a committed plan whose
+// records every read would count twice, so it is an error.
+func conversionPending(dir string) (bool, error) {
 	_, err := os.Lstat(filepath.Join(dir, convertSubdir, convertJournal))
-	return err == nil
+	switch {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	}
+	return false, fmt.Errorf("checking for an interrupted localdebt conversion: %w", basePathErr(err))
 }
 
 // finishPendingConversion finishes a committed conversion for a read path that does
 // not hold the store lock. A plan it cannot finish is reported to w and the store is
-// read as it stands, so a read-only store still reads.
-func finishPendingConversion(dir string, w io.Writer) {
-	if !conversionPending(dir) {
-		return
+// read as it stands, so a read-only store still reads. A journal it cannot check is
+// returned: it cannot tell whether the store reads every record once.
+func finishPendingConversion(dir string, w io.Writer) error {
+	pending, err := conversionPending(dir)
+	if err != nil || !pending {
+		return err
 	}
 	if err := withLock(dir, "convert-finish", func() error { return finishPendingConversionLocked(dir) }); err != nil {
 		_, _ = fmt.Fprintf(diagWriter(w), "localdebt: an interrupted conversion could not be finished (%v); "+
 			"some records may be counted twice until `atcr debt convert` finishes it\n", err)
 	}
+	return nil
 }
 
 // finishPendingConversionLocked finishes a committed conversion under the store
 // lock the caller holds.
 func finishPendingConversionLocked(dir string) error {
-	if !conversionPending(dir) {
-		return nil
+	pending, err := conversionPending(dir)
+	if err != nil || !pending {
+		return err
 	}
 	if err := finishConversion(dir); err != nil {
 		return fmt.Errorf("finishing an interrupted localdebt conversion: %w", err)
