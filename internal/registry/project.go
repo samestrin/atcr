@@ -105,7 +105,7 @@ type ProjectConfig struct {
 	// the registry tier or the embedded default.
 	OnOverflow string `yaml:"on_overflow,omitempty"`
 	// SecretGuard selects the payload-egress secret-guard policy (Epic 35.20)
-	// applied to each review prompt before dispatch: off, warn (default), redact,
+	// applied to each review prompt before dispatch: off, warn, redact (default),
 	// or block. Empty inherits the registry tier or the embedded default.
 	SecretGuard string `yaml:"secret_guard,omitempty"`
 	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
@@ -277,8 +277,8 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("#   here can recover it.\n")
 	fmt.Fprintf(&b, "on_overflow: %s\n", DefaultOnOverflow)
 	b.WriteString("# secret_guard: what to do when a credential is found in a review prompt\n")
-	b.WriteString("#   before it is sent to a provider. One of: off (no scan), warn (default —\n")
-	b.WriteString("#   log the count and kinds, send unchanged), redact (replace each secret\n")
+	b.WriteString("#   before it is sent to a provider. One of: off (no scan), warn (log the\n")
+	b.WriteString("#   count and kinds, send unchanged), redact (default — replace each secret\n")
 	b.WriteString("#   with a placeholder before sending), or block (fail the run, naming the\n")
 	b.WriteString("#   agent, kind and file; the secret value is never logged).\n")
 	fmt.Fprintf(&b, "secret_guard: %s\n", DefaultSecretGuard)

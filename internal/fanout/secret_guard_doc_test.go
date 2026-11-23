@@ -31,7 +31,7 @@ func TestSecretGuardDoc_ProvidersPrivacySection(t *testing.T) {
 	for _, must := range []struct{ phrase, why string }{
 		{"`secret_guard`", "the setting must be named as the config key"},
 		{"`off`, `warn`, `redact` or `block`", "the four policies must be enumerable from the doc"},
-		{"default `warn`", "the default must be stated: an operator must know an unset guard still scans"},
+		{"default `redact`", "the default must be stated: an operator must know an unset guard still scans and redacts (EST-8260)"},
 		{"registry tier or per project", "both config tiers must be named"},
 		{"project overrides the registry", "the precedence direction must be stated"},
 		{"`gitleaks stdin` when the binary is on `PATH` and a built-in ruleset otherwise", "the two scanner paths must be stated"},
@@ -58,6 +58,7 @@ func TestSecretGuardDoc_SecurityPage(t *testing.T) {
 	doc := strings.Join(strings.Fields(readRepoFile(t, "../../docs/security.md")), " ")
 	for _, must := range []struct{ phrase, why string }{
 		{"`secret_guard`", "the security page must name the setting"},
+		{"default `redact`", "the security page must state the default (EST-8260)"},
 		{"review prompt and tool-loop results", "the security page must state that the review prompt and subsequent tool-loop traffic are covered"},
 		{"Persona text is not scanned", "the security page must not claim persona text is covered"},
 		{"Debate seats and the verify skeptic and fix-executor prompts are scanned too", "debate and verify set the policy (epic 106.3); the security page must say they are covered"},

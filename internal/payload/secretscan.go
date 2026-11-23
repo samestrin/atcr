@@ -166,6 +166,8 @@ type builtinRule struct {
 	// entropic requires the matched value to look random (mixed letters and
 	// digits, high Shannon entropy), filtering placeholders and prose.
 	entropic bool
+	// valid, when set, must accept the matched value (after entropic).
+	valid func(string) bool
 }
 
 // builtinRules is a deliberately small, high-signal set: vendor token shapes
@@ -181,6 +183,145 @@ var builtinRules = []builtinRule{
 	{kind: "generic-api-key", re: regexp.MustCompile(
 		`(?i)[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*["']?\s*(?::=|=|:)\s*["'\x60]([^"'\x60\s]{16,})["'\x60]`),
 		entropic: true},
+	// The 40-character AWS secret access key, quoted or not, behind any
+	// aws..secret name (aws_secret_access_key, AWS_SECRET_ACCESS_KEY, awsSecretKey).
+	{kind: "aws-secret-access-key", re: regexp.MustCompile(
+		`(?i)aws[A-Za-z0-9_.-]*secret[A-Za-z0-9_.-]*["']?[ \t]*(?::=|=|:)[ \t]*["']?([A-Za-z0-9/+]{40})(?:[^A-Za-z0-9/+=]|$)`),
+		entropic: true},
+	// The password in URL userinfo: scheme://user:PASSWORD@host.
+	{kind: "url-credential", re: regexp.MustCompile(
+		`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@"'\x60]*:([^\s/@"'\x60]+)@`),
+		valid: notPlaceholder},
+}
+
+// unquotedAssignRe is a keyword-gated unquoted assignment, the .env, YAML and
+// INI shape (DB_PASSWORD=value, password: value, key = value). Group 1 is the
+// name, group 2 the value. The value stops at whitespace, a quote or a
+// comment, and may not hold call, template or env-reference characters, so
+// code that reads a secret (getPassword(), ${DB_PASSWORD}) is not a value.
+var unquotedAssignRe = regexp.MustCompile(
+	`(?im)([A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*)[ \t]*(?::=|=|:)[ \t]*([^\s"'\x60#;,(){}\[\]<>$\\]{6,})(?:$|[\s#;,])`)
+
+// passwordNameRe marks a name as a password. Passwords are chosen by people,
+// so they rarely pass the randomness test the other names need.
+var passwordNameRe = regexp.MustCompile(`(?i)passw(?:or)?d`)
+
+// placeholderWords mark a value as an example rather than a real secret
+// wherever they appear in it; placeholderValues only as the whole value.
+var (
+	placeholderWords  = []string{"password", "passwd", "changeme", "example", "placeholder", "your", "xxxx", "dummy", "sample"}
+	placeholderValues = map[string]bool{"pass": true, "secret": true, "admin": true, "guest": true, "root": true, "test": true}
+)
+
+// notPlaceholder rejects template references, placeholder words and very
+// short values (user:pw@host in docs).
+func notPlaceholder(v string) bool {
+	if len(v) < 4 || strings.ContainsAny(v, "${}<>%") {
+		return false
+	}
+	low := strings.ToLower(v)
+	if placeholderValues[low] {
+		return false
+	}
+	for _, w := range placeholderWords {
+		if strings.Contains(low, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// passwordPlaceholders are values that stand for a password rather than being
+// one, matched as the whole value once trailing digits are trimmed
+// (password123, changeme1). passwordKeywords are type names and literals a
+// config schema or code puts after "password:".
+var (
+	passwordPlaceholders = map[string]bool{"password": true, "passwd": true, "pass": true, "pwd": true, "secret": true,
+		"changeme": true, "admin": true, "guest": true, "root": true, "test": true, "letmein": true}
+	passwordKeywords = map[string]bool{"string": true, "str": true, "required": true, "optional": true, "true": true,
+		"false": true, "null": true, "nil": true, "none": true, "undefined": true, "empty": true, "bool": true,
+		"boolean": true, "integer": true, "number": true, "redacted": true, "hidden": true, "masked": true}
+	// dottedRefRe is a field or package reference (cfg.Password, os.Args).
+	dottedRefRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+	// envNameRe is an environment variable name (DB_PASSWORD) used as a reference.
+	envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$`)
+	// codeIdentRe is a camelCase or snake_case identifier (hashedPassword, hash_pw).
+	codeIdentRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*|_[a-z0-9]+)+$`)
+)
+
+// looksLikePassword is the gate for an unquoted value under a password name.
+// People pick passwords without digits, so no character class is required.
+// What it rejects instead is the shape of something that is not a password:
+// a path, a placeholder or keyword, a field, env-var or code identifier, a
+// letters-only value under eight characters (password := hashed) and a
+// value with no letters unless it is eight or more digits. The ":="
+// operator is Go code, never a config file, and is checked by the caller.
+func looksLikePassword(v string) bool {
+	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "~/") || strings.ContainsAny(v, "${}<>%") {
+		return false
+	}
+	low := strings.ToLower(v)
+	if passwordKeywords[low] || passwordPlaceholders[strings.TrimRight(low, "0123456789!")] {
+		return false
+	}
+	for _, w := range []string{"changeme", "example", "placeholder", "your", "xxxx", "dummy", "sample"} {
+		if strings.Contains(low, w) {
+			return false
+		}
+	}
+	if dottedRefRe.MatchString(v) || envNameRe.MatchString(v) || codeIdentRe.MatchString(v) {
+		return false
+	}
+	var letters, digits, other bool
+	for _, c := range v {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			letters = true
+		case c >= '0' && c <= '9':
+			digits = true
+		default:
+			other = true
+		}
+	}
+	if !letters {
+		// A numeric password (PIN style) of eight or more digits is flagged;
+		// shorter numbers under a password name are settings (password_timeout = 3600).
+		return digits && !other && len(v) >= 8
+	}
+	return digits || other || len(v) >= 8
+}
+
+// scanUnquotedAssignments finds unquoted keyword-named assignments. A value
+// under a password name passes looksLikePassword; any other name needs a
+// random-looking value of at least 16 characters. Spans another rule already
+// covers are skipped, so one secret is counted once.
+func scanUnquotedAssignments(text string, prior []SecretHit) []SecretHit {
+	var hits []SecretHit
+	for _, m := range unquotedAssignRe.FindAllStringSubmatchIndex(text, -1) {
+		name, start, end := text[m[2]:m[3]], m[4], m[5]
+		v := text[start:end]
+		if passwordNameRe.MatchString(name) {
+			if strings.Contains(text[m[3]:m[4]], ":=") || !looksLikePassword(v) {
+				continue
+			}
+		} else if len(v) < 16 || !looksRandom(v) {
+			continue
+		}
+		if overlapsAny(prior, start, end) {
+			continue
+		}
+		hits = append(hits, SecretHit{Kind: "generic-api-key", Start: start, End: end})
+	}
+	return hits
+}
+
+func overlapsAny(hits []SecretHit, start, end int) bool {
+	for _, h := range hits {
+		if h.Start < end && start < h.End {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -203,10 +344,14 @@ func scanBuiltin(text string) []SecretHit {
 			if r.entropic && !looksRandom(text[start:end]) {
 				continue
 			}
+			if r.valid != nil && !r.valid(text[start:end]) {
+				continue
+			}
 			hits = append(hits, SecretHit{Kind: r.kind, Start: start, End: end})
 		}
 	}
 	hits = append(hits, scanPEM(text)...)
+	hits = append(hits, scanUnquotedAssignments(text, hits)...)
 	return dedupeHits(hits)
 }
 

@@ -236,7 +236,11 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", usageError(errors.New("--output-dir must not be empty"))
 	}
-	abs, err := filepath.Abs(strings.TrimSpace(dir))
+	expanded, err := validation.ExpandHome(strings.TrimSpace(dir))
+	if err != nil {
+		return "", usageError(fmt.Errorf("--output-dir: %w", err))
+	}
+	abs, err := filepath.Abs(expanded)
 	if err != nil {
 		return "", usageError(fmt.Errorf("resolving --output-dir: %w", err))
 	}

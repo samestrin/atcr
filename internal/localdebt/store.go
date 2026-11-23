@@ -237,6 +237,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 type shardHealth struct {
 	unrepresentable bool // a line longer than maxLineBytes
 	malformed       bool // a line that failed to decode
+	malformedLines  int  // how many lines failed to decode
 }
 
 func scanShard(path string, opts ReadOpts, preserve, onRecord func([]byte)) ([]Record, shardHealth, error) {
@@ -293,6 +294,7 @@ func scanShard(path string, opts ReadOpts, preserve, onRecord func([]byte)) ([]R
 				}
 			case decodeMalformed:
 				health.malformed = true
+				health.malformedLines++
 			}
 		}
 		if err != nil {
@@ -435,6 +437,9 @@ type shardRead struct {
 	// is what let Compact write a second copy of such a record while the original
 	// survived in a shard that is never rewritten (TD internal/localdebt/store.go:774).
 	shards []string
+	// malformed counts the undecodable lines in month shards Compact may
+	// rewrite; the rewrite drops them. Frozen shards keep theirs.
+	malformed int
 	// preserved maps a month shard to the forward-incompatible raw lines read from
 	// it, in file order, to be written back into that same shard.
 	preserved map[string][][]byte
@@ -615,6 +620,9 @@ func readAllPreserving(dir string, opts ReadOpts) (shardRead, error) {
 		// deleting it costs the only copy.
 		if health.unrepresentable || (health.malformed && len(recs) == 0 && len(out.preserved[month]) == 0) {
 			out.frozen[name] = true
+		}
+		if isMonthShard && !out.frozen[name] {
+			out.malformed += health.malformedLines
 		}
 		for _, r := range recs {
 			out.records = append(out.records, r)
@@ -1561,6 +1569,10 @@ type CompactResult struct {
 	// compaction folds month shards only, so on an event-only store it is a no-op
 	// with EventRecords == RecordsBefore.
 	EventRecords int
+	// Malformed counts the undecodable lines the rewrite drops (or, from
+	// CompactPlan, would drop). Lines in a shard compaction leaves whole are
+	// not counted. Zero when nothing is rewritten.
+	Malformed int
 }
 
 // hasShardFiles reports whether dir holds at least one record file: a .jsonl shard
@@ -1575,6 +1587,16 @@ type CompactResult struct {
 func hasShardFiles(dir string) bool {
 	files, err := RecordFiles(dir)
 	return err == nil && len(files) > 0
+}
+
+// storeAbsent reports that dir holds no record files and no pending conversion,
+// so Compact and CompactPlan return before withLock, which would create the
+// directory, its lock and (for Compact) a watermark: a missing or mistyped store
+// stays missing. A dir that cannot be listed is not absent; the locked path
+// reports its error.
+func storeAbsent(dir string) bool {
+	files, err := RecordFiles(dir)
+	return err == nil && len(files) == 0 && !conversionPending(dir)
 }
 
 // Compact reads all records in dir, folds them by ID to keep only the effective
@@ -1657,6 +1679,9 @@ func hasShardFiles(dir string) bool {
 func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 	var result CompactResult
 	storeFound := hasShardFiles(dir)
+	if storeAbsent(dir) {
+		return CompactResult{}, nil
+	}
 	err := withLock(dir, "compact-plan", func() error {
 		result.StoreFound = storeFound
 		// A dry run may not finish a committed conversion, and reading past one
@@ -1678,6 +1703,7 @@ func CompactPlan(dir string, opts ReadOpts) (CompactResult, error) {
 		frozenMonth := func(month string) bool { return read.frozen[month+".jsonl"] }
 		filed := filedCount(bucketByMonth(planCompaction(read), frozenMonth, io.Discard))
 		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, filed)
+		result.Malformed = read.malformed
 		return nil
 	})
 	if err != nil {
@@ -1782,6 +1808,9 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 	// so inside it every store exists and StoreFound could only ever mean
 	// "something was foldable" — the ambiguity this contract had.
 	storeFound := hasShardFiles(dir)
+	if storeAbsent(dir) {
+		return CompactResult{}, nil
+	}
 	err := withLock(dir, "compact", func() error {
 		result.StoreFound = storeFound
 		sweepStaleTemps(dir)
@@ -1814,6 +1843,7 @@ func Compact(dir string, opts ReadOpts) (CompactResult, error) {
 			StoreFound:   storeFound,
 			Preserved:    preservedCount,
 			EventRecords: read.eventRecords,
+			Malformed:    read.malformed,
 		}
 		result.RecordsBefore, result.RecordsAfter, result.Dropped = compactionCounts(read, filedCount(byMonth))
 

@@ -14,9 +14,18 @@ import (
 // explicit path). This helper can be adopted by other subcommands to make atcr
 // cwd-independent.
 func repoRoot() (string, error) {
+	root, _, err := findRepoRoot()
+	return root, err
+}
+
+// findRepoRoot is repoRoot that also reports whether a .git or .atcr marker
+// was found. With none, root is the cwd and found is false: a caller that
+// would otherwise write state there (the telemetry notice marker) uses found
+// to write nothing outside a repository, such as in $HOME or /tmp.
+func findRepoRoot() (root string, found bool, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
 		// .git must be a DIRECTORY here, and the strictness is load-bearing for
@@ -42,23 +51,23 @@ func repoRoot() (string, error) {
 		// arbitrary directory and let it pass as a repo root.
 		if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
 			if info.IsDir() {
-				return dir, nil
+				return dir, true, nil
 			}
 			if info.Mode().IsRegular() {
 				if root := worktreeMainRoot(filepath.Join(dir, ".git")); root != "" {
-					return root, nil
+					return root, true, nil
 				}
 			}
 		}
 		if info, err := os.Lstat(filepath.Join(dir, ".atcr")); err == nil && info.IsDir() {
-			return dir, nil
+			return dir, true, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 	}
-	return cwd, nil
+	return cwd, false, nil
 }
 
 // worktreeMainRoot resolves the MAIN checkout's root from a linked worktree's

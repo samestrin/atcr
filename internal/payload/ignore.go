@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gitignore "github.com/sabhiram/go-gitignore"
+	"github.com/samestrin/atcr/internal/security"
 )
 
 // Repo-root ignore sources consulted to keep generated/vendored/lockfile churn
@@ -92,18 +93,26 @@ func loadAtcrignore(path string, logger *slog.Logger) *gitignore.GitIgnore {
 	return gitignore.CompileIgnoreLines(lines...)
 }
 
-// active reports whether either source contributed patterns; when false the
-// filter is a pure no-op and callers skip partitioning entirely.
+// credentialMatcher is the matcher used under --no-ignore: no ignore sources,
+// only the credential-file rule, which no opt-out turns off.
+func credentialMatcher() *ignoreMatcher { return &ignoreMatcher{} }
+
+// active reports whether the matcher can exclude anything. Every non-nil
+// matcher applies the credential-file rule, so only a nil matcher is a no-op.
 func (m *ignoreMatcher) active() bool {
-	return m != nil && (m.git != nil || m.atcr != nil)
+	return m != nil
 }
 
 // match reports whether path (repo-root-relative, forward slashes — the form
 // git diff --name-status emits with core.quotePath=false) is excluded by either
-// source.
+// source, or is a credential file (.env*, key files; security.IsCredentialPath)
+// that never goes to a model.
 func (m *ignoreMatcher) match(path string) bool {
 	if m == nil {
 		return false
+	}
+	if security.IsCredentialPath(path) {
+		return true
 	}
 	if m.git != nil && m.git.MatchesPath(path) {
 		return true

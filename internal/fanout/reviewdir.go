@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/security"
 )
 
 // reviewIDRe is the positive allowlist for a review id: it must be a single
@@ -158,6 +159,22 @@ func ReviewsRoot(root string) string {
 	return filepath.Join(root, ".atcr", "reviews")
 }
 
+// reviewsRootRel is ReviewsRoot relative to the repo root.
+var reviewsRootRel = filepath.Join(".atcr", "reviews")
+
+// mkdirReviewsRoot creates .atcr/reviews under root, refusing a symlinked .atcr
+// or .atcr/reviews (a cloned repository can ship one): following it would write
+// the review outside the project. --output-dir applies the same refusal.
+func mkdirReviewsRoot(root string) error {
+	if err := security.RefuseSymlinkUnder(root, reviewsRootRel); err != nil {
+		return fmt.Errorf("failed to create review directory: %w", err)
+	}
+	if err := os.MkdirAll(ReviewsRoot(root), 0o755); err != nil {
+		return fmt.Errorf("failed to create review directory: %w", err)
+	}
+	return nil
+}
+
 // ReviewExists reports whether a review directory with id already exists under
 // root. It is an advisory probe only — derived-id collision handling claims the
 // directory atomically via claimReviewDir rather than relying on this check.
@@ -174,8 +191,8 @@ func ReviewExists(root, id string) bool {
 // whose check/use window let concurrent runs interleave writes in one dir.
 // Returns the claimed id and its review-dir path.
 func claimReviewDir(root, id, suffix string) (string, string, error) {
-	if err := os.MkdirAll(ReviewsRoot(root), 0o755); err != nil {
-		return "", "", fmt.Errorf("failed to create review directory: %w", err)
+	if err := mkdirReviewsRoot(root); err != nil {
+		return "", "", err
 	}
 	for n := 0; n < 10000; n++ {
 		candidate := collisionCandidate(id, suffix, n)
@@ -217,8 +234,8 @@ func (e *ReviewDirExistsError) Error() string {
 // fan-out into a directory another run is writing. Derived ids go through
 // claimReviewDir instead, which makes creation the atomic collision claim.
 func ScaffoldReviewDir(root, id string) (string, error) {
-	if err := os.MkdirAll(ReviewsRoot(root), 0o755); err != nil {
-		return "", fmt.Errorf("failed to create review directory: %w", err)
+	if err := mkdirReviewsRoot(root); err != nil {
+		return "", err
 	}
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -474,6 +491,9 @@ func backupCrossDevice(path, backup, backupNew string) error {
 // the backup path when a backup was created, or "" when there was nothing to
 // back up.
 func forceBackupReviewDir(ctx context.Context, root, id string) (string, error) {
+	if err := security.RefuseSymlinkUnder(root, reviewsRootRel); err != nil {
+		return "", fmt.Errorf("checking review directory before --force backup: %w", err)
+	}
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return "", nil

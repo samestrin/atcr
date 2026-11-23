@@ -826,7 +826,10 @@ atcr debt compact            # reports records before/after and how many were dr
 It is the one irreversible subcommand in the namespace, so `--dry-run` runs the
 same fold and reports the same before/after/dropped counts without touching a
 file. When nothing is superseded, both modes say so rather than reporting a fold
-that changed nothing.
+that changed nothing. Lines that cannot be read as records are dropped by the
+rewrite, and both modes count them ("Removed N malformed line(s)", or "Would
+remove" with `--dry-run`); a shard holding nothing readable is left whole. With
+no store at the resolved path, both modes say so and create nothing.
 
 Compaction also runs **automatically** after a reconcile append, once the store
 trips **100k records or 100 MiB, whichever comes first** (and only when it has

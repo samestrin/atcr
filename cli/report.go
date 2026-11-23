@@ -210,6 +210,10 @@ func runReport(cmd *cobra.Command, args []string) error {
 // no on-disk form to resolve, so it falls open to the absolute path (mirrors
 // resolveRedactRoot's fail-open in review.go).
 func resolveOutputPath(output string) (string, error) {
+	output, err := validation.ExpandHome(output)
+	if err != nil {
+		return "", fmt.Errorf("--output: %w", err)
+	}
 	abs, err := absFn(output)
 	if err != nil {
 		return "", fmt.Errorf("resolving --output: %w", err)

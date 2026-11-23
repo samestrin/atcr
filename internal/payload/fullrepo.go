@@ -271,9 +271,9 @@ func enumerateRepoFiles(ctx context.Context, root string, logger *slog.Logger, n
 	if idx == nil {
 		return nil, RepoScanStats{}, errors.New("full-repo scan: could not enumerate tracked files (not a git repository or git unavailable)")
 	}
-	// A nil matcher's match() is a no-op (returns false), so --no-ignore includes
-	// every tracked file — the same effect as diff-mode's WithoutIgnoreFilter.
-	var matcher *ignoreMatcher
+	// --no-ignore skips the ignore files but still drops credential files — the
+	// same effect as diff-mode's WithoutIgnoreFilter.
+	matcher := credentialMatcher()
 	if !noIgnore {
 		matcher = newIgnoreMatcher(root, logger)
 	}

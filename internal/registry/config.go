@@ -882,7 +882,7 @@ type Registry struct {
 	// DefaultOnOverflow. Resolved once in ResolveSettings, like ReviewStrategy.
 	OnOverflow string `yaml:"on_overflow,omitempty"`
 	// SecretGuard is the registry (global) tier of the payload-egress secret
-	// guard (Epic 35.20): off, warn (default), redact, or block. The project tier
+	// guard (Epic 35.20): off, warn, redact (default), or block. The project tier
 	// (ProjectConfig.SecretGuard) overrides it; unset falls through to the
 	// embedded DefaultSecretGuard. Resolved once in ResolveSettings.
 	SecretGuard string `yaml:"secret_guard,omitempty"`

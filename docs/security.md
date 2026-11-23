@@ -150,7 +150,7 @@ flagged paths leaves the PR body byte-identical to today.
 A separate surface from the host-integrity controls above: what a review sends
 *out*. Before a review prompt leaves for a provider, atcr scans it for
 credentials and applies the `secret_guard` policy (`off`, `warn`, `redact` or
-`block`; default `warn`, settable in the registry or per project). `block`
+`block`; default `redact`, settable in the registry or per project). `block`
 aborts the run rather than send a prompt holding a credential — and fails
 closed when the scan itself could not be trusted. Warnings and block errors
 name the agent, the secret kinds and the files, never the value.
@@ -162,12 +162,18 @@ by the tool results and model turns added during the tool loop. The review
 prompt is scanned once when it is built; each later request scans the new
 messages under the same policy. Persona text is not scanned. Debate seats and
 the verify skeptic and fix-executor prompts are scanned too, under the
-registry's `secret_guard` (the embedded default `warn` when the registry sets
+registry's `secret_guard` (the embedded default `redact` when the registry sets
 none); the project tier is not applied to them. Doctor probes are not scanned:
 they send only fixed probe text, never repository content. One more input to
 verify is covered: the deterministic SAST findings a review saves to
 `sast.json` (the scanner messages and rules the Fixer reads through the
 reconciled report) pass the same policy before the file is written.
+
+Before the scan, credential files never enter a payload at all: `.env` and
+`.env.*`, `.envrc`, `.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`,
+`.pypirc`, `credentials`, SSH private keys and `.pem`/`.key`/`.p12`/`.pfx`/
+`.jks`/`.keystore` files are dropped in diff and full-repo mode, even with
+`--no-ignore`.
 
 It is one layer of three, and the docs describe them together in
 [docs/providers.md](providers.md#privacy-and-redaction-pii--secrets): a
@@ -175,6 +181,15 @@ It is one layer of three, and the docs describe them together in
 atcr's **egress guard** is the last checkpoint before a prompt leaves the
 machine, and **presidio** at the proxy masks residual PII that is not a
 credential.
+
+## atcr's own state directory: symlinks are refused
+
+atcr writes its own state under fixed repository paths, and a cloned
+repository can ship any of them as a symlink. `atcr review` refuses to create
+a review directory when `.atcr` or `.atcr/reviews` is a symlink, and
+`atcr init` (including `--force` and `--refresh-personas`) refuses when `.atcr`
+or `.atcr/personas` is one, so neither writes outside the project. An explicit
+`--output-dir` that is a symlink is refused the same way.
 
 ## Summary
 

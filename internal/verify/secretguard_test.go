@@ -81,8 +81,8 @@ func assertWire(t *testing.T, policy string, bodies []string) {
 // Epic 106.3 T1: the skeptic's Invocation carries the registry secret_guard
 // policy, warn when the registry sets none, on every Chat call.
 func TestRunVerify_SkepticCarriesSecretGuard(t *testing.T) {
-	for _, tc := range []struct{ set, want string }{{"", "warn"}, {"redact", "redact"}, {"block", "block"}, {"off", "off"}} {
-		t.Run(tc.want, func(t *testing.T) {
+	for _, tc := range []struct{ set, want string }{{"", "redact"}, {"warn", "warn"}, {"redact", "redact"}, {"block", "block"}, {"off", "off"}} {
+		t.Run(tc.set+"->"+tc.want, func(t *testing.T) {
 			dir := pipelineReview(t, []reconcile.JSONFinding{
 				{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
 			})
@@ -145,8 +145,8 @@ func TestFailureClass_SecretGuardBlocked(t *testing.T) {
 // Epic 106.3 T1: the agent-mode executor's Invocation carries the registry
 // secret_guard policy, warn when the registry sets none.
 func TestGenerateFixes_AgentModeCarriesSecretGuard(t *testing.T) {
-	for _, tc := range []struct{ set, want string }{{"", "warn"}, {"redact", "redact"}, {"block", "block"}} {
-		t.Run(tc.want, func(t *testing.T) {
+	for _, tc := range []struct{ set, want string }{{"", "redact"}, {"warn", "warn"}, {"redact", "redact"}, {"block", "block"}} {
+		t.Run(tc.set+"->"+tc.want, func(t *testing.T) {
 			reg := execRegistry("MEDIUM")
 			reg.Executor = agentExecConfig()
 			reg.SecretGuard = tc.set
@@ -207,14 +207,14 @@ func TestGenerateFixes_SnippetPromptSecretGuard(t *testing.T) {
 				assert.Empty(t, findings[0].Fix)
 				assert.Contains(t, findings[0].FixWarning, "secret_guard=block")
 				assert.NotContains(t, findings[0].FixWarning, verifyAWSKey)
-			case "redact":
+			case "redact", "":
 				require.Equal(t, 1, rec.calls)
-				assert.NotContains(t, rec.prompts[0], verifyAWSKey)
+				assert.NotContains(t, rec.prompts[0], verifyAWSKey, "redact (and the empty default) redacts")
 				assert.Contains(t, rec.prompts[0], payload.SecretPlaceholder)
 				assert.Equal(t, "rotate the key", findings[0].Fix)
 			default:
 				require.Equal(t, 1, rec.calls)
-				assert.Contains(t, rec.prompts[0], verifyAWSKey, "warn (and the empty default) sends the prompt unchanged")
+				assert.Contains(t, rec.prompts[0], verifyAWSKey, "warn sends the prompt unchanged")
 				assert.Equal(t, "rotate the key", findings[0].Fix)
 			}
 		})
