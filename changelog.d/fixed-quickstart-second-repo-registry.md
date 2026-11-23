@@ -1,0 +1,1 @@
+- `atcr quickstart` in a second repo no longer warns that `atcr review` will fail when your existing registry already defines every agent in the new roster: it says there is nothing to merge, and otherwise prints the merge snippet with a warning that names only the missing agents. (epic 114)
