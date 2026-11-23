@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -355,6 +356,30 @@ func TestRootCmd_BareAXIEndsWithHelpBlock(t *testing.T) {
 	assert.True(t, strings.HasPrefix(body, "home[1"), "the home payload still comes first")
 	// A first run has nothing to report, and report would exit 2 (EST-8140).
 	assert.Equal(t, "help[1]: atcr review\n", "help["+help, "help[] is the last block")
+}
+
+// TestRootCmd_BareAXIOffersReportWhenReconciled (EST-8140): once the latest
+// review has reconciled data, the home view offers report next to review; before
+// it reconciles, review alone (report would exit 2).
+func TestRootCmd_BareAXIOffersReportWhenReconciled(t *testing.T) {
+	root := t.TempDir()
+	writeStatusFixture(t, root, "2026-06-10_x")
+	t.Chdir(root)
+
+	helpOf := func() string {
+		t.Helper()
+		code, stdout, _ := execCmdSplit(t, "--axi")
+		require.Equal(t, 0, code)
+		_, help, ok := strings.Cut(stdout, "help[")
+		require.True(t, ok, "home --axi output carries a help[] block: %q", stdout)
+		return "help[" + help
+	}
+	assert.Equal(t, "help[1]: atcr review\n", helpOf(), "nothing reconciled yet")
+
+	recDir := filepath.Join(root, ".atcr", "reviews", "2026-06-10_x", "reconciled")
+	require.NoError(t, os.MkdirAll(recDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(recDir, reconcile.FindingsJSON), []byte("[]"), 0o644))
+	assert.Equal(t, "help[2]: atcr review,atcr report <id>\n", helpOf())
 }
 
 // TestRootCmd_BareAXILegacyPipeHasNoHelpBlock pins that the deprecated pipe

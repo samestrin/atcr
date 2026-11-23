@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/spf13/cobra"
@@ -330,6 +331,40 @@ func TestRecordedRangeFlags(t *testing.T) {
 	assert.Nil(t, recordedRangeFlags(write(payload.Manifest{Baseline: true, DetectionMode: gitrange.ModeExplicit})))
 	assert.Nil(t, recordedRangeFlags(t.TempDir()), "no manifest")
 	assert.Nil(t, recordedRangeFlags(""))
+}
+
+// TestInterruptMessage_ResumeCarriesRecordedRange (EST-8140): the interrupt
+// notice reads the range from the review's manifest.json, so its suggested
+// resume re-derives the range the review recorded instead of exiting 2.
+func TestInterruptMessage_ResumeCarriesRecordedRange(t *testing.T) {
+	prepIn := func(m *payload.Manifest) *fanout.PreparedReview {
+		dir := t.TempDir()
+		if m != nil {
+			data, err := json.Marshal(m)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
+		}
+		return &fanout.PreparedReview{ID: "rev-7", Dir: dir}
+	}
+	cases := []struct {
+		name   string
+		m      *payload.Manifest
+		resume string
+	}{
+		{"explicit range", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeExplicit},
+			"'atcr review --resume rev-7 --base=aaa --head=bbb'"},
+		{"merge commit", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeMergeCommit},
+			"'atcr review --resume rev-7 --merge-commit=bbb'"},
+		{"auto range", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeAuto},
+			"'atcr review --resume rev-7' to finish"},
+		{"no manifest", nil, "'atcr review --resume rev-7' to finish"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := interruptMessage(nil, prepIn(tc.m))
+			assert.Contains(t, msg, "Run 'atcr status rev-7' to inspect, or "+tc.resume)
+		})
+	}
 }
 
 // TestSuggestions_HomeOffersReportOnlyWhenReconciled (EST-8140): report exits 2
