@@ -288,6 +288,29 @@ func TestReviewAll_NothingChangedExitsZero(t *testing.T) {
 	assert.Contains(t, out, "unchanged since last review")
 	assert.Contains(t, out, "--no-file-cache", "the notice must point at the full-rescan escape hatch")
 	assert.NotContains(t, out, "--fresh", "--fresh is the hidden deprecated alias; the hint names its replacement")
+	assert.NotContains(t, out, "Next: atcr report", "no review was created, so no Next: line may point at one")
+	assert.NotContains(t, out, "Next: atcr verify", "no review was created, so no Next: line may point at one")
+	assert.Contains(t, out, "Next: atcr review --all --no-file-cache")
+}
+
+// AC3 round 6: a scoped no-change re-run suggests the same scope with
+// --no-file-cache, never a report or verify of a review that was not created.
+func TestReviewScope_NothingChangedAXIHelpNamesScopedRescan(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initBaselineRepo(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	require.Equal(t, 0, execCmd(t, "review", "--scope", "internal"))
+
+	code, stdout, _ := execCmdSplit(t, "review", "--scope", "internal", "--axi")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, stdout, "atcr report")
+	assert.NotContains(t, stdout, "atcr verify")
+	assert.Contains(t, stdout, "atcr review --scope=internal --no-file-cache")
+	_, err := goaxi.Decode(strings.NewReader(stdout))
+	require.NoErrorf(t, err, "axi stdout must decode as TOON: %q", stdout)
 }
 
 // AC3 round 5: under --axi the "nothing to review" no-op keeps stdout
@@ -309,6 +332,10 @@ func TestReviewAll_NothingChangedAXIKeepsStdoutPayloadOnly(t *testing.T) {
 	assert.Contains(t, stderr, "nothing to review", "the notice moves to stderr under --axi")
 	assert.Contains(t, stderr, "--no-file-cache")
 	assert.Contains(t, stdout, "help[", "stdout still carries the next-step help block")
+	// AC3 round 6: no review was created, so the help must not point at one.
+	assert.NotContains(t, stdout, "atcr report", "no review exists to report")
+	assert.NotContains(t, stdout, "atcr verify", "no review exists to verify")
+	assert.Contains(t, stdout, "atcr review --all --no-file-cache", "the help names the full-rescan re-run")
 	_, err := goaxi.Decode(strings.NewReader(stdout))
 	require.NoErrorf(t, err, "axi stdout must decode as TOON: %q", stdout)
 	assertNoANSIOrMarkdown(t, stdout)
@@ -1155,4 +1182,22 @@ func TestBaselineWithheldCause_EachArmNamesItsOwnCause(t *testing.T) {
 		assert.Contains(t, got, "re-packed",
 			"with every slot ok and no other counter set, the re-packed subset is the only remaining cause")
 	})
+}
+
+// The no-change rescan line keeps the scan the user ran: --all, --scope, or
+// --scope's deprecated --dir alias, with an unsafe scope value shell-quoted.
+func TestNoFileCacheRescanLine(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--all"}, "atcr review --all --no-file-cache"},
+		{[]string{"--scope", "internal"}, "atcr review --scope=internal --no-file-cache"},
+		{[]string{"--dir", "internal"}, "atcr review --scope=internal --no-file-cache"},
+		{[]string{"--scope", "my dir"}, "atcr review --scope='my dir' --no-file-cache"},
+	} {
+		cmd := newReviewCmd()
+		require.NoError(t, cmd.ParseFlags(tc.args))
+		assert.Equal(t, tc.want, noFileCacheRescanLine(cmd), tc.args)
+	}
 }

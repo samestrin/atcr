@@ -206,6 +206,17 @@ func TestReviewID_RejectsTraversalOverride(t *testing.T) {
 	}
 }
 
+// AC3 round 6: an id that is merely the wrong characters (a clock time with a
+// colon) names the allowed set, not a path-separator problem it does not have.
+func TestReviewID_RejectionNamesAllowedCharacters(t *testing.T) {
+	_, err := ReviewID("2026-11-22_main-23:50", "feature/x", "2026-06-10", "143022", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid review id")
+	assert.Contains(t, err.Error(), "letters, digits, '.', '_' and '-'")
+	_, err = ReviewID("2026-11-22_main-2350", "feature/x", "2026-06-10", "143022", nil)
+	require.NoError(t, err, "the same id with the time as 2350 is valid")
+}
+
 func TestReviewID_DotSlugBranchFallsBackToReview(t *testing.T) {
 	// A branch that slugifies to dots must not produce an unsafe component.
 	id, err := ReviewID("", "feature/..", "2026-06-10", "143022", nil)
