@@ -658,15 +658,40 @@ func writeUserRegistry(o quickstartOpts, content, what string, roster []string) 
 		return err
 	}
 	if existed {
-		// Exists and no force: do not touch it. Show the block to merge, and warn
-		// that the roster just written to .atcr/config.yaml references these agents
-		// — until they are merged, `atcr review` will fail to resolve the roster.
+		// Exists and no force: do not touch it. When the registry already defines
+		// every roster agent (a second repo under the same HOME), there is nothing
+		// to merge. Otherwise show the block to merge, and warn that the roster
+		// just written to .atcr/config.yaml references agents the registry lacks —
+		// until they are merged, `atcr review` will fail to resolve the roster.
 		_, _ = fmt.Fprintf(o.errOut, "\nA registry already exists at %s — not overwriting it (use --force to replace).\n", regPath)
+		missing := missingRosterAgents(regPath, o.dir, roster)
+		if len(missing) == 0 {
+			_, _ = fmt.Fprintf(o.errOut, "It already defines every agent in .atcr/config.yaml (%s); nothing to merge.\n", strings.Join(roster, ", "))
+			return nil
+		}
 		_, _ = fmt.Fprintf(o.errOut, "Add the following %s to it manually:\n", what)
 		_, _ = fmt.Fprintf(o.out, "\n%s\n", content)
-		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(roster, ", "))
+		_, _ = fmt.Fprintf(o.errOut, "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents (%s) your registry does not define yet.\n", strings.Join(missing, ", "))
 		return nil
 	}
 	_, _ = fmt.Fprintf(o.out, "  created %s\n", regPath)
 	return nil
+}
+
+// missingRosterAgents returns the roster agents the existing registry at
+// regPath (merged with root's project overlay, as `atcr review` loads it) does
+// not define. A registry that fails to load defines none of them, so the whole
+// roster is returned.
+func missingRosterAgents(regPath, root string, roster []string) []string {
+	reg, err := registry.LoadMergedRegistry(regPath, root)
+	if err != nil {
+		return roster
+	}
+	var missing []string
+	for _, name := range roster {
+		if _, ok := reg.Agents[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }

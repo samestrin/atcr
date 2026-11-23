@@ -163,7 +163,7 @@ help[1]: atcr reconcile <id>
 A review whose agents all failed (exit 1) suggests inspecting and resuming it.
 A review of an explicit range carries that range, because a resume aborts with
 exit 2 unless it resolves the range the review recorded, and a bare
-`--resume` resolves the auto-detected one (`--merge-commit <sha>` for a
+`--resume` resolves the auto-detected one (`--merge-commit=<sha>` for a
 `--merge-commit` review; an auto-detected range or a `--all`/`--scope` scan
 carries nothing):
 
@@ -176,9 +176,10 @@ suggests `report` and `verify` like any reconciled review.
 
 Without `--axi` the same suggestions go to stderr as `Next:` lines (for example
 `Next: atcr report <id>` and `Next: atcr verify <id>`), so the human stdout is
-unchanged. A run that failed before it created a review (a usage error, a
-missing API key), `--dry-run`, and the deprecated `--legacy-pipe` payload get
-no `Next:` or `help[]` suggestions. A signal-interrupted review's stderr notice
+unchanged. A run that failed before its fan-out started (a usage error, or a
+missing API key, which leaves a failed review with `start_error` that
+`atcr status` reports), `--dry-run`, and the deprecated `--legacy-pipe` payload
+get no `Next:` or `help[]` suggestions. A signal-interrupted review's stderr notice
 names `atcr status <id>` and `atcr review --resume <id>` (with the recorded
 range) from the same registry.
 
@@ -214,7 +215,7 @@ of ANSI/OSC escape sequences and Markdown syntax — it is TOON only.
 
 ### Next-step suggestions
 
-After a successful run, some commands name the commands that usually come next,
+After a run, some commands name the commands that usually come next,
 so an agent without the installed Skill does not spend a turn working out the
 command graph. A runtime value the CLI cannot know for certain stays a literal
 `<id>` placeholder; substitute the review id or path yourself.

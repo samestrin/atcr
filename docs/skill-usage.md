@@ -93,7 +93,7 @@ To drive atcr as the reviewer backend for a separate code-review skill or pipeli
 
 ## Technical Debt Resolution
 
-> **One store, five subcommands.** `atcr debt list` / `add` / `dashboard` / `resolve` / `compact` all read and write **one store**: the local, `.atcr/`-scoped backlog under `.atcr/debt/` that `atcr reconcile` populates. An item filed by `add` is visible to `list` and closeable by `resolve`. This section covers the `/atcr debt resolve` route specifically — the agent-driven fix loop over that backlog. For the full command family, the record schema, and the status lifetimes, see [technical-debt.md](technical-debt.md).
+> **One store for every subcommand.** `atcr debt list` / `add` / `dashboard` / `resolve` / `compact`, for example, all read and write **one store**: the local, `.atcr/`-scoped backlog under `.atcr/debt/` that `atcr reconcile` populates. An item filed by `add` is visible to `list` and closeable by `resolve`. This section covers the `/atcr debt resolve` route specifically — the agent-driven fix loop over that backlog. For the full command family, the record schema, and the status lifetimes, see [technical-debt.md](technical-debt.md).
 
 Beyond one-off review, atcr accumulates findings into a durable local backlog and can autonomously work through it. `atcr reconcile` appends each run's reconciled findings to a local technical-debt store, and the `/atcr debt resolve` route reads that backlog and fixes items through a per-item RED→GREEN→ADVERSARIAL→REFACTOR cycle. The whole loop is repo-agnostic, with zero `.planning/` dependency.
 

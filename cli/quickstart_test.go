@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/samestrin/atcr/internal/quickstart"
 	"github.com/samestrin/atcr/internal/registry"
+	builtins "github.com/samestrin/atcr/personas"
 )
 
 // quickstartInput is the canned interactive input for a non-interactive test
@@ -317,6 +319,51 @@ func TestQuickstart_RegistryGuard_SkipsExistingWithoutForce(t *testing.T) {
 	// which only init's "Next: define providers" hint satisfied; quickstart no
 	// longer prints that hint.
 	assert.Contains(t, errOut.String(), "A registry already exists at "+regPath, "user is told the snippet was not applied")
+}
+
+// A second repo under the same HOME finds a registry that already defines
+// every roster agent: quickstart must not print the merge snippet or claim
+// `atcr review` will fail (EST-8211).
+func TestQuickstart_RegistryGuard_SecondRepoRegistryCoversRoster(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: t.TempDir(), in: strings.NewReader(quickstartInput), out: &bytes.Buffer{}, errOut: &bytes.Buffer{},
+	}))
+
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: t.TempDir(), in: strings.NewReader(quickstartInput), out: out, errOut: errOut,
+	}))
+
+	assert.Contains(t, errOut.String(), "A registry already exists at")
+	assert.Contains(t, errOut.String(), "It already defines every agent in .atcr/config.yaml ("+strings.Join(builtins.Names(), ", ")+"); nothing to merge.")
+	assert.NotContains(t, errOut.String(), "Until you merge these")
+	assert.NotContains(t, errOut.String(), "Add the following")
+	assert.NotContains(t, out.String(), "providers:", "no merge snippet when nothing is missing")
+}
+
+// A registry that defines only some roster agents gets the merge snippet and a
+// warning naming just the missing agents (EST-8211).
+func TestQuickstart_RegistryGuard_WarnsOnlyForMissingAgents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	roster := builtins.Names()
+	require.GreaterOrEqual(t, len(roster), 2)
+	dropped := roster[0]
+	manifest, err := quickstart.LoadManifest()
+	require.NoError(t, err)
+	regPath := filepath.Join(home, ".config", "atcr", "registry.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(regPath), 0o755))
+	require.NoError(t, os.WriteFile(regPath, []byte(quickstart.RegistryYAML(manifest, roster[1:])), 0o644))
+
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: t.TempDir(), in: strings.NewReader(quickstartInput), out: out, errOut: errOut,
+	}))
+
+	assert.Contains(t, errOut.String(), "Until you merge these, `atcr review` will fail: .atcr/config.yaml lists agents ("+dropped+") your registry does not define yet.")
+	assert.NotContains(t, errOut.String(), "nothing to merge")
+	assert.Contains(t, out.String(), "providers:", "merge snippet printed when an agent is missing")
 }
 
 func TestQuickstart_ScaffoldsWorkflow(t *testing.T) {
