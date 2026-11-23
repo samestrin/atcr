@@ -171,6 +171,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return interruptedBeforeFanout(cmd)
 			}
+			// A bare resume of an explicit-range review resolves the
+			// auto-detected range, which can be empty: name the range to re-pass.
+			if errors.Is(err, gitrange.ErrEmptyRange) && base == "" && head == "" && mergeCommit == "" && m.Base != "" && m.Head != "" {
+				return usageError(fmt.Errorf("resume failed: %w; %s", err, fanout.RepassRangeHint(m)))
+			}
 			return usageError(fmt.Errorf("resume failed: %w", err))
 		}
 		if res == nil {
@@ -332,6 +337,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	var axiWerr error
 	var cov runCoverage
 	if result != nil {
+		// writeReviewHelp reads this dir for the review's state, as runReview
+		// records it.
+		cmd.SetContext(context.WithValue(cmd.Context(), reviewDirKey{}, result.Dir))
 		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
 		// before the all-agents-failed error guard so a fully-failed resume still
 		// reports the breakdown. Under --axi the human outcome + summary lines are

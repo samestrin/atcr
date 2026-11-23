@@ -24,7 +24,8 @@ import (
 // matches the range the interrupted review recorded in manifest.json. Resuming
 // would fan the pending agents out at a different base/head than the completed
 // ones reviewed, mixing inconsistent contexts — so resume aborts (exit 2) and
-// the user must start a fresh `atcr review` (epic 4.1.1 AC3).
+// the user re-passes the recorded range or starts a fresh `atcr review` (epic
+// 4.1.1 AC3).
 var ErrRangeChanged = errors.New("the working tree changed since the interrupted review (git base/head differ)")
 
 // ErrRosterChanged reports that the currently configured agent roster differs
@@ -40,10 +41,17 @@ var ErrRosterChanged = errors.New("the configured roster changed since the inter
 // the completed agents did.
 func ValidateResumeRange(m *payload.Manifest, cur ReviewRange) error {
 	if m.Base != cur.Base || m.Head != cur.Head {
-		return fmt.Errorf("%w: recorded %s..%s, current %s..%s; start a fresh `atcr review`",
-			ErrRangeChanged, shortRef(m.Base), shortRef(m.Head), shortRef(cur.Base), shortRef(cur.Head))
+		return fmt.Errorf("%w: recorded %s..%s, current %s..%s; %s",
+			ErrRangeChanged, shortRef(m.Base), shortRef(m.Head), shortRef(cur.Base), shortRef(cur.Head), RepassRangeHint(m))
 	}
 	return nil
+}
+
+// RepassRangeHint names the fix for a resume whose resolved range is not the one
+// m recorded: re-pass that range in full. A bare resume resolves the
+// auto-detected range, which an explicit or --merge-commit review's need not be.
+func RepassRangeHint(m *payload.Manifest) string {
+	return fmt.Sprintf("re-pass the recorded range (--base %s --head %s) or start a fresh `atcr review`", m.Base, m.Head)
 }
 
 // ValidateResumeRoster verifies the configured roster is the same SET of agent

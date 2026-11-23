@@ -34,6 +34,9 @@ type homeState struct {
 	unavailable bool
 	reviewID    string
 	status      string
+	// reconciled reports whether the latest review has reconciled data, which
+	// the suggested report reads (reviewReconciled).
+	reconciled bool
 }
 
 // relHome renders path with the user's home-directory prefix replaced by "~"
@@ -78,7 +81,7 @@ func resolveHomeState(ctx context.Context) homeState {
 			"review", filepath.Base(dir), "err", err)
 		return homeState{unavailable: true, reviewID: filepath.Base(dir)}
 	}
-	return homeState{hasReview: true, reviewID: st.ReviewID, status: st.Status}
+	return homeState{hasReview: true, reviewID: st.ReviewID, status: st.Status, reconciled: reviewReconciled(dir)}
 }
 
 // renderHomeView writes the non-axi home view: the ~-relativized executable path,
@@ -165,7 +168,7 @@ func runHome(cmd *cobra.Command) error {
 			return err
 		}
 		return goaxi.WriteHelp(cmd.OutOrStdout(),
-			renderSuggestions(suggestHome, invocation{Flags: invocationFlags(cmd)}))
+			renderSuggestions(suggestHome, invocation{Flags: invocationFlags(cmd), Reconciled: st.reconciled}))
 	}
 
 	return renderHomeView(cmd.OutOrStdout(), execPath, cmd.Short, st)

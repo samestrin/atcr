@@ -285,6 +285,11 @@ func TestSuggestions_RegistryMatchesCommandTree(t *testing.T) {
 					assert.NotNil(t, source.Flags().Lookup(name), "%s carries --%s, which %s does not define", key, name, source.CommandPath())
 					assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried --%s is not a flag there", key, s.Command, name)
 				}
+				if s.CarryRange {
+					for _, name := range []string{"base", "head", "merge-commit"} {
+						assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried range flag --%s is not a flag there", key, s.Command, name)
+					}
+				}
 				if s.StoreFrom != "" {
 					assert.NotNil(t, source.Flags().Lookup(s.StoreFrom), "%s derives --store from --%s, which %s does not define", key, s.StoreFrom, source.CommandPath())
 					assert.NotNil(t, target.Flags().Lookup("store"), "%s -> atcr %s: derived --store is not a flag there", key, s.Command)
