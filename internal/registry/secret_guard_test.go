@@ -148,7 +148,8 @@ func TestLoadProjectRegistry_SecretGuardKeyHint(t *testing.T) {
 // comment, and still round-trips through the strict loader.
 func TestDefaultProjectConfigYAML_DocumentsSecretGuard(t *testing.T) {
 	out := DefaultProjectConfigYAML([]string{"bruce"})
-	assert.Contains(t, out, "\nsecret_guard: warn\n")
+	assert.Contains(t, out, "\nsecret_guard: redact\n")
+	assert.Contains(t, out, "redact (default", "the help comment names the default")
 	assert.Contains(t, out, "# secret_guard:")
 	for _, v := range []string{"off", "warn", "redact", "block"} {
 		assert.Contains(t, out, v)
@@ -161,4 +162,10 @@ func TestDefaultProjectConfigYAML_DocumentsSecretGuard(t *testing.T) {
 	cfg, err := LoadProjectConfig(path)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultSecretGuard, cfg.SecretGuard)
+}
+
+// The owner chose redact as the default on EST-8260: under warn, a credential
+// the scan found was still sent to the provider.
+func TestDefaultSecretGuard_IsRedact(t *testing.T) {
+	assert.Equal(t, "redact", DefaultSecretGuard)
 }
