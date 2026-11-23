@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,8 +223,14 @@ func TestValidateResumeRange(t *testing.T) {
 	if err := ValidateResumeRange(m, ReviewRange{Base: "ZZZ", Head: "bbb222"}); !errors.Is(err, ErrRangeChanged) {
 		t.Fatalf("base mismatch must be ErrRangeChanged, got %v", err)
 	}
-	if err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "ZZZ"}); !errors.Is(err, ErrRangeChanged) {
+	err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "ZZZ"})
+	if !errors.Is(err, ErrRangeChanged) {
 		t.Fatalf("head mismatch must be ErrRangeChanged, got %v", err)
+	}
+	// The fix is re-passing the recorded range, so the message names it in full
+	// (EST-8140).
+	if !strings.Contains(err.Error(), "--base aaa111 --head bbb222") {
+		t.Fatalf("range-changed error must name the recorded range to re-pass, got %v", err)
 	}
 }
 

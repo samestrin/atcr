@@ -353,7 +353,8 @@ func TestRootCmd_BareAXIEndsWithHelpBlock(t *testing.T) {
 	body, help, ok := strings.Cut(stdout, "help[")
 	require.True(t, ok, "home --axi output carries a help[] block: %q", stdout)
 	assert.True(t, strings.HasPrefix(body, "home[1"), "the home payload still comes first")
-	assert.Equal(t, "help[2]: atcr review,atcr report <id>\n", "help["+help, "help[] is the last block")
+	// A first run has nothing to report, and report would exit 2 (EST-8140).
+	assert.Equal(t, "help[1]: atcr review\n", "help["+help, "help[] is the last block")
 }
 
 // TestRootCmd_BareAXILegacyPipeHasNoHelpBlock pins that the deprecated pipe
