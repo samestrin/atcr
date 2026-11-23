@@ -183,3 +183,16 @@ func TestExportWontfixRecords_MalformedLineGoesToDiagnostics(t *testing.T) {
 	assert.Len(t, got, 1)
 	assert.NotEmpty(t, diag.String(), "a skipped line is reported to Diagnostics")
 }
+
+func TestExportWontfixRecords_RelativeRepoRoot(t *testing.T) {
+	root, _ := storeConfigRepo(t)
+	a := openRec("2026-06-01T10:00:00Z-a", "HIGH", "internal/x/a.go", 12, "boom")
+	require.NoError(t, localdebt.Append(localdebt.DefaultDir(root), wontfixRec(a, "2026-06-02T10:00:00Z", "wontfix", "rel")))
+	sub := filepath.Join(root, "internal")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	t.Chdir(sub)
+	got, err := ExportWontfixRecords(WontfixExportOptions{RepoRoot: "..", Diagnostics: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "rel", got[0].Reason)
+}

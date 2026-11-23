@@ -343,3 +343,16 @@ func main() {
 
 See the godoc on `cli.Hooks`, `cli.ModelInvocation`, `cli.ReviewReport`,
 `cli.FixApplied`, and `cli.MainWithHooks` for the field-level contract.
+
+### Reading dismissed findings
+
+`cli.ExportWontfixRecords` is a read-only seam for an embedder that needs the
+findings developers dismissed with `atcr debt resolve --status wontfix
+--reason "<reason>"`. It returns one `cli.WontfixRecord` per finding whose
+effective status is `wontfix` (reason, file, line, category, and the
+reviewer personas that raised it), sorted by id, from either store layout.
+`WontfixExportOptions.Store` has the meaning of `atcr debt --store`; left
+empty, the store is resolved from `debt.store` the way the debt commands
+resolve it. The seam adds, changes and removes no record, and it sends
+nothing anywhere. The reason is free text and the file is a repository path,
+so an embedder that forwards either owns that exposure.
