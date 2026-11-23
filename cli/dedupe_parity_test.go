@@ -88,7 +88,9 @@ func dedupeParityCases() []dedupeParityCase {
 			{"no-line-rows.txt", "c"},
 		}, tolerance: 3},
 
-		// td_dedupe_test.go: TestDedupeTD_MalformedRowSurfaced.
+		// td_dedupe_test.go: TestDedupeTD_MalformedRowSurfaced, plus a severity-
+		// prefixed malformed row added by epic 126 T3 so both tools' skipped
+		// counts are nonzero; see the skipped row in DIFFERENCES.md.
 		{name: "malformed-row", streams: []dedupeParityStream{
 			{"malformed-row.txt", "c"},
 		}, tolerance: 3},
