@@ -1,1 +1,0 @@
-- `atcr config set telemetry false` (and `quality_signal`) now writes an unquoted `false` when the config held a quoted `"true"`; it used to write `"false"`, which the config loader rejects as a string. With no `.atcr/config.yaml` it fails without leaving an empty `.atcr/` directory behind (EST-8260)

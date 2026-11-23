@@ -1,1 +1,0 @@
-- `atcr debt compact` reports the malformed lines its rewrite removes ("Removed N malformed line(s)"), and `--dry-run` reports them as "Would remove"; before, it said "Nothing to compact ... none superseded" while dropping them (EST-8260)

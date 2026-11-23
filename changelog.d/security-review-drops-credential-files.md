@@ -1,1 +1,0 @@
-- `atcr review` no longer sends committed credential files to the model: `.env` and `.env.*`, `.envrc`, `.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`, `.pypirc`, `credentials`, SSH private keys (`id_rsa` and similar) and `.pem`/`.key`/`.p12`/`.pfx`/`.jks`/`.keystore` files are left out of the review payload, in diff and full-repo mode, even with `--no-ignore` (EST-8260)

@@ -1,1 +1,0 @@
-- `atcr review`, `atcr init` and `atcr init --refresh-personas` refuse to write when `.atcr`, `.atcr/reviews` or `.atcr/personas` is a symlink, as `--output-dir` already did; a cloned repository could ship such a link and have a review, or `init --force`'s `.gitignore`, written outside the project (EST-8260)

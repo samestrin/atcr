@@ -1,1 +1,0 @@
-- `secret_guard` now defaults to `redact`: when the key is unset at every tier, a credential found in a review, debate or verify prompt is replaced with `«REDACTED-SECRET»` before it is sent, instead of being sent unchanged with a warning. Set `secret_guard: warn` to keep the old behavior. `atcr init` writes the new default (EST-8260)

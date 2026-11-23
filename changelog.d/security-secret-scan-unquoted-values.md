@@ -1,1 +1,0 @@
-- The built-in secret scan (used when `gitleaks` is not installed) now finds unquoted assignments such as `.env` lines (`DB_PASSWORD=...`, `password: ...`), passwords in URLs (`postgres://user:pw@host`) and AWS secret access keys, so `secret_guard` warns about, redacts or blocks them; before, it only caught quoted values (EST-8260)
