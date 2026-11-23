@@ -72,7 +72,7 @@ A `--all` review with three personas, part way through its fan-out:
 | Field | Type | Meaning |
 |-------|------|---------|
 | `review_id` | string | The review's id (its folder name under `.atcr/reviews/`). |
-| `status` | string | `in_progress` (the fan-out has not written `sources/pool/summary.json`), `completed` (at least one persona succeeded), `failed` (every persona failed), `interrupted` (the run was stopped by a signal) or `stale` (see [Stale](#stale)). |
+| `status` | string | `in_progress` (the fan-out has not written `sources/pool/summary.json`), `completed` (at least one persona succeeded), `failed` (every persona failed, or the review never started its fan-out: see `start_error`), `interrupted` (the run was stopped by a signal) or `stale` (see [Stale](#stale)). |
 | `agent_count` | int | Personas in the roster. |
 | `agents_done` | int | Personas that have finished, whatever the outcome. While the fan-out runs, this is the number of personas with a valid `status.json`, so it rises as each one finishes; once `summary.json` exists it is that file's final tally. |
 | `agents_pending` | int | `agent_count - agents_done`, never below 0. |
@@ -80,8 +80,9 @@ A `--all` review with three personas, part way through its fan-out:
 | `current_stage` | string | The latest stage that has **finished** (see [Stages](#stages)). Absent only in output from an `atcr` older than this field. |
 | `completed_agents` | string array | The roster personas with a valid `status.json`, sorted by name, whatever outcome that file records (`ok`, `failed` or `timeout`). Absent while no persona has finished. |
 | `agents` | object array | One row per roster persona, in roster order (see [Agent rows](#agent-rows)). Absent when the roster is empty. |
+| `start_error` | string | Why the review never started its fan-out, for example `API key env var not set: OPENAI_API_KEY` when no roster agent has its key set. Present only with `status: failed` before any `summary.json` exists; `atcr reconcile` refuses such a review, and `atcr review --resume <id>` clears it once the cause is fixed. |
 
-`current_stage`, `completed_agents` and `agents` were added after the first six
+`current_stage`, `completed_agents`, `agents` and `start_error` were added after the first six
 fields, and each is left out of the JSON when it is empty. The first six keep
 their names, types and meaning, and read the same as before once a run ends.
 
@@ -142,8 +143,8 @@ activity, so it cannot hold a dead review at `in_progress`.
 fields encoded as one [TOON](findings-format.md) object, followed by the next
 steps as a `help[]` block; the two decode together as one value. Field names,
 types and omission rules match the JSON document: `current_stage`,
-`completed_agents`, `agents` and a row's `last_activity_at` appear only when
-non-empty.
+`completed_agents`, `agents`, `start_error` and a row's `last_activity_at` appear
+only when non-empty.
 
 ```
 review_id: 2026-06-10_x

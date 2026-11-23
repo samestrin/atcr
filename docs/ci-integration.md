@@ -99,7 +99,19 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }   # full history so atcr can resolve the diff range
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: go install github.com/samestrin/atcr/cmd/atcr@latest
+      # A fresh runner has no user registry, and a committed .atcr/registry.yaml
+      # only overlays one. Commit your registry (it names key env vars, never keys)
+      # and copy it into place, or set ATCR_REGISTRY_URL to a shared one.
+      - run: install -D -m 644 .github/atcr/registry.yaml "$HOME/.config/atcr/registry.yaml"
+
       - name: Run atcr and emit SARIF
+        env:
+          # one entry per api_key_env your registry's providers name
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
 
       - name: Upload SARIF to GitHub Code Scanning
@@ -118,7 +130,14 @@ artifact instead. Wire `results.sarif` through `artifacts:reports:sast`:
 
 ```yaml
 atcr-sast:
+  image: golang:1.25
+  # Set each api_key_env your registry's providers name (for example
+  # OPENROUTER_API_KEY) as a masked CI/CD variable; GitLab exports it to the job.
   script:
+    - go install github.com/samestrin/atcr/cmd/atcr@latest
+    # A fresh runner has no user registry: copy your committed one into place,
+    # or set ATCR_REGISTRY_URL to a shared one.
+    - install -D -m 644 .gitlab/atcr/registry.yaml "$HOME/.config/atcr/registry.yaml"
     - atcr review && atcr reconcile && atcr report --format=sarif > results.sarif
   artifacts:
     reports:
