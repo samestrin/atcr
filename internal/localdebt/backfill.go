@@ -254,8 +254,14 @@ func backfillJustifications(dir, reviewRoot string, dryRun bool, seams backfillS
 	err := withLock(dir, "backfill-justifications", func() error {
 		// A committed conversion left unfinished holds its records twice: finish it,
 		// or, for a dry run, which writes nothing, refuse.
-		if dryRun && conversionPending(dir) {
-			return errConversionPending
+		if dryRun {
+			pending, err := conversionPending(dir)
+			if err != nil {
+				return err
+			}
+			if pending {
+				return errConversionPending
+			}
 		}
 		if err := finishPendingConversionLocked(dir); err != nil {
 			return err
