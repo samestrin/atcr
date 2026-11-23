@@ -166,6 +166,8 @@ type builtinRule struct {
 	// entropic requires the matched value to look random (mixed letters and
 	// digits, high Shannon entropy), filtering placeholders and prose.
 	entropic bool
+	// valid, when set, must accept the matched value (after entropic).
+	valid func(string) bool
 }
 
 // builtinRules is a deliberately small, high-signal set: vendor token shapes
@@ -181,6 +183,103 @@ var builtinRules = []builtinRule{
 	{kind: "generic-api-key", re: regexp.MustCompile(
 		`(?i)[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*["']?\s*(?::=|=|:)\s*["'\x60]([^"'\x60\s]{16,})["'\x60]`),
 		entropic: true},
+	// The 40-character AWS secret access key, quoted or not, behind any
+	// aws..secret name (aws_secret_access_key, AWS_SECRET_ACCESS_KEY, awsSecretKey).
+	{kind: "aws-secret-access-key", re: regexp.MustCompile(
+		`(?i)aws[A-Za-z0-9_.-]*secret[A-Za-z0-9_.-]*["']?[ \t]*(?::=|=|:)[ \t]*["']?([A-Za-z0-9/+]{40})(?:[^A-Za-z0-9/+=]|$)`),
+		entropic: true},
+	// The password in URL userinfo: scheme://user:PASSWORD@host.
+	{kind: "url-credential", re: regexp.MustCompile(
+		`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@"'\x60]*:([^\s/@"'\x60]+)@`),
+		valid: notPlaceholder},
+}
+
+// unquotedAssignRe is a keyword-gated unquoted assignment, the .env, YAML and
+// INI shape (DB_PASSWORD=value, password: value, key = value). Group 1 is the
+// name, group 2 the value. The value stops at whitespace, a quote or a
+// comment, and may not hold call, template or env-reference characters, so
+// code that reads a secret (getPassword(), ${DB_PASSWORD}) is not a value.
+var unquotedAssignRe = regexp.MustCompile(
+	`(?im)([A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*)[ \t]*(?::=|=|:)[ \t]*([^\s"'\x60#;,(){}\[\]<>$\\]{8,})(?:$|[\s#;,])`)
+
+// passwordNameRe marks a name as a password. Passwords are chosen by people,
+// so they rarely pass the randomness test the other names need.
+var passwordNameRe = regexp.MustCompile(`(?i)passw(?:or)?d`)
+
+// placeholderWords mark a value as an example rather than a real secret
+// wherever they appear in it; placeholderValues only as the whole value.
+var (
+	placeholderWords  = []string{"password", "passwd", "changeme", "example", "placeholder", "your", "xxxx", "dummy", "sample"}
+	placeholderValues = map[string]bool{"pass": true, "secret": true, "admin": true, "guest": true, "root": true, "test": true}
+)
+
+// notPlaceholder rejects template references, placeholder words and very
+// short values (user:pw@host in docs).
+func notPlaceholder(v string) bool {
+	if len(v) < 4 || strings.ContainsAny(v, "${}<>%") {
+		return false
+	}
+	low := strings.ToLower(v)
+	if placeholderValues[low] {
+		return false
+	}
+	for _, w := range placeholderWords {
+		if strings.Contains(low, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// looksLikePassword is the gate for an unquoted value under a password name:
+// not a path or placeholder, at least eight characters, letters and digits.
+func looksLikePassword(v string) bool {
+	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "~/") || !notPlaceholder(v) {
+		return false
+	}
+	var letters, digits bool
+	for _, c := range v {
+		switch {
+		case c >= '0' && c <= '9':
+			digits = true
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			letters = true
+		}
+	}
+	return letters && digits
+}
+
+// scanUnquotedAssignments finds unquoted keyword-named assignments. A value
+// under a password name passes looksLikePassword; any other name needs a
+// random-looking value of at least 16 characters. Spans another rule already
+// covers are skipped, so one secret is counted once.
+func scanUnquotedAssignments(text string, prior []SecretHit) []SecretHit {
+	var hits []SecretHit
+	for _, m := range unquotedAssignRe.FindAllStringSubmatchIndex(text, -1) {
+		name, start, end := text[m[2]:m[3]], m[4], m[5]
+		v := text[start:end]
+		if passwordNameRe.MatchString(name) {
+			if !looksLikePassword(v) {
+				continue
+			}
+		} else if len(v) < 16 || !looksRandom(v) {
+			continue
+		}
+		if overlapsAny(prior, start, end) {
+			continue
+		}
+		hits = append(hits, SecretHit{Kind: "generic-api-key", Start: start, End: end})
+	}
+	return hits
+}
+
+func overlapsAny(hits []SecretHit, start, end int) bool {
+	for _, h := range hits {
+		if h.Start < end && start < h.End {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -203,10 +302,14 @@ func scanBuiltin(text string) []SecretHit {
 			if r.entropic && !looksRandom(text[start:end]) {
 				continue
 			}
+			if r.valid != nil && !r.valid(text[start:end]) {
+				continue
+			}
 			hits = append(hits, SecretHit{Kind: r.kind, Start: start, End: end})
 		}
 	}
 	hits = append(hits, scanPEM(text)...)
+	hits = append(hits, scanUnquotedAssignments(text, hits)...)
 	return dedupeHits(hits)
 }
 

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/samestrin/atcr/internal/security"
 	gitignore "github.com/sabhiram/go-gitignore"
+	"github.com/samestrin/atcr/internal/security"
 )
 
 // Repo-root ignore sources consulted to keep generated/vendored/lockfile churn

@@ -57,6 +57,7 @@ func TestBuiltinRules_UnquotedAssignmentShapes(t *testing.T) {
 		"comment":    "API_SECRET=" + "Zx9Kq2Lm8Np4" + "Rt7Vw3Yb6Cd1 # rotate monthly\n",
 		"token":      "GITLAB_TOKEN=" + "glpat" + "Zx9Kq2Lm8Np4Rt7Vw3Yb" + "\n",
 		"no-newline": "PASSWORD=" + probeDBPassword,
+		"word":       "DB_PASSWORD=" + "MySecret" + "2026",
 	}
 	for name, text := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -104,6 +105,8 @@ func TestBuiltinRules_UnquotedNoFalsePositives(t *testing.T) {
 		"secretVersion: v2",
 		"for token := range tokens {",
 		"postgres://user:password@localhost:5432/db",
+		"amqp://guest:guest@localhost:5672/",
+		"redis://:secret@localhost:6379",
 		"postgres://${PGUSER}:${PGPASSWORD}@db/app",
 		"https://example.com/path?q=1",
 		"git@github.com:samestrin/atcr.git",
