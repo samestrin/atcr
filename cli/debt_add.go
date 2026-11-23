@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -166,6 +167,9 @@ func parseDebtFileLine(v string) (string, int, error) {
 		return v, 0, nil
 	}
 	tail := v[i+1:]
+	if len(tail) > 1 && tail[0] == '-' && strings.Trim(tail[1:], "0123456789") == "" {
+		return "", 0, fmt.Errorf("invalid location %q: line numbers are 1-based, not negative", v)
+	}
 	for _, r := range tail {
 		if r < '0' || r > '9' {
 			return v, 0, nil // not a line suffix; keep verbatim
@@ -343,6 +347,11 @@ func finalizeDebtRecord(rec *localdebt.Record) error {
 		if req.val == "" {
 			return usageError(fmt.Errorf("%s is required and cannot be blank", req.flag))
 		}
+	}
+	// The same lexical rule `debt validate` applies: a location is repo-relative,
+	// so an absolute path or one that climbs out with ".." names no file here.
+	if loc := filepath.FromSlash(rec.File); filepath.IsAbs(loc) || !filepath.IsLocal(loc) {
+		return usageError(fmt.Errorf("invalid --file %q: path is outside the repository; use a path relative to the repository root", rec.File))
 	}
 	status := normalizeStatus(rec.Status)
 	if status == "" {

@@ -1,0 +1,1 @@
+- `atcr debt add --file` refuses a negative line (`a.go:-3`) and a path outside the repository (`../../etc/passwd:1`, an absolute path), the same paths `atcr debt validate` reports as outside the repository; before, they were stored as given (EST-8260)
