@@ -1,1 +1,0 @@
-- `atcr quickstart` prints the signup link as a plain URL when stdout is not a terminal, instead of raw OSC 8 escape bytes. (epic 114)

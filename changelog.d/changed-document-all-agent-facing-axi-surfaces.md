@@ -1,1 +1,0 @@
-- The agentic-consumption guide now lists the AXI payloads for `atcr debate` and the `atcr debt clean`, `filter`, `group` and `validate` commands, and records that these surfaces have no legacy pipe encoding. (epic 114 T6)

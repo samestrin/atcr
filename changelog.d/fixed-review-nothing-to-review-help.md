@@ -1,1 +1,0 @@
-- A `review --all` or `--scope` re-run with nothing to review no longer suggests `atcr report <id>` and `atcr verify <id>` for a review it never created. Its next step (the `--axi` `help[]` block, or the `Next:` line on stderr) is now the same scan with `--no-file-cache`. (epic 114)

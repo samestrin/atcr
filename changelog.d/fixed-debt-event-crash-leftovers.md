@@ -1,1 +1,0 @@
-- The debt store's event layout now ships an `items/.gitignore` and sweeps crash-leftover temp files under the store lock, so an `atcr` write killed mid-event can no longer leave a `.tmp-` file that `git add -A` would commit in a shared store; a failed event publish also redacts both file paths in its error instead of leaking the absolute store path. (epic 122)

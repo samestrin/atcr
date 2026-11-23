@@ -1,1 +1,0 @@
-- The `atcr debt group` documentation now warns that a regular `critical` theme and the CRITICAL-severity group can both use `theme: "critical"`, so consumers must not treat `theme` as a unique group key. (epic 123 T5)

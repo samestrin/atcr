@@ -1,1 +1,0 @@
-- The skeptic prompt now also removes an instruction-override phrase from a finding's problem and evidence when a line break splits it (for example `ignore all prior` on one line and `instructions` on the next); a role prefix such as `system:` is still only removed at the start of a line. (epic 106.1)

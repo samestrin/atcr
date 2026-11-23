@@ -1,1 +1,0 @@
-- The `--threat-map` and `--preview-url` "applies to git-range reviews only" errors now name both causes they can be raised for: a baseline (`--all`/`--scope`) scan and a diff-based preparation. Before, a run refused on the diff path was told only about the baseline cause. (epic 124)

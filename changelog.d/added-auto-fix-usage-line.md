@@ -1,1 +1,0 @@
-- `atcr review --auto-fix` now ends its output with an `atcr-auto-fix-usage:` line giving the input and output tokens the review agents spent; verify, debate and reconcile tokens are not counted, and a run with no reported usage prints zeros (epic 105.2).

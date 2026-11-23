@@ -1,3 +1,0 @@
-- `atcr debt backfill-justifications` no longer reports an id as "left unrepaired (held in event files)" when it never needed repair: event-held ids with no source report or an empty justification are now skipped silently, exactly as on a shard-only store. (epic 122)
-- `atcr debt compact` no longer claims "all N record(s) are event files" while preserved newer-version shard lines remain on disk; it reports the event records and the preserved lines separately instead. (epic 122)
-- The backfill's `reconciled/summary.json` read can no longer hang the store lock on a FIFO swapped in mid-read, and refuses a symlink at the open instead of following it. (epic 122)
