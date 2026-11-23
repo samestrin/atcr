@@ -79,9 +79,10 @@ type ItemLock struct {
 }
 
 // ItemLockWarning describes one ref under ItemLockRefPrefix that could not be
-// read as a lock: a malformed ref name, or a tag that cannot be read or does
-// not record the ref's id. List returns these alongside the valid locks so a
-// bad ref is shown, never hidden (epic 122 T4, owner decision 2026-11-18).
+// read as a lock: a malformed ref name, a fetch of the ref that fails, or a
+// tag that cannot be read or does not record the ref's id. List returns these
+// alongside the valid locks so a bad ref is shown, never hidden (epic 122 T4,
+// owner decision 2026-11-18; epic 127 T2 for the failed fetch).
 type ItemLockWarning struct {
 	Ref    string
 	Remote string
@@ -299,8 +300,8 @@ func (l ItemLocker) Unlock(ctx context.Context, ids []string) ([]ItemLock, error
 // List reads every lock the store remote holds, oldest first, then by id. It
 // only reads: it checks no holder for liveness and never frees a lock (Epic 93
 // T2). Holder is not used. A ref under ItemLockRefPrefix whose name is not a
-// hex-encoded id, or whose tag cannot be read as a lock, is returned as an
-// ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
+// hex-encoded id, whose fetch fails, or whose tag cannot be read as a lock is
+// returned as an ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
 // shown and never hides the rest (epic 122 T4, owner decision 2026-11-18;
 // before that it failed the whole listing). A remote that cannot be reached is
 // still an error: no listing can be made at all.
@@ -383,7 +384,10 @@ func fetchItemLocks(ctx context.Context, g itemLockRunner, remote string, found 
 // listing: a tag that cannot be read, parsed, or does not record the ref's id
 // becomes an ItemLockWarning instead of an error, and every other lock is
 // still returned. found maps id to tag object as listItemLockRefs returns it.
-// A failed fetch of the remote itself is still an error: nothing can be read.
+// A ref whose fetch fails is also a warning: one ref the remote can no longer
+// serve fails the whole batch fetch, so a failed batch is retried one fetch
+// per ref (epic 127 T2, row 485c4410f55dc612). Only when every ref's fetch
+// fails is that an error: the remote itself is unreadable, nothing can be read.
 func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string, found map[string]string) (map[string]remoteItemLock, []ItemLockWarning, error) {
 	ids := make([]string, 0, len(found))
 	for id := range found {
@@ -398,14 +402,31 @@ func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string,
 	for _, id := range ids {
 		fetch = append(fetch, ItemLockRef(id))
 	}
-	if _, _, err := g.run(ctx, "", append([]string{"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote}, fetch...)...); err != nil {
-		return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
-	}
 	var warnings []ItemLockWarning
+	fetchFailed := map[string]string{}
+	if _, _, err := g.run(ctx, "", append([]string{"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote}, fetch...)...); err != nil {
+		// One ref the remote can no longer serve (deleted or corrupt object)
+		// fails the whole batch fetch. Retry one fetch per ref so that ref
+		// alone becomes a warning and every readable lock is still listed.
+		for _, id := range ids {
+			if _, _, ferr := g.run(ctx, "", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, ItemLockRef(id)); ferr != nil {
+				fetchFailed[id] = ferr.Error()
+			}
+		}
+		if len(fetchFailed) == len(ids) {
+			// Every fetch failed: the remote itself is unreadable. Report the
+			// batch error, which names the remote and the first cause.
+			return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
+		}
+	}
 	for _, id := range ids {
 		ref := ItemLockRef(id)
 		warn := func(reason string) {
 			warnings = append(warnings, ItemLockWarning{Ref: ref, Remote: remote, Reason: reason})
+		}
+		if reason, ok := fetchFailed[id]; ok {
+			warn(reason)
+			continue
 		}
 		body, _, err := g.run(ctx, "", "cat-file", "tag", found[id])
 		if err != nil {

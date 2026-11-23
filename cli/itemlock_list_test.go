@@ -250,7 +250,7 @@ func (w failOnWrite) Write(p []byte) (int, error) {
 func TestRenderDebtLocks_WriteErrors(t *testing.T) {
 	withLocks := debtLocksReport{
 		Locks:    []debtLockRow{{ID: "TD-1", Holder: "alice", LockedAt: "2026-11-06T12:00:00Z", Flags: []string{}}},
-		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Reason: "bad name"}},
+		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Remote: "origin", Reason: "bad name"}},
 	}
 	noLocks := debtLocksReport{Warnings: withLocks.Warnings}
 	now := time.Now()
@@ -261,10 +261,10 @@ func TestRenderDebtLocks_WriteErrors(t *testing.T) {
 	}{
 		{"no locks line", debtLocksReport{}, "No item locks"},
 		{"warnings header after no locks", noLocks, "warning(s)"},
-		{"warning line after no locks", noLocks, "not-hex: bad name"},
+		{"warning line after no locks", noLocks, "not-hex on origin: bad name"},
 		{"footer", withLocks, "locks flagged"},
 		{"warnings header", withLocks, "warning(s)"},
-		{"warning line", withLocks, "not-hex: bad name"},
+		{"warning line", withLocks, "not-hex on origin: bad name"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
