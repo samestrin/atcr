@@ -568,7 +568,7 @@ func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFindi
 }
 
 // secretGuardPolicy is the secret_guard policy debate seats are sent under:
-// the registry's, or the embedded default (warn) when it sets none. The
+// the registry's, or the embedded default (redact) when it sets none. The
 // project tier is resolved only by the review's ResolveSettings, which Debate
 // does not run.
 func secretGuardPolicy(reg *registry.Registry) string {

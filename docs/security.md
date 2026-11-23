@@ -150,7 +150,7 @@ flagged paths leaves the PR body byte-identical to today.
 A separate surface from the host-integrity controls above: what a review sends
 *out*. Before a review prompt leaves for a provider, atcr scans it for
 credentials and applies the `secret_guard` policy (`off`, `warn`, `redact` or
-`block`; default `warn`, settable in the registry or per project). `block`
+`block`; default `redact`, settable in the registry or per project). `block`
 aborts the run rather than send a prompt holding a credential — and fails
 closed when the scan itself could not be trusted. Warnings and block errors
 name the agent, the secret kinds and the files, never the value.
@@ -162,7 +162,7 @@ by the tool results and model turns added during the tool loop. The review
 prompt is scanned once when it is built; each later request scans the new
 messages under the same policy. Persona text is not scanned. Debate seats and
 the verify skeptic and fix-executor prompts are scanned too, under the
-registry's `secret_guard` (the embedded default `warn` when the registry sets
+registry's `secret_guard` (the embedded default `redact` when the registry sets
 none); the project tier is not applied to them. Doctor probes are not scanned:
 they send only fixed probe text, never repository content. One more input to
 verify is covered: the deterministic SAST findings a review saves to

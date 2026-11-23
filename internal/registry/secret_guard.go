@@ -3,9 +3,10 @@ package registry
 import "strings"
 
 // DefaultSecretGuard is the embedded payload-egress secret-guard policy (Epic
-// 35.20). "warn" is non-breaking: existing configs keep dispatching but start
-// surfacing credentials detected in the review prompt.
-const DefaultSecretGuard = "warn"
+// 35.20). It was "warn" until v1.3.0, which still sent a detected credential to
+// the provider; the owner chose "redact" (EST-8260): reviews keep dispatching,
+// with each detected credential replaced by a placeholder.
+const DefaultSecretGuard = "redact"
 
 // secretGuardAllowed is the allowed set, in the order load errors list it.
 const secretGuardAllowed = "off, warn, redact, block"
@@ -15,8 +16,8 @@ const secretGuardAllowed = "off, warn, redact, block"
 // the egress scan finds a credential in it:
 //
 //   - "off"    no scan — the prompt is sent unchanged;
-//   - "warn"   (default) log the hit count and kinds, send unchanged;
-//   - "redact" replace each hit span with a placeholder before sending;
+//   - "warn"   log the hit count and kinds, send unchanged;
+//   - "redact" (default) replace each hit span with a placeholder before sending;
 //   - "block"  fail the run naming agent, kind and file (never the value).
 //
 // Enforcement lives in internal/fanout, not here — this package only parses,

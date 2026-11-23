@@ -77,20 +77,20 @@ secret_guard: yolo
 	assert.Contains(t, err.Error(), "off, warn, redact, block")
 }
 
-func TestResolveSettings_SecretGuard_DefaultsToWarn(t *testing.T) {
+func TestResolveSettings_SecretGuard_DefaultsToRedact(t *testing.T) {
 	s, err := ResolveSettings(CLIOverrides{}, nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultSecretGuard, s.SecretGuard)
-	assert.Equal(t, "warn", s.SecretGuard)
+	assert.Equal(t, "redact", s.SecretGuard)
 }
 
-func TestResolveSettings_SecretGuard_EmptyResolvesToWarn(t *testing.T) {
+func TestResolveSettings_SecretGuard_EmptyResolvesToRedact(t *testing.T) {
 	reg := loadRegistryWith(t, "secret_guard: \"\"\n")
 	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nsecret_guard: \"\"\n"))
 	require.NoError(t, err)
 
 	s := resolve(t, CLIOverrides{}, proj, reg)
-	assert.Equal(t, "warn", s.SecretGuard, "an empty value at every tier falls through to the default")
+	assert.Equal(t, "redact", s.SecretGuard, "an empty value at every tier falls through to the default")
 }
 
 func TestResolveSettings_SecretGuard_RegistryOverridesDefault(t *testing.T) {
@@ -121,7 +121,7 @@ func TestResolveSettings_SecretGuard_ProjectOffOverridesRegistry(t *testing.T) {
 func TestResolveSettings_SecretGuard_WhitespaceTreatedAsUnset(t *testing.T) {
 	s, err := ResolveSettings(CLIOverrides{}, &ProjectConfig{SecretGuard: "   "}, &Registry{SecretGuard: "  "})
 	require.NoError(t, err)
-	assert.Equal(t, "warn", s.SecretGuard)
+	assert.Equal(t, "redact", s.SecretGuard)
 }
 
 func TestResolveSettings_SecretGuard_DirectlyConstructedInvalidRejected(t *testing.T) {

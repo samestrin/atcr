@@ -156,8 +156,8 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 }
 
 // secretGuardPolicy is the secret_guard policy the skeptic and executor prompts
-// are sent under: the registry's own, warn (registry.DefaultSecretGuard) when it
-// sets none. llmclient reads "" as off, so the default is resolved here rather
+// are sent under: the registry's own, redact (registry.DefaultSecretGuard) when
+// it sets none. llmclient reads "" as off, so the default is resolved here rather
 // than left to the client.
 func secretGuardPolicy(reg *registry.Registry) string {
 	if p := strings.TrimSpace(reg.SecretGuard); p != "" {
