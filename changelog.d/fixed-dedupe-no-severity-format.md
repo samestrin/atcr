@@ -1,0 +1,1 @@
+- `atcr dedupe` counts pipe-delimited rows under a `# Format:` that declares no SEVERITY column in `summary.skipped` instead of silently ignoring them as prose, matching `td-dedupe`; one-field prose lines are still ignored. (epic 126)
