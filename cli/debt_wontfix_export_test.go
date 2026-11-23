@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,6 +148,7 @@ func TestExportWontfixRecords_RejectsABadStore(t *testing.T) {
 		"blank":            "   ",
 		"system directory": "/etc",
 		"unknown user":     "~nosuchuser/debt",
+		"traversal":        "../outside",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := ExportWontfixRecords(WontfixExportOptions{Store: store, Diagnostics: io.Discard})
@@ -195,4 +197,40 @@ func TestExportWontfixRecords_RelativeRepoRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "rel", got[0].Reason)
+}
+
+// TestExportWontfixRecords_RejectsARelativeStoreInASystemDirectory pins the
+// re-check after filepath.Abs: "." passes the check on the raw value and is
+// refused only once it resolves to /etc.
+func TestExportWontfixRecords_RejectsARelativeStoreInASystemDirectory(t *testing.T) {
+	if _, err := os.Stat("/etc"); err != nil {
+		t.Skip("no /etc on this host")
+	}
+	t.Chdir("/etc")
+	_, err := ExportWontfixRecords(WontfixExportOptions{Store: ".", Diagnostics: io.Discard})
+	require.Error(t, err)
+}
+
+func TestExportWontfixRecords_SortedByIDWhateverTheReadOrder(t *testing.T) {
+	var recs []localdebt.Record
+	for i, problem := range []string{"zeta", "alpha", "mu", "beta", "omega"} {
+		r := openRec("2026-06-01T10:00:00Z-a", "LOW", "internal/x/a.go", i+1, problem)
+		recs = append(recs, wontfixRec(r, "2026-06-02T10:00:00Z", "wontfix", problem))
+	}
+	dir := writeDebtStore(t, recs...)
+	got, err := ExportWontfixRecords(WontfixExportOptions{Store: dir, Diagnostics: io.Discard})
+	require.NoError(t, err)
+	require.Len(t, got, len(recs))
+	ids := make([]string, len(got))
+	for i, r := range got {
+		ids[i] = r.ID
+	}
+	require.False(t, sort.StringsAreSorted(func() []string {
+		written := make([]string, len(recs))
+		for i, r := range recs {
+			written[i] = r.ID
+		}
+		return written
+	}()), "fixture must be written out of id order")
+	assert.True(t, sort.StringsAreSorted(ids), "ids %v are not ascending", ids)
 }
