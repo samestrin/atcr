@@ -519,6 +519,19 @@ func TestQuickstart_StdinNotTTY_SkipsKeyPrompt(t *testing.T) {
 		"the export hint is printed instead of the prompt")
 }
 
+// `atcr quickstart </dev/null` (what SKILL.md tells an agent to run) reaches
+// the prompt and reads EOF at once: the export hint must still be printed.
+func TestQuickstart_StdinEOF_PrintsExportHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{
+		dir: dir, in: strings.NewReader(""), out: out, errOut: &bytes.Buffer{},
+	}))
+	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=<your-key>",
+		"EOF at the key prompt still shows how to set the key")
+}
+
 func TestQuickstart_LayersOntoExistingAtcr(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
