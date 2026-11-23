@@ -47,10 +47,27 @@ func DefaultDir(root string) string {
 // therefore names the configured store and the missing grandparent instead of
 // calling the anchor the "store root" — the wrong diagnosis for a configured
 // store (TD internal/localdebt/paths.go:45, row 993fffb0c24de643).
+//
+// A project-tier store (one projectStoreDir handed out, recorded in projectStores)
+// is anchored to its repository root instead: at depth 1 ("debt") the grandparent
+// is the root's PARENT, which survives the root's removal, so MkdirAll would
+// resurrect the root (row 24dcb363e7cd6d72). The root is known for those stores,
+// so the check names it directly and missing directories between the root and the
+// store are created. Stores not in the registry (the default, the user tier,
+// --store) keep the grandparent rule.
 func ensureStoreDir(dir string) error {
 	if info, err := os.Stat(dir); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("localdebt store path %s is not a directory", filepath.Base(dir))
+		}
+		return nil
+	}
+	if root, ok := projectStores.Load(filepath.Clean(dir)); ok {
+		if info, err := os.Stat(root.(string)); err != nil || !info.IsDir() {
+			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(root.(string)))
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return basePathErr(err)
 		}
 		return nil
 	}

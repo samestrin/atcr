@@ -102,6 +102,68 @@ func TestEnsureStoreDir_ConfiguredStoreUnderExistingGrandparentIsCreated(t *test
 	assert.True(t, info.IsDir(), "the configured store must exist as a directory")
 }
 
+// TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot pins row
+// 24dcb363e7cd6d72: a project-tier debt.store one level below the repo root
+// ("debt") has the root's PARENT as its grandparent, so the grandparent rule passed
+// even when the root itself had vanished, and MkdirAll resurrected the root. A
+// store projectStoreDir handed out is anchored to the repository root it was
+// resolved against instead.
+func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "gone-repo")
+	require.NoError(t, os.Mkdir(root, 0o755))
+	dir, err := projectStoreDir(root, "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { projectStores.Delete(filepath.Clean(dir)) })
+	require.NoError(t, os.Remove(root))
+
+	err = ensureStoreDir(dir)
+	require.Error(t, err, "a vanished repo root under a depth-1 project store must be refused, not recreated")
+	assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
+	assert.Contains(t, err.Error(), `"gone-repo"`, "the refusal names the missing repository root")
+	_, statErr := os.Stat(root)
+	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
+}
+
+// TestEnsureStoreDir_ProjectTierStoreUnderLiveRootIsCreated guards the other side
+// of row 24dcb363e7cd6d72: with the root present, a project-tier store is created
+// on demand at depth 1, and at depth 3 with its intermediate directories missing.
+func TestEnsureStoreDir_ProjectTierStoreUnderLiveRootIsCreated(t *testing.T) {
+	root := t.TempDir()
+	for _, v := range []string{"debt", "docs/planning/debt"} {
+		dir, err := projectStoreDir(root, v)
+		require.NoError(t, err)
+		t.Cleanup(func() { projectStores.Delete(filepath.Clean(dir)) })
+
+		require.NoError(t, ensureStoreDir(dir), v)
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.True(t, info.IsDir(), "%s must exist as a directory", v)
+	}
+}
+
+// TestEnsureStoreDir_UserTierStoreOutsideRepoKeepsGrandparentRule: a user-tier
+// store is not in projectStores, so it keeps the grandparent rule: refused when
+// its grandparent is missing, created when it exists (row 24dcb363e7cd6d72).
+func TestEnsureStoreDir_UserTierStoreOutsideRepoKeepsGrandparentRule(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	missing, err := userStoreDir(root, filepath.Join(outside, "planning", "notes", "debt"))
+	require.NoError(t, err)
+	err = ensureStoreDir(missing)
+	require.Error(t, err, "a user-tier store whose grandparent is missing must be refused")
+	assert.Contains(t, err.Error(), `"planning"`, "the refusal names the missing grandparent")
+	_, statErr := os.Stat(filepath.Join(outside, "planning"))
+	assert.True(t, os.IsNotExist(statErr), "the refusal must not create anything: %v", statErr)
+
+	present, err := userStoreDir(root, filepath.Join(outside, "notes", "debt"))
+	require.NoError(t, err)
+	require.NoError(t, ensureStoreDir(present), "a user-tier store under an existing grandparent is created")
+	info, err := os.Stat(present)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+}
+
 // TestRedactPathErr pins the exported path-reduction contract (TD
 // internal/localdebt/paths.go:51 — the row's FIX cell was a reconcile
 // copy-paste of the ManualRunID item; this is the clarified fix): a surfaced
