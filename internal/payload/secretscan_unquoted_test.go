@@ -13,7 +13,7 @@ import (
 var (
 	probeDBPassword  = "Pr0dDbPa" + "ss2026x"
 	probeURLPassword = "s3cr3tPg" + "Pass99"
-	probeAWSSecret   = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"
+	probeAWSSecret   = strings.Join([]string{"wJalrXUtn", "FEMI/K7MD", "ENG/bPxRfi", "CYEXAMPLEKEY"}, "")
 	probeAnthropic   = "sk-" + "ant-api03-" + strings.Repeat("Ab3De5Fg7Hi9Jk1Lm3No5", 4) + "AA"
 	probeSlack       = "xoxb-" + "123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
 )

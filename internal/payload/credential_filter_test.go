@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -20,7 +21,7 @@ func credentialFixture(t *testing.T) (dir, base, head string) {
 	write(t, dir, "certs/server.key", "key v1\n")
 	base = commitAll(t, dir, "v1")
 	write(t, dir, "main.go", goFileV2)
-	write(t, dir, ".env", "DB_PASSWORD=Sup3rS3cretPassw0rd\n")
+	write(t, dir, ".env", "DB_PASSWORD="+strings.Join([]string{"Sup3rS3", "cretPassw0rd"}, "")+"\n")
 	write(t, dir, "certs/server.key", "key v2\n")
 	head = commitAll(t, dir, "v2")
 	return dir, base, head
