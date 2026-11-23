@@ -115,9 +115,10 @@ func runDebtFilter(cmd *cobra.Command, _ []string) error {
 		EstFloor:   floor,
 		EstCeil:    ceil,
 	}
-	// One summary read feeds both halves of the document, so summary.matched and
-	// items cannot disagree when a writer lands mid-command (two reads could).
-	// Only the hydration of the selected ids reads full records.
+	// One summary read feeds the count and the selection, so a writer landing
+	// mid-command cannot make summary.matched disagree with what was selected.
+	// The selected ids are then hydrated by a second read (collectDebtIDRecords),
+	// so a concurrent compaction can still leave items shorter than matched.
 	dir, err := debtStoreDir(cmd)
 	if err != nil {
 		return err
