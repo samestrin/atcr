@@ -78,7 +78,7 @@ Invoke the dispatcher as `/atcr <command> <flags>`. Every command maps 1:1 to an
 | `atcr range` | Resolve the review range and print resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON |
 | `atcr init` | Write .atcr/config.yaml and editable persona files |
-| `atcr quickstart` | Interactive onboarding: scaffold config, provider, and a CI workflow |
+| `atcr quickstart` | Interactive onboarding: scaffold config, provider, and a CI workflow. An agent uses `--preset local-32gb` (asks nothing) or runs `atcr quickstart </dev/null`, which leaves the API-key prompt unanswered and prints the `export` line to set |
 | `atcr serve` | Run the MCP stdio server over the review engine |
 | `atcr webhook` | Run the loopback-only daemon that reviews a GitHub pull request when the Slack app is mentioned with `review <pr-url>`, or when a configured Linear issue moves to a trigger status (see docs/webhook.md) |
 | `atcr doctor` | Self-test every configured model endpoint |

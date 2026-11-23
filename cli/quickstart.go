@@ -336,6 +336,21 @@ func createExclusive(path string, data []byte, perm os.FileMode, force bool) (ex
 	return false, nil
 }
 
+// stdinIsPipeOrFile reports whether in is an *os.File that is not a character
+// device (a pipe or a regular file). Any other reader — a test's
+// strings.Reader — and a terminal or /dev/null count as answerable.
+func stdinIsPipeOrFile(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice == 0
+}
+
 // keyEnvFlow shows the referral signup link, optionally opens it, then walks the
 // user through setting the provider's API-key environment variable. The key is
 // held only transiently: it is echoed back as an `export` line and, if the user
@@ -360,6 +375,13 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		}
 	}
 
+	// Off a TTY (an agent's or CI's open pipe) nobody can answer the prompt, and
+	// reading would block until EOF: print the export hint and move on.
+	if stdinIsPipeOrFile(o.in) {
+		_, _ = fmt.Fprintf(o.out, "\nstdin is not a terminal, so quickstart will not prompt for the key. Set it with:\n  export %s=<your-key>\n", env)
+		return nil
+	}
+
 	scanner := bufio.NewScanner(o.in)
 	readLine := func(prompt string) (string, bool) {
 		_, _ = fmt.Fprint(o.out, prompt)
@@ -374,6 +396,8 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		if err := scanner.Err(); err != nil {
 			_, _ = fmt.Fprintf(o.errOut, "could not read input: %v\n", err)
 		}
+		// EOF (`</dev/null`): nobody answered, so say how to set the key.
+		_, _ = fmt.Fprintf(o.out, "\nWhen you have a key, set it with:\n  export %s=<your-key>\n", env)
 		return nil
 	}
 	if key == "" {
