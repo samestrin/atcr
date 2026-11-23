@@ -62,8 +62,11 @@ The legacy path keeps its old bytes exactly, including its old pagination contra
 # Kick off a review and capture the run summary (metadata) as a clean payload.
 atcr review --axi > run.toon 2> review.log
 
-# A plain review does not reconcile (only --fail-on, --verify, --debate or
-# --auto-fix do), so reconcile the latest review before reading its findings.
+# A review reconciles in-process only when a gate threshold is set (--fail-on,
+# or fail_on in .atcr/config.yaml, which init and quickstart set to HIGH) or
+# with --verify, --debate or --auto-fix; otherwise reconcile the latest review
+# before reading its findings. Check review's exit code first: after a review
+# whose agents all failed (exit 1) there are no findings to read.
 atcr reconcile > /dev/null 2> reconcile.log
 
 # Read the reconciled findings themselves as a token-dense payload.
@@ -138,14 +141,24 @@ review is already fully complete) runs no fan-out, so its payload reports the
 just-reconciled total instead of a fan-out count.
 
 A run that exits 0 ends with a `help[]` block naming the usual next commands,
-with the review id left as the literal placeholder `<id>`:
+with the review id left as the literal placeholder `<id>`. A review that
+reconciled in-process (a gate threshold from `--fail-on` or config `fail_on`, or
+`--verify`, `--debate` or `--auto-fix`) suggests reading its findings:
 
 ```
 help[2]: atcr report <id>,atcr verify <id>
 ```
 
-Without `--axi` the same suggestions go to stderr as `Next: atcr report <id>`
-and `Next: atcr verify <id>`, so the human stdout is unchanged. A run that exits
+A review that did not reconcile suggests reconciling it first, since `report`
+and `verify` exit 2 until reconciled data exists:
+
+```
+help[1]: atcr reconcile <id>
+```
+
+Without `--axi` the same suggestions go to stderr as `Next:` lines (for example
+`Next: atcr report <id>` and `Next: atcr verify <id>`), so the human stdout is
+unchanged. A run that exits
 non-zero, `--dry-run`, and the deprecated `--legacy-pipe` payload get no
 `Next:` or `help[]` suggestions. The one exception is a signal-interrupted
 review, whose stderr notice names `atcr status <id>` and
@@ -222,12 +235,13 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   after its result line, and leaves stdout unchanged. It stays a raw stderr
   line under `--log-format json` too, exactly as before `--axi` existed.
 - `atcr status --axi` replaces its indented JSON document with one TOON object
-  of the same fields (see [status.md](status.md#axi-mode)), followed by the
-  same `help` array: `help[1]: atcr report <id>`, plus a
-  `review --resume <id>` line while agents are pending. No `Next:` line is
-  written, on stderr or as a `--log-format json` record. Without `--axi`,
-  stdout stays the JSON document and the `Next:` lines stay on stderr,
-  byte-identical.
+  of the same fields (see [status.md](status.md#axi-mode)), followed by a
+  `help` array that follows the review's state: `help[1]: atcr reconcile <id>`
+  for a finished review with no reconciled data yet, `atcr report <id>` once it
+  is reconciled, and `atcr review --resume <id>` while agents are pending or the
+  review failed. No `Next:` line is written, on stderr or as a
+  `--log-format json` record. Without `--axi`, stdout stays the JSON document
+  byte-identical and the same steps are `Next:` lines on stderr.
 - Without `--axi`, `atcr reconcile` prints the same suggestions as human
   lines on **stderr**, after its other diagnostics, and leaves stdout unchanged:
 

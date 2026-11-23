@@ -8,11 +8,14 @@ After the JSON, the command prints the usual next steps on stderr, so stdout
 stays one JSON document:
 
 ```
-Next: atcr report <id>
-Next: atcr review --resume <id>
+Next: atcr reconcile <id>
 ```
 
-The `review --resume` line appears only while `agents_pending` is above zero.
+The steps follow the review's state: `atcr reconcile <id>` for a finished review
+with no reconciled data yet, `atcr report <id>` once `reconciled/findings.json`
+exists, and `atcr review --resume <id>` while `agents_pending` is above zero or
+the review `failed`. A failed or still-running review is never offered
+`reconcile`.
 `<id>` is a placeholder for the review id. The MCP tool does not add these lines.
 
 Under [`--axi`](#axi-mode) the same fields print as one TOON object followed by
@@ -158,11 +161,13 @@ completed_agents[2]: greta,kai
 agents[2]{name,state,chunks_done,chunks_total,last_activity_at}:
   greta,done,1,1,"2026-06-10T14:31:12Z"
   kai,done,1,1,"2026-06-10T14:32:05Z"
-help[1]: atcr report <id>
+help[1]: atcr reconcile <id>
 ```
 
-While `agents_pending` is above zero, `help[]` also offers
-`atcr review --resume <id>`. No `Next:` line is written anywhere. There is no
+`help[]` follows the same rules as the `Next:` lines: `reconcile` here because
+the review is only `reviewed`, `report` once it is reconciled, and
+`atcr review --resume <id>` while agents are pending or the review failed. No
+`Next:` line is written anywhere. There is no
 legacy pipe encoding: `--legacy-pipe` is rejected as a usage error (exit 2)
 and `ATCR_LEGACY_PIPE` is ignored. Without `--axi` the output is byte-identical
 to what it always was. The `atcr_status` MCP tool is unchanged: it always

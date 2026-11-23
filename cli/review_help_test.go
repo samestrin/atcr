@@ -1,6 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,12 +16,18 @@ import (
 )
 
 // reviewHelpBlock is the help[] block a successful `atcr review --axi` (fresh
-// or --resume) ends with (Epic 42.0 T2): the registry's review next steps with
-// <id> left as a literal placeholder, in goaxi.WriteHelp's inline TOON form.
-const reviewHelpBlock = "help[2]: atcr report <id>,atcr verify <id>\n"
+// or --resume) with no gate ends with (Epic 42.0 T2): the registry's review next
+// steps with <id> left as a literal placeholder, in goaxi.WriteHelp's inline
+// TOON form. Nothing reconciled the review, so report and verify (which exit 2
+// without reconciled data) give way to reconcile (EST-8139).
+const reviewHelpBlock = "help[1]: atcr reconcile <id>\n"
 
 // reviewNextLines is the human-mode rendering of the same next steps, on stderr.
-const reviewNextLines = "Next: atcr report <id>\nNext: atcr verify <id>\n"
+const reviewNextLines = "Next: atcr reconcile <id>\n"
+
+// reconciledReviewHelpBlock is the help[] block of a review that reconciled
+// in-process: report and verify now have the data they read.
+const reconciledReviewHelpBlock = "help[2]: atcr report <id>,atcr verify <id>\n"
 
 // TestInterruptMessage_ByteIdentical pins the whole interrupt notice to the
 // text it had before the registry took over its hint line (Epic 42.0 T2).
@@ -163,4 +175,74 @@ func TestInterruptMessage_ShortRegistryEntryDoesNotPanic(t *testing.T) {
 	})
 	assert.Contains(t, msg, "atcr status rev-7")
 	assert.Contains(t, msg, "atcr review --resume rev-7")
+}
+
+// lowFindingProvider is liveMockProvider with a LOW finding, so a HIGH gate
+// reconciles in-process and passes.
+func lowFindingProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		content := "LOW|a.txt:1|Nit|Tidy it|style|5|evidence"
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestReviewCmd_GateReconciledSuggestsReport (EST-8139): a review that
+// reconciled in-process under a passing --fail-on gate suggests report and
+// verify, which can read its reconciled findings, and no reconcile.
+func TestReviewCmd_GateReconciledSuggestsReport(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := lowFindingProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, stdout, stderr := execCmdSplit(t, "review", "--axi", "--fail-on", "high", "--base", "HEAD^")
+	require.Equal(t, 0, code, stderr)
+	require.True(t, strings.HasSuffix(stdout, reconciledReviewHelpBlock), "got:\n%s", stdout)
+
+	// The suggested report runs: the review has the data it reads.
+	code, _, stderr = execCmdSplit(t, "report", "--format", "axi")
+	assert.Equal(t, 0, code, stderr)
+}
+
+// TestReviewCmd_ConfigGateReconciledSuggestsReport (EST-8139): a fail_on in
+// the project config (init and quickstart write HIGH) reconciles in-process
+// just as the flag does, so the suggestion follows what ran, not the flag.
+func TestReviewCmd_ConfigGateReconciledSuggestsReport(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := lowFindingProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [bruce]\nfail_on: HIGH\n"), 0o644))
+
+	code, _, stderr := execCmdSplit(t, "review", "--base", "HEAD^")
+	require.Equal(t, 0, code, stderr)
+	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\nNext: atcr verify <id>\n"), "got:\n%s", stderr)
+}
+
+// TestReviewCmd_UnreconciledSuggestionRuns (EST-8139): the reconcile a plain
+// review suggests runs, where the report it used to suggest exited 2.
+func TestReviewCmd_UnreconciledSuggestionRuns(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	code, stdout, stderr := execCmdSplit(t, "review", "--axi", "--base", "HEAD^")
+	require.Equal(t, 0, code, stderr)
+	require.True(t, strings.HasSuffix(stdout, reviewHelpBlock), "got:\n%s", stdout)
+
+	code, _, _ = execCmdSplit(t, "report", "--format", "axi")
+	require.Equal(t, 2, code, "report needs reconciled data")
+	code, _, stderr = execCmdSplit(t, "reconcile")
+	require.Equal(t, 0, code, stderr)
+	code, _, stderr = execCmdSplit(t, "report", "--format", "axi")
+	assert.Equal(t, 0, code, stderr)
 }

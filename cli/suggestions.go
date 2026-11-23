@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -60,8 +62,16 @@ type nextStep struct {
 	// from which to derive --store=<absolute root>/.atcr/debt, for a debt
 	// command that should read the store that root's findings persisted to.
 	StoreFrom string
-	// PendingOnly offers the step only when the review is still pending.
-	PendingOnly bool
+	// ResumableOnly offers the step only when the review still has agents to
+	// run: it is pending, or it failed (review --resume reruns failed agents).
+	ResumableOnly bool
+	// ReconciledOnly offers the step only when the review has reconciled data
+	// (reconciled/findings.json), which report and verify read and refuse
+	// without.
+	ReconciledOnly bool
+	// UnreconciledOnly offers the step only when the review settled without
+	// reconciled data: not reconciled, nothing pending and not failed.
+	UnreconciledOnly bool
 }
 
 // carryAllowlist holds the disambiguating flags whose value may be carried into
@@ -75,9 +85,13 @@ var carryAllowlist = map[string]bool{
 // suggestionRegistry maps what just ran to its ordered candidate next steps.
 // review --resume is a flag on review, not a standalone `atcr resume` command.
 var suggestionRegistry = map[suggestionKey][]nextStep{
+	// A review reconciles in-process only under a gate threshold (--fail-on or
+	// config fail_on) or --verify/--debate/--auto-fix; otherwise report and
+	// verify would exit 2 until `atcr reconcile` runs, so that comes first.
 	suggestReview: {
-		{Command: "report", Args: []string{idPlaceholder}},
-		{Command: "verify", Args: []string{idPlaceholder}},
+		{Command: "reconcile", Args: []string{idPlaceholder}, UnreconciledOnly: true},
+		{Command: "report", Args: []string{idPlaceholder}, ReconciledOnly: true},
+		{Command: "verify", Args: []string{idPlaceholder}, ReconciledOnly: true},
 	},
 	suggestReviewInterrupted: {
 		{Command: "status", Args: []string{idPlaceholder}},
@@ -101,8 +115,9 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 		{Command: "report", Args: []string{idPlaceholder}},
 	},
 	suggestStatus: {
-		{Command: "report", Args: []string{idPlaceholder}},
-		{Command: "review", Args: []string{"--resume", idPlaceholder}, PendingOnly: true},
+		{Command: "reconcile", Args: []string{idPlaceholder}, UnreconciledOnly: true},
+		{Command: "report", Args: []string{idPlaceholder}, ReconciledOnly: true},
+		{Command: "review", Args: []string{"--resume", idPlaceholder}, ResumableOnly: true},
 	},
 	suggestHome: {
 		{Command: "review"},
@@ -114,8 +129,38 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 type invocation struct {
 	// Flags maps each flag the user set to its value (see invocationFlags).
 	Flags map[string]string
-	// Pending reports whether the review is still pending, gating PendingOnly.
+	// Pending reports whether the review is still pending.
 	Pending bool
+	// Failed reports whether the review ended failed.
+	Failed bool
+	// Reconciled reports whether the review has reconciled data
+	// (reviewReconciled).
+	Reconciled bool
+}
+
+// reviewReconciled reports whether reconcile ran for the review in reviewDir:
+// reconciled/findings.json, the file report and verify read, is a regular file.
+// The reconciled/ directory alone proves nothing, since every review is
+// scaffolded with it.
+func reviewReconciled(reviewDir string) bool {
+	if reviewDir == "" {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(reviewDir, "reconciled", reconcile.FindingsJSON))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// offered reports whether s applies to inv.
+func (s nextStep) offered(inv invocation) bool {
+	switch {
+	case s.ResumableOnly && !inv.Pending && !inv.Failed:
+		return false
+	case s.ReconciledOnly && !inv.Reconciled:
+		return false
+	case s.UnreconciledOnly && (inv.Reconciled || inv.Pending || inv.Failed):
+		return false
+	}
+	return true
 }
 
 // invocationFlags returns the flags the user explicitly set on cmd, by name,
@@ -149,7 +194,7 @@ var deprecatedFlagAliases = map[string]string{
 func renderSuggestions(key suggestionKey, inv invocation) []string {
 	var out []string
 	for _, s := range suggestionRegistry[key] {
-		if s.PendingOnly && !inv.Pending {
+		if !s.offered(inv) {
 			continue
 		}
 		out = append(out, s.render(inv))
