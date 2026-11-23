@@ -1,0 +1,1 @@
+- Embedders can read the findings developers dismissed as `wontfix`, with each one's reason, file, category and reviewer personas, through the read-only `cli.ExportWontfixRecords`. It reads the store `atcr debt` would (honoring `--store` and `debt.store`) and changes nothing. (atcr-enterprise epic 17.0)
