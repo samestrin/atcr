@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/gitrange"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +24,8 @@ func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
 		suggestReview: {
 			"atcr report <id>",
 			"atcr verify <id>",
+			"atcr status <id>",
+			"atcr review --resume <id>",
 		},
 		suggestReviewInterrupted: {
 			"atcr status <id>",
@@ -280,6 +286,11 @@ func TestSuggestions_RegistryMatchesCommandTree(t *testing.T) {
 					assert.NotNil(t, source.Flags().Lookup(name), "%s carries --%s, which %s does not define", key, name, source.CommandPath())
 					assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried --%s is not a flag there", key, s.Command, name)
 				}
+				if s.CarryRange {
+					for _, name := range []string{"base", "head", "merge-commit"} {
+						assert.NotNil(t, target.Flags().Lookup(name), "%s -> atcr %s: carried range flag --%s is not a flag there", key, s.Command, name)
+					}
+				}
 				if s.StoreFrom != "" {
 					assert.NotNil(t, source.Flags().Lookup(s.StoreFrom), "%s derives --store from --%s, which %s does not define", key, s.StoreFrom, source.CommandPath())
 					assert.NotNil(t, target.Flags().Lookup("store"), "%s -> atcr %s: derived --store is not a flag there", key, s.Command)
@@ -287,4 +298,79 @@ func TestSuggestions_RegistryMatchesCommandTree(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSuggestions_ResumeCarriesRecordedRange (EST-8140): a range review resumes
+// only at the range it recorded (fanout.ValidateResumeRange), so its resume step
+// carries the flags that re-derive that range. An auto-detected range and a
+// baseline scan carry none.
+func TestSuggestions_ResumeCarriesRecordedRange(t *testing.T) {
+	ranged := invocation{Failed: true, ResumeRange: []string{"--base=aaa", "--head=bbb"}}
+	assert.Equal(t, []string{"atcr review --resume <id> --base=aaa --head=bbb"}, renderSuggestions(suggestStatus, ranged))
+	assert.Equal(t, []string{"atcr status <id>", "atcr review --resume <id> --base=aaa --head=bbb"}, renderSuggestions(suggestReview, ranged))
+	assert.Equal(t, []string{"atcr status <id>", "atcr review --resume <id> --base=aaa --head=bbb"}, renderSuggestions(suggestReviewInterrupted, ranged))
+	// Only the resume step takes the range.
+	assert.Equal(t, []string{"atcr report <id>"}, renderSuggestions(suggestStatus, invocation{Reconciled: true, ResumeRange: ranged.ResumeRange}))
+}
+
+// TestRecordedRangeFlags (EST-8140): the flags come from manifest.json's
+// detection mode and resolved SHAs.
+func TestRecordedRangeFlags(t *testing.T) {
+	write := func(m payload.Manifest) string {
+		dir := t.TempDir()
+		data, err := json.Marshal(m)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
+		return dir
+	}
+	assert.Equal(t, []string{"--base=aaa", "--head=bbb"},
+		recordedRangeFlags(write(payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeExplicit})))
+	assert.Equal(t, []string{"--merge-commit=bbb"},
+		recordedRangeFlags(write(payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeMergeCommit})))
+	assert.Nil(t, recordedRangeFlags(write(payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeAuto})))
+	assert.Nil(t, recordedRangeFlags(write(payload.Manifest{Baseline: true, DetectionMode: gitrange.ModeExplicit})))
+	assert.Nil(t, recordedRangeFlags(t.TempDir()), "no manifest")
+	assert.Nil(t, recordedRangeFlags(""))
+}
+
+// TestInterruptMessage_ResumeCarriesRecordedRange (EST-8140): the interrupt
+// notice reads the range from the review's manifest.json, so its suggested
+// resume re-derives the range the review recorded instead of exiting 2.
+func TestInterruptMessage_ResumeCarriesRecordedRange(t *testing.T) {
+	prepIn := func(m *payload.Manifest) *fanout.PreparedReview {
+		dir := t.TempDir()
+		if m != nil {
+			data, err := json.Marshal(m)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
+		}
+		return &fanout.PreparedReview{ID: "rev-7", Dir: dir}
+	}
+	cases := []struct {
+		name   string
+		m      *payload.Manifest
+		resume string
+	}{
+		{"explicit range", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeExplicit},
+			"'atcr review --resume rev-7 --base=aaa --head=bbb'"},
+		{"merge commit", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeMergeCommit},
+			"'atcr review --resume rev-7 --merge-commit=bbb'"},
+		{"auto range", &payload.Manifest{Base: "aaa", Head: "bbb", DetectionMode: gitrange.ModeAuto},
+			"'atcr review --resume rev-7' to finish"},
+		{"no manifest", nil, "'atcr review --resume rev-7' to finish"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := interruptMessage(nil, prepIn(tc.m))
+			assert.Contains(t, msg, "Run 'atcr status rev-7' to inspect, or "+tc.resume)
+		})
+	}
+}
+
+// TestSuggestions_HomeOffersReportOnlyWhenReconciled (EST-8140): report exits 2
+// without reconciled data, so a first run, an unreadable pointer and an
+// unreconciled latest review get only `atcr review`.
+func TestSuggestions_HomeOffersReportOnlyWhenReconciled(t *testing.T) {
+	assert.Equal(t, []string{"atcr review"}, renderSuggestions(suggestHome, invocation{}))
+	assert.Equal(t, []string{"atcr review", "atcr report <id>"}, renderSuggestions(suggestHome, invocation{Reconciled: true}))
 }

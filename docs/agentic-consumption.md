@@ -112,8 +112,10 @@ help[2]: atcr review,atcr report <id>
 
 The trailing `help[]` line lists the commands that usually come next (axi.md
 Principle 9, "Contextual Disclosure"). `<id>` is a placeholder for the review id,
-never a guessed value. The deprecated `--legacy-pipe` home payload has no
-`help[]` line.
+never a guessed value. `atcr report <id>` is offered only when the latest review
+has reconciled data; on a first run, an `unavailable` pointer or an unreconciled
+review, where `report` would exit 2, the line is `help[1]: atcr review`. The
+deprecated `--legacy-pipe` home payload has no `help[]` line.
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
 `review_status` is `none` — the home view is never an error and never empty, even
@@ -140,10 +142,12 @@ exception: a `review --resume <id> --axi` run that finds nothing pending (the
 review is already fully complete) runs no fan-out, so its payload reports the
 just-reconciled total instead of a fan-out count.
 
-A run that exits 0 ends with a `help[]` block naming the usual next commands,
-with the review id left as the literal placeholder `<id>`. A review that
+A run that produced a review ends with a `help[]` block naming the usual next
+commands, with the review id left as the literal placeholder `<id>`, whether
+it exits 0 or not. A review that
 reconciled in-process (a gate threshold from `--fail-on` or config `fail_on`, or
-`--verify`, `--debate` or `--auto-fix`) suggests reading its findings:
+`--verify`, `--debate` or `--auto-fix`), and a completed `review --resume`, which
+always reconciles, suggest reading its findings:
 
 ```
 help[2]: atcr report <id>,atcr verify <id>
@@ -156,13 +160,27 @@ and `verify` exit 2 until reconciled data exists:
 help[1]: atcr reconcile <id>
 ```
 
+A review whose agents all failed (exit 1) suggests inspecting and resuming it.
+A review of an explicit range carries that range, because a resume aborts with
+exit 2 unless it resolves the range the review recorded, and a bare
+`--resume` resolves the auto-detected one (`--merge-commit <sha>` for a
+`--merge-commit` review; an auto-detected range or a `--all`/`--scope` scan
+carries nothing):
+
+```
+help[2]: atcr status <id>,atcr review --resume <id> --base=<base sha> --head=<head sha>
+```
+
+A review that tripped its `--fail-on` gate (exit 1) reconciled first, so it
+suggests `report` and `verify` like any reconciled review.
+
 Without `--axi` the same suggestions go to stderr as `Next:` lines (for example
 `Next: atcr report <id>` and `Next: atcr verify <id>`), so the human stdout is
-unchanged. A run that exits
-non-zero, `--dry-run`, and the deprecated `--legacy-pipe` payload get no
-`Next:` or `help[]` suggestions. The one exception is a signal-interrupted
-review, whose stderr notice names `atcr status <id>` and
-`atcr review --resume <id>` from the same registry.
+unchanged. A run that failed before it created a review (a usage error, a
+missing API key), `--dry-run`, and the deprecated `--legacy-pipe` payload get
+no `Next:` or `help[]` suggestions. A signal-interrupted review's stderr notice
+names `atcr status <id>` and `atcr review --resume <id>` (with the recorded
+range) from the same registry.
 
 A `review --all` or `review --scope <dir>` re-run that finds every in-scope file
 unchanged since the last completed review creates no review. It exits 0, writes
@@ -239,7 +257,8 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   `help` array that follows the review's state: `help[1]: atcr reconcile <id>`
   for a finished review with no reconciled data yet, `atcr report <id>` once it
   is reconciled, and `atcr review --resume <id>` while agents are pending or the
-  review failed. No `Next:` line is written, on stderr or as a
+  review failed (with `--base=<sha> --head=<sha>` or `--merge-commit=<sha>`
+  appended for a review of an explicit range). No `Next:` line is written, on stderr or as a
   `--log-format json` record. Without `--axi`, stdout stays the JSON document
   byte-identical and the same steps are `Next:` lines on stderr.
 - Without `--axi`, `atcr reconcile` prints the same suggestions as human

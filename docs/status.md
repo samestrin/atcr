@@ -15,7 +15,10 @@ The steps follow the review's state: `atcr reconcile <id>` for a finished review
 with no reconciled data yet, `atcr report <id>` once `reconciled/findings.json`
 exists, and `atcr review --resume <id>` while `agents_pending` is above zero or
 the review `failed`. A failed or still-running review is never offered
-`reconcile`.
+`reconcile`. A resume must resolve the range the review recorded, so for a
+review of an explicit range the resume line carries it:
+`atcr review --resume <id> --base=<sha> --head=<sha>`, or
+`--merge-commit=<sha>` for a `--merge-commit` review.
 `<id>` is a placeholder for the review id. The MCP tool does not add these lines.
 
 Under [`--axi`](#axi-mode) the same fields print as one TOON object followed by

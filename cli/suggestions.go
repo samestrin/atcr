@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -72,6 +74,8 @@ type nextStep struct {
 	// UnreconciledOnly offers the step only when the review settled without
 	// reconciled data: not reconciled, nothing pending and not failed.
 	UnreconciledOnly bool
+	// CarryRange appends the invocation's ResumeRange, for the resume step.
+	CarryRange bool
 }
 
 // carryAllowlist holds the disambiguating flags whose value may be carried into
@@ -88,14 +92,18 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 	// A review reconciles in-process only under a gate threshold (--fail-on or
 	// config fail_on) or --verify/--debate/--auto-fix; otherwise report and
 	// verify would exit 2 until `atcr reconcile` runs, so that comes first.
+	// A review whose agents all failed exits 1 but still gets its next steps:
+	// status names the failures, and resume reruns the failed agents.
 	suggestReview: {
 		{Command: "reconcile", Args: []string{idPlaceholder}, UnreconciledOnly: true},
 		{Command: "report", Args: []string{idPlaceholder}, ReconciledOnly: true},
 		{Command: "verify", Args: []string{idPlaceholder}, ReconciledOnly: true},
+		{Command: "status", Args: []string{idPlaceholder}, ResumableOnly: true},
+		{Command: "review", Args: []string{"--resume", idPlaceholder}, ResumableOnly: true, CarryRange: true},
 	},
 	suggestReviewInterrupted: {
 		{Command: "status", Args: []string{idPlaceholder}},
-		{Command: "review", Args: []string{"--resume", idPlaceholder}},
+		{Command: "review", Args: []string{"--resume", idPlaceholder}, CarryRange: true},
 	},
 	// report takes no --repo-root, so there is nothing to carry into verify.
 	suggestReport: {
@@ -117,11 +125,13 @@ var suggestionRegistry = map[suggestionKey][]nextStep{
 	suggestStatus: {
 		{Command: "reconcile", Args: []string{idPlaceholder}, UnreconciledOnly: true},
 		{Command: "report", Args: []string{idPlaceholder}, ReconciledOnly: true},
-		{Command: "review", Args: []string{"--resume", idPlaceholder}, ResumableOnly: true},
+		{Command: "review", Args: []string{"--resume", idPlaceholder}, ResumableOnly: true, CarryRange: true},
 	},
+	// report reads the latest review's reconciled data, so a first run, an
+	// unreadable pointer and an unreconciled review get only review.
 	suggestHome: {
 		{Command: "review"},
-		{Command: "report", Args: []string{idPlaceholder}},
+		{Command: "report", Args: []string{idPlaceholder}, ReconciledOnly: true},
 	},
 }
 
@@ -136,6 +146,32 @@ type invocation struct {
 	// Reconciled reports whether the review has reconciled data
 	// (reviewReconciled).
 	Reconciled bool
+	// ResumeRange holds the range flags a resume of the review must re-pass
+	// (recordedRangeFlags); rendered only on CarryRange steps.
+	ResumeRange []string
+}
+
+// recordedRangeFlags returns the flags that make `review --resume` re-derive the
+// range the review in dir recorded in manifest.json. A resume aborts when the
+// range it resolves differs from the recorded one (fanout.ValidateResumeRange),
+// and a bare resume resolves the auto-detected range, so a review of an
+// explicit (--base/--head) or --merge-commit range must name it again. An
+// auto-detected range, a baseline scan and an unreadable manifest carry none.
+func recordedRangeFlags(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	m, err := fanout.ReadManifest(dir)
+	if err != nil || m.Baseline || m.Base == "" || m.Head == "" {
+		return nil
+	}
+	switch m.DetectionMode {
+	case gitrange.ModeExplicit:
+		return []string{"--base=" + carryValue(m.Base), "--head=" + carryValue(m.Head)}
+	case gitrange.ModeMergeCommit:
+		return []string{"--merge-commit=" + carryValue(m.Head)}
+	}
+	return nil
 }
 
 // reviewReconciled reports whether reconcile ran for the review in reviewDir:
@@ -202,10 +238,13 @@ func renderSuggestions(key suggestionKey, inv invocation) []string {
 	return out
 }
 
-// render builds one command line: binary, command, fixed args, the derived
-// --store, then each Carry flag the invocation set, in Carry order.
+// render builds one command line: binary, command, fixed args, the recorded
+// range (CarryRange), the derived --store, then each Carry flag the invocation set, in Carry order.
 func (s nextStep) render(inv invocation) string {
 	parts := append([]string{"atcr", s.Command}, s.Args...)
+	if s.CarryRange {
+		parts = append(parts, inv.ResumeRange...)
+	}
 	// A blank root asserts nothing (reconcile normalizes it to the CWD), so it
 	// derives no store. A relative root is made absolute, as persistence does:
 	// debt list refuses a --store containing "..".

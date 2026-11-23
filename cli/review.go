@@ -854,6 +854,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// the history/audit ledgers below are recorded before the fault is surfaced.
 	var axiWerr error
 	if result != nil {
+		// writeReviewHelp reads this dir for the review's state, including on
+		// the all-agents-failed exit below.
+		cmd.SetContext(context.WithValue(cmd.Context(), reviewDirKey{}, result.Dir))
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
 		// Chunk coverage (Epic 35.16.13 T5), read back from the chunks.json records
 		// the fan-out just finished writing; reported on success, partial and
@@ -1014,8 +1017,6 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// otherwise it fires here. The gates after it (--fail-on, --require-coverage)
 	// judge a completed review, so a gate failure does not withdraw the call.
 	report := newReviewReport(result, req.PRNumber, req.Range.Base, req.Range.Head)
-	// writeReviewHelp reads this dir to tell whether the review reconciled.
-	cmd.SetContext(context.WithValue(cmd.Context(), reviewDirKey{}, result.Dir))
 	reconcileInline := threshold != "" || verifyFlag || debateFlag || autoFix
 	if !reconcileInline {
 		hookobs.ReviewComplete(ctx, report)
@@ -1195,8 +1196,8 @@ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) 
 	}
 	// The two commands come from the review:interrupted registry entry (Epic
 	// 42.0). The id here is the interrupted review's own, not a guess, so it
-	// fills the <id> placeholder.
-	steps := renderSuggestions(suggestReviewInterrupted, invocation{})
+	// fills the <id> placeholder; the resume carries the recorded range.
+	steps := renderSuggestions(suggestReviewInterrupted, invocation{ResumeRange: recordedRangeFlags(prep.Dir)})
 	for i, s := range steps {
 		steps[i] = strings.ReplaceAll(s, idPlaceholder, prep.ID)
 	}
@@ -1219,11 +1220,17 @@ func localBranchName(ref string) string {
 }
 
 // runReviewWithHelp is the review command's RunE: runReview (fresh or
-// --resume), then the next-step suggestions (Epic 42.0, axi.md Principle 9)
-// once the run succeeded. They are appended after every other line, so the
-// existing output is unchanged.
+// --resume), then the next-step suggestions (Epic 42.0, axi.md Principle 9).
+// They are appended after every other line, so the existing output is
+// unchanged. A run that produced a review and then failed (every agent failed,
+// a gate, a later stage) gets them too, after its run summary, so a failed
+// review --axi still names its next step (status, resume); a run that failed
+// before producing one has no review to suggest anything for.
 func runReviewWithHelp(cmd *cobra.Command, args []string) error {
 	if err := runReview(cmd, args); err != nil {
+		if dir, _ := cmd.Context().Value(reviewDirKey{}).(string); dir != "" {
+			_ = writeReviewHelp(cmd)
+		}
 		return err
 	}
 	// --dry-run ran no review, so there is nothing to report or verify.
@@ -1242,7 +1249,8 @@ func runReviewWithHelp(cmd *cobra.Command, args []string) error {
 // next step is the same scan with --no-file-cache, never a report or verify of
 // an id that does not exist. A review that did not reconcile in-process (no
 // reconciled/findings.json in its dir) gets `reconcile <id>` instead of report
-// and verify, which would exit 2 without reconciled data.
+// and verify, which would exit 2 without reconciled data. A failed review gets
+// status and a resume carrying its recorded range (recordedRangeFlags).
 func writeReviewHelp(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	var lines []string
@@ -1250,10 +1258,18 @@ func writeReviewHelp(cmd *cobra.Command) error {
 		lines = []string{noFileCacheRescanLine(cmd)}
 	} else {
 		dir, _ := ctx.Value(reviewDirKey{}).(string)
-		lines = renderSuggestions(suggestReview, invocation{
-			Flags:      invocationFlags(cmd),
-			Reconciled: reviewReconciled(dir),
-		})
+		inv := invocation{
+			Flags:       invocationFlags(cmd),
+			Reconciled:  reviewReconciled(dir),
+			ResumeRange: recordedRangeFlags(dir),
+		}
+		if dir != "" {
+			if st, err := fanout.ReadReviewStatus(dir, filepath.Base(dir)); err == nil {
+				inv.Pending = st.AgentsPending > 0
+				inv.Failed = st.Status == fanout.RunFailed
+			}
+		}
+		lines = renderSuggestions(suggestReview, inv)
 	}
 	if !axiFromContext(ctx) {
 		for _, l := range lines {

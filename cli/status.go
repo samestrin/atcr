@@ -61,10 +61,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	inv := invocation{
-		Flags:      invocationFlags(cmd),
-		Pending:    st.AgentsPending > 0,
-		Failed:     st.Status == fanout.RunFailed,
-		Reconciled: reviewReconciled(dir),
+		Flags:       invocationFlags(cmd),
+		Pending:     st.AgentsPending > 0,
+		Failed:      st.Status == fanout.RunFailed,
+		Reconciled:  reviewReconciled(dir),
+		ResumeRange: recordedRangeFlags(dir),
 	}
 	// Under --axi the same ReviewStatus fields print as one TOON object followed
 	// by the suggestStatus help[] block on stdout (Epic 104.1 T4), through the

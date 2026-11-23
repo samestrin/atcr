@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// reviewHelpBlock is the help[] block a successful `atcr review --axi` (fresh
-// or --resume) with no gate ends with (Epic 42.0 T2): the registry's review next
+// reviewHelpBlock is the help[] block a successful fresh `atcr review --axi`
+// with no gate ends with (Epic 42.0 T2): the registry's review next
 // steps with <id> left as a literal placeholder, in goaxi.WriteHelp's inline
 // TOON form. Nothing reconciled the review, so report and verify (which exit 2
 // without reconciled data) give way to reconcile (EST-8139).
@@ -26,7 +26,8 @@ const reviewHelpBlock = "help[1]: atcr reconcile <id>\n"
 const reviewNextLines = "Next: atcr reconcile <id>\n"
 
 // reconciledReviewHelpBlock is the help[] block of a review that reconciled
-// in-process: report and verify now have the data they read.
+// in-process, and of a completed --resume (which always reconciles): report and
+// verify now have the data they read.
 const reconciledReviewHelpBlock = "help[2]: atcr report <id>,atcr verify <id>\n"
 
 // TestInterruptMessage_ByteIdentical pins the whole interrupt notice to the
@@ -72,7 +73,9 @@ func TestReviewCmd_AXIEndsWithHelpBlock(t *testing.T) {
 }
 
 // TestResume_AXIEndsWithHelpBlock: the --resume flag path of review ends with
-// the same help[] block as a fresh review.
+// a help[] block too. A completed resume always reconciles (epic 4.1.1), so it
+// offers report and verify, which then run (EST-8140; it offered reconcile
+// before the resume recorded its review dir).
 func TestResume_AXIEndsWithHelpBlock(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
@@ -85,8 +88,11 @@ func TestResume_AXIEndsWithHelpBlock(t *testing.T) {
 
 	code, stdout, _ := execCmdSplit(t, "review", "--resume", "2026-06-18_demo", "--axi", "--base", "HEAD^")
 	require.Equal(t, 0, code)
-	require.True(t, strings.HasSuffix(stdout, reviewHelpBlock), "resume --axi stdout must end with the help[] block, got:\n%s", stdout)
+	require.True(t, strings.HasSuffix(stdout, reconciledReviewHelpBlock), "resume --axi stdout must end with the help[] block, got:\n%s", stdout)
 	assert.True(t, strings.HasPrefix(stdout, "review_summary[1]{"), "the run-summary payload still leads stdout")
+
+	code, _, stderr := execCmdSplit(t, "report", "2026-06-18_demo", "--format", "axi")
+	assert.Equal(t, 0, code, stderr)
 }
 
 // TestReviewCmd_HumanNextLinesOnStderr: without --axi the next steps are human
@@ -106,7 +112,7 @@ func TestReviewCmd_HumanNextLinesOnStderr(t *testing.T) {
 }
 
 // TestResume_HumanNextLinesOnStderr: the human --resume path gets the same
-// Next: lines.
+// steps as Next: lines.
 func TestResume_HumanNextLinesOnStderr(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
@@ -119,13 +125,15 @@ func TestResume_HumanNextLinesOnStderr(t *testing.T) {
 
 	code, stdout, stderr := execCmdSplit(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 0, code)
-	assert.True(t, strings.HasSuffix(stderr, reviewNextLines), "stderr must end with the Next: lines, got:\n%s", stderr)
+	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\nNext: atcr verify <id>\n"), "stderr must end with the Next: lines, got:\n%s", stderr)
 	assert.NotContains(t, stdout, "Next:", "human stdout is unchanged")
 }
 
-// TestReviewCmd_FailedRunNoHelp: a review that exits non-zero (here a --fail-on
-// gate) did not finish successfully, so it suggests nothing.
-func TestReviewCmd_FailedRunNoHelp(t *testing.T) {
+// TestReviewCmd_GateFailureSuggestsReport (EST-8140, replacing the Epic 42.0
+// rule that a non-zero review suggests nothing): a review that tripped its
+// --fail-on gate reconciled its findings, so its help[] points at the report
+// of what tripped it, and that report runs.
+func TestReviewCmd_GateFailureSuggestsReport(t *testing.T) {
 	isolate(t)
 	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
@@ -134,6 +142,22 @@ func TestReviewCmd_FailedRunNoHelp(t *testing.T) {
 
 	code, stdout, stderr := execCmdSplit(t, "review", "--axi", "--fail-on", "high", "--base", "HEAD^")
 	require.Equal(t, 1, code)
+	assert.True(t, strings.HasSuffix(stdout, reconciledReviewHelpBlock), "got:\n%s", stdout)
+	assert.NotContains(t, stderr, "Next:")
+
+	code, _, stderr = execCmdSplit(t, "report", "--format", "axi")
+	assert.Equal(t, 0, code, stderr)
+}
+
+// TestReviewCmd_PreReviewFailureNoHelp: a run that failed before it produced a
+// review (here a missing API key) has no review to suggest anything for.
+func TestReviewCmd_PreReviewFailureNoHelp(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t)
+
+	code, stdout, stderr := execCmdSplit(t, "review", "--axi", "--base", "HEAD^")
+	require.Equal(t, 2, code)
 	assert.NotContains(t, stdout, "help[")
 	assert.NotContains(t, stderr, "Next:")
 }
