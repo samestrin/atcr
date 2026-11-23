@@ -19,7 +19,7 @@ AXI mode is exposed on these agent-facing surfaces:
 | Command | How to enable AXI | stdout payload |
 |---------|-------------------|----------------|
 | `atcr` (no subcommand) | `--axi` flag | a one-row `home` TOON array (executable path, one-line description, current review state) |
-| `atcr review` | `--axi` flag | a one-row `review_summary` TOON array (run metadata) |
+| `atcr review` | `--axi` flag | a one-row `review_summary` TOON array (run metadata); a `--all`/`--scope` re-run with nothing changed prints only a `help[]` block ([below](#the-review---axi-run-summary-payload)) |
 | `atcr review --resume <id>` | `--axi` flag | identical `review_summary` shape to `review --axi` |
 | `atcr report` | `--format axi` | a `findings[N]` TOON array of the reconciled findings |
 | `atcr reconcile` | `--axi` flag | a TOON object of the run values (`findings`, `sources`, `reconciled_dir`) |
@@ -61,6 +61,10 @@ The legacy path keeps its old bytes exactly, including its old pagination contra
 ```bash
 # Kick off a review and capture the run summary (metadata) as a clean payload.
 atcr review --axi > run.toon 2> review.log
+
+# A plain review does not reconcile (only --fail-on, --verify, --debate or
+# --auto-fix do), so reconcile the latest review before reading its findings.
+atcr reconcile > /dev/null 2> reconcile.log
 
 # Read the reconciled findings themselves as a token-dense payload.
 atcr report --format axi > findings.toon 2> report.log
@@ -115,7 +119,8 @@ on a first run with no `.atcr/latest` pointer.
 ### The `review --axi` run-summary payload
 
 `atcr review --axi` (and `atcr review --resume <id> --axi`) gate every
-human-oriented stdout line and emit a single-row TOON array describing the run:
+human-oriented stdout line and emit a single-row TOON array describing the run
+(the one exception, a baseline re-run with nothing to review, is below):
 
 ```
 review_summary[1]{id,dir,agents_succeeded,agents_total,agents_failed,agents_timed_out,api_calls,findings_total,findings_critical,findings_high,findings_medium,findings_low}:
@@ -140,6 +145,20 @@ Without `--axi` the same suggestions go to stderr as `Next: atcr report <id>`
 and `Next: atcr verify <id>`, so the human stdout is unchanged. A run that exits
 non-zero, `--dry-run`, and the deprecated `--legacy-pipe` payload get no
 suggestions.
+
+A `review --all` or `review --scope <dir>` re-run that finds every in-scope file
+unchanged since the last completed review creates no review. It exits 0, writes
+its `nothing to review` notice to stderr, and emits no `review_summary` row:
+stdout is only a `help[]` block naming the same scan with `--no-file-cache`, never
+a report or verify of a review that does not exist:
+
+```
+help[1]: atcr review --all --no-file-cache
+```
+
+`.atcr/latest` still points at the earlier review. Without `--axi` the notice is
+on stdout and the suggestion is a `Next:` line on stderr; under `--legacy-pipe`
+stdout is empty.
 
 ### The `report --format axi` findings payload
 
@@ -279,7 +298,8 @@ The entire value of AXI mode for an orchestrator is that a redirect produces a
 byte-clean file. Under `--axi`:
 
 - **stdout carries only the payload** — the `review_summary`/`findings` TOON and
-  its `total`, `truncated` and `help` lines, with zero ANSI/OSC escapes and zero Markdown. `atcr
+  its `total`, `truncated` and `help` lines (only the `help` line for a
+  nothing-to-review baseline re-run), with zero ANSI/OSC escapes and zero Markdown. `atcr
   review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
   parseable files with nothing else mixed in.
 - **stderr carries only diagnostics** — progress, warnings, and all structured

@@ -281,7 +281,7 @@ func hashPersonaCopy(path string, checked fs.FileInfo) (string, copyState, error
 // atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
 // outputs atcr writes under .atcr/ (the diff cache, up to max_cache_bytes,
 // reviewer outputs — both can hold source snippets and review prose — and the
-// finding-history ledger) are never accidentally committed, even by end users who
+// finding-history ledger, and the latest-review pointer) are never accidentally committed, even by end users who
 // never manually ignore .atcr/. The editable config.yaml and personas/ alongside
 // this file stay tracked.
 //
@@ -296,6 +296,7 @@ const atcrGitignore = `# Written by atcr init. Runtime outputs under .atcr/ — 
 cache/
 reviews/
 history/
+latest
 `
 
 // initTargets returns every path `atcr init` writes under dir, config first.

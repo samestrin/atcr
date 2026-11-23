@@ -79,6 +79,7 @@ func TestInit_WritesGitignore(t *testing.T) {
 	assert.Contains(t, content, "cache/", "the diff cache dir must be ignored")
 	assert.Contains(t, content, "reviews/", "the reviews dir must be ignored")
 	assert.Contains(t, content, "history/", "the trend ledger must be ignored — Append's 0600/0700 modes assume it is never committed")
+	assert.Contains(t, strings.Split(content, "\n"), "latest", "the .atcr/latest pointer is a runtime output too")
 }
 
 func TestInit_FilePermissions(t *testing.T) {

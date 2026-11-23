@@ -9,9 +9,13 @@
 # follows from this file; that PR is the whole task.
 #
 # Steps the owner runs:
-#   1. Fork kunchenguid/axi and branch from its main.
+#   1. Fork kunchenguid/axi, then clone kunchenguid/axi itself (or set the
+#      clone's origin back to git@github.com:kunchenguid/axi.git), as upstream
+#      CONTRIBUTING.md says: `no-mistakes --fork-url` below depends on origin
+#      being the parent. Branch from main.
 #   2. Append the `- name: atcr` entry below (without these comments) to the
-#      `community` list in catalog.yaml.
+#      `community` list in catalog.yaml as it stands: it is already indented
+#      two spaces, like the other community items.
 #   3. Refresh `reviewed_revision` to the release commit (see note below).
 #   4. Run `pnpm run docs:gen` to regenerate README.md and docs/index.html, and
 #      commit all three files (catalog.yaml, README.md, docs/index.html)
@@ -25,68 +29,73 @@
 # Later epic 114 PRs were not documentation only: they also changed code
 # comments, the `atcr init` next-step hint, the review nothing-to-review hint, an
 # auto-fix constant, the quickstart-scaffolded workflow and the skills/atcr/SKILL.md
-# input and command guidance. One touched an AXI surface: `review --axi` now
-# writes its nothing-to-review notice to stderr, so stdout stays payload-only (it
-# printed the notice on stdout at the pin). atcr has no release
+# input and command guidance. One touched an AXI surface: a `review --all` or
+# `--scope` re-run under `--axi` that finds every file unchanged now writes its
+# nothing-to-review notice to stderr and exits 0 with no review_summary row; its
+# stdout is only a help[] block naming the same scan with --no-file-cache, not a
+# report or verify of a review it never created (at the pin it printed the
+# notice on stdout). atcr has no release
 # tag carrying this audit yet. Repo PRs are squash-merged, so cut the next
 # release, re-check docs/axi-audit.md on the tagged commit, and replace
 # `reviewed_revision` with it before submitting. If a later release moves the
-# pin, re-check docs/axi-audit.md there and replace both.
+# pin, re-check docs/axi-audit.md there and replace both. Two citations are
+# already at the current tree, not the pin (see docs/axi-audit.md's Audited
+# line): cli/quickstart.go:364-365 below is :359-360 at the pin.
 #
 # The exceptions below are numbered as in docs/axi-audit.md; that file is the
 # evidence for every claim here, and the two must not drift apart. When the
 # audit's last line reads `Unjustified gaps: <n>` with n above 0 (it reads
 # `Unjustified gaps: 10` at this revision), `status` stays `exception` and
 # every one of those gaps is named in `exception`.
-- name: atcr
-  url: https://github.com/samestrin/atcr
-  author: samestrin
-  domain: Code review
-  description: "Fans a git range, branch or whole-repository scan out to a panel of heterogeneous LLM reviewers and deterministically reconciles their findings into one deduplicated, confidence-scored report, with TOON payloads on its AXI surfaces for an agent to consume."
-  admission:
-    status: exception
-    reviewed_revision: 2e957227c2c9e8f33428865302d3e3a0ff264c23
-    reviewed_components:
-      - README.md
-      - go.mod
-      - docs/axi-audit.md
-      - docs/agentic-consumption.md
-      - docs/skill-usage.md
-      - skills/atcr/SKILL.md
-      - cli/main.go
-      - cli/home.go
-      - cli/review.go
-      - cli/resume.go
-      - cli/report.go
-      - cli/suggestions.go
-      - cli/status.go
-      - cli/reconcile.go
-      - cli/verify.go
-      - cli/debate.go
-      - cli/debt_add.go
-      - cli/debt_clean.go
-      - cli/debt_dashboard.go
-      - cli/debt_filter.go
-      - cli/debt_group.go
-      - cli/debt_report.go
-      - cli/debt_resolve.go
-      - cli/debt_validate.go
-      - cli/quickstart.go
-      - cli/version.go
-      - cli/skill.go
-      - internal/report/standard_axi.go
-      - internal/report/render.go
-      - internal/report/pagination.go
-    source_observations:
-      - "docs/axi-audit.md marks principles 4, 5 and 8 met; 1, 3, 6, 9 and 10 met with stated exceptions; and 2 and 7 unmet. Every paginated findings payload carries `total` and `truncated` after its array (internal/report/pagination.go:109-136; TestRenderAXIPaginated_HeaderNEqualsEmittedRows), an empty result encodes as `findings[0]` with `total: 0` and `truncated: false` (the `paginated_empty` golden in TestStandardAXI_Goldens), and empty debt selections are non-nil empty arrays (cli/debt_filter.go:146-149; TestDebtFilter_EmptyStoreEmitsEmptyItems, TestDebtClean_EmptyStore, TestDebtGroup_EmptyStore)."
-      - "A bare `atcr` prints live data, not help: under `--axi` one TOON row of exec_path, description, review_id and review_status, with the home directory as `~`, review_status `none` on a first run, and a `help[]` next-step block; exit 0 either way (cli/home.go:145-168, internal/report/standard_axi.go:199-201; TestRootCmd_BareInvocationShowsHomeView, TestRootCmd_BareAXIRendersHomeViewPayload, TestRootCmd_BareAXIEndsWithHelpBlock). The human view is the same live state, not static help."
-      - "TOON is opt-in, not the default: `--axi` on bare atcr, review, review --resume, reconcile, verify, debate, status, debt clean/filter/group/validate, and `report --format axi` on the report's existing format enum; the default stays Markdown for report and human text or JSON elsewhere (cli/main.go:569-577, cli/report.go:28-37; TestRootCmd_AXIFlagRegisteredOnRoot, TestReportCmd_DefaultFormatAndOutputFile). AXI payloads are canonical TOON through goaxi.EncodeChecked with go-axi v0.4.0 pinned (internal/report/standard_axi.go:31-56, go.mod:40; TestRenderAXI_StandardTOONRoundTrip, TestRenderSingleRowAXI_StandardTOON)."
-      - "Next-step disclosure rides stdout as a TOON `help[]` block on the home view, review/resume, report, reconcile, verify, debate and status, generated from a suggestion registry that keeps `<id>` placeholders and allowlists only disambiguating flags (cli/suggestions.go:75-111, cli/suggestions.go:160-191, cli/suggestions.go:235-257; TestReviewCmd_AXIEndsWithHelpBlock, TestReportCmd_AXIEndsWithHelpBlock, TestReconcileCmd_AXI, TestVerifyCmd_AXI, TestDebateCmd_AXI, TestStatusCmd_AXIPendingOffersResume). Human `Next:` lines are not an AXI leak: one representation is chosen, and the AXI tests assert no stderr `Next:`."
-      - "Exit codes are 0 success, 1 failure or gate, 2 usage or configuration, 3 sync-cloud authentication, and they do not change with output shape (cli/main.go:238-265; TestAXIExitParity_CleanReviewExitsZero, TestAXIExitParity_GateFailureExitsOne, TestAXIExitParity_UsageErrorExitsTwo, TestAXIExitParity_AuthErrorExitsThree). A malformed invocation fails loudly before command work as a usage error (cli/main.go:579-583; TestRootCmd_UnknownSubcommandIsUsageError, TestReportCmd_InvalidFormatIsUsageError), and a completed reconcile keeps its payload when its gate exits 1 (TestReconcileCmd_AXIGateFailureStillEmits). Two non-AXI commands add exit 4: debt dashboard --check and debt report --check report drift or a missing target with it (cli/debt_dashboard.go:276, cli/debt_dashboard.go:298-307, cli/debt_report.go:88-89), outside the AXI contract."
-      - "AXI calls are non-interactive and keep the streams separate: stdout is only the payload, and failures are plain diagnostics on stderr, not structured documents on stdout (cli/main.go:157-162, cli/main.go:250-259, cli/main.go:735-739; TestStatusCmd_AXIMissingReview). A fully complete review resume re-reconciles and exits 0, and repeated debt resolution neither errors nor appends another record (TestResume_AllCompleteReconcilesAndExitsZero, TestDebtResolve_MarkResolvedIsIdempotent)."
-      - "Truncation is explicit where it exists: findings free-text cells are cut at 500 runes (internal/report/render.go:41-43, internal/report/standard_axi.go:161-170; TestAXIText_SanitizesBeforeTruncating), and the findings array is capped at 500 lines by default with ATCR_AXI_MAX_LINES as the override, rows dropped before encoding so the header count equals the rows present and the true total sits on the `total` line (internal/report/pagination.go:112-136, cli/main.go:696-732; TestReportCmd_AXITruncatesAtEnvCap, TestReportCmd_AXIUnderCapNotTruncated, TestAXIMaxLinesFromEnv)."
-      - "An installable Agent Skill ships for Claude Code, Codex, Kimi, OpenCode, Antigravity and the vendor-neutral agents layout (cli/skill.go:44-51, docs/skill-usage.md:13-56; TestSkillExport_UnknownHarnessIsAUsageError), and it rightly omits live state (skills/atcr/SKILL.md:14), but SKILL.md is written by hand rather than generated from the no-argument home view, with no `--check` step to fail CI when it drifts; no `setup` command, SessionStart hook or OpenCode plugin injects the live home view; the root registers `skill`, not `setup` (cli/main.go:593-623); and the skill's command examples assume atcr is already on PATH (skills/atcr/SKILL.md:20) rather than offering a form that runs without a global install."
-      - "Version discovery is partially there: `--version` and the `version` subcommand share atcrVersion and agree, but every form prints `atcr version <version>` rather than the bare version and `-V` is rejected with exit 2 (cli/main.go:430-431, cli/version.go:18-55; TestVersion_FlagAndSubcommandAgree, real-binary probes). All 71 visible command paths (the root, 64 command paths and six `help`/`completion` paths) answered `--help` with exit 0, but concise references such as `status --help` omit the required two-to-three usage examples (cli/main.go:593-623; real-binary probe)."
-      - "Provider-backed review and resume success paths were exercised through fake-endpoint tests, not a paid live review; version latency was not benchmarked, because the AXI source's ESM dynamic-import remedy is Node-specific and atcr reads build metadata through runtime/debug (cli/version.go:23-41). No live sync-cloud service or interactive TTY was used."
-      - "Nothing on an AXI surface prompts, and the only wizards left are human-only: `debt add` and `quickstart` keep optional TTY flows while `debt add` provides a complete flag route that fails immediately off a TTY (cli/debt_add.go:103-134, cli/debt_add.go:204-253, cli/quickstart.go:364-365; TestDebtAdd_MissingRequiredNonTTYIsUsageError)."
-    exception: "Fourteen exceptions, numbered as in docs/axi-audit.md: four justified tradeoffs and ten unjustified gaps. Justified: (1) TOON is opt-in through --axi or --format axi, keeping the human and JSON defaults; (6) AXI failures remain plain diagnostics on stderr, so stdout is only ever a payload; (7) AXI retains atcr's additional exit 3 for sync-cloud authentication failure, which CI already branches on; (14) human-only debt add and quickstart retain optional TTY wizards. Unjustified: (2) no AXI surface offers --fields or a three-to-four-field list projection; (3) AXI findings cells are cut to 500 runes with no size or full-content hint; (4) a row-truncated findings payload reports total and truncated but its help[] never names ATCR_AXI_MAX_LINES; (5) debt clean, filter, and group put complete problem and fix strings in list rows; (8) unknown flags exit 2 but name neither the command's valid flags nor a replacement; (9) no setup command, SessionStart hook, or OpenCode plugin, and the skill's examples need atcr on PATH; (10) the four debt AXI renderers return with no help[]; (11) -V is rejected with exit 2; (12) version forms print 'atcr version <version>', not the bare version; (13) concise references such as status --help omit the two-to-three usage examples."
+  - name: atcr
+    url: https://github.com/samestrin/atcr
+    author: samestrin
+    domain: Code review
+    description: "Fans a git range, branch or whole-repository scan out to a panel of heterogeneous LLM reviewers and deterministically reconciles their findings into one deduplicated, confidence-scored report, with TOON payloads on its AXI surfaces for an agent to consume."
+    admission:
+      status: exception
+      reviewed_revision: 2e957227c2c9e8f33428865302d3e3a0ff264c23
+      reviewed_components:
+        - README.md
+        - go.mod
+        - docs/axi-audit.md
+        - docs/agentic-consumption.md
+        - docs/skill-usage.md
+        - skills/atcr/SKILL.md
+        - cli/main.go
+        - cli/home.go
+        - cli/review.go
+        - cli/resume.go
+        - cli/report.go
+        - cli/suggestions.go
+        - cli/status.go
+        - cli/reconcile.go
+        - cli/verify.go
+        - cli/debate.go
+        - cli/debt_add.go
+        - cli/debt_clean.go
+        - cli/debt_dashboard.go
+        - cli/debt_filter.go
+        - cli/debt_group.go
+        - cli/debt_report.go
+        - cli/debt_resolve.go
+        - cli/debt_validate.go
+        - cli/quickstart.go
+        - cli/version.go
+        - cli/skill.go
+        - internal/report/standard_axi.go
+        - internal/report/render.go
+        - internal/report/pagination.go
+      source_observations:
+        - "docs/axi-audit.md marks principles 4, 5 and 8 met; 1, 3, 6, 9 and 10 met with stated exceptions; and 2 and 7 unmet. Every paginated findings payload carries `total` and `truncated` after its array (internal/report/pagination.go:109-136; TestRenderAXIPaginated_HeaderNEqualsEmittedRows), an empty result encodes as `findings[0]` with `total: 0` and `truncated: false` (the `paginated_empty` golden in TestStandardAXI_Goldens), and empty debt selections are non-nil empty arrays (cli/debt_filter.go:146-149; TestDebtFilter_EmptyStoreEmitsEmptyItems, TestDebtClean_EmptyStore, TestDebtGroup_EmptyStore)."
+        - "A bare `atcr` prints live data, not help: under `--axi` one TOON row of exec_path, description, review_id and review_status, with the home directory as `~`, review_status `none` on a first run, and a `help[]` next-step block; exit 0 either way (cli/home.go:145-168, internal/report/standard_axi.go:199-201; TestRootCmd_BareInvocationShowsHomeView, TestRootCmd_BareAXIRendersHomeViewPayload, TestRootCmd_BareAXIEndsWithHelpBlock). The human view is the same live state, not static help."
+        - "TOON is opt-in, not the default: `--axi` on bare atcr, review, review --resume, reconcile, verify, debate, status, debt clean/filter/group/validate, and `report --format axi` on the report's existing format enum; the default stays Markdown for report and human text or JSON elsewhere (cli/main.go:569-577, cli/report.go:28-37; TestRootCmd_AXIFlagRegisteredOnRoot, TestReportCmd_DefaultFormatAndOutputFile). AXI payloads are canonical TOON through goaxi.EncodeChecked with go-axi v0.4.0 pinned (internal/report/standard_axi.go:31-56, go.mod:40; TestRenderAXI_StandardTOONRoundTrip, TestRenderSingleRowAXI_StandardTOON)."
+        - "Next-step disclosure rides stdout as a TOON `help[]` block on the home view, review/resume, report, reconcile, verify, debate and status, generated from a suggestion registry that keeps `<id>` placeholders and allowlists only disambiguating flags (cli/suggestions.go:75-111, cli/suggestions.go:160-191, cli/suggestions.go:235-257; TestReviewCmd_AXIEndsWithHelpBlock, TestReportCmd_AXIEndsWithHelpBlock, TestReconcileCmd_AXI, TestVerifyCmd_AXI, TestDebateCmd_AXI, TestStatusCmd_AXIPendingOffersResume). Human `Next:` lines are not an AXI leak: one representation is chosen, and the AXI tests assert no stderr `Next:`."
+        - "Exit codes are 0 success, 1 failure or gate, 2 usage or configuration, 3 sync-cloud authentication, and they do not change with output shape (cli/main.go:238-265; TestAXIExitParity_CleanReviewExitsZero, TestAXIExitParity_GateFailureExitsOne, TestAXIExitParity_UsageErrorExitsTwo, TestAXIExitParity_AuthErrorExitsThree). A malformed invocation fails loudly before command work as a usage error (cli/main.go:579-583; TestRootCmd_UnknownSubcommandIsUsageError, TestReportCmd_InvalidFormatIsUsageError), and a completed reconcile keeps its payload when its gate exits 1 (TestReconcileCmd_AXIGateFailureStillEmits). Two non-AXI commands add exit 4: debt dashboard --check and debt report --check report drift or a missing target with it (cli/debt_dashboard.go:276, cli/debt_dashboard.go:298-307, cli/debt_report.go:88-89), outside the AXI contract."
+        - "AXI calls are non-interactive and keep the streams separate: stdout is only the payload, and failures are plain diagnostics on stderr, not structured documents on stdout (cli/main.go:157-162, cli/main.go:250-259, cli/main.go:735-739; TestStatusCmd_AXIMissingReview). A fully complete review resume re-reconciles and exits 0, and repeated debt resolution neither errors nor appends another record (TestResume_AllCompleteReconcilesAndExitsZero, TestDebtResolve_MarkResolvedIsIdempotent)."
+        - "Truncation is explicit where it exists: findings free-text cells are cut at 500 runes (internal/report/render.go:41-43, internal/report/standard_axi.go:161-170; TestAXIText_SanitizesBeforeTruncating), and the findings array is capped at 500 lines by default with ATCR_AXI_MAX_LINES as the override, rows dropped before encoding so the header count equals the rows present and the true total sits on the `total` line (internal/report/pagination.go:112-136, cli/main.go:696-732; TestReportCmd_AXITruncatesAtEnvCap, TestReportCmd_AXIUnderCapNotTruncated, TestAXIMaxLinesFromEnv)."
+        - "An installable Agent Skill ships for Claude Code, Codex, Kimi, OpenCode, Antigravity and the vendor-neutral agents layout (cli/skill.go:44-51, docs/skill-usage.md:13-56; TestSkillExport_UnknownHarnessIsAUsageError), and it rightly omits live state (skills/atcr/SKILL.md:14), but SKILL.md is written by hand rather than generated from the no-argument home view, with no `--check` step to fail CI when it drifts; no `setup` command, SessionStart hook or OpenCode plugin injects the live home view; the root registers `skill`, not `setup` (cli/main.go:593-623); and the skill's command examples assume atcr is already on PATH (skills/atcr/SKILL.md:20) rather than offering a form that runs without a global install."
+        - "Version discovery is partially there: `--version` and the `version` subcommand share atcrVersion and agree, but every form prints `atcr version <version>` rather than the bare version and `-V` is rejected with exit 2 (cli/main.go:430-431, cli/version.go:18-55; TestVersion_FlagAndSubcommandAgree, real-binary probes). All 71 visible command paths (the root, 64 command paths and six `help`/`completion` paths) answered `--help` with exit 0, but concise references such as `status --help` omit the required two-to-three usage examples (cli/main.go:593-623; real-binary probe)."
+        - "Provider-backed review and resume success paths were exercised through fake-endpoint tests, not a paid live review; version latency was not benchmarked, because the AXI source's ESM dynamic-import remedy is Node-specific and atcr reads build metadata through runtime/debug (cli/version.go:23-41). No live sync-cloud service or interactive TTY was used."
+        - "Nothing on an AXI surface prompts, and the only wizards left are human-only: `debt add` and `quickstart` keep optional TTY flows while `debt add` provides a complete flag route that fails immediately off a TTY (cli/debt_add.go:103-134, cli/debt_add.go:204-253, cli/quickstart.go:364-365; TestDebtAdd_MissingRequiredNonTTYIsUsageError)."
+      exception: "Fourteen exceptions, numbered as in docs/axi-audit.md: four justified tradeoffs and ten unjustified gaps. Justified: (1) TOON is opt-in through --axi or --format axi, keeping the human and JSON defaults; (6) AXI failures remain plain diagnostics on stderr, so stdout is only ever a payload; (7) AXI retains atcr's additional exit 3 for sync-cloud authentication failure, which CI already branches on; (14) human-only debt add and quickstart retain optional TTY wizards. Unjustified: (2) no AXI surface offers --fields or a three-to-four-field list projection; (3) AXI findings cells are cut to 500 runes with no size or full-content hint; (4) a row-truncated findings payload reports total and truncated but its help[] never names ATCR_AXI_MAX_LINES; (5) debt clean, filter, and group put complete problem and fix strings in list rows; (8) unknown flags exit 2 but name neither the command's valid flags nor a replacement; (9) no setup command, SessionStart hook, or OpenCode plugin, and the skill's examples need atcr on PATH; (10) the four debt AXI renderers return with no help[]; (11) -V is rejected with exit 2; (12) version forms print 'atcr version <version>', not the bare version; (13) concise references such as status --help omit the two-to-three usage examples."

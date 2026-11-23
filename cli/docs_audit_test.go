@@ -2910,6 +2910,54 @@ func TestAXICatalogEntryCitationsResolveAndAreReviewed(t *testing.T) {
 	}
 }
 
+// TestAXICatalogEntrySplicesIntoCommunityList: step 2 of the submission appends
+// the entry to the `community` list of upstream catalog.yaml, whose items sit
+// two spaces in (admission keys at six). Appended as written, without its
+// comment header, the catalog must still parse with atcr as the last community
+// item (AC3 round 6: a column-0 entry broke the file).
+func TestAXICatalogEntrySplicesIntoCommunityList(t *testing.T) {
+	root := repoRootDir(t)
+	b, err := os.ReadFile(filepath.Join(root, "docs", "axi-catalog-entry.yaml"))
+	if err != nil {
+		t.Fatalf("read docs/axi-catalog-entry.yaml: %v", err)
+	}
+	var body []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(line, "#") {
+			body = append(body, line)
+		}
+	}
+	const upstream = "official:\n" +
+		"  - name: gh-axi\n" +
+		"    url: https://example.com/gh-axi\n" +
+		"community:\n" +
+		"  - name: other\n" +
+		"    url: https://example.com/other\n" +
+		"    admission:\n" +
+		"      status: admitted\n" +
+		"      reviewed_revision: abc\n"
+	var catalog struct {
+		Community []struct {
+			Name      string `yaml:"name"`
+			Admission struct {
+				Status    string `yaml:"status"`
+				Exception string `yaml:"exception"`
+			} `yaml:"admission"`
+		} `yaml:"community"`
+	}
+	spliced := upstream + strings.Join(body, "\n")
+	if err := yaml.Unmarshal([]byte(spliced), &catalog); err != nil {
+		t.Fatalf("catalog.yaml with the entry appended to community must parse: %v", err)
+	}
+	if n := len(catalog.Community); n != 2 {
+		t.Fatalf("community has %d items, want 2 (other, atcr)", n)
+	}
+	got := catalog.Community[1]
+	if got.Name != "atcr" || got.Admission.Status != "exception" || got.Admission.Exception == "" {
+		t.Errorf("last community item = %+v, want atcr with status exception and an exception string", got)
+	}
+}
+
 // exceptionEntry is one numbered AXI exception as written in the audit's
 // `## Exceptions` list and copied into the README `Limits` section.
 type exceptionEntry struct {

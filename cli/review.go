@@ -780,6 +780,9 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 				w = cmd.ErrOrStderr()
 			}
 			_, _ = fmt.Fprintf(w, "%v; nothing to review (use --no-file-cache to force a full re-scan)\n", err)
+			// No review was created, so the next-step help must not point at one
+			// (writeReviewHelp reads this mark).
+			cmd.SetContext(context.WithValue(cmd.Context(), nothingToReviewKey{}, true))
 			return nil
 		}
 		return usageError(err)
@@ -1228,9 +1231,18 @@ func runReviewWithHelp(cmd *cobra.Command, args []string) error {
 // block on stdout, after the run-summary payload; the legacy pipe payload gets
 // none, so it stays byte-identical for the parsers it exists for. In human mode
 // they are Next: lines on stderr, leaving stdout unchanged.
+//
+// A baseline re-run that found nothing to review created no review, so its one
+// next step is the same scan with --no-file-cache, never a report or verify of
+// an id that does not exist.
 func writeReviewHelp(cmd *cobra.Command) error {
-	lines := renderSuggestions(suggestReview, invocation{Flags: invocationFlags(cmd)})
 	ctx := cmd.Context()
+	var lines []string
+	if nothing, _ := ctx.Value(nothingToReviewKey{}).(bool); nothing {
+		lines = []string{noFileCacheRescanLine(cmd)}
+	} else {
+		lines = renderSuggestions(suggestReview, invocation{Flags: invocationFlags(cmd)})
+	}
 	if !axiFromContext(ctx) {
 		for _, l := range lines {
 			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Next: "+l)
@@ -1244,6 +1256,27 @@ func writeReviewHelp(cmd *cobra.Command) error {
 		return fmt.Errorf("axi output rendering failed: %w", err)
 	}
 	return nil
+}
+
+// nothingToReviewKey marks cmd's context when a baseline re-run found every
+// in-scope file unchanged and so created no review.
+type nothingToReviewKey struct{}
+
+// noFileCacheRescanLine is the baseline scan the user ran (--all, or --scope
+// and its deprecated --dir alias) re-run with --no-file-cache.
+func noFileCacheRescanLine(cmd *cobra.Command) string {
+	scopeFlag := ""
+	for _, name := range []string{"scope", "dir"} {
+		if cmd.Flags().Changed(name) {
+			scopeFlag = name
+			break
+		}
+	}
+	if scopeFlag == "" {
+		return "atcr review --all --no-file-cache"
+	}
+	v, _ := cmd.Flags().GetString(scopeFlag)
+	return "atcr review --scope=" + carryValue(v) + " --no-file-cache"
 }
 
 // absFn resolves a path to absolute form. It is a package var so a test can
