@@ -1233,7 +1233,10 @@ line that does not start with a severity and a `|` is prose and ignored. A row
 that does counts in `summary.skipped` when it has fewer than 5 columns, no
 file, more columns than its `# Format:` names, or, with no `# Format:`, a width
 other than 5, 6, 8 or 10 (an unescaped `|`); trailing empty columns are
-padding. An unknown version header is an error, never a silent parse.
+padding. Under a `# Format:` that declares no SEVERITY column,
+pipe-delimited rows count in `summary.skipped` (`td-dedupe` parity) and
+one-field lines are still prose. An unknown version header is an error,
+never a silent parse.
 
 Flags: `--streams` (required, comma-separated), `--source-tags` (parallel to
 `--streams`; defaults to each stream's parent directory name), `--tolerance`
