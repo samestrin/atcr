@@ -1,0 +1,1 @@
+- `atcr quickstart` no longer waits on stdin for an API key when stdin is not a terminal (an agent or CI job with an open pipe): it skips the prompt and prints the `export` line to set instead. `atcr init --force` help now says it overwrites `config.yaml` and `.gitignore` but never persona files, and `atcr debt --help` lists all 18 subcommands. (epic 114)

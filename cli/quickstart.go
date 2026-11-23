@@ -396,6 +396,8 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		if err := scanner.Err(); err != nil {
 			_, _ = fmt.Fprintf(o.errOut, "could not read input: %v\n", err)
 		}
+		// EOF (`</dev/null`): nobody answered, so say how to set the key.
+		_, _ = fmt.Fprintf(o.out, "\nWhen you have a key, set it with:\n  export %s=<your-key>\n", env)
 		return nil
 	}
 	if key == "" {

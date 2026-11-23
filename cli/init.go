@@ -77,7 +77,7 @@ func newInitCmd() *cobra.Command {
 			return installCommunityPersonas(personasClient, commpersonas.BaseURL(), dir, nil, out, errOut)
 		},
 	}
-	cmd.Flags().Bool("force", false, "overwrite existing configuration and persona files")
+	cmd.Flags().Bool("force", false, "overwrite the existing config.yaml and .gitignore (persona files are never overwritten; see --refresh-personas)")
 	cmd.Flags().Bool("offline", false, "skip the community persona fetch; scaffold from embedded built-ins only")
 	cmd.Flags().Bool("refresh-personas", false, "overwrite built-in persona copies under .atcr/personas that differ from the embedded ones, hand edits included")
 	cmd.Flags().Bool("dry-run", false, "with --refresh-personas: list the files it would overwrite and write nothing")
