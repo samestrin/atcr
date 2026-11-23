@@ -252,8 +252,9 @@ var (
 // looksLikePassword is the gate for an unquoted value under a password name.
 // People pick passwords without digits, so no character class is required.
 // What it rejects instead is the shape of something that is not a password:
-// a path, a placeholder or keyword, a field, env-var or code identifier, and
-// a letters-only value under eight characters (password := hashed). The ":="
+// a path, a placeholder or keyword, a field, env-var or code identifier, a
+// letters-only value under eight characters (password := hashed) and a
+// value with no letters unless it is eight or more digits. The ":="
 // operator is Go code, never a config file, and is checked by the caller.
 func looksLikePassword(v string) bool {
 	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "~/") || strings.ContainsAny(v, "${}<>%") {
@@ -271,19 +272,23 @@ func looksLikePassword(v string) bool {
 	if dottedRefRe.MatchString(v) || envNameRe.MatchString(v) || codeIdentRe.MatchString(v) {
 		return false
 	}
-	var letters, other bool
+	var letters, digits, other bool
 	for _, c := range v {
 		switch {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
 			letters = true
+		case c >= '0' && c <= '9':
+			digits = true
 		default:
 			other = true
 		}
 	}
 	if !letters {
-		return false
+		// A numeric password (PIN style) of eight or more digits is flagged;
+		// shorter numbers under a password name are settings (password_timeout = 3600).
+		return digits && !other && len(v) >= 8
 	}
-	return other || len(v) >= 8
+	return digits || other || len(v) >= 8
 }
 
 // scanUnquotedAssignments finds unquoted keyword-named assignments. A value
