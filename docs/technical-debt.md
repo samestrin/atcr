@@ -1177,12 +1177,14 @@ Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
 flags.
 
 A ref under `refs/atcr/debt-locks/` that cannot be read as a lock — its name is
-not a hex-encoded id, or its tag cannot be read or records a different id — is
-reported as a warning, in the human output and in the `warnings` list of
-`--json` (an empty list when there is nothing to warn about). Every other lock
-is still listed: one bad ref never hides the rest, and the listing still
-succeeds. Inspect or delete a warned-about ref with git; `locks` itself never
-changes a ref.
+not a hex-encoded id, its object can no longer be fetched from the remote, or
+its tag cannot be read or records a different id — is reported as a warning,
+in the human output and in the `warnings` list of `--json` (an empty list when
+there is nothing to warn about). Each human warning line names the remote
+beside the ref. Every other lock is still listed: one bad ref never hides the
+rest, and the listing still succeeds. Only a remote that cannot be read at all
+fails the listing. Inspect or delete a warned-about ref with git; `locks` itself
+never changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To

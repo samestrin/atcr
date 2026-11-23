@@ -1,0 +1,1 @@
+- `atcr debt locks` no longer fails the whole listing when one lock ref's object can no longer be fetched from the remote: that ref alone is reported as a warning and every readable lock is still listed. Each human warning line now names the remote beside the ref, so the same bad ref on two remotes is distinguishable (epic 127 T2).
