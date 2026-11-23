@@ -95,6 +95,9 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 		if strings.TrimSpace(dir) == "" {
 			return usageError(fmt.Errorf("--%s must not be empty; omit it to resolve the configured store or <repo root>/.atcr/debt", name))
 		}
+		if _, err := validation.ExpandHome(dir); err != nil {
+			return usageError(fmt.Errorf("--%s: %w", name, err))
+		}
 		if err := validation.FilePath(dir); err != nil {
 			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
 		}
@@ -114,12 +117,22 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 // ("", "") when neither flag was supplied.
 func debtStoreFlagValue(cmd *cobra.Command) (string, string) {
 	if cmd.Flags().Changed("store") {
-		return "store", mustFlag(cmd, "store")
+		return "store", expandHomeOrRaw(mustFlag(cmd, "store"))
 	}
 	if cmd.Flags().Changed("dir") {
-		return "dir", mustFlag(cmd, "dir")
+		return "dir", expandHomeOrRaw(mustFlag(cmd, "dir"))
 	}
 	return "", ""
+}
+
+// expandHomeOrRaw expands a leading "~" or "~/" (a quoted '~' reaches atcr
+// unexpanded). A "~user" form it cannot expand is returned as given, and the
+// PreRunE check refuses it before anything is written.
+func expandHomeOrRaw(v string) string {
+	if e, err := validation.ExpandHome(v); err == nil {
+		return e
+	}
+	return v
 }
 
 // debtStoreDir resolves the store directory for a debt subcommand: an explicit

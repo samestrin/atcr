@@ -1,0 +1,1 @@
+- A leading `~` in a path is now expanded to your home directory instead of creating a directory literally named `~`: `--store '~/td'`, `review --output-dir '~/x'`, `report --output '~/r.md'` and `debt.store: ~/td` in `~/.config/atcr/registry.yaml`. `~user` forms are refused, and `debt.store` in `.atcr/config.yaml` refuses `~` because it must stay inside the repository (EST-8260)

@@ -63,6 +63,9 @@ func projectStoreDir(root, v string) (string, error) {
 	if filepath.IsAbs(v) || filepath.VolumeName(v) != "" || strings.HasPrefix(slashed, "/") {
 		return reject("must be a path relative to the repository root")
 	}
+	if strings.HasPrefix(slashed, "~") {
+		return reject(`must be a path relative to the repository root ("~" is not expanded here)`)
+	}
 	for _, seg := range strings.Split(slashed, "/") {
 		if seg == ".." {
 			return reject(`must not contain ".."`)
@@ -148,11 +151,15 @@ func containedIn(root, dir string) error {
 	return nil
 }
 
-// userStoreDir resolves the user tier's value: absolute as given, relative
-// against root. It gets the same system-directory guard --store gets
+// userStoreDir resolves the user tier's value: "~" and "~/..." expanded to the
+// home directory, absolute as given, relative against root. It gets the same system-directory guard --store gets
 // (validation.FilePath on the absolute form), but no containment rule.
 func userStoreDir(root, v string) (string, error) {
-	dir := filepath.Clean(v)
+	expanded, err := validation.ExpandHome(v)
+	if err != nil {
+		return "", fmt.Errorf("registry.yaml debt.store %q: %w", v, err)
+	}
+	dir := filepath.Clean(expanded)
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(root, dir)
 	}
