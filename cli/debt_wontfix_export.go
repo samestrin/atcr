@@ -43,7 +43,7 @@ type WontfixRecord struct {
 // WontfixExportOptions selects the store ExportWontfixRecords reads. The zero
 // value reads the store `atcr debt list` run from the working directory reads.
 type WontfixExportOptions struct {
-	// Store is the store directory, with the meaning of `atcr debt --store`: it
+	// Store is the store directory, with the meaning of `atcr debt list --store`: it
 	// wins over any debt.store setting, a leading "~/" is expanded, and it is
 	// validated the same way. Empty means unset; a blank (whitespace-only)
 	// value is an error, as `--store ""` is.
