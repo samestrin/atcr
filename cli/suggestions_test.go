@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 // registry template renders with the allowlisted flags of the current invocation
 // carried forward and <id> left as a literal placeholder, never a concrete id.
 func TestSuggestions_RenderEveryRegistryTemplate(t *testing.T) {
-	inv := invocation{Flags: map[string]string{"repo-root": "/src/app"}, Pending: true}
+	inv := invocation{Flags: map[string]string{"repo-root": "/src/app"}, Pending: true, Reconciled: true}
 	want := map[suggestionKey][]string{
 		suggestReview: {
 			"atcr report <id>",
@@ -90,11 +91,49 @@ func TestSuggestions_ReconcileDebtListCarriesStore(t *testing.T) {
 		renderSuggestions(suggestReconcile, invocation{Flags: map[string]string{"repo-root": "/a b"}})[0])
 }
 
-// TestSuggestions_PendingOnlyStepDroppedWhenNotPending: the status entry offers
-// `review --resume <id>` only when the review is pending.
-func TestSuggestions_PendingOnlyStepDroppedWhenNotPending(t *testing.T) {
-	got := renderSuggestions(suggestStatus, invocation{})
+// TestSuggestions_ResumableOnlyStepDroppedWhenSettled: the status entry offers
+// `review --resume <id>` only when the review is pending or failed.
+func TestSuggestions_ResumableOnlyStepDroppedWhenSettled(t *testing.T) {
+	got := renderSuggestions(suggestStatus, invocation{Reconciled: true})
 	assert.Equal(t, []string{"atcr report <id>"}, got)
+}
+
+// TestSuggestions_ReconcileStateGatesSteps (EST-8139): report and verify read
+// reconciled/findings.json and exit 2 without it, so they are offered only for
+// a reconciled review; a settled unreconciled one gets reconcile instead, and a
+// failed one only the resume.
+func TestSuggestions_ReconcileStateGatesSteps(t *testing.T) {
+	cases := []struct {
+		name string
+		key  suggestionKey
+		inv  invocation
+		want []string
+	}{
+		{"review reconciled", suggestReview, invocation{Reconciled: true}, []string{"atcr report <id>", "atcr verify <id>"}},
+		{"review unreconciled", suggestReview, invocation{}, []string{"atcr reconcile <id>"}},
+		{"status reconciled", suggestStatus, invocation{Reconciled: true}, []string{"atcr report <id>"}},
+		{"status unreconciled", suggestStatus, invocation{}, []string{"atcr reconcile <id>"}},
+		{"status pending", suggestStatus, invocation{Pending: true}, []string{"atcr review --resume <id>"}},
+		{"status failed", suggestStatus, invocation{Failed: true}, []string{"atcr review --resume <id>"}},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.want, renderSuggestions(c.key, c.inv), c.name)
+	}
+}
+
+// TestReviewReconciled: only a regular reconciled/findings.json counts; the
+// scaffolded reconciled/ directory alone, a directory in the file's place and a
+// blank dir do not.
+func TestReviewReconciled(t *testing.T) {
+	assert.False(t, reviewReconciled(""))
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+	assert.False(t, reviewReconciled(dir), "the scaffolded dir alone")
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "reconciled", "findings.json"), 0o755))
+	assert.False(t, reviewReconciled(dir), "a directory is not the findings file")
+	require.NoError(t, os.Remove(filepath.Join(dir, "reconciled", "findings.json")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", "findings.json"), []byte("[]"), 0o644))
+	assert.True(t, reviewReconciled(dir))
 }
 
 // TestSuggestions_NonAllowlistedFlagRendersPlaceholder: a template that carries a

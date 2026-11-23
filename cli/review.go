@@ -1014,6 +1014,8 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 	// otherwise it fires here. The gates after it (--fail-on, --require-coverage)
 	// judge a completed review, so a gate failure does not withdraw the call.
 	report := newReviewReport(result, req.PRNumber, req.Range.Base, req.Range.Head)
+	// writeReviewHelp reads this dir to tell whether the review reconciled.
+	cmd.SetContext(context.WithValue(cmd.Context(), reviewDirKey{}, result.Dir))
 	reconcileInline := threshold != "" || verifyFlag || debateFlag || autoFix
 	if !reconcileInline {
 		hookobs.ReviewComplete(ctx, report)
@@ -1238,14 +1240,20 @@ func runReviewWithHelp(cmd *cobra.Command, args []string) error {
 //
 // A baseline re-run that found nothing to review created no review, so its one
 // next step is the same scan with --no-file-cache, never a report or verify of
-// an id that does not exist.
+// an id that does not exist. A review that did not reconcile in-process (no
+// reconciled/findings.json in its dir) gets `reconcile <id>` instead of report
+// and verify, which would exit 2 without reconciled data.
 func writeReviewHelp(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	var lines []string
 	if nothing, _ := ctx.Value(nothingToReviewKey{}).(bool); nothing {
 		lines = []string{noFileCacheRescanLine(cmd)}
 	} else {
-		lines = renderSuggestions(suggestReview, invocation{Flags: invocationFlags(cmd)})
+		dir, _ := ctx.Value(reviewDirKey{}).(string)
+		lines = renderSuggestions(suggestReview, invocation{
+			Flags:      invocationFlags(cmd),
+			Reconciled: reviewReconciled(dir),
+		})
 	}
 	if !axiFromContext(ctx) {
 		for _, l := range lines {
@@ -1261,6 +1269,9 @@ func writeReviewHelp(cmd *cobra.Command) error {
 	}
 	return nil
 }
+
+// reviewDirKey carries the finished review's directory on cmd's context.
+type reviewDirKey struct{}
 
 // nothingToReviewKey marks cmd's context when a baseline re-run found every
 // in-scope file unchanged and so created no review.

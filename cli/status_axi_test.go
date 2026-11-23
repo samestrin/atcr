@@ -31,7 +31,7 @@ func statusAXIStdout() string {
 		"agents[2]{name,state,chunks_done,chunks_total}:\n" +
 		"  greta,pending,0,1\n" +
 		"  kai,pending,0,1\n" +
-		"help[1]: atcr report <id>\n"
+		"help[1]: atcr reconcile <id>\n"
 }
 
 // statusFixtureJSON is the exact default stdout of the same fixture: the
@@ -114,7 +114,7 @@ func TestStatusCmd_AXIPendingOffersResume(t *testing.T) {
 		"current_stage: fanout\n"+
 		"agents[1]{name,state,chunks_done,chunks_total}:\n"+
 		"  greta,pending,0,1\n"+
-		"help[2]: atcr report <id>,atcr review --resume <id>\n", stdout)
+		"help[1]: atcr review --resume <id>\n", stdout)
 	assert.NotContains(t, stderr, "Next:")
 }
 
@@ -141,7 +141,7 @@ func TestStatusCmd_AXIFailedStartCarriesStartError(t *testing.T) {
 		"agents[1]{name,state,chunks_done,chunks_total}:\n"+
 		"  greta,pending,0,1\n"+
 		"start_error: \"API key env var not set: ATCR_TEST_REVIEW_KEY\"\n"+
-		"help[2]: atcr report <id>,atcr review --resume <id>\n", stdout)
+		"help[1]: atcr review --resume <id>\n", stdout)
 
 	var doc map[string]any
 	require.NoError(t, toon.Unmarshal([]byte(stdout), &doc))
@@ -196,7 +196,7 @@ func TestStatusCmd_AXILiveProgress(t *testing.T) {
 	require.NotNil(t, bruce)
 	assert.Equal(t, "pending", bruce["state"])
 	assert.NotContains(t, bruce, "last_activity_at", "an absent time is omitted, not empty")
-	assert.Len(t, doc["help"], 2, "pending review offers resume")
+	assert.Equal(t, []any{"atcr review --resume <id>"}, doc["help"], "pending review offers resume alone")
 }
 
 // TestStatusCmd_AXILogFormatJSON: under --axi --log-format json no Next:
@@ -241,7 +241,25 @@ func TestStatusCmd_JSONModeUnchanged(t *testing.T) {
 	code, stdout, stderr := execCmdSplit(t, "status", "r")
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, statusFixtureJSON, stdout)
-	assert.True(t, strings.HasSuffix(stderr, "Next: atcr report <id>\n"), "stderr: %q", stderr)
+	assert.True(t, strings.HasSuffix(stderr, "Next: atcr reconcile <id>\n"), "stderr: %q", stderr)
+}
+
+// TestStatusCmd_AXIReconciledSuggestsReport (EST-8139): once reconcile has
+// written reconciled/findings.json, status suggests report, which reads it,
+// and no reconcile.
+func TestStatusCmd_AXIReconciledSuggestsReport(t *testing.T) {
+	isolate(t)
+	writeStatusFixture(t, ".", "r")
+	dir := filepath.Join(".atcr", "reviews", "r", "reconciled")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings.json"), []byte("[]"), 0o644))
+	code, stdout, stderr := execCmdSplit(t, "status", "--axi", "r")
+	require.Equal(t, 0, code, stderr)
+	assert.True(t, strings.HasSuffix(stdout, "current_stage: reconciled\n"+
+		"agents[2]{name,state,chunks_done,chunks_total}:\n"+
+		"  greta,pending,0,1\n"+
+		"  kai,pending,0,1\n"+
+		"help[1]: atcr report <id>\n"), "stdout: %q", stdout)
 }
 
 // TestStatusCmd_AXIMissingReview: the not-found usage error is unchanged under

@@ -241,8 +241,9 @@ func TestStatusCmd_StaleStageJSON(t *testing.T) {
 }
 
 // TestStatusCmd_NextLinesOnStderr is Epic 42.0 T5: a completed review prints a
-// Next: line naming report <id> on stderr, offers no resume (nothing pending),
-// and leaves stdout the bare JSON document.
+// Next: line on stderr, offers no resume (nothing pending), and leaves stdout
+// the bare JSON document. The fixture never reconciled, so the line names
+// reconcile <id>, not the report that would exit 2 (EST-8139).
 func TestStatusCmd_NextLinesOnStderr(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-06-10_x"
@@ -250,14 +251,15 @@ func TestStatusCmd_NextLinesOnStderr(t *testing.T) {
 
 	out, errOut, err := runStatusSplit(t, root, id)
 	require.NoError(t, err)
-	assert.Equal(t, "Next: atcr report <id>\n", errOut)
+	assert.Equal(t, "Next: atcr reconcile <id>\n", errOut)
 	assert.NotContains(t, out, "Next:", "stdout stays JSON only")
 	var doc map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &doc), "stdout is exactly one JSON document")
 }
 
 // TestStatusCmd_NextLinesPendingOffersResume: a review with agents still
-// pending also names review --resume <id>, after report <id>.
+// pending names review --resume <id>, and no report or reconcile of data the
+// fan-out has not finished.
 func TestStatusCmd_NextLinesPendingOffersResume(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-06-10_live"
@@ -271,7 +273,7 @@ func TestStatusCmd_NextLinesPendingOffersResume(t *testing.T) {
 	require.NoError(t, err)
 	st, _ := decodeStatus(t, out)
 	require.Equal(t, 1, st.AgentsPending, "fixture is a pending review")
-	assert.Equal(t, "Next: atcr report <id>\nNext: atcr review --resume <id>\n", errOut)
+	assert.Equal(t, "Next: atcr review --resume <id>\n", errOut)
 }
 
 // TestStatusCmd_BrokenStderrStillSucceeds: the Next: lines are advisory, so a

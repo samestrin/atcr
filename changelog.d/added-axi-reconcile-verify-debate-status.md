@@ -1,1 +1,0 @@
-- Add `--axi` TOON output mode to `reconcile`, `verify`, `debate`, and `status`. (technical debt, 2026-11-02)
