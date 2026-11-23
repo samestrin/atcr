@@ -341,6 +341,41 @@ func ReadManifest(reviewDir string) (*payload.Manifest, error) {
 	return &m, nil
 }
 
+// MarkStartFailed records cause as the review's start_error, so a review whose
+// fan-out never started reports failed rather than in_progress (EST-8137). The
+// manifest is re-read before the write and only StartError is set, the narrow
+// shape backfillReviewRoot uses.
+func (p *PreparedReview) MarkStartFailed(cause error) error {
+	m, err := ReadManifest(p.Dir)
+	if err != nil {
+		return err
+	}
+	m.StartError = cause.Error()
+	if p.manifest != nil {
+		p.manifest.StartError = m.StartError
+	}
+	return WriteManifest(p.Dir, m)
+}
+
+// ClearStartError removes a recorded start_error once a resume has passed the
+// key preflight, so the resumed fan-out reports in_progress again. The
+// in-memory manifest is cleared too, or ExecuteReview's finalizing write would
+// put it back. It writes nothing when none is recorded on disk.
+func (p *PreparedReview) ClearStartError() error {
+	if p.manifest != nil {
+		p.manifest.StartError = ""
+	}
+	m, err := ReadManifest(p.Dir)
+	if err != nil {
+		return err
+	}
+	if m.StartError == "" {
+		return nil
+	}
+	m.StartError = ""
+	return WriteManifest(p.Dir, m)
+}
+
 // ClearInterrupted rewrites the review's manifest with Interrupted=false when it
 // is currently set. A review whose every agent already finished but whose manifest
 // still carries the interrupt marker (a signal that landed after the last agent

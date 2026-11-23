@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -34,6 +35,81 @@ func TestEnsureReviewComplete(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
 		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
 	require.NoError(t, EnsureReviewComplete(dir, "x"))
+}
+
+// A review whose start failed after scaffolding (manifest.start_error, e.g. the
+// CLI key preflight) has no summary.json and never will: it reports failed with
+// the recorded error, not in_progress until the stale deadline (EST-8137).
+func TestReadReviewStatus_StartErrorIsFailed(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	withNow(t, start.Add(time.Second)) // well inside the stale window
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta","stevie"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"start_error":"API key env var not set: K","partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunFailed, st.Status)
+	assert.Equal(t, RunFailed, st.CurrentStage)
+	assert.Equal(t, "API key env var not set: K", st.StartError)
+	assert.Equal(t, 2, st.AgentsPending)
+
+	err = EnsureReviewComplete(dir, "run-7")
+	require.ErrorIs(t, err, ErrReviewFailedToStart)
+	assert.Contains(t, err.Error(), "review run-7 failed to start: API key env var not set: K")
+	assert.Contains(t, err.Error(), "--resume run-7")
+}
+
+// Once a summary.json exists (a resume ran the fan-out), the summary decides the
+// status and a leftover start_error is not reported.
+func TestReadReviewStatus_SummaryOverridesStartError(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"start_error":"boom","partial":false}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunCompleted, st.Status)
+	assert.Empty(t, st.StartError)
+	require.NoError(t, EnsureReviewComplete(dir, "x"))
+}
+
+// MarkStartFailed records the cause on disk without clobbering other manifest
+// fields, and ClearStartError removes it again on disk and in memory (a resume that passes preflight).
+func TestMarkStartFailedAndClear(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"timeout_secs":600,"partial":false}`)
+	p := &PreparedReview{ID: "x", Dir: dir, manifest: &payload.Manifest{Base: "a", Head: "b", Roster: []string{"greta"}}}
+	require.NoError(t, p.MarkStartFailed(errors.New("no key")))
+	m, err := ReadManifest(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "no key", m.StartError)
+	assert.Equal(t, 600, m.TimeoutSecs, "the narrow write keeps the on-disk fields")
+	assert.Equal(t, "no key", p.manifest.StartError)
+
+	require.NoError(t, p.ClearStartError())
+	assert.Empty(t, p.manifest.StartError, "or the finalizing write would restore it")
+	m, err = ReadManifest(dir)
+	require.NoError(t, err)
+	assert.Empty(t, m.StartError)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// ClearStartError is a no-op on the ordinary resume, whose manifest has no
+// start_error: it writes nothing. A missing manifest is an error.
+func TestClearStartError_NoOpAndMissingManifest(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"base":"a","head":"b","roster":["greta"],"partial":false}`
+	writeManifestOnly(t, dir, body)
+	p := &PreparedReview{ID: "x", Dir: dir}
+	require.NoError(t, p.ClearStartError())
+	got, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	require.NoError(t, err)
+	assert.Equal(t, body, string(got), "no start_error means no rewrite")
+
+	missing := &PreparedReview{ID: "y", Dir: filepath.Join(dir, "absent")}
+	require.Error(t, missing.ClearStartError())
 }
 
 // --- Epic 1.5: stale inference for dead reviews ---

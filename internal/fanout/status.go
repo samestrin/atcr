@@ -128,6 +128,10 @@ type ReviewStatus struct {
 	CompletedAgents []string `json:"completed_agents,omitempty"`
 	// Agents is one row per roster persona, in roster order.
 	Agents []AgentProgress `json:"agents,omitempty"`
+	// StartError is why a failed review never started its fan-out (for example
+	// "API key env var not set: ..."), set only with Status failed and no
+	// summary.json (EST-8137).
+	StartError string `json:"start_error,omitempty"`
 }
 
 // ReviewStatus.CurrentStage values. StageFanout holds while the fan-out has not
@@ -251,6 +255,14 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		st.AgentsPending = st.AgentCount - st.AgentsDone
 		if st.AgentsPending < 0 {
 			st.AgentsPending = 0
+		}
+		if m.StartError != "" {
+			// The fan-out never started (manifest.start_error): terminal now,
+			// not in_progress until the stale deadline.
+			st.Status = RunFailed
+			st.CurrentStage = RunFailed
+			st.StartError = m.StartError
+			return st, nil
 		}
 		if staleByDeadline(m, st.Agents, lastActivity) {
 			st.Status = RunStale
@@ -535,6 +547,11 @@ func readContained(root, path string, limit int64) ([]byte, time.Time, bool) {
 // fan-out has not written its completion signal (summary.json) yet.
 var ErrReviewInProgress = errors.New("still in_progress")
 
+// ErrReviewFailedToStart marks a review whose fan-out never started
+// (manifest.start_error). It has no summary.json, so reconciling it would emit a
+// verdict from no agents; the fix is to correct the cause and resume.
+var ErrReviewFailedToStart = errors.New("failed to start")
+
 // ErrReviewStale reports a reconcile/report attempt against a review inferred
 // dead (Epic 1.5): its fan-out exceeded the effective timeout without writing a
 // completion signal. Like in_progress it has no summary.json, so reconciling it
@@ -562,6 +579,9 @@ func EnsureReviewComplete(reviewDir, id string) error {
 	}
 	if st.Status == RunInProgress {
 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
+	}
+	if st.StartError != "" {
+		return fmt.Errorf("review %s %w: %s; fix the cause and run `atcr review --resume %s` (CLI only), or start a fresh review", id, ErrReviewFailedToStart, st.StartError, id)
 	}
 	if st.Status == RunStale {
 		// Both callers include MCP handlers, which have no resume capability at all

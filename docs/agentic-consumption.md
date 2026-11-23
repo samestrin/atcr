@@ -147,7 +147,9 @@ help[2]: atcr report <id>,atcr verify <id>
 Without `--axi` the same suggestions go to stderr as `Next: atcr report <id>`
 and `Next: atcr verify <id>`, so the human stdout is unchanged. A run that exits
 non-zero, `--dry-run`, and the deprecated `--legacy-pipe` payload get no
-suggestions.
+`Next:` or `help[]` suggestions. The one exception is a signal-interrupted
+review, whose stderr notice names `atcr status <id>` and
+`atcr review --resume <id>` from the same registry.
 
 A `review --all` or `review --scope <dir>` re-run that finds every in-scope file
 unchanged since the last completed review creates no review. It exits 0, writes
@@ -345,6 +347,16 @@ case $status in
     echo "clean: no findings at or above the threshold; proceeding"
     ;;
   1)
+    # Exit 1 also means every agent failed (an invalid key, a provider outage):
+    # the gate then has nothing to pass, and the report would read as zero
+    # findings. agents_succeeded is the third column of run.toon's one row (the
+    # id and dir before it hold no comma for a review under .atcr/reviews).
+    succeeded=$(awk -F, 'row { print $3; exit } /^review_summary\[/ { row = 1 }' run.toon)
+    if [ "${succeeded:-0}" -eq 0 ]; then
+      echo "every agent failed; nothing was reviewed (see review.log)" >&2
+      exit 1
+    fi
+
     # Findings survived the gate. Read them as an AXI payload (stdout only).
     # report returns 2 for a usage/config fault (bad anchor, absent findings.json)
     # and 1 for an internal render fault — propagate whichever actually occurred.
@@ -388,7 +400,9 @@ Two invariants the example relies on, both guaranteed by AXI mode: `review.log`
 and `report.log` capture *all* diagnostics because stderr is the only diagnostic
 sink, so `run.toon`/`findings.toon` are byte-clean payloads; and the exit code is
 authoritative, so the sweeper never has to parse stdout to decide whether the run
-failed.
+failed. The one thing exit 1 does not say is why: findings survived the gate, or
+every agent failed and nothing was reviewed, which is why step 2 reads
+`agents_succeeded` from `run.toon` before acting on the findings.
 
 ## The `--json` convention
 

@@ -118,6 +118,36 @@ func TestStatusCmd_AXIPendingOffersResume(t *testing.T) {
 	assert.NotContains(t, stderr, "Next:")
 }
 
+// TestStatusCmd_AXIFailedStartCarriesStartError (EST-8137): a review whose
+// fan-out never started reports failed with its start_error in the TOON
+// payload, the field SKILL.md step 3 reads. The pending fixture above pins the
+// other side: a review without one omits the key.
+func TestStatusCmd_AXIFailedStartCarriesStartError(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(".atcr", "reviews", "r")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	started := time.Now().UTC().Format(time.RFC3339)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"`+started+`","timeout_secs":600,"start_error":"API key env var not set: ATCR_TEST_REVIEW_KEY","partial":false}`), 0o644))
+	code, stdout, stderr := execCmdSplit(t, "status", "--axi", "r")
+	require.Equal(t, 0, code, stderr)
+	assert.Equal(t, "review_id: r\n"+
+		"status: failed\n"+
+		"agent_count: 1\n"+
+		"agents_done: 0\n"+
+		"agents_pending: 1\n"+
+		"partial: false\n"+
+		"current_stage: failed\n"+
+		"agents[1]{name,state,chunks_done,chunks_total}:\n"+
+		"  greta,pending,0,1\n"+
+		"start_error: \"API key env var not set: ATCR_TEST_REVIEW_KEY\"\n"+
+		"help[2]: atcr report <id>,atcr review --resume <id>\n", stdout)
+
+	var doc map[string]any
+	require.NoError(t, toon.Unmarshal([]byte(stdout), &doc))
+	assert.Equal(t, "API key env var not set: ATCR_TEST_REVIEW_KEY", doc["start_error"])
+}
+
 // TestStatusCmd_AXILiveProgress: the additive fields reach the TOON payload —
 // completed_agents, per-persona chunk progress, and last_activity_at present
 // only for personas that have written (the JSON omitempty rule).
