@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -488,6 +489,34 @@ func TestQuickstart_NoKey_PrintsInstructions(t *testing.T) {
 	}))
 	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=<your-key>",
 		"instructions to set the env var later are shown when no key is pasted")
+}
+
+// An agent runs quickstart with stdin an open pipe it never writes to. The key
+// prompt must not read it (it would block until EOF): off a TTY quickstart
+// skips the prompt and prints the export hint instead.
+func TestQuickstart_StdinNotTTY_SkipsKeyPrompt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Close(); _ = w.Close() })
+
+	out := &bytes.Buffer{}
+	done := make(chan error, 1)
+	go func() {
+		done <- runQuickstart(quickstartOpts{dir: dir, in: r, out: out, errOut: &bytes.Buffer{}})
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		_ = w.Close() // unblock the reader so the goroutine ends
+		<-done
+		t.Fatal("quickstart blocked reading a non-TTY stdin for the API key")
+	}
+	assert.NotContains(t, out.String(), "Paste your API key", "no prompt off a TTY")
+	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=<your-key>",
+		"the export hint is printed instead of the prompt")
 }
 
 func TestQuickstart_LayersOntoExistingAtcr(t *testing.T) {
