@@ -133,6 +133,14 @@ func setConfigBool(root, session, key string, enabled bool) error {
 func setConfigBoolCreating(root, session, key string, enabled, createIfAbsent bool) error {
 	path := DefaultProjectConfigPath(root)
 	dir := filepath.Dir(path)
+	// A set that may not create the file fails before withConfigLock, whose
+	// MkdirAll would otherwise leave an empty .atcr/ behind the error. The read
+	// inside the lock still reports a file removed after this check.
+	if !createIfAbsent {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+	}
 	return withConfigLock(dir, session, func() error {
 		// Fail-fast symlink pre-check right after lock acquisition: a symlinked
 		// config is rejected before paying for the read/parse/temp-write below.
@@ -343,6 +351,9 @@ func setMappingBool(mapping *yaml.Node, key string, val bool) {
 			existing.Tag = "!!bool"
 			existing.Value = boolLiteral(val)
 			existing.Content = nil
+			// Drop any quoting: a value written as "true" would otherwise be
+			// re-emitted as "false", a string the strict loader rejects.
+			existing.Style = 0
 			return
 		}
 	}
