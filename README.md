@@ -115,7 +115,7 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config, the
 | `atcr skill` | Install the embedded Agent Skill; `atcr skill export [--harness <name>] [--user] [--dest <path>] [--force]` writes it to your agent harness's skills directory |
 | `atcr version` | Print the atcr version |
 
-**Command-group nouns are singular** — `benchmark`, `config`, `debt`, and `skill` follow the git/docker/kubectl/gh convention of a singular noun for a group holding subcommands, and any new group keeps that rule. `models` and `personas` are **grandfathered** plurals: they shipped plural, and renaming them would break every scripted and documented invocation for a consistency win no user feels, so they stay. (`debt` is a mass noun and `config` names one file — neither could be pluralized anyway.)
+**Command-group nouns are singular** — `benchmark`, `config`, `debt`, `leaderboard`, and `skill` follow the git/docker/kubectl/gh convention of a singular noun for a group holding subcommands, and any new group keeps that rule. `models` and `personas` are **grandfathered** plurals: they shipped plural, and renaming them would break every scripted and documented invocation for a consistency win no user feels, so they stay. (`debt` is a mass noun and `config` names one file — neither could be pluralized anyway.)
 
 **Reporting commands share one heading and one `--json` flag.** `atcr --help` lists `audit-report`, `history`, `leaderboard`, `quality-report`, `report` and `scorecard` under `Reporting Commands`, and the heading also names `debt dashboard`; no command was renamed or moved (see [the decision record](docs/decisions/2026-10-22-reporting-entry-point-shape.md)). Every command that prints a report takes `--json` for machine-readable output, except four that have none yet: `audit-report`, `benchmark fit`, `debt report` (use `debt list --json` instead) and `personas search` — see [docs/agentic-consumption.md](docs/agentic-consumption.md#the---json-convention).
 
@@ -137,7 +137,7 @@ Environment variables:
 - `ATCR_TIER4_INDEX_MAX_FILES` — overrides the 5000-file cap on the Tier 4 symbol index `atcr reconcile` builds when resolving findings whose cited file does not exist. A tracked tree over the cap disables Tier 4 for the run (counted by `atcr_tier4_index_unavailable_total`); set this to a positive integer to raise or lower the cap. An unparseable or non-positive value falls back to the default.
 - `ATCR_TELEMETRY` — names the **enabled** state (note the inverse direction vs. `ATCR_DISABLE_AST_GROUPING`): `ATCR_TELEMETRY=0` disables the anonymous usage ping. See [docs/telemetry.md](docs/telemetry.md).
 - `ATCR_API_KEY` — API key for `--sync-cloud` scorecard uploads; a missing or rejected key exits with code **3** when `--cloud-endpoint` is set (without `--cloud-endpoint` the run exits **2** first, as a usage error).
-- `ATCR_AXI_MAX_LINES` — caps `--axi` output before truncation (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).
+- `ATCR_AXI_MAX_LINES` — caps the findings array of `atcr report --format axi` (default 500 lines) before truncation; no other `--axi` output is capped (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).
 
 ### Redirecting output for orchestrators (`--output-dir`)
 
@@ -208,7 +208,7 @@ atcr review --resume latest --require-coverage 100
 
 ## Agent consumption (`--axi`)
 
-`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap tunable via `ATCR_AXI_MAX_LINES`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
+`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap on the `atcr report --format axi` findings array tunable via `ATCR_AXI_MAX_LINES`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
 
 Available on:
 

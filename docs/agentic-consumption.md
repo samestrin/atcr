@@ -114,7 +114,10 @@ never a guessed value. The deprecated `--legacy-pipe` home payload has no
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
 `review_status` is `none` — the home view is never an error and never empty, even
-on a first run with no `.atcr/latest` pointer.
+on a first run with no `.atcr/latest` pointer. When `.atcr/latest` exists but the
+review it names cannot be read (a dangling or corrupt pointer, or a pruned or
+corrupt review), `review_status` is `unavailable` and `review_id` is the named
+review's id when known, else `""`.
 
 ### The `review --axi` run-summary payload
 
