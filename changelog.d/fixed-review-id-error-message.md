@@ -1,0 +1,1 @@
+- An invalid review id (for example one with a colon, such as `23:50`) now fails with a message naming the allowed characters (letters, digits, `.`, `_` and `-`, starting with a letter or digit) instead of one about path separators. (epic 114)

@@ -96,10 +96,11 @@ func resolveCollision(id, suffix string, exists func(string) bool) string {
 }
 
 // validateReviewID rejects ids that could escape the reviews directory. The
-// message is AC 01-03 Edge Case 4 verbatim.
+// message names the allowed set, so an id that is only the wrong characters
+// (a clock time's colon) is not reported as a path problem it does not have.
 func validateReviewID(id string) error {
 	if !reviewIDRe.MatchString(id) {
-		return fmt.Errorf("invalid review id: must not contain path separators or '..'")
+		return fmt.Errorf("invalid review id: use only letters, digits, '.', '_' and '-', starting with a letter or digit (no path separators)")
 	}
 	return nil
 }
