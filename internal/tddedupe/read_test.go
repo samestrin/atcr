@@ -362,6 +362,57 @@ func TestReadStreamByNameTooWideSkipped(t *testing.T) {
 	}
 }
 
+// A `# Format:` with no SEVERITY column reads no rows: its pipe-delimited
+// rows count in skipped (`td-dedupe` v1.5.0 gives skipped 2 on this input),
+// one-field prose is still ignored, and there is no width fallback
+// (row e31ec15125bb6bfd, epic 126 T1).
+func TestReadStreamFormatWithoutSeveritySkipsRows(t *testing.T) {
+	data := "# Format: FILE:LINE|PROBLEM|FIX|CATEGORY|X\n" +
+		"a.go:1|p|f|c|x\n" +
+		"a.go:2|p|f|c|x\n"
+	got, skipped, warn := mustRead(t, "nosev", data)
+	if skipped != 2 || len(got) != 0 {
+		t.Fatalf("skipped=%d findings=%d, want 2 and 0", skipped, len(got))
+	}
+	if !strings.Contains(warn, `"nosev"`) {
+		t.Fatalf("warning %q does not name the tag", warn)
+	}
+
+	// One-field prose is still ignored, even a bare severity; a
+	// severity-looking first field does not rescue a row (no width
+	// fallback), and every pipe-delimited row counts in skipped.
+	mixed := "# Format: FILE:LINE|PROBLEM|FIX|CATEGORY|X\n" +
+		"one-field prose\n" +
+		"HIGH\n" +
+		"HIGH|a.go:1|p|f|correctness\n" +
+		"GARBAGE|too|few\n" +
+		"a.go:3|p\n"
+	got, skipped, _ = mustRead(t, "nosev", mixed)
+	if skipped != 3 || len(got) != 0 {
+		t.Fatalf("mixed: skipped=%d findings=%d, want 3 and 0", skipped, len(got))
+	}
+}
+
+// The versioned path slices data at the header's byte offset (row
+// a395ac82030ef98d): leading comments, blank lines, CRLF and a missing final
+// newline must not change what stream.ParseSource reads.
+func TestReadStreamVersionedSliceOffsets(t *testing.T) {
+	row := "HIGH|a.go:12|p|f|correctness|15|ev|claude"
+	want := []reconcile.Finding{{Severity: "HIGH", File: "a.go", Line: 12, Problem: "p", Fix: "f", Category: "correctness", EstMinutes: 15, Evidence: "ev", Reviewer: "claude"}}
+	for name, data := range map[string]string{
+		"plain":            "# atcr-findings/v1\n" + row + "\n",
+		"no final newline": "# atcr-findings/v1\n" + row,
+		"leading block":    "# note\n\n# atcr-findings/v1\n" + row + "\n",
+		"crlf":             "# note\r\n\r\n# atcr-findings/v1\r\n" + row + "\r\n",
+	} {
+		got, skipped, warn := mustRead(t, "slice", data)
+		if skipped != 0 || warn != "" {
+			t.Fatalf("%s: skipped=%d warn=%q, want 0 and none", name, skipped, warn)
+		}
+		wantFindings(t, got, want)
+	}
+}
+
 // The prose test reads the column `# Format:` names SEVERITY, so a stream that
 // declares it second is not read as all prose.
 func TestReadStreamByNameSeverityNotFirst(t *testing.T) {
