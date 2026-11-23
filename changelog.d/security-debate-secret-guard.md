@@ -1,1 +1,0 @@
-- `atcr debate` now applies the registry's `secret_guard` policy (default `warn`) to every proposer, challenger and judge request: a credential in a seat prompt is warned about, redacted, or, under `block`, never sent, and the seat is recorded as halted. (epic 106.3)

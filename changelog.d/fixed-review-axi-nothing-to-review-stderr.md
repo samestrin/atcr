@@ -1,1 +1,0 @@
-- `atcr review --axi` now writes its `nothing to review` notice (a baseline re-run where every file is unchanged) to stderr, so stdout carries only the TOON `help[]` block. `--legacy-pipe` gets an empty stdout. Without `--axi` the notice still goes to stdout. (epic 114)

@@ -1,1 +1,0 @@
-- The `verification did not run: ...` error printed when a review recorded no head commit no longer names `--diff-file`, a flag no atcr command has. It now names only the reachable causes: a baseline scan of a tree with uncommitted changes, or a review made before baseline scans recorded HEAD (epic 124 T3).

@@ -1,1 +1,0 @@
-- Installing or upgrading a community persona whose existing `<name>.yaml` cannot be read (for example its permissions deny reading, or a directory sits at that path) now stops with an error naming the file, before anything is written. Before, a failed prompt write could delete that existing persona file, and a binding-only install could remove its `<name>.md`. (epic 119)

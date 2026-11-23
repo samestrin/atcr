@@ -1,1 +1,0 @@
-- `atcr init` now lists `latest` in the scaffolded `.atcr/.gitignore`, so `git add .atcr` no longer commits the `.atcr/latest` review pointer. Rerun `atcr init --force` to refresh an existing `.gitignore`. (epic 114)

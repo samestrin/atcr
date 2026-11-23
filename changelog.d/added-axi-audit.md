@@ -1,1 +1,0 @@
-- Added an [AXI audit](docs/axi-audit.md) that grades all ten Agent eXperience Interface principles against the current CLI, with checkable code and test evidence and explicitly justified or unjustified gaps. (epic 114)

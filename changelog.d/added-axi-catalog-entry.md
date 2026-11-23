@@ -1,1 +1,0 @@
-- Added a draft [AXI catalog entry](docs/axi-catalog-entry.yaml) in `kunchenguid/axi` `catalog.yaml` form, with the hand-off steps as header comments and every exception from the [AXI audit](docs/axi-audit.md) named. (epic 114 T2)

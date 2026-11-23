@@ -1,1 +1,0 @@
-- Installing a binding-only community persona for the first time no longer deletes a `<name>.md` prompt file that another process created in the personas directory during the fetch. The stale-prompt cleanup still runs on re-install and upgrade, where a prior install's `.md` can genuinely be outdated. (epic 105.1)

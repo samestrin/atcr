@@ -1,1 +1,0 @@
-- `atcr debt report` now keys a section on its source README's path plus its heading, so two READMEs carrying the same `### [date] From: ...` heading render as separate sections instead of one merged table; sections whose headings tie order by source path, keeping the render byte-identical across reruns (epic 123).

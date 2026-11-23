@@ -1,1 +1,0 @@
-- `go run ./cmd/changelog assemble` keeps deleting fragments after one fails to delete, then lists every fragment it left behind and says to delete them by hand instead of re-running. (epic 101.1)

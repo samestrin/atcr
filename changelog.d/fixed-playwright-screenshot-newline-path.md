@@ -1,1 +1,0 @@
-- The browser review stage now keeps a Playwright screenshot whose path holds a newline; before, the screenshot pass split the path in two and dropped the file. (epic 117)
