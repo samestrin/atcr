@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/samestrin/atcr/internal/pathutil"
 	commpersonas "github.com/samestrin/atcr/internal/personas"
@@ -336,19 +337,15 @@ func createExclusive(path string, data []byte, perm os.FileMode, force bool) (ex
 	return false, nil
 }
 
-// stdinIsPipeOrFile reports whether in is an *os.File that is not a character
-// device (a pipe or a regular file). Any other reader — a test's
-// strings.Reader — and a terminal or /dev/null count as answerable.
-func stdinIsPipeOrFile(in io.Reader) bool {
+// stdinIsNotTerminal reports whether in is an *os.File that is not an
+// interactive terminal: a pipe, a regular file, or a character device such as
+// /dev/null. Any other reader (a test's strings.Reader) counts as answerable.
+func stdinIsNotTerminal(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice == 0
+	return !term.IsTerminal(int(f.Fd()))
 }
 
 // keyEnvFlow shows the referral signup link, optionally opens it, then walks the
@@ -375,9 +372,9 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 		}
 	}
 
-	// Off a TTY (an agent's or CI's open pipe) nobody can answer the prompt, and
+	// Off a TTY (an agent's or CI's open pipe, or /dev/null) nobody can answer the prompt, and
 	// reading would block until EOF: print the export hint and move on.
-	if stdinIsPipeOrFile(o.in) {
+	if stdinIsNotTerminal(o.in) {
 		_, _ = fmt.Fprintf(o.out, "\nstdin is not a terminal, so quickstart will not prompt for the key. Set it with:\n  export %s=<your-key>\n", env)
 		return nil
 	}

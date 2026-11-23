@@ -39,5 +39,6 @@ require (
 	github.com/samestrin/atcr/reconcile v0.15.0
 	github.com/samestrin/go-axi v0.4.0
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
+	golang.org/x/term v0.39.0
 	golang.org/x/text v0.23.0
 )

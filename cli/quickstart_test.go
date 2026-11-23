@@ -519,8 +519,24 @@ func TestQuickstart_StdinNotTTY_SkipsKeyPrompt(t *testing.T) {
 		"the export hint is printed instead of the prompt")
 }
 
-// `atcr quickstart </dev/null` (what SKILL.md tells an agent to run) reaches
-// the prompt and reads EOF at once: the export hint must still be printed.
+// /dev/null is a character device but not a terminal: `atcr quickstart
+// </dev/null` must skip the key prompt too, not print it and read EOF.
+func TestQuickstart_StdinDevNull_SkipsKeyPrompt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	devNull, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = devNull.Close() })
+
+	out := &bytes.Buffer{}
+	require.NoError(t, runQuickstart(quickstartOpts{dir: dir, in: devNull, out: out, errOut: &bytes.Buffer{}}))
+	assert.NotContains(t, out.String(), "Paste your API key", "no prompt when stdin is /dev/null")
+	assert.Contains(t, out.String(), "stdin is not a terminal")
+	assert.Contains(t, out.String(), "export LLM_SYNTHETIC_API_KEY=<your-key>")
+}
+
+// A reader that is not an *os.File (a test's strings.Reader) reaches the
+// prompt and reads EOF at once: the export hint must still be printed.
 func TestQuickstart_StdinEOF_PrintsExportHint(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
