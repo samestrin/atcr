@@ -281,7 +281,7 @@ func TestDedupeParityWithTdDedupe(t *testing.T) {
 				seenAdded[f] = true
 			}
 
-			applied := applyDedupeDeviations(golden, deviations[tc.name])
+			applied := applyDedupeDeviations(t, golden, deviations[tc.name])
 			if usedDeviation[tc.name] == nil {
 				usedDeviation[tc.name] = map[int]bool{}
 			}
@@ -346,7 +346,7 @@ func TestDedupeParityStaleRowFailsDespiteSiblings(t *testing.T) {
 	}
 
 	// Sanity: every row applies to the pristine golden, so nothing is stale yet.
-	applied := applyDedupeDeviations(load(), rows)
+	applied := applyDedupeDeviations(t, load(), rows)
 	assert.Empty(t, staleDedupeDeviations(rows, applied), "the committed golden must still satisfy every row")
 
 	// Mutate only the golden's `error-handling` member category to `other`, the
@@ -373,7 +373,7 @@ func TestDedupeParityStaleRowFailsDespiteSiblings(t *testing.T) {
 	}
 	require.True(t, mutated, "the fixture must still carry the `error-handling` member category")
 
-	applied = applyDedupeDeviations(golden, rows)
+	applied = applyDedupeDeviations(t, golden, rows)
 	stale := staleDedupeDeviations(rows, applied)
 	require.Len(t, stale, 1, "only the row whose value disappeared may be stale")
 	assert.Equal(t, "member category", stale[0].field)
@@ -511,10 +511,10 @@ func dedupeParityPaths(tc dedupeParityCase) string {
 // returns the indexes of the rows it used, so the caller can detect a stale row
 // at the row level. Fields without a deviation are left alone, so the
 // comparison stays exact.
-func applyDedupeDeviations(golden map[string]any, deviations []dedupeDeviation) map[int]bool {
+func applyDedupeDeviations(t testing.TB, golden map[string]any, deviations []dedupeDeviation) map[int]bool {
 	applied := map[int]bool{}
 	if summary, ok := golden["summary"].(map[string]any); ok {
-		applyDedupeSkippedDeviation(summary, deviations, applied)
+		applyDedupeSkippedDeviation(t, summary, deviations, applied)
 	}
 	rows, ok := golden["merged"].([]any)
 	if !ok {
@@ -562,7 +562,7 @@ func applyDedupeDeviation(value map[string]any, deviations []dedupeDeviation, fi
 
 // applyDedupeSkippedDeviation rewrites summary.skipped, a JSON number, when a
 // "skipped" row's from value is its decimal spelling.
-func applyDedupeSkippedDeviation(summary map[string]any, deviations []dedupeDeviation, applied map[int]bool) {
+func applyDedupeSkippedDeviation(t testing.TB, summary map[string]any, deviations []dedupeDeviation, applied map[int]bool) {
 	got, ok := summary["skipped"].(float64)
 	if !ok {
 		return
@@ -577,6 +577,48 @@ func applyDedupeSkippedDeviation(summary map[string]any, deviations []dedupeDevi
 		}
 		return
 	}
+}
+
+// TestDedupeParityUnparseableSkippedToFails proves a "skipped" deviation whose
+// `to` is not a number fails the test loudly instead of being silently ignored
+// (tech-debt row 4d7ca12bb4c6b6a0): an ignored row would leave the golden's old
+// skipped count in place, and the typo would surface only as an unrelated
+// parity diff — or, worse, pass when the counts happen to agree. It uses the
+// errorRecorder from debt_exhaustive_test.go so the failure is asserted on, and
+// checks the known-good arms too: a numeric `to` applies, and a `from` that
+// matches nothing is a stale-row matter, not a parse error.
+func TestDedupeParityUnparseableSkippedToFails(t *testing.T) {
+	t.Run("an unparseable to fails the test and changes nothing", func(t *testing.T) {
+		summary := map[string]any{"skipped": float64(1)}
+		rows := []dedupeDeviation{{index: 0, field: "skipped", from: "1", to: "one"}}
+		applied := map[int]bool{}
+		rec := &errorRecorder{TB: t}
+		applyDedupeSkippedDeviation(rec, summary, rows, applied)
+		require.Len(t, rec.errors, 1, "an unparseable skipped `to` must fail the test, not be ignored")
+		assert.Contains(t, rec.errors[0], "one", "the report must name the unparseable value")
+		assert.Equal(t, float64(1), summary["skipped"], "a rejected row must not rewrite the golden")
+		assert.Empty(t, applied, "a rejected row must not count as applied")
+	})
+	t.Run("a numeric to applies without error", func(t *testing.T) {
+		summary := map[string]any{"skipped": float64(1)}
+		rows := []dedupeDeviation{{index: 0, field: "skipped", from: "1", to: "2"}}
+		applied := map[int]bool{}
+		rec := &errorRecorder{TB: t}
+		applyDedupeSkippedDeviation(rec, summary, rows, applied)
+		assert.Empty(t, rec.errors)
+		assert.Equal(t, float64(2), summary["skipped"])
+		assert.True(t, applied[0])
+	})
+	t.Run("a from that matches nothing is left to the stale-row guard", func(t *testing.T) {
+		summary := map[string]any{"skipped": float64(3)}
+		rows := []dedupeDeviation{{index: 0, field: "skipped", from: "1", to: "one"}}
+		applied := map[int]bool{}
+		rec := &errorRecorder{TB: t}
+		applyDedupeSkippedDeviation(rec, summary, rows, applied)
+		assert.Empty(t, rec.errors, "a row whose from never matches must not be a parse error")
+		assert.Equal(t, float64(3), summary["skipped"])
+		assert.Empty(t, applied)
+	})
 }
 
 // dedupeAddedField is one key atcr prints that td-dedupe did not, read from the
