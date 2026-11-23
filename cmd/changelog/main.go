@@ -210,16 +210,20 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 }
 
 // splitBullets returns each complete "- " bullet in text with its indented
-// continuation lines, joined by "\n" with trailing whitespace trimmed, so two
-// bullets compare equal only when every line of both matches.
+// continuation lines, including blank lines inside a loose list, joined by
+// "\n" with trailing whitespace trimmed, so two bullets compare equal only
+// when every line of both matches.
 func splitBullets(text string) []string {
 	var out []string
 	var cur []string
 	flush := func() {
-		if cur != nil {
-			out = append(out, strings.Join(cur, "\n"))
-			cur = nil
+		for len(cur) > 0 && cur[len(cur)-1] == "" {
+			cur = cur[:len(cur)-1]
 		}
+		if len(cur) > 0 {
+			out = append(out, strings.Join(cur, "\n"))
+		}
+		cur = nil
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 		line = strings.TrimRight(line, " \t")
@@ -227,7 +231,9 @@ func splitBullets(text string) []string {
 		case strings.HasPrefix(line, "- "):
 			flush()
 			cur = []string{line}
-		case cur != nil && line != "" && (line[0] == ' ' || line[0] == '\t'):
+		case cur != nil && (line == "" || line[0] == ' ' || line[0] == '\t'):
+			// A blank line does not end a bullet: an indented line after it
+			// is still this bullet's continuation (a loose list).
 			cur = append(cur, line)
 		default:
 			flush()
