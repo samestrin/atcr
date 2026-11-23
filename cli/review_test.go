@@ -441,6 +441,31 @@ func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
 }
 
+// A review that fails its key preflight has already scaffolded its directory, so
+// `atcr status` must report it failed with the start error rather than
+// in_progress with every agent pending until the stale deadline (EST-8137).
+// Reconcile must refuse it the same way, naming the cause.
+func TestReviewCmd_MissingAPIKeyRecordsFailedStart(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t)
+	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
+
+	code, out := execCmdCapture(t, "status")
+	require.Equal(t, 0, code, out)
+	var st fanout.ReviewStatus
+	end := strings.Index(out, "\n}")
+	require.Positive(t, end, out)
+	require.NoError(t, json.Unmarshal([]byte(out[:end+2]), &st), out)
+	assert.Equal(t, fanout.RunFailed, st.Status)
+	assert.Equal(t, fanout.RunFailed, st.CurrentStage)
+	assert.Contains(t, st.StartError, "API key env var not set: ATCR_TEST_REVIEW_KEY")
+
+	code, out = execCmdCapture(t, "reconcile")
+	assert.Equal(t, 2, code, out)
+	assert.Contains(t, out, "failed to start")
+}
+
 // TestReviewCmd_ForceFlagRegistered verifies the --force flag exists on the
 // review command and defaults to false (Epic 4.7 AC2).
 func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
