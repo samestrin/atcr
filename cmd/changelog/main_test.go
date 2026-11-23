@@ -248,7 +248,7 @@ func TestAssemble_KeepsRemovingAfterAFailedRemove(t *testing.T) {
 			t.Errorf("stderr does not report %s:\n%s", path, stderr)
 		}
 	}
-	for _, want := range []string{"2 fragments not removed", "delete them by hand", "do not re-run assemble"} {
+	for _, want := range []string{"2 fragments not removed", "delete them by hand", "a re-run will refuse until the leftover fragments are deleted"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
@@ -347,7 +347,7 @@ func TestAssemble_RefusesBulletAlreadyInChangelog(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("code %d, want 1: %s", code, stderr)
 			}
-			for _, want := range []string{survivor, tt.wantErr, "already in"} {
+			for _, want := range []string{survivor, tt.wantErr, "already in", "delete those fragment files by hand, then re-run"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr lacks %q:\n%s", want, stderr)
 				}
