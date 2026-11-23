@@ -15,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/atomicfs"
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/security"
 	builtins "github.com/samestrin/atcr/personas"
 )
 
@@ -101,6 +102,9 @@ func newInitCmd() *cobra.Command {
 // cannot be written to is a named error, raised before any file changes.
 func runRefreshPersonas(dir string, dryRun bool, out io.Writer, writeFile func(path string, data []byte) error) error {
 	personasDir := filepath.Join(dir, ".atcr", "personas")
+	if err := security.RefuseSymlinkUnder(dir, filepath.Join(".atcr", "personas")); err != nil {
+		return fmt.Errorf("cannot refresh personas: %w", err)
+	}
 	info, err := os.Stat(personasDir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -458,6 +462,11 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 // embedded built-ins; `atcr quickstart --preset local` passes the local
 // community personas, whose prompts are embedded too.
 func runInitRoster(dir string, force bool, roster []string, personaText func(string) (string, error), out, errOut io.Writer) error {
+	// A cloned repository can ship .atcr (or .atcr/personas) as a symlink;
+	// writing through it would overwrite files outside the project.
+	if err := security.RefuseSymlinkUnder(dir, filepath.Join(".atcr", "personas")); err != nil {
+		return fmt.Errorf("cannot create .atcr/: %w", err)
+	}
 	targets := initTargets(dir)
 	// A config holding only what atcr writes on its own (the first-run notice
 	// record, `atcr config set` opt-outs) is not a workspace: it is replaced, and
