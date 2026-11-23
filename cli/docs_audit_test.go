@@ -2910,6 +2910,191 @@ func TestAXICatalogEntryCitationsResolveAndAreReviewed(t *testing.T) {
 	}
 }
 
+// axiCitationPins pins every path:line cited by docs/axi-audit.md,
+// docs/axi-catalog-entry.yaml and the README Limits section to text the cited
+// lines must contain: a line unique in its file, or the symbol the claim is
+// about. The resolve guards above only prove a cited line exists, so code that
+// moves under a citation kept it green while the citation pointed at something
+// else (AC3 round 9: the quickstart non-TTY skip moved three lines down and its
+// citation landed on the prompt path). When code moves, re-point the citation
+// in all three documents and update its key here.
+var axiCitationPins = map[string]string{
+	"cli/debt_add.go:103-134":                 "func newDebtAddCmd() *cobra.Command {",
+	"cli/debt_add.go:204-253":                 "func runDebtAdd(cmd *cobra.Command, _ []string) error {",
+	"cli/debt_clean.go:164-197":               "// renderDebtCleanAXI emits {items, summary} as standard TOON, items i",
+	"cli/debt_clean.go:166-193":               "func renderDebtCleanAXI(w io.Writer, doc debtCleanDoc) error {",
+	"cli/debt_dashboard.go:276":               "const exitDrift = 4",
+	"cli/debt_dashboard.go:298-307":           "existing, err := os.ReadFile(resolved)",
+	"cli/debt_filter.go:146-149":              "if recs == nil {",
+	"cli/debt_filter.go:209-230":              "// renderDebtFilterAXI emits the same {items, summary} as standard TOO",
+	"cli/debt_filter.go:212-226":              "func renderDebtFilterAXI(w io.Writer, doc debtFilterDoc) error {",
+	"cli/debt_filter.go:233-249":              "// debtItemAXIRows is the items tabular array debt filter and debt cle",
+	"cli/debt_group.go:276-305":               "// renderDebtGroupAXI emits {groups, ungrouped, summary} as standard T",
+	"cli/debt_group.go:279-301":               "func renderDebtGroupAXI(w io.Writer, doc debtGroupDoc) error {",
+	"cli/debt_report.go:88-89":                "case check:",
+	"cli/debt_resolve.go:213-224":             "// The retired flags fail with guidance, not a bare pflag \"unknown fla",
+	"cli/debt_validate.go:270-290":            "func renderDebtValidateAXI(w interface{ Write([]byte) (int, error) }, ",
+	"cli/home.go:39-47":                       "// relHome renders path with the user's home-directory prefix replaced",
+	"cli/home.go:49-82":                       "// resolveHomeState resolves the current review's id/status via the sa",
+	"cli/home.go:145-168":                     "if axiFromContext(ctx) {",
+	"cli/home.go:153-168":                     "view := report.HomeViewAXI{",
+	"cli/init.go:65":                          "_, _ = fmt.Fprintln(out, \"Next: define providers and agents in ~/.conf",
+	"cli/main.go:157-162":                     "code := exitCode(err)",
+	"cli/main.go:238-265":                     "// Exit-code semantics, centralized: 0 success, 1 failure (including",
+	"cli/main.go:250-259":                     "// --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 c",
+	"cli/main.go:430-431":                     "// `atcr version` convention; both render the same string.",
+	"cli/main.go:556-558":                     "return runHome(cmd)",
+	"cli/main.go:569-577":                     "// --axi is a LOCAL flag on the root command (not persistent): it is r",
+	"cli/main.go:579-583":                     "// Flag-parse errors (unknown flags, bad values, violated flag groups)",
+	"cli/main.go:593-623":                     "root.AddCommand(",
+	"cli/main.go:696-732":                     "// axiMaxLinesFromEnv resolves the --axi line cap from ATCR_AXI_MAX_LI",
+	"cli/main.go:735-739":                     "// setupLogger constructs the single root logger from LOG_LEVEL and --",
+	"cli/quickstart.go:377-380":               "if stdinIsNotTerminal(o.in) {",
+	"cli/reconcile.go:293-295":                "toon.Field{Key: \"findings\", Value: res.Summary.TotalFindings},",
+	"cli/report.go:28-37":                     "cmd := &cobra.Command{",
+	"cli/report.go:34":                        "cmd.Flags().String(\"format\", \"md\", \"output format: \"+formatHelp())",
+	"cli/report.go:53-63":                     "func runReport(cmd *cobra.Command, args []string) error {",
+	"cli/report.go:168-172":                   "// Next-step suggestions (Epic 42.0) follow the payload, after it rend",
+	"cli/skill.go:44-51":                      "var skillHarnesses = map[string]skillHarness{",
+	"cli/status.go:92-125":                    "func statusAXIPayload(st *fanout.ReviewStatus) toon.Object {",
+	"cli/status.go:111-125":                   "if len(st.Agents) > 0 {",
+	"cli/suggestions.go:75-111":               "// suggestionRegistry maps what just ran to its ordered candidate next",
+	"cli/suggestions.go:160-191":              "// render builds one command line: binary, command, fixed args, the de",
+	"cli/suggestions.go:235-245":              "// writeAXIOrNextSteps closes a command that has an --axi mode but no ",
+	"cli/suggestions.go:235-257":              "// writeAXIOrNextSteps closes a command that has an --axi mode but no ",
+	"cli/suggestions.go:248-257":              "// writeAXIHelp encodes payload as standard TOON, then appends lines a",
+	"cli/verify.go:313-320":                   "reconciledDir := filepath.Join(reviewDir, \"reconciled\")",
+	"cli/version.go:18-55":                    "// atcrVersion resolves the version string reported by `atcr --version",
+	"cli/version.go:23-41":                    "func atcrVersion() string {",
+	"cli/version.go:44-55":                    "// newVersionCmd prints the atcr version. It mirrors the output of the",
+	"docs/skill-usage.md:13-56":               "## Installation",
+	"go.mod:40":                               "github.com/samestrin/go-axi v0.4.0",
+	"internal/report/pagination.go:109-136":   "// axiPaginatedDoc caps findings to maxLines-1 rows (the header is lin",
+	"internal/report/pagination.go:112-136":   "func axiPaginatedDoc(findings []reconcile.JSONFinding, maxLines int) a",
+	"internal/report/pagination.go:132-136":   "return axiPaginatedPayload{",
+	"internal/report/render.go:41-43":         "// maxTextLen bounds PROBLEM/FIX/EVIDENCE in the md and checklist view",
+	"internal/report/render.go:183-208":       "type ReviewSummaryAXI struct {",
+	"internal/report/render.go:232-239":       "// reviewSummaryAXIHeader is the fixed column order of the review-summ",
+	"internal/report/render.go:657-671":       "// truncate shortens s to at most n runes, appending \"...\" when it was",
+	"internal/report/standard_axi.go:31-56":   "// encodeAXI writes v as standard TOON through go-axi, which sanitizes",
+	"internal/report/standard_axi.go:91-99":   "// axiRows builds one ordered TOON row per finding. The slice is never",
+	"internal/report/standard_axi.go:113-125": "func axiRow(f reconcile.JSONFinding, cols axiColumns) toon.Object {",
+	"internal/report/standard_axi.go:161-170": "// axiText caps a free-text cell at maxTextLen runes (the same bound t",
+	"internal/report/standard_axi.go:199-201": "// homeViewAXIDoc builds the one-row home document. All four fields ar",
+	"skills/atcr/SKILL.md:14":                 "This skill has **no project-state knowledge**: the input is a git rang",
+	"skills/atcr/SKILL.md:20":                 "Before running any command, satisfy the shared prerequisites \u2014 the `at",
+}
+
+// axiCitationSources returns the documents whose citations axiCitationPins
+// covers, keyed by a name for error messages: the audit, the whole catalog
+// entry (its comments cite too) and the README Limits section.
+func axiCitationSources(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, name := range []string{"docs/axi-audit.md", "docs/axi-catalog-entry.yaml"} {
+		b, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		out[name] = string(b)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	limits, ok := markdownSection(string(b), regexp.MustCompile(`^Limits`))
+	if !ok {
+		t.Fatal("README.md has no `## Limits` section")
+	}
+	out["README.md Limits"] = limits
+	return out
+}
+
+// citationKey is a citation's axiCitationPins key: path:start, or
+// path:start-end for a range.
+func citationKey(c fileLineCitation) string {
+	if c.end != c.start {
+		return fmt.Sprintf("%s:%d-%d", c.path, c.start, c.end)
+	}
+	return fmt.Sprintf("%s:%d", c.path, c.start)
+}
+
+// validateCitationPins checks each citation against pins: it must have a pin,
+// and its cited lines (joined, under root) must contain the pinned text.
+// Unresolvable citations are left to validateFileLineCitations.
+func validateCitationPins(root string, cits []fileLineCitation, pins map[string]string) []string {
+	var errs []string
+	files := map[string][]string{}
+	for _, c := range cits {
+		key := citationKey(c)
+		pin, ok := pins[key]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("line %d cites %s, which has no pin: add the text its lines must contain to axiCitationPins", c.docLine, key))
+			continue
+		}
+		lines, ok := files[c.path]
+		if !ok {
+			b, err := os.ReadFile(filepath.Join(root, c.path))
+			if err == nil {
+				lines = strings.Split(string(b), "\n")
+			}
+			files[c.path] = lines
+		}
+		if c.start < 1 || c.end < c.start || c.end > len(lines) {
+			continue
+		}
+		if !strings.Contains(strings.Join(lines[c.start-1:c.end], "\n"), pin) {
+			errs = append(errs, fmt.Sprintf("line %d cites %s, whose lines no longer contain %q: the code moved, so re-point the citation", c.docLine, key, pin))
+		}
+	}
+	return errs
+}
+
+// TestAXICitationsHoldTheirPinnedText is the moved-code guard: every audit,
+// catalog and README Limits citation still lands on its pinned text, and every
+// pin is still cited somewhere, so a stale pin cannot linger.
+func TestAXICitationsHoldTheirPinnedText(t *testing.T) {
+	root := repoRootDir(t)
+	cited := map[string]bool{}
+	for name, text := range axiCitationSources(t, root) {
+		cits := fileLineCitations(text)
+		for _, c := range cits {
+			cited[citationKey(c)] = true
+		}
+		for _, e := range validateCitationPins(root, cits, axiCitationPins) {
+			t.Errorf("%s %s", name, e)
+		}
+	}
+	for key := range axiCitationPins {
+		if !cited[key] {
+			t.Errorf("axiCitationPins pins %s, which no audit, catalog or README Limits citation uses; drop it", key)
+		}
+	}
+}
+
+// TestValidateCitationPins is the both-ways test for the pin guard, built from
+// the round 9 failure: the same citation passes on the tree it was written
+// against and fails once three lines are inserted above it, as #916 did to
+// cli/quickstart.go. An unpinned citation is rejected too.
+func TestValidateCitationPins(t *testing.T) {
+	root := t.TempDir()
+	skip := "\tif stdinIsNotTerminal(o.in) {\n\t\treturn nil\n\t}\n"
+	prompt := "\tscanner := bufio.NewScanner(o.in)\n\treadLine(prompt)\n\treturn key\n"
+	writeFile(t, filepath.Join(root, "q.go"), "package q\n"+skip+prompt)
+	cit := []fileLineCitation{{path: "q.go", start: 2, end: 4, docLine: 1}}
+	pins := map[string]string{"q.go:2-4": "stdinIsNotTerminal(o.in)"}
+	require.Empty(t, validateCitationPins(root, cit, pins))
+
+	writeFile(t, filepath.Join(root, "q.go"), "package q\n// one\n// two\n// three\n"+skip+prompt)
+	errs := validateCitationPins(root, cit, pins)
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0], "no longer contain")
+
+	errs = validateCitationPins(root, cit, map[string]string{})
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0], "has no pin")
+}
+
 // TestAXICatalogEntrySplicesIntoCommunityList: step 2 of the submission appends
 // the entry to the `community` list of upstream catalog.yaml, whose items sit
 // two spaces in (admission keys at six). Appended as written, without its
