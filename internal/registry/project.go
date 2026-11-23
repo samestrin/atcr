@@ -105,7 +105,7 @@ type ProjectConfig struct {
 	// the registry tier or the embedded default.
 	OnOverflow string `yaml:"on_overflow,omitempty"`
 	// SecretGuard selects the payload-egress secret-guard policy (Epic 35.20)
-	// applied to each review prompt before dispatch: off, warn (default), redact,
+	// applied to each review prompt before dispatch: off, warn, redact (default),
 	// or block. Empty inherits the registry tier or the embedded default.
 	SecretGuard string `yaml:"secret_guard,omitempty"`
 	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`

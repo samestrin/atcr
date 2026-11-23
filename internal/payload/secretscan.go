@@ -200,7 +200,7 @@ var builtinRules = []builtinRule{
 // comment, and may not hold call, template or env-reference characters, so
 // code that reads a secret (getPassword(), ${DB_PASSWORD}) is not a value.
 var unquotedAssignRe = regexp.MustCompile(
-	`(?im)([A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*)[ \t]*(?::=|=|:)[ \t]*([^\s"'\x60#;,(){}\[\]<>$\\]{8,})(?:$|[\s#;,])`)
+	`(?im)([A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|credential)[A-Za-z0-9_.-]*)[ \t]*(?::=|=|:)[ \t]*([^\s"'\x60#;,(){}\[\]<>$\\]{6,})(?:$|[\s#;,])`)
 
 // passwordNameRe marks a name as a password. Passwords are chosen by people,
 // so they rarely pass the randomness test the other names need.
@@ -231,22 +231,59 @@ func notPlaceholder(v string) bool {
 	return true
 }
 
-// looksLikePassword is the gate for an unquoted value under a password name:
-// not a path or placeholder, at least eight characters, letters and digits.
+// passwordPlaceholders are values that stand for a password rather than being
+// one, matched as the whole value once trailing digits are trimmed
+// (password123, changeme1). passwordKeywords are type names and literals a
+// config schema or code puts after "password:".
+var (
+	passwordPlaceholders = map[string]bool{"password": true, "passwd": true, "pass": true, "pwd": true, "secret": true,
+		"changeme": true, "admin": true, "guest": true, "root": true, "test": true, "letmein": true}
+	passwordKeywords = map[string]bool{"string": true, "str": true, "required": true, "optional": true, "true": true,
+		"false": true, "null": true, "nil": true, "none": true, "undefined": true, "empty": true, "bool": true,
+		"boolean": true, "integer": true, "number": true, "redacted": true, "hidden": true, "masked": true}
+	// dottedRefRe is a field or package reference (cfg.Password, os.Args).
+	dottedRefRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+	// envNameRe is an environment variable name (DB_PASSWORD) used as a reference.
+	envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$`)
+	// codeIdentRe is a camelCase or snake_case identifier (hashedPassword, hash_pw).
+	codeIdentRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*|_[a-z0-9]+)+$`)
+)
+
+// looksLikePassword is the gate for an unquoted value under a password name.
+// People pick passwords without digits, so no character class is required.
+// What it rejects instead is the shape of something that is not a password:
+// a path, a placeholder or keyword, a field, env-var or code identifier, and
+// a letters-only value under eight characters (password := hashed). The ":="
+// operator is Go code, never a config file, and is checked by the caller.
 func looksLikePassword(v string) bool {
-	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "~/") || !notPlaceholder(v) {
+	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "~/") || strings.ContainsAny(v, "${}<>%") {
 		return false
 	}
-	var letters, digits bool
-	for _, c := range v {
-		switch {
-		case c >= '0' && c <= '9':
-			digits = true
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
-			letters = true
+	low := strings.ToLower(v)
+	if passwordKeywords[low] || passwordPlaceholders[strings.TrimRight(low, "0123456789!")] {
+		return false
+	}
+	for _, w := range []string{"changeme", "example", "placeholder", "your", "xxxx", "dummy", "sample"} {
+		if strings.Contains(low, w) {
+			return false
 		}
 	}
-	return letters && digits
+	if dottedRefRe.MatchString(v) || envNameRe.MatchString(v) || codeIdentRe.MatchString(v) {
+		return false
+	}
+	var letters, other bool
+	for _, c := range v {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+			letters = true
+		default:
+			other = true
+		}
+	}
+	if !letters {
+		return false
+	}
+	return other || len(v) >= 8
 }
 
 // scanUnquotedAssignments finds unquoted keyword-named assignments. A value
@@ -259,7 +296,7 @@ func scanUnquotedAssignments(text string, prior []SecretHit) []SecretHit {
 		name, start, end := text[m[2]:m[3]], m[4], m[5]
 		v := text[start:end]
 		if passwordNameRe.MatchString(name) {
-			if !looksLikePassword(v) {
+			if strings.Contains(text[m[3]:m[4]], ":=") || !looksLikePassword(v) {
 				continue
 			}
 		} else if len(v) < 16 || !looksRandom(v) {

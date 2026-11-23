@@ -405,9 +405,9 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 
 // applyIgnore partitions files into the kept set (returned) and the excluded
 // set, returning git pathspecs for the excluded paths. Each excluded file is
-// logged at slog debug (AC #3). When the matcher is inactive (no ignore files,
-// or --no-ignore) the input is returned unchanged with a nil exclude spec, so
-// the common case pays only one map/nil check.
+// logged at slog debug (AC #3). Every matcher applies the credential-file rule
+// (with no ignore files, and under --no-ignore, it is the only rule); only a
+// nil matcher returns the input unchanged with a nil exclude spec.
 func (g *gitRunner) applyIgnore(files []changedFile) (kept []changedFile, exclude []string) {
 	m := g.matcher()
 	if !m.active() {
