@@ -122,9 +122,12 @@ func finish(f reconcile.Finding, rawCategory, tag string) reconcile.Finding {
 }
 
 // isSeverity is stream.parse's finding-row test applied to a row's SEVERITY
-// field (the first unless `# Format:` places it elsewhere), case-folded because
-// a headerless stream's severity is upper-cased on read. A line whose field is
-// anything else, or that has no `|` after it, is prose.
+// field (the first unless `# Format:` places it elsewhere), case-folded for
+// td-dedupe parity: `llm-support td-dedupe` reads a lowercase `high|` row as a
+// finding and upper-cases it on read. That is the difference from stream.parse,
+// whose severityRe (internal/stream/parser.go) is case-sensitive and reads the
+// same row as prose in a versioned stream. A line whose field is anything else,
+// or that has no `|` after it, is prose (row 1a9acdece84b9785).
 func isSeverity(s string) bool {
 	switch strings.ToUpper(s) {
 	case "CRITICAL", "HIGH", "MEDIUM", "LOW":
