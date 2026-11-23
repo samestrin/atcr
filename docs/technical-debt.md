@@ -865,10 +865,10 @@ Flags: `--store`, `--dry-run`.
   records tie on timestamp and status breaks the tie by line order in a month
   shard and by file name in the event layout, so such a store is refused, and
   the error says how to clear the tie: run `atcr debt compact`, then convert
-  again. Compaction folds each item to one record, which clears the tie, except
-  for tied resolutions with different reasons: compaction keeps every reason, so
-  remove the unwanted line from its month shard by hand, or keep the store on
-  month shards.
+  again. Compaction clears most ties by folding the item to one record, but not
+  when the tied records are resolutions with different reasons: compaction keeps
+  every reason, so remove the unwanted line from its month shard by hand, or keep
+  the store on month shards.
 - **A shard converts only when every line in it can become an event file.** A
   shard holding a corrupt or over-long line, a record from a newer atcr, or a
   record whose id or timestamp cannot name an event file is left whole and named
@@ -882,7 +882,11 @@ Flags: `--store`, `--dry-run`.
   committed. So does the next command that reads the store (`atcr debt list`,
   `filter`, `compact` and the others), so a record is never counted twice in the
   meantime; if it cannot finish the conversion it warns that some records may be
-  counted twice and reads the store as it stands. `atcr debt compact --dry-run`
+  counted twice and reads the store as it stands. A journal it cannot even check
+  (`.convert/COMMIT` unreadable, for example a permission error) is an error,
+  not a warning: the command cannot tell whether a record would be counted twice.
+  If a conversion fails after it opted the store in to the event layout, it says
+  so before the error. `atcr debt compact --dry-run`
   and `atcr debt backfill-justifications --dry-run` write nothing, so they refuse
   until the conversion is finished.
 - **Finishing a conversion never removes a record it did not move.** Before
@@ -1177,12 +1181,14 @@ Flags: `--store`, `--older-than`, `--json`. In `--json`, `flags` holds
 flags.
 
 A ref under `refs/atcr/debt-locks/` that cannot be read as a lock — its name is
-not a hex-encoded id, or its tag cannot be read or records a different id — is
-reported as a warning, in the human output and in the `warnings` list of
-`--json` (an empty list when there is nothing to warn about). Every other lock
-is still listed: one bad ref never hides the rest, and the listing still
-succeeds. Inspect or delete a warned-about ref with git; `locks` itself never
-changes a ref.
+not a hex-encoded id, its object can no longer be fetched from the remote, or
+its tag cannot be read or records a different id — is reported as a warning,
+in the human output and in the `warnings` list of `--json` (an empty list when
+there is nothing to warn about). Each human warning line names the remote
+beside the ref. Every other lock is still listed: one bad ref never hides the
+rest, and the listing still succeeds. Only a remote that cannot be read at all
+fails the listing. Inspect or delete a warned-about ref with git; `locks` itself
+never changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To

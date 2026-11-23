@@ -793,3 +793,132 @@ func TestFinishConversion_OnlyARegularFileIsAnEvent(t *testing.T) {
 		})
 	}
 }
+
+// TestConvert_ReportsTheOptInWhenItFailsAfterIt (TD row dc2a27d4d9d88e64): a run
+// that opts the store in and then fails returns what it did with the error, so the
+// caller learns every later write is now an event file. A run refused before the
+// opt-in reports none.
+func TestConvert_ReportsTheOptInWhenItFailsAfterIt(t *testing.T) {
+	dir := buildStore(t, layoutShards)
+	require.False(t, UsesEventLayout(dir), "fixture: the store is on month shards")
+
+	crash := errors.New("simulated crash")
+	convertAfterCommit = func() error { return crash }
+	res, err := Convert(dir, quiet)
+	convertAfterCommit = nil
+	require.ErrorIs(t, err, crash)
+	require.True(t, UsesEventLayout(dir), "fixture: the run opted the store in before it failed")
+	assert.True(t, res.OptedIn, "the opt-in survives the error")
+	assert.True(t, res.StoreFound)
+	assert.NotEmpty(t, res.Shards, "the partial result names the shards of the committed plan")
+
+	tied := fullTie(t)
+	res, err = Convert(tied, quiet)
+	require.ErrorIs(t, err, ErrFoldChanged)
+	require.False(t, UsesEventLayout(tied), "fixture: the refused run did not opt in")
+	assert.False(t, res.OptedIn, "a run refused before the opt-in reports none")
+	assert.True(t, res.StoreFound)
+}
+
+// TestConvert_TieMessageSaysCompactClearsMostTies (TD row 2010fcfe2fcc8781): the
+// refusal does not promise that compaction folds every tied item to one record;
+// tied resolutions with different reasons survive it.
+func TestConvert_TieMessageSaysCompactClearsMostTies(t *testing.T) {
+	msg := foldChangedError([]string{idP}).Error()
+	assert.Contains(t, msg, "`atcr debt compact` clears most ties")
+	assert.NotContains(t, msg, "folds each item to one record")
+	assert.Contains(t, msg, "run `atcr debt compact`, then convert again")
+	assert.Contains(t, msg, "resolutions with different reasons survive compaction")
+}
+
+// lockConvertStaging makes the store's .convert/ directory unsearchable, so the
+// Lstat of its COMMIT journal fails with EACCES rather than ENOENT.
+func lockConvertStaging(t *testing.T, dir string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("a permission-denied Lstat cannot be provoked as root")
+	}
+	staging := filepath.Join(dir, convertSubdir)
+	require.NoError(t, os.MkdirAll(staging, 0o700))
+	require.NoError(t, os.Chmod(staging, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(staging, 0o700) })
+	_, err := os.Lstat(filepath.Join(staging, convertJournal))
+	require.ErrorIs(t, err, os.ErrPermission, "fixture: the journal Lstat fails with EACCES")
+}
+
+func requirePendingCheckError(t *testing.T, dir string, err error) {
+	t.Helper()
+	require.Error(t, err, "a journal that cannot be checked is not an absent one")
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.Contains(t, err.Error(), "checking for an interrupted localdebt conversion")
+	assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+}
+
+// TestConversionPending_OnlyNotExistIsAbsent (TD row 76a1ab4c7d86582b): a COMMIT
+// journal the run cannot Lstat may be a committed plan, whose records every read
+// would count twice; so only IsNotExist means no conversion is pending, and every
+// other failure is returned by each path that checks.
+func TestConversionPending_OnlyNotExistIsAbsent(t *testing.T) {
+	t.Run("absent", func(t *testing.T) {
+		pending, err := conversionPending(filepath.Join(t.TempDir(), "no-store"))
+		require.NoError(t, err)
+		assert.False(t, pending)
+		pending, err = conversionPending(buildStore(t, layoutShards))
+		require.NoError(t, err)
+		assert.False(t, pending)
+	})
+	t.Run("committed", func(t *testing.T) {
+		dir, _ := halfFinishedConversion(t)
+		pending, err := conversionPending(dir)
+		require.NoError(t, err)
+		assert.True(t, pending)
+	})
+	t.Run("EACCES", func(t *testing.T) {
+		dir, _ := halfFinishedConversion(t)
+		lockConvertStaging(t, dir)
+		pending, err := conversionPending(dir)
+		requirePendingCheckError(t, dir, err)
+		assert.False(t, pending)
+	})
+
+	paths := map[string]func(dir string) error{
+		"Convert":     func(dir string) error { _, err := Convert(dir, quiet); return err },
+		"ConvertPlan": func(dir string) error { _, err := ConvertPlan(dir, quiet); return err },
+		"finishPendingConversion": func(dir string) error {
+			return finishPendingConversion(dir, io.Discard)
+		},
+		"finishPendingConversionLocked": func(dir string) error {
+			return withLock(dir, "test", func() error { return finishPendingConversionLocked(dir) })
+		},
+		"ReadAll": func(dir string) error { _, err := ReadAll(dir, quiet); return err },
+		"StreamSummaries": func(dir string) error {
+			return StreamSummaries(dir, quiet, func(Summary) error { return nil })
+		},
+		"Compact":     func(dir string) error { _, err := Compact(dir, quiet); return err },
+		"CompactPlan": func(dir string) error { _, err := CompactPlan(dir, quiet); return err },
+		"BackfillJustifications": func(dir string) error {
+			_, err := BackfillJustifications(dir, t.TempDir(), false)
+			return err
+		},
+		"BackfillJustifications/dry-run": func(dir string) error {
+			_, err := BackfillJustifications(dir, t.TempDir(), true)
+			return err
+		},
+	}
+	for name, run := range paths {
+		t.Run("EACCES/"+name, func(t *testing.T) {
+			dir, _ := halfFinishedConversion(t)
+			lockConvertStaging(t, dir)
+			requirePendingCheckError(t, dir, run(dir))
+		})
+	}
+	// A store with no record file left is absent to Compact only when no plan can
+	// be pending either.
+	for _, name := range []string{"Compact", "CompactPlan"} {
+		t.Run("EACCES/no record file/"+name, func(t *testing.T) {
+			dir := DefaultDir(t.TempDir())
+			lockConvertStaging(t, dir)
+			requirePendingCheckError(t, dir, paths[name](dir))
+		})
+	}
+}

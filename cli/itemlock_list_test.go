@@ -177,6 +177,32 @@ func TestDebtLocks_OnlyBadRefStillWarns(t *testing.T) {
 	require.Equal(t, badRef, rep.Warnings[0].Ref)
 }
 
+// Row f111ddd891700632 (epic 127 T2): the human warning line names the remote
+// beside the ref, so the same bad ref on two remotes is distinguishable.
+func TestDebtLocks_HumanWarningShowsRemote(t *testing.T) {
+	isolate(t)
+	remote, stores := itemLockClones(t, 1)
+	runFixtureGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	badRef := localdebt.ItemLockRefPrefix + "not-hex"
+	runFixtureGit(t, remote, "update-ref", badRef, "HEAD")
+
+	out, err := runDebt(t, "locks", "--store", stores[0])
+	require.NoError(t, err, out)
+	require.Contains(t, out, badRef+" on origin:")
+}
+
+// The same bad ref on two remotes renders as two distinguishable lines.
+func TestRenderDebtLockWarnings_ShowsRemoteBesideRef(t *testing.T) {
+	var b strings.Builder
+	warnings := []debtLockWarning{
+		{Ref: "refs/atcr/debt-locks/not-hex", Remote: "origin", Reason: "bad name"},
+		{Ref: "refs/atcr/debt-locks/not-hex", Remote: "backup", Reason: "bad name"},
+	}
+	require.NoError(t, renderDebtLockWarnings(&b, warnings))
+	require.Contains(t, b.String(), "refs/atcr/debt-locks/not-hex on origin: bad name")
+	require.Contains(t, b.String(), "refs/atcr/debt-locks/not-hex on backup: bad name")
+}
+
 func TestDebtLocks_BadOlderThanIsUsageError(t *testing.T) {
 	isolate(t)
 	_, stores := itemLockClones(t, 1)
@@ -224,7 +250,7 @@ func (w failOnWrite) Write(p []byte) (int, error) {
 func TestRenderDebtLocks_WriteErrors(t *testing.T) {
 	withLocks := debtLocksReport{
 		Locks:    []debtLockRow{{ID: "TD-1", Holder: "alice", LockedAt: "2026-11-06T12:00:00Z", Flags: []string{}}},
-		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Reason: "bad name"}},
+		Warnings: []debtLockWarning{{Ref: "refs/atcr/debt-locks/not-hex", Remote: "origin", Reason: "bad name"}},
 	}
 	noLocks := debtLocksReport{Warnings: withLocks.Warnings}
 	now := time.Now()
@@ -235,10 +261,10 @@ func TestRenderDebtLocks_WriteErrors(t *testing.T) {
 	}{
 		{"no locks line", debtLocksReport{}, "No item locks"},
 		{"warnings header after no locks", noLocks, "warning(s)"},
-		{"warning line after no locks", noLocks, "not-hex: bad name"},
+		{"warning line after no locks", noLocks, "not-hex on origin: bad name"},
 		{"footer", withLocks, "locks flagged"},
 		{"warnings header", withLocks, "warning(s)"},
-		{"warning line", withLocks, "not-hex: bad name"},
+		{"warning line", withLocks, "not-hex on origin: bad name"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

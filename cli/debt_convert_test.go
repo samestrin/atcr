@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -105,4 +106,34 @@ func TestDebtConvert_SaysTheStoreIsOptedIn(t *testing.T) {
 	out, err = runDebt(t, "convert", "--store", dir)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "opted in", "an opted-in store is not reported again")
+}
+
+// TestDebtConvert_SaysTheStoreIsOptedInWhenItFails (TD row dc2a27d4d9d88e64): a
+// conversion that opted the store in and then failed returns that with its error,
+// and the command says so before the error, since every later write is now an
+// event file. A dry run, or a run that opted nothing in, says nothing of it.
+func TestDebtConvert_SaysTheStoreIsOptedInWhenItFails(t *testing.T) {
+	boom := errors.New("simulated failure")
+	stub := func(res localdebt.ConvertResult) {
+		f := func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error) { return res, boom }
+		origConvert, origPlan := debtConvert, debtConvertPlan
+		debtConvert, debtConvertPlan = f, f
+		t.Cleanup(func() { debtConvert, debtConvertPlan = origConvert, origPlan })
+	}
+	dir := convertFixture(t)
+
+	stub(localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true})
+	out, err := runDebt(t, "convert", "--store", dir)
+	require.ErrorIs(t, err, boom)
+	assert.Contains(t, out, "The store is now opted in to the event layout: every later add and resolution writes an event file (items/).")
+	assert.Contains(t, out, "Finished an interrupted conversion.")
+
+	out, err = runDebt(t, "convert", "--store", dir, "--dry-run")
+	require.ErrorIs(t, err, boom)
+	assert.NotContains(t, out, "opted in", "a failed dry run opted nothing in")
+
+	stub(localdebt.ConvertResult{StoreFound: true})
+	out, err = runDebt(t, "convert", "--store", dir)
+	require.ErrorIs(t, err, boom)
+	assert.NotContains(t, out, "opted in", "a run that opted nothing in says nothing of it")
 }

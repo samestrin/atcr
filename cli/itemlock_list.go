@@ -170,7 +170,9 @@ func renderDebtLocks(w io.Writer, rep debtLocksReport, olderThan time.Duration, 
 }
 
 // renderDebtLockWarnings prints one line per bad ref, so a ref that cannot be
-// read as a lock is shown and never hidden (epic 122 T4).
+// read as a lock is shown and never hidden (epic 122 T4). Each line names the
+// remote beside the ref, so the same bad ref on two remotes is distinguishable
+// (epic 127 T2, row f111ddd891700632).
 func renderDebtLockWarnings(w io.Writer, warnings []debtLockWarning) error {
 	if len(warnings) == 0 {
 		return nil
@@ -179,7 +181,7 @@ func renderDebtLockWarnings(w io.Writer, warnings []debtLockWarning) error {
 		return err
 	}
 	for _, wn := range warnings {
-		if _, err := fmt.Fprintf(w, "  %s: %s\n", wn.Ref, wn.Reason); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s on %s: %s\n", wn.Ref, wn.Remote, wn.Reason); err != nil {
 			return err
 		}
 	}

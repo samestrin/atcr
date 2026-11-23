@@ -529,3 +529,91 @@ func TestItemUnlock_BadTagIsStillError(t *testing.T) {
 	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Lock(ctx, []string{"TD-001"})
 	require.ErrorIs(t, err, ErrItemLocked)
 }
+
+// removeRemoteObject deletes one loose object from the remote's object store,
+// leaving its refs intact: ls-remote still lists the ref, but any fetch that
+// includes it fails whole.
+func removeRemoteObject(t *testing.T, remote, sha string) {
+	t.Helper()
+	require.NoError(t, os.Remove(filepath.Join(remote, ".git", "objects", sha[:2], sha[2:])))
+}
+
+// Row 485c4410f55dc612 (epic 127 T2): one ref whose object the remote can no
+// longer serve makes the batch fetch fail whole; the listing must fall back to
+// per-ref fetches, warn on that ref alone and still list every valid lock.
+func TestItemLockList_UnfetchableRefObjectIsWarningAndGoodLocksStillListed(t *testing.T) {
+	badRef := ItemLockRef("TD-003")
+	cases := map[string]func(t *testing.T, remote, sha string){
+		"missing object": func(t *testing.T, remote, sha string) {
+			t.Helper()
+			removeRemoteObject(t, remote, sha)
+		},
+		"corrupt object": func(t *testing.T, remote, sha string) {
+			t.Helper()
+			// Loose objects are read-only; replace the file with garbage bytes.
+			removeRemoteObject(t, remote, sha)
+			require.NoError(t, os.WriteFile(filepath.Join(remote, ".git", "objects", sha[:2], sha[2:]), []byte("not zlib"), 0o644))
+		},
+	}
+	for name, damage := range cases {
+		t.Run(name, func(t *testing.T) {
+			remote, stores := itemLockRemote(t, 1)
+			ctx := context.Background()
+			_, err := ItemLocker{Dir: stores[0], Holder: "alice", Now: fixedNow}.Lock(ctx, []string{"TD-001", "TD-002"})
+			require.NoError(t, err)
+			itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+			sha := itemLockGit(t, remote, "rev-parse", "HEAD")
+			itemLockGit(t, remote, "update-ref", badRef, sha)
+			damage(t, remote, sha)
+
+			locks, warnings, err := ItemLocker{Dir: stores[0]}.List(ctx)
+			require.NoError(t, err, "one unfetchable ref must not hide the valid locks")
+			require.Len(t, locks, 2)
+			require.Equal(t, []string{"TD-001", "TD-002"}, []string{locks[0].ID, locks[1].ID})
+			require.Len(t, warnings, 1)
+			require.Equal(t, badRef, warnings[0].Ref)
+			require.Equal(t, "origin", warnings[0].Remote)
+			require.NotEmpty(t, warnings[0].Reason)
+		})
+	}
+}
+
+// When every ref's fetch fails the remote itself cannot be read, and the
+// listing is still an error: leniency is per bad ref, not per dead remote
+// (row 485c4410f55dc612, plan: "still returning the error when every ref fails").
+func TestItemLockList_AllRefsUnfetchableIsError(t *testing.T) {
+	remote, stores := itemLockRemote(t, 1)
+	// The refs name objects made on the remote and deleted there, so the clone
+	// holds no copy: every fetch, batch or per-ref, must fail.
+	shas := map[string]string{}
+	for _, id := range []string{"TD-001", "TD-002"} {
+		itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", id)
+		shas[id] = itemLockGit(t, remote, "rev-parse", "HEAD")
+	}
+	for id, sha := range shas {
+		itemLockGit(t, remote, "update-ref", ItemLockRef(id), sha)
+		removeRemoteObject(t, remote, sha)
+	}
+	_, _, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.ErrorContains(t, err, "read locks from origin")
+}
+
+// The per-ref fallback must not leak leniency into the mutation paths: an
+// unlock of several ids where one ref cannot be fetched is still an error
+// naming that id, and nothing is unlocked.
+func TestItemUnlock_OneUnfetchableRefIsStillError(t *testing.T) {
+	remote, stores := itemLockRemote(t, 1)
+	ctx := context.Background()
+	_, err := ItemLocker{Dir: stores[0], Holder: "alice", Now: fixedNow}.Lock(ctx, []string{"TD-001"})
+	require.NoError(t, err)
+	// TD-002's ref names an object made on the remote and deleted there, so no
+	// clone holds a copy and its fetch cannot succeed.
+	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+	sha := itemLockGit(t, remote, "rev-parse", "HEAD")
+	itemLockGit(t, remote, "update-ref", ItemLockRef("TD-002"), sha)
+	before := itemLockGit(t, remote, "for-each-ref", "--format=%(refname)", "refs/atcr/")
+	removeRemoteObject(t, remote, sha)
+	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(ctx, []string{"TD-001", "TD-002"})
+	require.ErrorContains(t, err, "read lock TD-002")
+	require.Equal(t, before, itemLockGit(t, remote, "for-each-ref", "--format=%(refname)", "refs/atcr/"), "nothing was unlocked")
+}
