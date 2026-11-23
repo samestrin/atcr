@@ -80,10 +80,11 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 		reportPreservedRecords(cmd, res)
 		return nil
 	}
-	// Nothing superseded is a no-op too, in both modes. "Compacted N records into
+	// Nothing superseded is a no-op too, in both modes, unless the rewrite drops
+	// malformed lines: that is a change, reported below. "Compacted N records into
 	// N (0 superseded dropped)" reads as a mutation that did not occur — and in the
 	// real-run case the rewrite it announces is one the user has no reason to want.
-	if res.Dropped == 0 {
+	if res.Dropped == 0 && res.Malformed == 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 			"Nothing to compact: %d record(s), none superseded.\n", res.RecordsBefore)
 		reportPreservedRecords(cmd, res)
@@ -97,12 +98,28 @@ func runDebtCompact(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %d records into %d (%d superseded dropped).\n",
 		verb, res.RecordsBefore, res.RecordsAfter, res.Dropped)
+	reportMalformedLines(cmd, res, dryRun)
 	if dryRun {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Dry run: the store was not modified.")
 	}
 	reportPreservedRecords(cmd, res)
 	reportEventRecords(cmd, res)
 	return nil
+}
+
+// reportMalformedLines names the unreadable lines the rewrite drops, so a fold
+// that removes data is never reported as "nothing superseded" (EST-8260).
+func reportMalformedLines(cmd *cobra.Command, res localdebt.CompactResult, dryRun bool) {
+	if res.Malformed == 0 {
+		return
+	}
+	verb := "Removed"
+	if dryRun {
+		verb = "Would remove"
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"%s %d malformed line(s) that could not be read as records (see the warnings above).\n",
+		verb, res.Malformed)
 }
 
 // reportEventRecords explains, on a store holding both layouts, that the counts

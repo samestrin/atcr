@@ -1,0 +1,1 @@
+- `atcr debt compact` (and `--dry-run`) with no store now writes nothing: it used to print "No local TD store to compact." while creating the store directory, including a mistyped `--store` path, and a `.compact-watermark` in it (EST-8260)
