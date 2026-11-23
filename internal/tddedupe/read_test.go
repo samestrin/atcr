@@ -144,6 +144,31 @@ func TestReadStreamHeaderlessWidths(t *testing.T) {
 	}
 }
 
+// Case-folding in isSeverity is td-dedupe parity: `llm-support td-dedupe`
+// v1.5.0 reads a lowercase `high|` row in a headerless stream as a finding
+// (checked: input_rows 1, skipped 0). The difference is stream.parse, whose
+// severityRe is case-sensitive, so the same row under a v1 header is prose
+// there (row 1a9acdece84b9785, epic 126 T2). No DIFFERENCES.md row: that table
+// lists td-dedupe vs atcr differences, and here they agree.
+func TestReadStreamLowercaseSeverityIsFinding(t *testing.T) {
+	data := "high|a.go:1|p|f|correctness\n"
+	got, skipped, warn := mustRead(t, "legacy", data)
+	if skipped != 0 || warn == "" {
+		t.Fatalf("skipped=%d warn=%q, want 0 and a legacy warning", skipped, warn)
+	}
+	wantFindings(t, got, []reconcile.Finding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "correctness", Reviewer: "legacy"},
+	})
+
+	// The documented difference: under a v1 header, stream.parse's
+	// case-sensitive severityRe reads the lowercase row as prose, never a
+	// finding and never skipped.
+	v1Got, v1Skipped, _ := mustRead(t, "legacy", "# atcr-findings/v1\n"+data)
+	if len(v1Got) != 0 || v1Skipped != 0 {
+		t.Fatalf("v1: findings=%d skipped=%d, want the lowercase row read as prose (0 and 0)", len(v1Got), v1Skipped)
+	}
+}
+
 func TestReadStreamHeaderlessWarningNamesTag(t *testing.T) {
 	_, _, warn := mustRead(t, "codex-run", "HIGH|a.go:1|p|f|correctness\n")
 	want := "stream \"codex-run\": no `# atcr-findings/v1` header: parsing as a legacy stream. " +
