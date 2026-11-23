@@ -32,6 +32,13 @@ func newDebtConvertCmd() *cobra.Command {
 	return cmd
 }
 
+// debtConvert and debtConvertPlan are the conversions runDebtConvert calls; a test
+// swaps them to return a partial result with an error.
+var (
+	debtConvert     = localdebt.Convert
+	debtConvertPlan = localdebt.ConvertPlan
+)
+
 func runDebtConvert(cmd *cobra.Command, _ []string) error {
 	dir, err := debtStoreDir(cmd)
 	if err != nil {
@@ -40,16 +47,25 @@ func runDebtConvert(cmd *cobra.Command, _ []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
-	convert := localdebt.Convert
+	convert := debtConvert
 	if dryRun {
-		convert = localdebt.ConvertPlan
+		convert = debtConvertPlan
 	}
 	res, err := convert(dir, opts)
+	out := cmd.OutOrStdout()
 	if err != nil {
+		// A run that failed may still have finished an interrupted conversion or
+		// opted the store in (localdebt.Convert reports both with the error), and
+		// every later write is then an event file: say so before the error.
+		if res.Resumed {
+			_, _ = fmt.Fprintln(out, "Finished an interrupted conversion.")
+		}
+		if res.OptedIn && !dryRun {
+			_, _ = fmt.Fprintln(out, optedInLine)
+		}
 		return fmt.Errorf("convert: %w", err)
 	}
 
-	out := cmd.OutOrStdout()
 	if !res.StoreFound {
 		_, _ = fmt.Fprintln(out, "No local TD store to convert.")
 		return nil
@@ -77,14 +93,19 @@ func runDebtConvert(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if res.OptedIn {
-		lead := "The store is now opted in"
+		line := optedInLine
 		if dryRun {
-			lead = "A real run opts the store in"
+			line = "A real run opts the store in" + optedInTail
 		}
-		_, _ = fmt.Fprintf(out, "%s to the event layout: every later add and resolution writes an event file (items/).\n", lead)
+		_, _ = fmt.Fprintln(out, line)
 	}
 	if dryRun {
 		_, _ = fmt.Fprintln(out, "Dry run: the store was not modified.")
 	}
 	return nil
 }
+
+const (
+	optedInTail = " to the event layout: every later add and resolution writes an event file (items/)."
+	optedInLine = "The store is now opted in" + optedInTail
+)

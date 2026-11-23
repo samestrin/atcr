@@ -225,7 +225,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 	if err != nil {
 		// A failed run reports an opt-in only when it made one: a refused or dry
 		// run opted nothing in, and a run that failed past enableEventLayoutLocked
-		// (or while finishing a resumed plan) did.
+		// did.
 		res.OptedIn = res.OptedIn && !dryRun && UsesEventLayout(dir)
 		return res, err
 	}
