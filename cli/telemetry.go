@@ -253,9 +253,15 @@ func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
 	if err != nil {
 		return
 	}
+	// persist is false outside a repository: the notice still prints, but no
+	// marker is written into $HOME, /tmp or whatever the cwd happens to be.
+	persist := true
 	if root == "." { // no --config-dir: the repo root, as `config set` writes it
-		if r, rerr := repoRoot(); rerr == nil {
+		r, found, rerr := findRepoRoot()
+		if rerr == nil && found {
 			root = r
+		} else {
+			persist = false
 		}
 	} else if _, serr := os.Stat(filepath.Join(root, ".atcr", "config.yaml")); serr != nil {
 		return
@@ -276,7 +282,9 @@ func maybeDiscloseTelemetry(cmd *cobra.Command, client *telemetry.Client) {
 	// Best-effort: if this cannot be persisted the notice simply repeats next run,
 	// which is the safe direction — far better than suppressing a disclosure that
 	// was never recorded.
-	_ = registry.SetTelemetryNoticeShown(root, true)
+	if persist {
+		_ = registry.SetTelemetryNoticeShown(root, true)
+	}
 }
 
 // reviewTelemetryEvent builds the anonymous usage Event for a completed review

@@ -60,6 +60,8 @@ const defaultNoticeMarker = "anonymous usage ping to https://atcr.dev when"
 // second prints nothing because the first persisted the fact.
 func TestTelemetryDisclosure_PrintsOnceThenPersists(t *testing.T) {
 	isolate(t)
+	// Persistence needs a repository (EST-8260): outside one nothing is written.
+	require.NoError(t, os.Mkdir(".git", 0o755))
 	t.Setenv("ATCR_TELEMETRY", "1")
 
 	_, _, errOut := execTransmitting(t, "version")
@@ -79,6 +81,8 @@ func TestTelemetryDisclosure_PrintsOnceThenPersists(t *testing.T) {
 // the notice would re-fire on every single invocation forever.
 func TestTelemetryDisclosure_CreatesConfigWhenAbsent(t *testing.T) {
 	isolate(t)
+	// Persistence needs a repository (EST-8260): outside one nothing is written.
+	require.NoError(t, os.Mkdir(".git", 0o755))
 	t.Setenv("ATCR_TELEMETRY", "1")
 
 	cfg := filepath.Join(".atcr", "config.yaml")
@@ -463,4 +467,24 @@ func TestTelemetryDisclosure_InvalidConfigDirSkipsNotice(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(".atcr", "config.yaml"),
 			"nor fall back to writing the reviewed tree")
 	})
+}
+
+// TestTelemetryDisclosure_NoRepoRootWritesNothing is the EST-8260 probe: `cd ~ &&
+// atcr version` created ~/.atcr/config.yaml, because with no repo root the
+// marker was persisted under ".". Outside a repository the notice still prints
+// (nothing records that it was shown), but nothing is written.
+func TestTelemetryDisclosure_NoRepoRootWritesNothing(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TELEMETRY", "1")
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	_, found, rerr := findRepoRoot()
+	require.NoError(t, rerr)
+	require.False(t, found, "precondition: the isolated cwd is not inside a repository")
+
+	_, _, errOut := execTransmitting(t, "version")
+	assert.Contains(t, errOut, defaultNoticeMarker, "the notice is still shown outside a repository")
+
+	_, statErr := os.Lstat(filepath.Join(cwd, ".atcr"))
+	assert.True(t, os.IsNotExist(statErr), "no .atcr may be created outside a repository, got %v", statErr)
 }

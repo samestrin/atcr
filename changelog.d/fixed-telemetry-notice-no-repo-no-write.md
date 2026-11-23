@@ -1,0 +1,1 @@
+- The one-time telemetry notice no longer creates `.atcr/config.yaml` outside a repository: running any command in your home directory or `/tmp` used to write `~/.atcr/config.yaml`; now the notice prints and nothing is written (EST-8260)
