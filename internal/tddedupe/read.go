@@ -4,6 +4,7 @@
 package tddedupe
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"slices"
@@ -38,26 +39,40 @@ const minColumns = 5
 // RISK_CLASS or BLOCKING, is dropped, never shifted into a neighbour), and
 // otherwise by its 5, 6, 8 or 10 column width; either way warning names the
 // tag. As in stream.parse, a line that does not start with a severity and a
-// `|` is prose and ignored. A row with fewer than 5 columns, more than its
+// `|` is prose and ignored. A `# Format:` with no SEVERITY column reads no
+// rows: its pipe-delimited rows count in skipped (td-dedupe parity) and
+// one-field lines are prose. A row with fewer than 5 columns, more than its
 // `# Format:` declares, a width other than 5, 6, 8 or 10 when there is no
 // `# Format:`, or an empty file is counted in skipped; trailing empty fields
 // are padding. An empty reviewer becomes tag, and every category goes through
 // stream.CanonicalCategory (epic 110 D2).
 func ReadStream(tag string, data []byte) (findings []reconcile.Finding, skipped int, warning string, err error) {
-	lines := strings.Split(string(data), "\n")
-	if i := headerLine(lines); i >= 0 {
-		return readVersioned(tag, []byte(strings.Join(lines[i:], "\n")))
+	if off := headerOffset(data); off >= 0 {
+		return readVersioned(tag, data[off:])
 	}
 
+	lines := strings.Split(string(data), "\n")
 	warning = fmt.Sprintf("stream %q: %s", tag, legacyWarning)
 	cols := formatColumns(lines)
-	sevCol := max(0, slices.Index(cols, "SEVERITY"))
+	sevCol := slices.Index(cols, "SEVERITY")
+	if cols == nil {
+		sevCol = 0 // headerless width layouts carry SEVERITY first
+	}
 	for _, line := range lines {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
 		}
 		fields := splitRow(t)
+		if sevCol < 0 {
+			// A `# Format:` with no SEVERITY column reads no rows: a
+			// pipe-delimited row counts in skipped, never a width fallback;
+			// a one-field line is prose (row e31ec15125bb6bfd).
+			if len(fields) > 1 {
+				skipped++
+			}
+			continue
+		}
 		if sevCol >= len(fields)-1 || !isSeverity(fields[sevCol]) {
 			continue // prose
 		}
@@ -118,21 +133,27 @@ func isSeverity(s string) bool {
 	return false
 }
 
-// headerLine returns the index of the first line in the leading comment block
-// (blank and `#` lines, up to the first other line) that carries
-// versionPrefix, or -1 when there is none.
-func headerLine(lines []string) int {
-	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if t == "" {
-			continue
+// headerOffset returns the byte offset of the first line in the leading
+// comment block (blank and `#` lines, up to the first other line) that carries
+// versionPrefix, or -1 when there is none. The versioned path slices data at
+// it, so the stream is never split and rejoined (row a395ac82030ef98d).
+func headerOffset(data []byte) int {
+	off := 0
+	for off < len(data) {
+		line := data[off:]
+		if i := bytes.IndexByte(line, '\n'); i >= 0 {
+			line = line[:i]
 		}
-		if !strings.HasPrefix(t, "#") {
-			return -1
+		t := bytes.TrimSpace(line)
+		if len(t) > 0 {
+			if t[0] != '#' {
+				return -1
+			}
+			if bytes.HasPrefix(t, []byte(versionPrefix)) {
+				return off
+			}
 		}
-		if strings.HasPrefix(t, versionPrefix) {
-			return i
-		}
+		off += len(line) + 1
 	}
 	return -1
 }
