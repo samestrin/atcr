@@ -121,3 +121,44 @@ func TestBuiltinRules_UnquotedNoFalsePositives(t *testing.T) {
 		}
 	}
 }
+
+// Review of PR #922: people pick passwords without digits, and short ones, so
+// the password gate cannot demand a digit and eight characters. These lines
+// went to the model unchanged from a settings.cfg (not a credential file name).
+func TestBuiltinRules_LettersOnlyAndShortPasswords(t *testing.T) {
+	for _, line := range []struct{ text, secret string }{
+		{"DB_PASSWORD=" + "letmein" + "please\n", "letmein" + "please"},
+		{"POSTGRES_PASSWORD=" + "mysecret" + "password\n", "mysecret" + "password"},
+		{"password: " + "Swordfish" + "Secret\n", "Swordfish" + "Secret"},
+		{"DB_PASSWORD=" + "hun" + "ter2\n", "hun" + "ter2"},
+		{"[db]\npasswd = " + "tr0ub4dor\n", "tr0ub4dor"},
+	} {
+		hits := scanBuiltin(line.text)
+		assertCovered(t, line.text, hits, line.secret)
+	}
+}
+
+// Code that names a password without holding one: identifiers, field
+// references, type names and keywords stay clean under the wider gate.
+func TestBuiltinRules_PasswordGateNoFalsePositives(t *testing.T) {
+	for _, text := range []string{
+		"password := hashed",
+		"password = hashedPassword",
+		"password: required",
+		"password: string",
+		"password = true",
+		"password: null",
+		"Password = cfg.Password",
+		"password_env: DB_PASSWORD",
+		"password=password123",
+		"password: changeme1",
+		"password: secret",
+		"password = admin",
+		"newPassword := strings.TrimSpace(raw)",
+		"passwordHash = hash_password",
+	} {
+		if hits := scanBuiltin(text); len(hits) != 0 {
+			t.Errorf("scanBuiltin(%q) = %+v, want no hit", text, hits)
+		}
+	}
+}
