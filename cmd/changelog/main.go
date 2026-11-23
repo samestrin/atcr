@@ -139,7 +139,7 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 		if len(failed) == 1 {
 			noun = "fragment"
 		}
-		return fmt.Errorf("%s has the %s section but %d %s not removed:\n%s\nto recover, delete them by hand; do not re-run assemble, the section is already written",
+		return fmt.Errorf("%s has the %s section but %d %s not removed:\n%s\nto recover, delete them by hand; the section is already written, so a re-run will refuse until the leftover fragments are deleted",
 			changelogPath, version, len(failed), noun, strings.Join(failed, "\n"))
 	}
 	return nil
@@ -205,7 +205,7 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 	if len(found) == 1 {
 		noun = "bullet is"
 	}
-	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete them from the fragments by hand, then re-run",
+	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete those fragment files by hand, then re-run",
 		len(found), noun, changelogPath, strings.Join(found, "\n"))
 }
 

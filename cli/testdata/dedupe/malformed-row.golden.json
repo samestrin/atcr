@@ -20,7 +20,7 @@
     "clusters": 1,
     "merged_rows": 1,
     "needs_review_count": 0,
-    "skipped": 1,
+    "skipped": 2,
     "warnings": [
       "stream \"c\": no `# atcr-findings/v1` header: parsing as a legacy stream. Add the header so a consumer never silently reads incompatible data."
     ]
