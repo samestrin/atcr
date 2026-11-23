@@ -111,7 +111,7 @@ func checkerBuiltFromBase(src []byte) error {
 
 func TestChangelogWorkflowBuildsCheckerFromBase(t *testing.T) {
 	if err := checkerBuiltFromBase([]byte(readRepoFile(t, changelogWorkflow))); err != nil {
-		t.Fatalf("%s: %v\nA PR must not be able to edit cmd/changelog to pass its own gate.", changelogWorkflow, err)
+		t.Fatalf("%s: %v\nA PR that edits only cmd/changelog must not be able to pass its own gate.", changelogWorkflow, err)
 	}
 }
 

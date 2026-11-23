@@ -248,7 +248,7 @@ func TestAssemble_KeepsRemovingAfterAFailedRemove(t *testing.T) {
 			t.Errorf("stderr does not report %s:\n%s", path, stderr)
 		}
 	}
-	for _, want := range []string{"2 fragments not removed", "delete them by hand", "do not re-run assemble"} {
+	for _, want := range []string{"2 fragments not removed", "delete them by hand", "a re-run will refuse until the leftover fragments are deleted"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
@@ -326,6 +326,12 @@ func TestAssemble_RefusesBulletAlreadyInChangelog(t *testing.T) {
 			wantErr: "- a, which wraps",
 		},
 		{
+			name:    "loose-list bullet",
+			frags:   map[string]string{"added-a.md": "- a, with a loose list\n\n  and a second paragraph. (epic 1)\n"},
+			stuck:   "added-a.md",
+			wantErr: "- a, with a loose list",
+		},
+		{
 			name:    "one consumed bullet among new ones",
 			frags:   map[string]string{"changed-c.md": "- c. (epic 1)\n"},
 			stuck:   "changed-c.md",
@@ -347,7 +353,7 @@ func TestAssemble_RefusesBulletAlreadyInChangelog(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("code %d, want 1: %s", code, stderr)
 			}
-			for _, want := range []string{survivor, tt.wantErr, "already in"} {
+			for _, want := range []string{survivor, tt.wantErr, "already in", "delete those fragment files by hand, then re-run"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr lacks %q:\n%s", want, stderr)
 				}
@@ -374,7 +380,8 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 	changelog := "# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-10-27\n\n### Added\n\n" +
 		"- old entry. (epic 1)\n" +
 		"- wrapped entry\n  with a second line. (epic 1)\n" +
-		"- nested entry. (epic 1)\n  - a sub-point.\n"
+		"- nested entry. (epic 1)\n  - a sub-point.\n" +
+		"- loose entry.\n\n  with a second paragraph. (epic 1)\n"
 	tests := map[string]string{
 		"brand new":                 "- new entry. (epic 2)\n",
 		"prefix of an old bullet":   "- old entry.\n",
@@ -385,6 +392,11 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 		"old bullet without nested": "- nested entry. (epic 1)\n",
 		"old continuation as text":  "- x\n  with a second line. (epic 1)\n",
 		"several new bullets":       "- one. (epic 2)\n- two\n  wrapped. (epic 2)\n",
+		// Loose lists: a blank line inside a bullet must not end it, or two
+		// bullets sharing a first paragraph compare equal (debt row 760c60b5e12e54e8).
+		"loose list, different paragraph": "- loose entry.\n\n  with another paragraph. (epic 2)\n",
+		"first paragraph of a loose list": "- loose entry.\n",
+		"tight version of a loose bullet": "- loose entry.\n  with a second paragraph. (epic 1)\n",
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {

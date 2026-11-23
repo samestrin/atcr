@@ -139,7 +139,7 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 		if len(failed) == 1 {
 			noun = "fragment"
 		}
-		return fmt.Errorf("%s has the %s section but %d %s not removed:\n%s\nto recover, delete them by hand; do not re-run assemble, the section is already written",
+		return fmt.Errorf("%s has the %s section but %d %s not removed:\n%s\nto recover, delete them by hand; the section is already written, so a re-run will refuse until the leftover fragments are deleted",
 			changelogPath, version, len(failed), noun, strings.Join(failed, "\n"))
 	}
 	return nil
@@ -205,21 +205,25 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 	if len(found) == 1 {
 		noun = "bullet is"
 	}
-	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete them from the fragments by hand, then re-run",
+	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete those fragment files by hand, then re-run",
 		len(found), noun, changelogPath, strings.Join(found, "\n"))
 }
 
 // splitBullets returns each complete "- " bullet in text with its indented
-// continuation lines, joined by "\n" with trailing whitespace trimmed, so two
-// bullets compare equal only when every line of both matches.
+// continuation lines, including blank lines inside a loose list, joined by
+// "\n" with trailing whitespace trimmed, so two bullets compare equal only
+// when every line of both matches.
 func splitBullets(text string) []string {
 	var out []string
 	var cur []string
 	flush := func() {
-		if cur != nil {
-			out = append(out, strings.Join(cur, "\n"))
-			cur = nil
+		for len(cur) > 0 && cur[len(cur)-1] == "" {
+			cur = cur[:len(cur)-1]
 		}
+		if len(cur) > 0 {
+			out = append(out, strings.Join(cur, "\n"))
+		}
+		cur = nil
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 		line = strings.TrimRight(line, " \t")
@@ -227,7 +231,9 @@ func splitBullets(text string) []string {
 		case strings.HasPrefix(line, "- "):
 			flush()
 			cur = []string{line}
-		case cur != nil && line != "" && (line[0] == ' ' || line[0] == '\t'):
+		case cur != nil && (line == "" || line[0] == ' ' || line[0] == '\t'):
+			// A blank line does not end a bullet: an indented line after it
+			// is still this bullet's continuation (a loose list).
 			cur = append(cur, line)
 		default:
 			flush()
