@@ -37,14 +37,17 @@ func DefaultDir(root string) string {
 // directory the operator removed is the opposite of what a stale-root stop signal is
 // for.
 //
-// The container (<root>/.atcr) is still created on demand — that is ordinary
+// For a store not in projectStores (the default, the user tier, --store), the
+// container (<root>/.atcr) is still created on demand — that is ordinary
 // first-write behavior — but only under a parent that already exists, so the chain
-// stops exactly one level below the root.
+// stops exactly one level below the anchor (the repo root, for the default
+// layout). A project-tier store follows the root rule in the last paragraph
+// instead.
 //
-// The anchor is the store's GRANDPARENT, which is the repo root only for the
-// default <root>/.atcr/debt layout: a configured debt.store (StoreDir) may sit at
-// any depth, e.g. docs/planning/debt, whose anchor is <root>/docs. The refusal
-// therefore names the configured store and the missing grandparent instead of
+// For those same stores the anchor is the store's GRANDPARENT, which is the repo
+// root only for the default <root>/.atcr/debt layout: a user-tier or --store path
+// may sit at any depth, e.g. <root>/docs/planning/debt, whose anchor is
+// <root>/docs. The refusal therefore names the configured store and the missing grandparent instead of
 // calling the anchor the "store root" — the wrong diagnosis for a configured
 // store (TD internal/localdebt/paths.go:45, row 993fffb0c24de643).
 //
@@ -52,9 +55,10 @@ func DefaultDir(root string) string {
 // is anchored to its repository root instead: at depth 1 ("debt") the grandparent
 // is the root's PARENT, which survives the root's removal, so MkdirAll would
 // resurrect the root (row 24dcb363e7cd6d72). The root is known for those stores,
-// so the check names it directly and missing directories between the root and the
-// store are created. Stores not in the registry (the default, the user tier,
-// --store) keep the grandparent rule.
+// so the check names it directly (refusing a root that is missing or is not a
+// directory) and missing directories between the root and the store are created.
+// Stores not in the registry (the default, the user tier, --store) keep the
+// grandparent rule above.
 func ensureStoreDir(dir string) error {
 	if info, err := os.Stat(dir); err == nil {
 		if !info.IsDir() {

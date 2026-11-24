@@ -1,0 +1,1 @@
+- A project-tier debt store reached through a relative and an absolute spelling of the same path is now treated as one store, so a write through either spelling refuses to recreate a vanished repository root instead of falling back to the looser grandparent check (epic 128 T5).

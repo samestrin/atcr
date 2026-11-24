@@ -88,12 +88,23 @@ func projectStoreDir(root, v string) (string, error) {
 // projectStores maps each directory projectStoreDir has handed out (keyed by
 // projectStoreKey) to the repository root it must stay inside, so withLock can
 // re-check containment at write time without every caller passing the root along.
+//
+// The map has no eviction: re-resolving a store replaces its entry, so it grows
+// only with the number of distinct project-store paths a process resolves, which
+// is one per repository in practice. No pruning is done (EST-8389 Q3).
 var projectStores sync.Map
 
-// projectStoreKey is the projectStores key for dir: every Store, Load and Delete
-// goes through it so two spellings of one store are one entry.
+// projectStoreKey is the projectStores key for dir: the cleaned absolute path, so
+// a store resolved against a relative root and looked up by its absolute spelling
+// (or the reverse) is one entry, not two (row 7a03d6351e9f221a). Every Store,
+// Load and Delete goes through it. If the working directory cannot be read the
+// cleaned path is used as-is.
 func projectStoreKey(dir string) string {
-	return filepath.Clean(dir)
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	return abs
 }
 
 // afterContainmentCheck runs between withLock's pre-lock containment check and
