@@ -57,6 +57,29 @@ const MaxRecordBytes = maxLineBytes
 // absolute path at all.
 type ReadOpts struct {
 	Writer io.Writer
+	// Result, when non-nil, is reset and filled by the read (ReadAll,
+	// StreamSummaries, ReadSummaries): what a caller must know about the records
+	// beyond the diagnostic lines, which it may discard.
+	Result *ReadResult
+}
+
+// ReadResult is what a read reports about the records it returned.
+type ReadResult struct {
+	// ConversionUnfinished is set when the store holds a committed conversion the
+	// read could not finish: the store is read as it stands, so a record may be
+	// counted twice, once from its month shard and once from its event file, until
+	// `atcr debt convert` finishes it.
+	ConversionUnfinished bool
+}
+
+// finishPendingConversionForRead finishes a committed conversion before a read and
+// records in opts.Result whether one was left that could not be finished.
+func finishPendingConversionForRead(dir string, opts ReadOpts) error {
+	unfinished, err := finishPendingConversion(dir, opts.Writer)
+	if opts.Result != nil {
+		*opts.Result = ReadResult{ConversionUnfinished: unfinished}
+	}
+	return err
 }
 
 // diagWriter resolves a diagnostics sink: the caller-supplied writer, or os.Stderr
@@ -370,9 +393,11 @@ func drainLine(br *bufio.Reader) error {
 // skipped per-file by ReadRecords). A missing directory is empty (nil, nil), not an
 // error — the "no backlog yet" state. Other files are ignored. A committed
 // conversion left unfinished is finished first (finishPendingConversion), so no
-// record is read twice; a caller holding the store lock uses readAllLocked.
+// record is read twice; one that cannot be finished is reported in opts.Result and
+// the store is read as it stands. A caller holding the store lock uses
+// readAllLocked.
 func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
-	if err := finishPendingConversion(dir, opts.Writer); err != nil {
+	if err := finishPendingConversionForRead(dir, opts); err != nil {
 		return nil, err
 	}
 	return readAllLocked(dir, opts)

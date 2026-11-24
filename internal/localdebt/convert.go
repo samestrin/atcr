@@ -480,14 +480,14 @@ func conversionPending(dir string) (bool, error) {
 }
 
 // finishPendingConversion finishes a committed conversion for a read path that does
-// not hold the store lock. A plan it cannot finish is reported to w and the store is
-// read as it stands, so a read-only store still reads. A journal it cannot check,
-// before the lock or again under it, is returned: it cannot tell whether the store
-// reads every record once.
-func finishPendingConversion(dir string, w io.Writer) error {
+// not hold the store lock. A plan it cannot finish is reported to w and returned as
+// unfinished, and the store is read as it stands, so a read-only store still reads.
+// A journal it cannot check, before the lock or again under it, is returned: it
+// cannot tell whether the store reads every record once.
+func finishPendingConversion(dir string, w io.Writer) (unfinished bool, err error) {
 	pending, err := conversionPending(dir)
 	if err != nil || !pending {
-		return err
+		return false, err
 	}
 	var checkErr error
 	err = withLock(dir, "convert-finish", func() error {
@@ -505,13 +505,14 @@ func finishPendingConversion(dir string, w io.Writer) error {
 		return nil
 	})
 	if checkErr != nil {
-		return checkErr
+		return false, checkErr
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(diagWriter(w), "localdebt: an interrupted conversion could not be finished (%v); "+
 			"some records may be counted twice until `atcr debt convert` finishes it\n", err)
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 // finishPendingConversionLocked finishes a committed conversion under the store

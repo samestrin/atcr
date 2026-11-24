@@ -3502,3 +3502,50 @@ func TestFold_UnorderableTimestampDefersToAppendOrder(t *testing.T) {
 			"the valid record is effective here because it was appended later — not because it is valid")
 	})
 }
+
+// TestReadAll_CountsAConversionItCannotFinish (TD row e697982c609cb875): a read
+// that cannot finish a committed conversion still reads the store as it stands, and
+// reports that in the read result, so a caller that discards the diagnostic line
+// can still see its records may be counted twice.
+func TestReadAll_CountsAConversionItCannotFinish(t *testing.T) {
+	unfinishable := func(t *testing.T) string {
+		dir, _ := halfFinishedConversion(t)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, convertSubdir, convertJournal), []byte("{not json"), 0o600))
+		return dir
+	}
+	t.Run("ReadAll", func(t *testing.T) {
+		dir := unfinishable(t)
+		var res ReadResult
+		recs, err := ReadAll(dir, ReadOpts{Writer: io.Discard, Result: &res})
+		require.NoError(t, err, "a read-only store still reads")
+		assert.Len(t, recs, 2*len(dualHistory), "the store is read as it stands")
+		assert.True(t, res.ConversionUnfinished, "the read result says the records may be doubled")
+	})
+	t.Run("ReadSummaries", func(t *testing.T) {
+		dir := unfinishable(t)
+		var res ReadResult
+		sums, err := ReadSummaries(dir, ReadOpts{Writer: io.Discard, Result: &res})
+		require.NoError(t, err)
+		assert.Len(t, sums, 2*len(dualHistory))
+		assert.True(t, res.ConversionUnfinished)
+	})
+	t.Run("finished", func(t *testing.T) {
+		dir, _ := halfFinishedConversion(t)
+		res := ReadResult{ConversionUnfinished: true}
+		_, err := ReadAll(dir, ReadOpts{Writer: io.Discard, Result: &res})
+		require.NoError(t, err)
+		assert.False(t, res.ConversionUnfinished, "a conversion the read finishes is not reported")
+	})
+	t.Run("none", func(t *testing.T) {
+		dir := buildStore(t, layoutShards)
+		res := ReadResult{ConversionUnfinished: true}
+		_, err := ReadAll(dir, ReadOpts{Writer: io.Discard, Result: &res})
+		require.NoError(t, err)
+		assert.False(t, res.ConversionUnfinished, "a store with no conversion is not reported")
+	})
+	t.Run("nil result", func(t *testing.T) {
+		dir := unfinishable(t)
+		_, err := ReadAll(dir, ReadOpts{Writer: io.Discard})
+		require.NoError(t, err, "a caller that does not ask is not told")
+	})
+}
