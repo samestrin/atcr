@@ -1,0 +1,1 @@
+- `atcr debt convert` now writes the progress lines of a failed run ("Finished an interrupted conversion." and the opted-in notice) to stderr instead of stdout, so a script parsing stdout no longer reads a failed conversion as a success (epic 128 T3).
