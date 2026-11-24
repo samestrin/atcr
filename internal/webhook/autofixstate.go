@@ -23,6 +23,10 @@ var (
 	// ErrAutoFixDailyTokenCap is returned by Claim once the tokens charged to
 	// the day (AddTokens) reach AutoFixState.DailyTokenCap.
 	ErrAutoFixDailyTokenCap = errors.New("webhook: auto-fix daily token cap reached")
+	// ErrAutoFixTokenOverflow is returned by AddTokens when the day's true
+	// token total exceeds math.MaxInt. The total is still charged, held at
+	// math.MaxInt, so the day reads as over any cap.
+	ErrAutoFixTokenOverflow = errors.New("webhook: auto-fix day's token total overflows")
 )
 
 // autoFixStateVersion is the on-disk format version. A file with any other
@@ -171,7 +175,9 @@ func (s *AutoFixState) Count(now time.Time) int {
 // AddTokens charges tokens of usage to now's UTC day and writes it to disk
 // before it returns. A write that fails charges nothing. The charge is not
 // tied to a claim: a job claimed before midnight and finished after it is
-// charged to the day it finished.
+// charged to the day it finished. When the day's true total exceeds
+// math.MaxInt, the day is charged math.MaxInt and the error wraps
+// ErrAutoFixTokenOverflow.
 func (s *AutoFixState) AddTokens(tokens int, now time.Time) error {
 	if tokens < 0 {
 		return fmt.Errorf("webhook: auto-fix token usage %d is negative", tokens)
@@ -179,12 +185,16 @@ func (s *AutoFixState) AddTokens(tokens int, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	day := utcDay(now)
+	prev := s.tokensOn(day)
 	next := s.data
-	next.Day, next.Count, next.Tokens = day, s.countOn(day), addCapped(s.tokensOn(day), tokens)
+	next.Day, next.Count, next.Tokens = day, s.countOn(day), addCapped(prev, tokens)
 	if err := writeAutoFixState(s.path, next); err != nil {
 		return err
 	}
 	s.data = next
+	if prev > math.MaxInt-tokens {
+		return fmt.Errorf("%w: %d plus %d tokens on %s, held at %d", ErrAutoFixTokenOverflow, prev, tokens, day, math.MaxInt)
+	}
 	return nil
 }
 

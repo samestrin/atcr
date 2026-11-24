@@ -1,0 +1,1 @@
+- The webhook daemon now reports an error when a day's auto-fix token total passes the largest integer, instead of holding it there silently; the day is still charged and stays over any daily token cap (epic 135).
