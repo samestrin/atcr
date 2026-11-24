@@ -74,6 +74,7 @@ type AutoFixState struct {
 	data autoFixStateFile
 	// dailyTokenCap is the token usage per UTC day at which Claim refuses
 	// further jobs; zero is no cap. Configuration, not persisted state.
+	// Guarded by mu, like data.
 	dailyTokenCap int
 }
 
@@ -112,11 +113,15 @@ func OpenAutoFixState(path string, dailyCap int) (*AutoFixState, error) {
 // SetDailyTokenCap sets the token usage per UTC day at which Claim refuses
 // further jobs; zero or less is no cap.
 func (s *AutoFixState) SetDailyTokenCap(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.dailyTokenCap = n
 }
 
 // DailyTokenCap returns the cap set by SetDailyTokenCap; zero is no cap.
 func (s *AutoFixState) DailyTokenCap() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.dailyTokenCap
 }
 
