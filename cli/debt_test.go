@@ -1340,6 +1340,27 @@ func TestDebtList_SeverityMatchesExactlyNotAsCommaList(t *testing.T) {
 	assert.Len(t, applyDebtFilter(recs, debtFilter{Severity: " LOW "}), 1)
 }
 
+// The filter-only comma-list form keeps its list semantics: case-insensitive,
+// element-trimmed, and a single-element list is just the one severity.
+func TestDebtFilter_SeverityListMatchesCommaForm(t *testing.T) {
+	recs := debtSampleRecords()
+
+	for _, tc := range []struct {
+		name string
+		f    debtFilter
+		want int
+	}{
+		{"comma list keeps both", debtFilter{SeverityList: "HIGH,LOW"}, 2},
+		{"case-insensitive and trimmed", debtFilter{SeverityList: "high , low"}, 2},
+		{"single element", debtFilter{SeverityList: "LOW"}, 1},
+		{"combined with component", debtFilter{SeverityList: "MEDIUM,LOW", Component: "internal/autofix"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Len(t, applyDebtFilter(recs, tc.f), tc.want)
+		})
+	}
+}
+
 // The CLI boundary the board answer pins: `debt list --severity HIGH,LOW`
 // matches nothing (validateDebtListFilters rejects the unrecognized value as a
 // usage error, the TD-011 behavior — no rows either way), while
