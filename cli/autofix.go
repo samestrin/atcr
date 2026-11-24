@@ -793,15 +793,29 @@ func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, r
 //
 // The totals are the review fan-out agents' TokensIn/TokensOut from
 // sources/pool/summary.json; verify, debate and reconcile spend is not
-// recorded there, and the line says so. Zero usage prints zeros. A summary
-// that cannot be read is reported on its own line and no usage line follows:
-// the webhook runner then reports the job as unaccounted (ErrAutoFixNoUsage)
-// rather than charging it zero tokens against the caps.
+// recorded there, and the line says so. A nonempty roster reporting zero
+// tokens prints zeros. A summary that cannot be read, lists no agents, or
+// carries FailureMarker (writeFailureSummary's best-effort record of a
+// write-phase fault, whose per-agent token data never reached disk) is
+// reported on its own line and no usage line follows: the webhook runner then
+// reports the job as unaccounted (ErrAutoFixNoUsage) rather than charging it
+// zero tokens against the caps.
 func writeAutoFixUsage(out io.Writer, reviewDir string) {
 	var in, outTokens int
 	ps, err := fanout.ReadPoolSummary(reviewDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "auto-fix: token usage unavailable: %v\n", err)
+		return
+	}
+	// An agentless summary ({} parses cleanly) records no usage, and a failure
+	// marker's roster is untrustworthy by construction even if one survived;
+	// neither may sum into a zero usage line the runner would charge as free.
+	if ps.FailureMarker {
+		_, _ = fmt.Fprintln(out, "auto-fix: token usage unavailable: pool summary carries the fan-out failure marker")
+		return
+	}
+	if len(ps.Agents) == 0 {
+		_, _ = fmt.Fprintln(out, "auto-fix: token usage unavailable: pool summary lists no agents")
 		return
 	}
 	for _, a := range ps.Agents {
