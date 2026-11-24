@@ -149,3 +149,31 @@ func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 	assert.False(t, reviewDirOwnsRun(reviewDir, runID),
 		"the uncached wrapper's default open must refuse a symlinked summary.json")
 }
+
+// TD 088dae89858474f8 — the default summary opener's O_NOFOLLOW guards only the
+// last path component, so a reconciled/ that is itself a symlink to a directory
+// outside the review dir was followed, and a summary.json there attributed the
+// run to this review. Every default-open path must refuse it: the seams
+// default, the ownershipCache zero value, and the uncached reviewDirOwnsRun
+// wrapper. The control proves the same summary owns the run once it is real.
+func TestSummaryDefaultOpen_RefusesSymlinkedReconciledDir(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "multi-agent")
+	require.NoError(t, os.MkdirAll(reviewDir, 0o750))
+	outside := filepath.Join(root, "outside")
+	writeRegularSummary(t, outside)
+	require.NoError(t, os.Symlink(filepath.Join(outside, "reconciled"), filepath.Join(reviewDir, "reconciled")))
+
+	const runID = "2026-08-04T10:00:00Z-multi-agent"
+	at, oversized := readSummary(reviewDir, defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a summary.json reached through a symlinked reconciled/ owns nothing")
+	assert.False(t, oversized)
+	assert.False(t, (&ownershipCache{}).owns(reviewDir, runID),
+		"the cache's default open must refuse a symlinked reconciled/")
+	assert.False(t, reviewDirOwnsRun(reviewDir, runID),
+		"the uncached wrapper's default open must refuse a symlinked reconciled/")
+
+	require.NoError(t, os.Remove(filepath.Join(reviewDir, "reconciled")))
+	writeRegularSummary(t, reviewDir)
+	assert.True(t, reviewDirOwnsRun(reviewDir, runID), "control: a real reconciled/ owns the run")
+}
