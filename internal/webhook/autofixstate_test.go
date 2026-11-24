@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -415,6 +416,202 @@ func TestAutoFixStateAddTokensWriteFailureRecordsNothing(t *testing.T) {
 	}
 	if got := s.Tokens(now); got != 0 {
 		t.Fatalf("Tokens after failed write = %d, want 0", got)
+	}
+}
+
+// TestAutoFixStateRefusedTokenClaimSurvivesReopen pins that a claim refused
+// at the token cap wrote nothing: a reopen from the same path sees only the
+// successful claims and charges, and the refused issue still claims the next
+// day.
+func TestAutoFixStateRefusedTokenClaimSurvivesReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+	s := openState(t, path, 10)
+	s.DailyTokenCap = 1000
+	for _, id := range []string{"ISS-1", "ISS-2"} {
+		if err := s.Claim(id, "st", now); err != nil {
+			t.Fatalf("claim %s: %v", id, err)
+		}
+	}
+	if err := s.AddTokens(1000, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Claim("ISS-3", "st", now); !errors.Is(err, ErrAutoFixDailyTokenCap) {
+		t.Fatalf("claim at the token cap: got %v, want ErrAutoFixDailyTokenCap", err)
+	}
+
+	// The refusal is not on disk: the reopened count and tokens are those of
+	// the two successful claims and the charge, not of the refusal.
+	reopened := openState(t, path, 10)
+	reopened.DailyTokenCap = 1000
+	if got := reopened.Count(now); got != 2 {
+		t.Fatalf("Count after reopen = %d, want 2", got)
+	}
+	if got := reopened.Tokens(now); got != 1000 {
+		t.Fatalf("Tokens after reopen = %d, want 1000", got)
+	}
+	if _, ok := reopened.data.Seen["ISS-3"]; ok {
+		t.Fatal("refused claim recorded in the seen set")
+	}
+	if err := reopened.Claim("ISS-3", "st", now); !errors.Is(err, ErrAutoFixDailyTokenCap) {
+		t.Fatalf("claim at the token cap after reopen: got %v, want ErrAutoFixDailyTokenCap", err)
+	}
+	// ISS-3 was never claimed, so it still claims the next day.
+	day2 := now.Add(24 * time.Hour)
+	if err := reopened.Claim("ISS-3", "st", day2); err != nil {
+		t.Fatalf("ISS-3 the next day: %v", err)
+	}
+	if got := reopened.Count(day2); got != 1 {
+		t.Fatalf("next-day Count = %d, want 1", got)
+	}
+}
+
+// TestAutoFixStateTokenCapIsConfigurationNotState pins that DailyTokenCap is
+// configuration, not persisted state: the file keeps the usage, and the cap
+// is enforced after a restart only because the owner sets it again from
+// config after open (cli/webhook.go:196).
+func TestAutoFixStateTokenCapIsConfigurationNotState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+	s := openState(t, path, 10)
+	s.DailyTokenCap = 1000
+	if err := s.Claim("ISS-1", "st", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(1000, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen without setting DailyTokenCap by hand: the usage survives, the
+	// cap does not.
+	reopened := openState(t, path, 10)
+	if reopened.DailyTokenCap != 0 {
+		t.Fatalf("DailyTokenCap after reopen = %d, want 0 (configuration, not state)", reopened.DailyTokenCap)
+	}
+	if got := reopened.Tokens(now); got != 1000 {
+		t.Fatalf("Tokens after reopen = %d, want 1000", got)
+	}
+	// With no cap configured, the persisted usage refuses nothing.
+	if err := reopened.Claim("ISS-2", "st", now); err != nil {
+		t.Fatalf("claim with no cap configured: %v", err)
+	}
+	// Once the owner configures the cap again, the persisted usage enforces
+	// it. This is how the cap survives a restart.
+	reopened.DailyTokenCap = 1000
+	if err := reopened.Claim("ISS-3", "st", now); !errors.Is(err, ErrAutoFixDailyTokenCap) {
+		t.Fatalf("claim after the cap is reconfigured: got %v, want ErrAutoFixDailyTokenCap", err)
+	}
+}
+
+// TestAutoFixStateClaimStartsNewTokenDay pins the rollover where the first
+// call of the new day is a Claim, with no AddTokens before it: the new day
+// starts at zero tokens and the claim succeeds even though the previous day
+// ended at the cap.
+func TestAutoFixStateClaimStartsNewTokenDay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	day1 := time.Date(2026, 11, 17, 23, 50, 0, 0, time.UTC)
+	day2 := day1.Add(20 * time.Minute) // 00:10 UTC the next day
+
+	s := openState(t, path, 5)
+	s.DailyTokenCap = 50
+	if err := s.Claim("ISS-1", "st", day1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(50, day1); err != nil {
+		t.Fatal(err)
+	}
+	// Day 1 is at the token cap. The first call of day 2 is this Claim.
+	if err := s.Claim("ISS-2", "st", day2); err != nil {
+		t.Fatalf("first claim of day 2: %v", err)
+	}
+	if got := s.Tokens(day2); got != 0 {
+		t.Fatalf("day-2 Tokens = %d, want 0", got)
+	}
+	if got := s.Count(day2); got != 1 {
+		t.Fatalf("day-2 Count = %d, want 1", got)
+	}
+	// The rollover is what reaches disk.
+	reopened := openState(t, path, 5)
+	if got := reopened.Tokens(day2); got != 0 {
+		t.Fatalf("day-2 Tokens after reopen = %d, want 0", got)
+	}
+	if got := reopened.Count(day2); got != 1 {
+		t.Fatalf("day-2 Count after reopen = %d, want 1", got)
+	}
+}
+
+// TestAutoFixStateConcurrentAddTokensAndClaim races AddTokens and Claim on
+// one handle (run under -race): the final token total is exactly the sum of
+// the successful charges, and the count is the number of successful claims.
+func TestAutoFixStateConcurrentAddTokensAndClaim(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 100)
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	charged, wins := 0, 0
+	for i := 1; i <= 30; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			if err := s.AddTokens(n, now); err == nil {
+				mu.Lock()
+				charged += n
+				mu.Unlock()
+			}
+		}(i)
+	}
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			if err := s.Claim(fmt.Sprintf("ISS-%d", n), "st", now); err == nil {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if got := s.Tokens(now); got != charged {
+		t.Fatalf("Tokens after concurrent use = %d, want %d (sum of successful charges)", got, charged)
+	}
+	if got := s.Count(now); got != wins {
+		t.Fatalf("Count after concurrent use = %d, want %d (successful claims)", got, wins)
+	}
+}
+
+// TestAutoFixStateZeroTokenCapAcrossRollover pins that a zero DailyTokenCap
+// never refuses a claim, on either side of a UTC rollover and whatever usage
+// is charged. A negative cap cannot arrive from config
+// (internal/registry/config.go:2091 rejects it); set directly, it reads as no
+// cap, not as a cap already exceeded.
+func TestAutoFixStateZeroTokenCapAcrossRollover(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	day1 := time.Date(2026, 11, 17, 22, 0, 0, 0, time.UTC)
+	s := openState(t, path, 10)
+	s.DailyTokenCap = 0 // zero is no cap
+	if err := s.AddTokens(1<<40, day1); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"ISS-1", "ISS-2", "ISS-3"} {
+		if err := s.Claim(id, "st", day1.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatalf("day-1 claim %s: %v", id, err)
+		}
+	}
+	day2 := day1.Add(3 * time.Hour) // 01:00 UTC the next day
+	if err := s.AddTokens(1<<40, day2); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"ISS-4", "ISS-5", "ISS-6"} {
+		if err := s.Claim(id, "st", day2.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatalf("day-2 claim %s: %v", id, err)
+		}
+	}
+	s.DailyTokenCap = -1
+	if err := s.Claim("ISS-7", "st", day2.Add(time.Hour)); err != nil {
+		t.Fatalf("claim with a negative cap: %v", err)
 	}
 }
 
