@@ -166,7 +166,7 @@ func TestSummaryDefaultOpen_RefusesSymlinkedReconciledDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(reviewDir, 0o750))
 	outside := filepath.Join(root, "outside")
 	writeRegularSummary(t, outside)
-	require.NoError(t, os.Symlink(filepath.Join(outside, "reconciled"), filepath.Join(reviewDir, "reconciled")))
+	require.NoError(t, os.Symlink(filepath.Join("..", "outside", "reconciled"), filepath.Join(reviewDir, "reconciled")))
 
 	const runID = "2026-08-04T10:00:00Z-multi-agent"
 	at, oversized := readSummary(reviewDir, defaultBackfillSeams().open, slog.Default())
@@ -184,4 +184,39 @@ func TestSummaryDefaultOpen_RefusesSymlinkedReconciledDir(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(reviewDir, "reconciled")))
 	writeRegularSummary(t, reviewDir)
 	assert.True(t, reviewDirOwnsRun(reviewDir, runID), "control: a real reconciled/ owns the run")
+}
+
+// TD 088dae89858474f8 (review follow-up) — a reconciled/ that is a symlink owns
+// nothing even when it resolves to a directory INSIDE the review: the summary
+// must be the review's own reconciled/summary.json, not one reached by a link.
+func TestSummaryDefaultOpen_RefusesInReviewSymlinkedReconciledDir(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeRegularSummary(t, filepath.Join(reviewDir, "actual"))
+	// Relative: os.Root refuses an absolute link target outright, which would
+	// pass this test without the guard.
+	require.NoError(t, os.Symlink(filepath.Join("actual", "reconciled"), filepath.Join(reviewDir, "reconciled")))
+
+	const runID = "2026-08-04T10:00:00Z-multi-agent"
+	at, _ := readSummary(reviewDir, defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a reconciled/ symlink owns nothing, wherever it leads")
+	assert.False(t, (&ownershipCache{}).owns(reviewDir, runID))
+	assert.False(t, reviewDirOwnsRun(reviewDir, runID))
+}
+
+// The summary is opened under a root of reconciled/ itself, not of the review
+// dir: a summary.json swapped for a symlink to another file in the review after
+// the Lstat must not be read through the pass's default opener.
+func TestReadSummary_SymlinkSwappedInAfterLstatStaysInReconciled(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeRegularSummary(t, reviewDir)
+	elsewhere := filepath.Join(reviewDir, "elsewhere.json")
+	require.NoError(t, os.WriteFile(elsewhere, []byte(summaryJSON), 0o600))
+	open := func(dir *os.Root, name string) (*os.File, error) {
+		require.NoError(t, dir.Remove(name))
+		require.NoError(t, os.Symlink(filepath.Join("..", filepath.Base(elsewhere)), filepath.Join(dir.Name(), name)))
+		return defaultBackfillSeams().open(dir, name)
+	}
+
+	at, _ := readSummary(reviewDir, open, slog.Default())
+	assert.Empty(t, at, "a summary.json symlink leading out of reconciled/ owns nothing")
 }
