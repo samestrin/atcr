@@ -1,0 +1,1 @@
+- `atcr review --auto-fix` reports `auto-fix: token usage unavailable` instead of a zero `atcr-auto-fix-usage:` line when the pool summary lists no agents or carries the fan-out failure marker, so the webhook daemon logs such a job as unknown spend rather than charging it zero tokens against the caps (epic 135 T2).
