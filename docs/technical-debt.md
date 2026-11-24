@@ -1186,9 +1186,13 @@ its tag cannot be read or records a different id — is reported as a warning,
 in the human output and in the `warnings` list of `--json` (an empty list when
 there is nothing to warn about). Each human warning line names the remote
 beside the ref. Every other lock is still listed: one bad ref never hides the
-rest, and the listing still succeeds. Only a remote that cannot be read at all
-fails the listing. Inspect or delete a warned-about ref with git; `locks` itself
-never changes a ref.
+rest, and the listing still succeeds. Only a remote that cannot be reached
+fails the listing; when the remote is reachable but objects can no longer be
+fetched, the affected refs are warnings even if that is every ref — including a
+store's only lock ref. The per-ref retry after a failed batch fetch shares one
+timeout budget across the whole sweep, so a slow remote cannot stall the
+listing for one timeout per ref. Inspect or delete a warned-about ref with git;
+`locks` itself never changes a ref.
 
 A flag is a prompt to ask the holder, nothing more. `locks` only reads: it does
 not check whether the holder is still working, and it never frees a lock. To

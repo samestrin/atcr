@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -402,10 +404,14 @@ func TestItemLockList_UnreachableRemoteIsError(t *testing.T) {
 	require.ErrorContains(t, err, "read locks from origin")
 }
 
-// A remote whose refs can be listed but whose objects cannot be fetched is
-// still an error on both the listing and the mutation path: no lock can be
-// read at all. The ref here names an object the remote no longer has.
-func TestItemLockList_UnfetchableRemoteIsError(t *testing.T) {
+// Epic 127 F1 replaces the listing half of TestItemLockList_UnfetchableRemoteIsError:
+// the remote's refs can be listed, so it is reachable, and a ref whose object
+// can no longer be fetched is a warning even when it is the only ref. This is a
+// change of the documented rule, not a weakening: the bad ref must still be
+// shown, by name, and the mutation path must still refuse to act on it. The
+// dead-remote error guarantee is pinned by
+// TestItemLockList_ConnectivityFailureIsErrorAndSkipsPerRefSweep.
+func TestItemLockList_UnfetchableRemoteObjectsWarnAndUnlockStillErrors(t *testing.T) {
 	remote, stores := itemLockRemote(t, 1)
 	itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
 	itemLockGit(t, remote, "update-ref", ItemLockRef("TD-001"), "HEAD")
@@ -417,10 +423,18 @@ func TestItemLockList_UnfetchableRemoteIsError(t *testing.T) {
 	for _, e := range entries {
 		require.NoError(t, os.RemoveAll(filepath.Join(objects, e.Name())))
 	}
-	_, _, err = ItemLocker{Dir: stores[0]}.List(context.Background())
-	require.ErrorContains(t, err, "read locks from origin")
+	locks, warnings, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.NoError(t, err, "a reachable remote with an unfetchable ref warns; it does not fail the listing")
+	require.Empty(t, locks)
+	require.Len(t, warnings, 1)
+	require.Equal(t, ItemLockRef("TD-001"), warnings[0].Ref)
+	require.Equal(t, "origin", warnings[0].Remote)
+	require.NotEmpty(t, warnings[0].Reason)
 	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(context.Background(), []string{"TD-001"})
-	require.ErrorContains(t, err, "read locks from origin")
+	// Assert the refusal cause, not just the id: the strict path must name the
+	// unreadable lock, never silently drop it and report it as not locked.
+	require.ErrorContains(t, err, "read lock TD-001")
+	require.NotErrorIs(t, err, ErrItemNotLocked)
 }
 
 // Epic 122 T4 (owner decision 2026-11-18) replaces TestItemLockList_ForeignRefNameIsError:
@@ -578,10 +592,15 @@ func TestItemLockList_UnfetchableRefObjectIsWarningAndGoodLocksStillListed(t *te
 	}
 }
 
-// When every ref's fetch fails the remote itself cannot be read, and the
-// listing is still an error: leniency is per bad ref, not per dead remote
-// (row 485c4410f55dc612, plan: "still returning the error when every ref fails").
-func TestItemLockList_AllRefsUnfetchableIsError(t *testing.T) {
+// Epic 127 F1 replaces TestItemLockList_AllRefsUnfetchableIsError: the remote
+// here is reachable (its refs list fine), so every ref's failed fetch is
+// ref-class and each ref is a warning, at any N. The old all-fail error rule
+// was the N=1 degeneration F1 fixes, applied at N=2; the dead-remote error
+// guarantee is pinned by
+// TestItemLockList_ConnectivityFailureIsErrorAndSkipsPerRefSweep. This is a
+// change of the documented rule, not a weakening: both bad refs must still be
+// shown, by name.
+func TestItemLockList_AllRefsUnfetchableObjectsAreWarnings(t *testing.T) {
 	remote, stores := itemLockRemote(t, 1)
 	// The refs name objects made on the remote and deleted there, so the clone
 	// holds no copy: every fetch, batch or per-ref, must fail.
@@ -594,8 +613,16 @@ func TestItemLockList_AllRefsUnfetchableIsError(t *testing.T) {
 		itemLockGit(t, remote, "update-ref", ItemLockRef(id), sha)
 		removeRemoteObject(t, remote, sha)
 	}
-	_, _, err := ItemLocker{Dir: stores[0]}.List(context.Background())
-	require.ErrorContains(t, err, "read locks from origin")
+	locks, warnings, err := ItemLocker{Dir: stores[0]}.List(context.Background())
+	require.NoError(t, err, "a reachable remote warns per unfetchable ref, even when that is every ref")
+	require.Empty(t, locks)
+	require.Len(t, warnings, 2)
+	require.Equal(t, ItemLockRef("TD-001"), warnings[0].Ref)
+	require.Equal(t, ItemLockRef("TD-002"), warnings[1].Ref)
+	for _, w := range warnings {
+		require.Equal(t, "origin", w.Remote)
+		require.NotEmpty(t, w.Reason)
+	}
 }
 
 // The per-ref fallback must not leak leniency into the mutation paths: an
@@ -616,4 +643,180 @@ func TestItemUnlock_OneUnfetchableRefIsStillError(t *testing.T) {
 	_, err = ItemLocker{Dir: stores[0], Holder: "alice"}.Unlock(ctx, []string{"TD-001", "TD-002"})
 	require.ErrorContains(t, err, "read lock TD-002")
 	require.Equal(t, before, itemLockGit(t, remote, "for-each-ref", "--format=%(refname)", "refs/atcr/"), "nothing was unlocked")
+}
+
+// Epic 127 F1, finding 1: a store with exactly one lock ref whose object cannot
+// be fetched must warn, not error. The remote is reachable (its refs listed
+// fine), so the failure is ref-class; the old len(fetchFailed) == len(ids) rule
+// degenerated at N=1 and failed the whole listing.
+func TestItemLockList_SingleUnfetchableRefIsWarning(t *testing.T) {
+	badRef := ItemLockRef("TD-001")
+	cases := map[string]func(t *testing.T, remote, sha string){
+		"missing object": func(t *testing.T, remote, sha string) {
+			t.Helper()
+			removeRemoteObject(t, remote, sha)
+		},
+		"corrupt object": func(t *testing.T, remote, sha string) {
+			t.Helper()
+			removeRemoteObject(t, remote, sha)
+			require.NoError(t, os.WriteFile(filepath.Join(remote, ".git", "objects", sha[:2], sha[2:]), []byte("not zlib"), 0o644))
+		},
+	}
+	for name, damage := range cases {
+		t.Run(name, func(t *testing.T) {
+			remote, stores := itemLockRemote(t, 1)
+			ctx := context.Background()
+			// The sole ref names an object made on the remote and deleted
+			// there, so the clone holds no copy and its fetch cannot succeed.
+			itemLockGit(t, remote, "commit", "-q", "--allow-empty", "-m", "x")
+			sha := itemLockGit(t, remote, "rev-parse", "HEAD")
+			itemLockGit(t, remote, "update-ref", badRef, sha)
+			damage(t, remote, sha)
+
+			locks, warnings, err := ItemLocker{Dir: stores[0]}.List(ctx)
+			require.NoError(t, err, "the only ref being unfetchable is a warning: the remote was reachable")
+			require.Empty(t, locks)
+			require.Len(t, warnings, 1)
+			require.Equal(t, badRef, warnings[0].Ref)
+			require.Equal(t, "origin", warnings[0].Remote)
+			require.NotEmpty(t, warnings[0].Reason)
+		})
+	}
+}
+
+// itemLockGitStub replaces gitexec.CommandContextFn with a call-recording fake
+// (the seam pattern of cli/verify_diff_test.go): respond scripts each call's
+// stdout, stderr, exit code and an optional sleep, so failure classes that real
+// git cannot produce deterministically (a remote that dies between ls-remote
+// and fetch, a hung fetch) are exercised without a network. It returns the
+// recorded argv of every call, in order.
+func itemLockGitStub(t *testing.T, respond func(args []string) (stdout, stderr string, exitCode int, sleep time.Duration)) *[][]string {
+	t.Helper()
+	var calls [][]string
+	orig := gitexec.CommandContextFn
+	gitexec.CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
+		stdout, stderr, code, sleep := respond(arg)
+		calls = append(calls, append([]string(nil), arg...))
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestItemLockGitStubProcess$", "--")
+		cmd.Env = append(os.Environ(),
+			"ATCR_ITEMLOCK_GIT_STUB=1",
+			"ATCR_ITEMLOCK_GIT_STUB_STDOUT="+stdout,
+			"ATCR_ITEMLOCK_GIT_STUB_STDERR="+stderr,
+			"ATCR_ITEMLOCK_GIT_STUB_EXIT="+strconv.Itoa(code),
+			"ATCR_ITEMLOCK_GIT_STUB_SLEEP="+sleep.String(),
+		)
+		return cmd
+	}
+	t.Cleanup(func() { gitexec.CommandContextFn = orig })
+	return &calls
+}
+
+// TestItemLockGitStubProcess is the helper process itemLockGitStub re-executes:
+// it prints the scripted output and exits with the scripted code. In a normal
+// test run the marker env is absent and it skips.
+func TestItemLockGitStubProcess(t *testing.T) {
+	if os.Getenv("ATCR_ITEMLOCK_GIT_STUB") != "1" {
+		t.Skip("helper process for itemLockGitStub, not a test")
+	}
+	if d, err := time.ParseDuration(os.Getenv("ATCR_ITEMLOCK_GIT_STUB_SLEEP")); err == nil && d > 0 {
+		time.Sleep(d)
+	}
+	_, _ = os.Stdout.WriteString(os.Getenv("ATCR_ITEMLOCK_GIT_STUB_STDOUT"))
+	_, _ = os.Stderr.WriteString(os.Getenv("ATCR_ITEMLOCK_GIT_STUB_STDERR"))
+	code, _ := strconv.Atoi(os.Getenv("ATCR_ITEMLOCK_GIT_STUB_EXIT"))
+	os.Exit(code)
+}
+
+// itemLockStubRefs is ls-remote output for one lock ref per id, all naming the
+// same (fake) tag object: the stub never fetches it for real.
+func itemLockStubRefs(ids ...string) string {
+	var b strings.Builder
+	for _, id := range ids {
+		b.WriteString(strings.Repeat("a", 40) + "\t" + ItemLockRef(id) + "\n")
+	}
+	return b.String()
+}
+
+// Epic 127 F1, finding 2: a connectivity-class failure must not run one fetch
+// per ref. The remote lists its refs (the listing's first ls-remote succeeds),
+// then becomes unreachable: the batch fetch fails, the control probe fails, and
+// the listing errors without any per-ref sweep.
+func TestItemLockList_ConnectivityFailureIsErrorAndSkipsPerRefSweep(t *testing.T) {
+	refsOut := itemLockStubRefs("TD-001", "TD-002", "TD-003")
+	const connErr = "fatal: unable to access 'origin/': Could not resolve host: example.invalid"
+	lsRemoteCalls := 0
+	calls := itemLockGitStub(t, func(args []string) (string, string, int, time.Duration) {
+		switch args[0] {
+		case "rev-parse":
+			return ".git", "", 0, 0
+		case "remote":
+			return "origin", "", 0, 0
+		case "ls-remote":
+			lsRemoteCalls++
+			if lsRemoteCalls == 1 {
+				return refsOut, "", 0, 0
+			}
+			return "", connErr, 128, 0
+		case "fetch":
+			return "", connErr, 128, 0
+		}
+		return "", "", 0, 0
+	})
+	_, _, err := ItemLocker{Dir: t.TempDir()}.List(context.Background())
+	require.ErrorContains(t, err, "read locks from origin")
+	fetches := 0
+	for _, c := range *calls {
+		if c[0] == "fetch" {
+			fetches++
+		}
+	}
+	require.Equal(t, 1, fetches, "a connectivity-class failure must stop at the batch fetch, not run N per-ref fetches")
+	require.Equal(t, 2, lsRemoteCalls, "the listing's ls-remote plus one control probe")
+}
+
+// Epic 127 F1, finding 2: the per-ref sweep shares one timeout budget, not one
+// timeout per ref. Two refs, a reachable remote, and every per-ref fetch hung:
+// the first fetch consumes the whole sweep budget, the second is never started,
+// and both refs come back as warnings.
+func TestItemLockList_PerRefSweepSharesOneDeadline(t *testing.T) {
+	const timeout = 250 * time.Millisecond
+	refsOut := itemLockStubRefs("TD-001", "TD-002")
+	fetchCalls := 0
+	calls := itemLockGitStub(t, func(args []string) (string, string, int, time.Duration) {
+		switch args[0] {
+		case "rev-parse":
+			return ".git", "", 0, 0
+		case "remote":
+			return "origin", "", 0, 0
+		case "ls-remote":
+			return refsOut, "", 0, 0
+		case "fetch":
+			fetchCalls++
+			if fetchCalls == 1 {
+				// The batch fetch fails fast: a ref the remote cannot serve.
+				return "", "fatal: git upload-pack: not our ref", 128, 0
+			}
+			// Every per-ref fetch hangs far past the sweep budget.
+			return "", "", 0, 10 * time.Second
+		}
+		return "", "", 0, 0
+	})
+	start := time.Now()
+	locks, warnings, err := ItemLocker{Dir: t.TempDir(), Timeout: timeout}.List(context.Background())
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.Empty(t, locks)
+	require.Len(t, warnings, 2)
+	require.Equal(t, ItemLockRef("TD-001"), warnings[0].Ref)
+	require.Contains(t, warnings[0].Reason, "timed out")
+	require.Equal(t, ItemLockRef("TD-002"), warnings[1].Ref)
+	require.Contains(t, warnings[1].Reason, "per-ref fetch sweep", "the ref left unfetched when the shared budget ran out is still shown")
+	fetches := 0
+	for _, c := range *calls {
+		if c[0] == "fetch" {
+			fetches++
+		}
+	}
+	require.Equal(t, 2, fetches, "batch fetch plus one per-ref fetch: the second per-ref fetch must not start after the shared deadline")
+	require.Less(t, elapsed, 5*time.Second, "the sweep must be bounded by one shared timeout, not one per ref")
 }

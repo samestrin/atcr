@@ -386,8 +386,17 @@ func fetchItemLocks(ctx context.Context, g itemLockRunner, remote string, found 
 // still returned. found maps id to tag object as listItemLockRefs returns it.
 // A ref whose fetch fails is also a warning: one ref the remote can no longer
 // serve fails the whole batch fetch, so a failed batch is retried one fetch
-// per ref (epic 127 T2, row 485c4410f55dc612). Only when every ref's fetch
-// fails is that an error: the remote itself is unreadable, nothing can be read.
+// per ref (epic 127 T2, row 485c4410f55dc612).
+//
+// A failed batch is first told apart from a dead remote by a control probe
+// (epic 127 F1): the same ls-remote that already listed the refs. If the probe
+// fails, the remote has become unreachable — a connectivity-class failure —
+// and that is an error without any per-ref sweep. If the probe succeeds, the
+// remote is reachable, so every per-ref failure is ref-class and becomes a
+// warning, even when that is every ref, including a store's only ref. The
+// sweep shares one timeout budget across all its fetches, so its worst case
+// is one timeout, not one per ref; a ref left unfetched when the budget runs
+// out is a warning too, never a silent drop.
 func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string, found map[string]string) (map[string]remoteItemLock, []ItemLockWarning, error) {
 	ids := make([]string, 0, len(found))
 	for id := range found {
@@ -405,18 +414,29 @@ func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string,
 	var warnings []ItemLockWarning
 	fetchFailed := map[string]string{}
 	if _, _, err := g.run(ctx, "", append([]string{"fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote}, fetch...)...); err != nil {
-		// One ref the remote can no longer serve (deleted or corrupt object)
-		// fails the whole batch fetch. Retry one fetch per ref so that ref
-		// alone becomes a warning and every readable lock is still listed.
+		// Control probe: the listing already reached the remote (ls-remote
+		// listed these refs), so re-run that same call to tell a remote that
+		// has since become unreachable from refs it can no longer serve. A
+		// failed probe is connectivity-class: report the batch error, which
+		// names the remote and the first cause, and run no per-ref sweep.
+		if _, _, perr := g.run(ctx, "", "ls-remote", "--refs", remote, ItemLockRefPrefix+"*"); perr != nil {
+			return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
+		}
+		// The remote is reachable, so one ref the remote can no longer serve
+		// (deleted or corrupt object) fails the whole batch fetch. Retry one
+		// fetch per ref so that ref alone becomes a warning and every readable
+		// lock is still listed. One shared deadline bounds the whole sweep;
+		// each fetch also keeps its own per-call timeout, whichever is sooner.
+		sweepCtx, cancel := context.WithTimeout(ctx, g.timeout)
+		defer cancel()
 		for _, id := range ids {
-			if _, _, ferr := g.run(ctx, "", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, ItemLockRef(id)); ferr != nil {
+			if sweepCtx.Err() != nil {
+				fetchFailed[id] = fmt.Sprintf("not fetched: the per-ref fetch sweep exceeded its %s budget", g.timeout)
+				continue
+			}
+			if _, _, ferr := g.run(sweepCtx, "", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, ItemLockRef(id)); ferr != nil {
 				fetchFailed[id] = ferr.Error()
 			}
-		}
-		if len(fetchFailed) == len(ids) {
-			// Every fetch failed: the remote itself is unreadable. Report the
-			// batch error, which names the remote and the first cause.
-			return nil, nil, fmt.Errorf("read locks from %s: %w", remote, err)
 		}
 	}
 	for _, id := range ids {
