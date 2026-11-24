@@ -1493,9 +1493,9 @@ func TestBackfillJustifications_ReadsEachReviewDirSummaryOnce(t *testing.T) {
 
 	opens := map[string]int{}
 	seams := defaultBackfillSeams()
-	seams.open = func(name string) (*os.File, error) {
-		opens[name]++
-		return os.Open(name)
+	seams.open = func(dir *os.Root, name string) (*os.File, error) {
+		opens[filepath.Join(dir.Name(), name)]++
+		return dir.Open(name)
 	}
 
 	target := filepath.Join(root, "elsewhere", "review.md")
@@ -1542,7 +1542,7 @@ func TestReadReconciledAt_OversizedLogsAtDebug(t *testing.T) {
 	body := `{"reconciled_at":"2026-08-04T10:00:00Z"}` + strings.Repeat(" ", maxSummaryBytes)
 	rawSummary(body)(t, reviewDir)
 
-	assert.Empty(t, readReconciledAt(reviewDir, os.Open, log))
+	assert.Empty(t, readReconciledAt(reviewDir, (*os.Root).Open, log))
 	out := buf.String()
 	assert.Contains(t, out, "level=DEBUG")
 	assert.Contains(t, out, filepath.Join(reviewDir, "reconciled", "summary.json"))
@@ -1708,13 +1708,13 @@ func TestBackfillJustifications_ZeroValueSeamsDoNotPanic(t *testing.T) {
 func TestReadSummary_ReadErrorIsTreatedAsAbsent(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
-	openDir := func(name string) (*os.File, error) { return os.Open(filepath.Dir(name)) }
+	openDir := func(dir *os.Root, _ string) (*os.File, error) { return dir.Open(".") }
 
 	at, oversized := readSummary(reviewDir, openDir, slog.Default())
 	assert.Empty(t, at, "a summary that cannot be read carries no reconciled_at")
 	assert.False(t, oversized, "a read error is not an oversized skip")
 
-	openWriteOnly := func(name string) (*os.File, error) { return os.OpenFile(name, os.O_WRONLY, 0) }
+	openWriteOnly := func(dir *os.Root, name string) (*os.File, error) { return dir.OpenFile(name, os.O_WRONLY, 0) }
 	at, oversized = readSummary(reviewDir, openWriteOnly, slog.Default())
 	assert.Empty(t, at, "a regular handle that cannot be read carries no reconciled_at")
 	assert.False(t, oversized, "a read error is not an oversized skip")
@@ -1732,8 +1732,8 @@ func TestReadSummary_ReadErrorIsTreatedAsAbsent(t *testing.T) {
 func TestReadSummary_StatErrorIsTreatedAsAbsent(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
-	openClosed := func(name string) (*os.File, error) {
-		f, err := os.Open(name)
+	openClosed := func(dir *os.Root, name string) (*os.File, error) {
+		f, err := dir.Open(name)
 		if err != nil {
 			return nil, err
 		}
@@ -1799,9 +1799,9 @@ func TestBackfillJustifications_SeamsAreCarriedPerPass(t *testing.T) {
 
 			opens := 0
 			seams := defaultBackfillSeams()
-			seams.open = func(name string) (*os.File, error) {
+			seams.open = func(dir *os.Root, name string) (*os.File, error) {
 				opens++
-				return os.Open(name)
+				return dir.Open(name)
 			}
 			res, err := backfillJustifications(store, filepath.Join(root, "reviews"), false, seams)
 			require.NoError(t, err)
@@ -1959,12 +1959,12 @@ func TestOwnershipCache_CountsAFileThatGrewPastTheCapAfterTheLstat(t *testing.T)
 	reviewDir := t.TempDir()
 	writeReconciledSummary(t, reviewDir, "2026-08-01T00:00:00Z")
 	path := filepath.Join(reviewDir, "reconciled", "summary.json")
-	c := &ownershipCache{open: func(name string) (*os.File, error) {
+	c := &ownershipCache{open: func(dir *os.Root, name string) (*os.File, error) {
 		// Grow the file between the Lstat and the read.
-		if err := os.WriteFile(name, []byte(strings.Repeat(" ", maxSummaryBytes+1)), 0o600); err != nil {
+		if err := dir.WriteFile(name, []byte(strings.Repeat(" ", maxSummaryBytes+1)), 0o600); err != nil {
 			return nil, err
 		}
-		return os.Open(name)
+		return dir.Open(name)
 	}}
 
 	assert.False(t, c.owns(reviewDir, "2026-08-01T00:00:00Z-"+filepath.Base(reviewDir)))

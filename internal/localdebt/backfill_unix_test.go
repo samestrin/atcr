@@ -55,12 +55,12 @@ func TestReviewDirOwnsRun_FIFOSummaryOwnsNothing(t *testing.T) {
 func TestReadSummary_FIFOSwappedInAfterLstatOwnsNothing(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	path := writeRegularSummary(t, reviewDir)
-	open := func(name string) (*os.File, error) {
-		require.NoError(t, os.Remove(name))
-		if err := syscall.Mkfifo(name, 0o600); err != nil {
+	open := func(dir *os.Root, name string) (*os.File, error) {
+		require.NoError(t, dir.Remove(name))
+		if err := syscall.Mkfifo(filepath.Join(dir.Name(), name), 0o600); err != nil {
 			t.Skipf("mkfifo unsupported: %v", err)
 		}
-		return defaultBackfillSeams().open(name)
+		return defaultBackfillSeams().open(dir, name)
 	}
 
 	type result struct {
@@ -93,7 +93,8 @@ func TestReadSummary_FIFOSwappedInAfterLstatOwnsNothing(t *testing.T) {
 func TestReadSummary_NonRegularHandleOwnsNothing(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	writeRegularSummary(t, reviewDir)
-	open := func(name string) (*os.File, error) {
+	open := func(dir *os.Root, base string) (*os.File, error) {
+		name := filepath.Join(dir.Name(), base)
 		require.NoError(t, os.Remove(name))
 		if err := syscall.Mkfifo(name, 0o600); err != nil {
 			t.Skipf("mkfifo unsupported: %v", err)
@@ -126,8 +127,8 @@ func TestReadSummary_NonRegularHandleOwnsNothing(t *testing.T) {
 }
 
 // TD db483cca5f54a5d2 — the default summary opener refuses a symlink at the open
-// (O_NOFOLLOW on unix), so a link swapped in after the Lstat cannot redirect the
-// read. Every default-open path owes this: the seams default, the ownershipCache
+// that resolves outside reconciled/ (the os.Root it opens under), so a link
+// swapped in after the Lstat cannot redirect the read. Every default-open path owes this: the seams default, the ownershipCache
 // zero value, and the uncached reviewDirOwnsRun wrapper.
 func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
@@ -137,7 +138,10 @@ func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 	link := filepath.Join(reviewDir, "reconciled", "summary.json")
 	require.NoError(t, os.Symlink(target, link))
 
-	f, err := defaultBackfillSeams().open(link)
+	dir, err := os.OpenRoot(filepath.Dir(link))
+	require.NoError(t, err)
+	defer func() { _ = dir.Close() }()
+	f, err := defaultBackfillSeams().open(dir, filepath.Base(link))
 	if f != nil {
 		_ = f.Close()
 	}
@@ -148,4 +152,71 @@ func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 		"the cache's default open must refuse a symlinked summary.json")
 	assert.False(t, reviewDirOwnsRun(reviewDir, runID),
 		"the uncached wrapper's default open must refuse a symlinked summary.json")
+}
+
+// TD 088dae89858474f8 — the default summary opener's O_NOFOLLOW guards only the
+// last path component, so a reconciled/ that is itself a symlink to a directory
+// outside the review dir was followed, and a summary.json there attributed the
+// run to this review. Every default-open path must refuse it: the seams
+// default, the ownershipCache zero value, and the uncached reviewDirOwnsRun
+// wrapper. The control proves the same summary owns the run once it is real.
+func TestSummaryDefaultOpen_RefusesSymlinkedReconciledDir(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "multi-agent")
+	require.NoError(t, os.MkdirAll(reviewDir, 0o750))
+	outside := filepath.Join(root, "outside")
+	writeRegularSummary(t, outside)
+	require.NoError(t, os.Symlink(filepath.Join("..", "outside", "reconciled"), filepath.Join(reviewDir, "reconciled")))
+
+	const runID = "2026-08-04T10:00:00Z-multi-agent"
+	at, oversized := readSummary(reviewDir, defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a summary.json reached through a symlinked reconciled/ owns nothing")
+	assert.False(t, oversized)
+	assert.False(t, (&ownershipCache{}).owns(reviewDir, runID),
+		"the cache's default open must refuse a symlinked reconciled/")
+	assert.False(t, reviewDirOwnsRun(reviewDir, runID),
+		"the uncached wrapper's default open must refuse a symlinked reconciled/")
+
+	at, oversized = readSummary(filepath.Join(root, "missing"), defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a review dir that cannot be opened as a root owns nothing")
+	assert.False(t, oversized)
+
+	require.NoError(t, os.Remove(filepath.Join(reviewDir, "reconciled")))
+	writeRegularSummary(t, reviewDir)
+	assert.True(t, reviewDirOwnsRun(reviewDir, runID), "control: a real reconciled/ owns the run")
+}
+
+// TD 088dae89858474f8 (review follow-up) — a reconciled/ that is a symlink owns
+// nothing even when it resolves to a directory INSIDE the review: the summary
+// must be the review's own reconciled/summary.json, not one reached by a link.
+func TestSummaryDefaultOpen_RefusesInReviewSymlinkedReconciledDir(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeRegularSummary(t, filepath.Join(reviewDir, "actual"))
+	// Relative: os.Root refuses an absolute link target outright, which would
+	// pass this test without the guard.
+	require.NoError(t, os.Symlink(filepath.Join("actual", "reconciled"), filepath.Join(reviewDir, "reconciled")))
+
+	const runID = "2026-08-04T10:00:00Z-multi-agent"
+	at, _ := readSummary(reviewDir, defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a reconciled/ symlink owns nothing, wherever it leads")
+	assert.False(t, (&ownershipCache{}).owns(reviewDir, runID))
+	assert.False(t, reviewDirOwnsRun(reviewDir, runID))
+}
+
+// The summary is opened under a root of reconciled/ itself, not of the review
+// dir: a summary.json swapped for a symlink to another file in the review after
+// the Lstat must not be read through the pass's default opener.
+func TestReadSummary_SymlinkSwappedInAfterLstatStaysInReconciled(t *testing.T) {
+	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
+	writeRegularSummary(t, reviewDir)
+	elsewhere := filepath.Join(reviewDir, "elsewhere.json")
+	require.NoError(t, os.WriteFile(elsewhere, []byte(summaryJSON), 0o600))
+	open := func(dir *os.Root, name string) (*os.File, error) {
+		require.NoError(t, dir.Remove(name))
+		require.NoError(t, os.Symlink(filepath.Join("..", filepath.Base(elsewhere)), filepath.Join(dir.Name(), name)))
+		return defaultBackfillSeams().open(dir, name)
+	}
+
+	at, _ := readSummary(reviewDir, open, slog.Default())
+	assert.Empty(t, at, "a summary.json symlink leading out of reconciled/ owns nothing")
 }
