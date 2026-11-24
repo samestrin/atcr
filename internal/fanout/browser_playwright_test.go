@@ -509,6 +509,21 @@ func TestPlaywrightRunShell_CreateOrAppendFollowsTheArchive(t *testing.T) {
 	}
 }
 
+// TestPlaywrightRunShell_DisablesMacMetadata: macOS's bsdtar packs an AppleDouble
+// "._" entry beside each file that carries extended attributes unless
+// COPYFILE_DISABLE=1 is set, which doubled the packed entries past the cap. The
+// fake tar refuses any call without it, so the shell must export it to every tar.
+func TestPlaywrightRunShell_DisablesMacMetadata(t *testing.T) {
+	dir, bin := t.TempDir(), t.TempDir()
+	writeFakeTool(t, bin, "tar", `[ "$COPYFILE_DISABLE" = 1 ] || { echo "tar: would pack AppleDouble ._ entries" >&2; exit 1; }
+exec "$real" "$@"
+`)
+	writeScreenshots(t, dir, 3)
+	if names, out := runPlaywrightShellWithBin(t, dir, bin); len(names) != 3 {
+		t.Fatalf("packed names = %q, want all 3 screenshots\n%s", names, out)
+	}
+}
+
 // TestPlaywrightRunShell_NoScreenshotsIsQuiet: a run that wrote no output
 // directory leaves no screenshots tar and prints nothing.
 func TestPlaywrightRunShell_NoScreenshotsIsQuiet(t *testing.T) {

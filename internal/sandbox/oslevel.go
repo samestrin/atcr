@@ -495,7 +495,7 @@ const loopbackDialTimeout = 500 * time.Millisecond
 // held-port check behind ErrOSLevelLoopbackPortHeld could not finish: the
 // host's addresses could not be listed, a probe at one of the host's own
 // addresses timed out (a firewall dropping the connect; zone-suffixed
-// link-local addresses excepted), or the run's context ended mid-check.
+// link-local addresses and tunnel interface addresses excepted), or the run's context ended mid-check.
 // The run is refused, as for a held port, because an unfinished check cannot
 // say the grant reaches nothing of the host's; the sentinel is separate so the
 // message does not claim a port was found in use.
@@ -513,12 +513,12 @@ var (
 // addresses: 127.0.0.1 and ::1, plus every interface address. It returns
 // ErrOSLevelLoopbackCheckUnavailable when it cannot finish: the addresses
 // cannot be listed, ctx ends, or a probe at any address but a zone-suffixed
-// link-local one times out. The probes run one after another, each bounded by
+// link-local one or one on a point-to-point (tunnel) interface times out. The probes run one after another, each bounded by
 // loopbackDialTimeout and by ctx. Under a firewall that drops traffic to the
 // host's own addresses rather than refusing it, the first such probe to time
 // out ends the check: a dropped connect says nothing about whether a host
-// service listens there. A link-local address that times out is not probed
-// again for later ports in the same call.
+// service listens there. A link-local or tunnel address that times out is not
+// probed again for later ports in the same call.
 //
 // The interface addresses are not belt-and-braces. Measured on the macOS CI
 // runner (PR #753): under a grant on port P the workload connected to a host
@@ -537,6 +537,10 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 		return nil
 	}
 	hosts := []string{"127.0.0.1", "::1"}
+	// offLo holds the host addresses a probe reaches through an interface
+	// rather than lo0: zone-suffixed link-local addresses and every address
+	// of a point-to-point (tunnel) interface. A timeout there is not local.
+	offLo := map[string]bool{}
 	ifaces, err := netInterfaces()
 	if err != nil {
 		// Without the address list the check cannot cover what the grant
@@ -557,12 +561,15 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 			if ipn.IP.To4() == nil && ipn.IP.IsLinkLocalUnicast() {
 				// An IPv6 link-local address is only dialable with its zone.
 				host += "%" + ifc.Name
+				offLo[host] = true
+			}
+			if ifc.Flags&net.FlagPointToPoint != 0 {
+				offLo[host] = true
 			}
 			hosts = append(hosts, host)
 		}
 	}
-	// dead holds the zone-suffixed link-local hosts that have timed out in this
-	// call. Each such probe costs the full loopbackDialTimeout and learns
+	// dead holds the offLo hosts that have timed out in this call. Each such probe costs the full loopbackDialTimeout and learns
 	// nothing, so later ports skip them.
 	dead := map[string]bool{}
 	for _, p := range ports {
@@ -593,8 +600,11 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 				// IPv6 link-local address timed out, because a scoped
 				// link-local dial leaves through its interface rather than
 				// lo0. Nothing on the host answers there, and the grant does
-				// not reach it.
-				if strings.Contains(host, "%") {
+				// not reach it. A point-to-point interface's own address is
+				// the same case: seen on a Mac with Tailscale (EST-8465), every
+				// probe to its utun address (fd7a:115c:...) timed out, since
+				// the dial goes into the tunnel rather than over lo0.
+				if offLo[host] {
 					dead[host] = true
 					continue
 				}

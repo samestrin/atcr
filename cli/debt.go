@@ -177,6 +177,11 @@ func debtStoreDir(cmd *cobra.Command) (string, error) {
 	return store, nil
 }
 
+// debtGetwdFn reads the working directory for debtRepoRoot. It is a package
+// var so a test can substitute a failing Getwd: removing the cwd does not make
+// os.Getwd fail on macOS, which answers from $PWD (mirrors the absFn seam).
+var debtGetwdFn = os.Getwd
+
 // debtRepoRoot finds the repository root for the debt store, using the marker
 // rules of the store's WRITER — literally, by calling the same predicate the
 // writer's validateRepoRoot calls (localdebt.HasRepoRootMarker): `.git` counts
@@ -197,7 +202,7 @@ func debtStoreDir(cmd *cobra.Command) (string, error) {
 // Lstat, matching repoRoot()'s hardening: a link pointing at an arbitrary
 // directory must not pass as a repository root, and git never creates one.
 func debtRepoRoot() (string, error) {
-	cwd, err := os.Getwd()
+	cwd, err := debtGetwdFn()
 	if err != nil {
 		return "", err
 	}
