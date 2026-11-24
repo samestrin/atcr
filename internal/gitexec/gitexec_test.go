@@ -2,6 +2,7 @@ package gitexec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -124,18 +125,16 @@ func TestFixtureCommandContext_RelativeDirIsAbsolutized(t *testing.T) {
 
 // TestFixtureCommandContext_PanicsWhenDirCannotBeResolved asserts a relative dir
 // that cannot be made absolute (the cwd is gone) panics instead of silently
-// running against the wrong directory.
+// running against the wrong directory. The failure is injected: a removed cwd
+// does not make os.Getwd fail on macOS, which answers from $PWD.
 //
-// It deletes the process cwd, which every goroutine shares, so this package's
-// tests stay serial: a parallel test running meanwhile would fail on ENOENT.
-// t.Chdir refuses a parallel caller, and TestPackageTestsStaySerial refuses a
-// t.Parallel anywhere in the package.
+// It swaps a package var, so this package's tests stay serial: a parallel test
+// running meanwhile would resolve its dir through the failing stub.
+// TestPackageTestsStaySerial refuses a t.Parallel anywhere in the package.
 func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
-	gone := t.TempDir()
-	t.Chdir(gone)
-	if err := os.Remove(gone); err != nil {
-		t.Skipf("cannot remove the cwd on this platform: %v", err)
-	}
+	orig := fixtureAbsFn
+	fixtureAbsFn = func(string) (string, error) { return "", errors.New("getwd: no such file or directory") }
+	t.Cleanup(func() { fixtureAbsFn = orig })
 	defer func() {
 		if recover() == nil {
 			t.Fatal("FixtureCommandContext did not panic on an unresolvable relative dir")
@@ -144,7 +143,7 @@ func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
 	FixtureCommandContext(context.Background(), "relative", "status")
 }
 
-// TestPackageTestsStaySerial keeps the precondition the cwd-deleting test above
+// TestPackageTestsStaySerial keeps the precondition the resolver-swapping test above
 // relies on: no test in this package runs in parallel.
 func TestPackageTestsStaySerial(t *testing.T) {
 	paths, err := filepath.Glob("*_test.go")
@@ -161,7 +160,7 @@ func TestPackageTestsStaySerial(t *testing.T) {
 			if call, ok := n.(*ast.CallExpr); ok {
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Parallel" {
 					t.Errorf("%s: a parallel test races TestFixtureCommandContext_PanicsWhenDirCannotBeResolved, "+
-						"which deletes the process cwd", fset.Position(call.Pos()))
+						"which swaps the fixture dir resolver", fset.Position(call.Pos()))
 				}
 			}
 			return true
