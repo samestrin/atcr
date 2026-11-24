@@ -3,9 +3,11 @@ package verify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 
@@ -139,6 +141,10 @@ func TestRunVerify_SkepticPromptSecretGuardOnTheWire(t *testing.T) {
 func TestFailureClass_SecretGuardBlocked(t *testing.T) {
 	res := fanout.Result{Status: fanout.StatusFailed, Err: errors.Join(errors.New("agent"), llmclient.ErrSecretGuardBlocked)}
 	assert.Equal(t, "secret_guard_blocked", failureClass(res))
+	// The form the engine returns: llmclient wraps the sentinel with %w and the
+	// agent loop wraps that again.
+	wrapped := fmt.Errorf("agent %q: %w", "rev", fmt.Errorf("%w: aws key; remove the credential or set secret_guard: redact", llmclient.ErrSecretGuardBlocked))
+	assert.Equal(t, "secret_guard_blocked", failureClass(fanout.Result{Status: fanout.StatusFailed, Err: wrapped}))
 	assert.Equal(t, "provider_error", failureClass(fanout.Result{Status: fanout.StatusFailed, Err: errors.New("boom")}))
 }
 
@@ -193,6 +199,7 @@ func TestGenerateFixes_AgentModePromptSecretGuardOnTheWire(t *testing.T) {
 // Epic 106.3 T1: the snippet-path executor prompt goes through
 // fanout.GuardOutbound before Complete: warn sends it unchanged, redact sends
 // the redacted text, block sends nothing and records a named FixWarning.
+// Not parallel: it captures os.Stderr to assert warn's warning.
 func TestGenerateFixes_SnippetPromptSecretGuard(t *testing.T) {
 	for _, policy := range []string{"", "warn", "redact", "block"} {
 		t.Run("policy="+policy, func(t *testing.T) {
@@ -200,7 +207,9 @@ func TestGenerateFixes_SnippetPromptSecretGuard(t *testing.T) {
 			reg.SecretGuard = policy
 			findings := secretFinding()
 			rec := &recordingExecutor{out: "rotate the key"}
-			generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+			stderr := captureStderr(t, func() {
+				generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+			})
 			switch policy {
 			case "block":
 				assert.Zero(t, rec.calls, "block sends nothing")
@@ -216,6 +225,9 @@ func TestGenerateFixes_SnippetPromptSecretGuard(t *testing.T) {
 				require.Equal(t, 1, rec.calls)
 				assert.Contains(t, rec.prompts[0], verifyAWSKey, "warn sends the prompt unchanged")
 				assert.Equal(t, "rotate the key", findings[0].Fix)
+				assert.Contains(t, stderr, "sent unchanged to", "warn must say the credential went out")
+				assert.Contains(t, stderr, "(secret_guard: warn)")
+				assert.NotContains(t, stderr, verifyAWSKey, "the warning must not echo the credential")
 			}
 		})
 	}
@@ -277,4 +289,19 @@ func TestRunVerify_DegradedSkepticPromptSecretGuardOnTheWire(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureStderr returns what fn writes to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
 }
