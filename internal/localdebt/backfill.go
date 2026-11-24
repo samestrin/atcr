@@ -237,9 +237,9 @@ func BackfillJustifications(dir, reviewRoot string, dryRun bool) (BackfillResult
 // counting walk or opener sees only its own pass and may run in parallel. A nil
 // field falls back to its default, so a partial (or zero) value is safe.
 type backfillSeams struct {
-	walk func(root string, fn fs.WalkDirFunc) error // the review-root walk (reviewTree)
-	open func(name string) (*os.File, error)        // the summary.json open (readReconciledAt)
-	log  *slog.Logger                               // where an oversized summary.json is noted
+	walk func(root string, fn fs.WalkDirFunc) error        // the review-root walk (reviewTree)
+	open func(dir *os.Root, name string) (*os.File, error) // the summary.json open (readReconciledAt)
+	log  *slog.Logger                                      // where an oversized summary.json is noted
 }
 
 // defaultBackfillSeams is the real filesystem and the process-wide logger as it
@@ -702,33 +702,54 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
 // or "" when the file is missing, not a regular file, unreadable, over
 // maxSummaryBytes, unparseable or carries none — every case reviewDirOwnsRun reads
-// as owning nothing. The Lstat pre-checks the size and refuses a non-regular path,
-// but the path can change between the Lstat and the open, so the default open
-// (openSummaryFile) refuses a symlink and does not block on a FIFO, and readSummary
-// checks the opened DESCRIPTOR is regular — the backfill pass holds the store lock
-// meanwhile, so a blocked open would hold it too. An oversized file is logged at
-// debug on log, so the skip is visible when asked for. open is how the file is
-// opened, openSummaryFile outside a test.
-func readReconciledAt(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) string {
+// as owning nothing. reconciled/ must be a real directory of reviewDir, never a
+// symlink, and both the summary's Lstat and its open go through an os.Root of it,
+// so a summary.json symlink that resolves outside reconciled/ is refused rather
+// than followed (TD 088dae89858474f8). The Lstat pre-checks the
+// size and refuses a non-regular path, but the path can change between the Lstat
+// and the open, so the default open (openSummaryFile) does not block on a FIFO, and
+// readSummary checks the opened DESCRIPTOR is regular — the backfill pass holds the
+// store lock meanwhile, so a blocked open would hold it too. An oversized file is
+// logged at debug on log, so the skip is visible when asked for. open is how the
+// file is opened under the reconciled/ root, openSummaryFile outside a test.
+func readReconciledAt(reviewDir string, open func(dir *os.Root, name string) (*os.File, error), log *slog.Logger) string {
 	at, _ := readSummary(reviewDir, open, log)
 	return at
 }
 
-// openSummaryFile is the default summary.json open: read-only, refusing a
-// symlink (O_NOFOLLOW) and returning at once on a FIFO (O_NONBLOCK) on unix, so
-// a path swapped after the Lstat cannot redirect the read or block it while the
-// pass holds the store lock. readSummary's handle check decides what is read.
-// Same shape as internal/stream/findingsfile.go's readRegularFile.
-func openSummaryFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
+// openSummaryFile is the default summary.json open: read-only under dir, the
+// review's reconciled/ root, and returning at once on a FIFO (O_NONBLOCK) on unix,
+// so a path swapped after the Lstat cannot redirect the read out of reconciled/ or
+// block it while the pass holds the store lock. O_NOFOLLOW alone guarded only the
+// last component (TD 088dae89858474f8); the root refuses any symlink, at any
+// component, that resolves outside dir. readSummary's handle check decides what is
+// read. Same shape as internal/stream/findingsfile.go's readRegularFile.
+func openSummaryFile(dir *os.Root, name string) (*os.File, error) {
+	return dir.OpenFile(name, os.O_RDONLY|openNoFollowNonBlock, 0)
 }
 
 // readSummary is readReconciledAt that also reports whether the file was skipped for
 // being over maxSummaryBytes, on either arm: the Lstat size check, or the read of a
 // file that grew past the cap since the Lstat. ownershipCache counts that report.
-func readSummary(reviewDir string, open func(name string) (*os.File, error), log *slog.Logger) (reconciledAt string, oversized bool) {
+func readSummary(reviewDir string, open func(dir *os.Root, name string) (*os.File, error), log *slog.Logger) (reconciledAt string, oversized bool) {
 	path := filepath.Join(reviewDir, "reconciled", "summary.json")
-	info, err := os.Lstat(path)
+	root, err := os.OpenRoot(reviewDir)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = root.Close() }()
+	// A symlinked reconciled/ owns nothing, wherever it leads. A directory swapped
+	// for a link after this Lstat can still be followed by OpenRoot, but only to a
+	// directory inside reviewDir: the review root refuses anything further.
+	if di, err := root.Lstat("reconciled"); err != nil || !di.IsDir() {
+		return "", false
+	}
+	dir, err := root.OpenRoot("reconciled")
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = dir.Close() }()
+	info, err := dir.Lstat("summary.json")
 	if err != nil || !info.Mode().IsRegular() {
 		return "", false
 	}
@@ -736,7 +757,7 @@ func readSummary(reviewDir string, open func(name string) (*os.File, error), log
 		log.Debug("skipping oversized summary.json", "path", path, "size", info.Size())
 		return "", true
 	}
-	f, err := open(path)
+	f, err := open(dir, "summary.json")
 	if err != nil {
 		return "", false
 	}
@@ -775,7 +796,7 @@ func readSummary(reviewDir string, open func(name string) (*os.File, error), log
 // once per review dir because each dir is read once.
 type ownershipCache struct {
 	at        map[string]string
-	open      func(name string) (*os.File, error)
+	open      func(dir *os.Root, name string) (*os.File, error)
 	log       *slog.Logger
 	oversized int
 }
