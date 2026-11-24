@@ -322,7 +322,10 @@ webhook:
   job: one that goes over it is logged as over the cap and fails, and its spend
   still counts toward the day. Once the day's spend reaches `daily_token_cap`,
   the daemon posts a comment on the pull request naming the cap and starts no
-  job, as for `daily_job_cap`. Under either token cap, a job whose `atcr`
+  job, as for `daily_job_cap`. With `daily_token_cap` set, auto-fix jobs run
+  one at a time, from the claim until the job finishes and is charged, so the
+  next job's check sees the last one's spend; without it, jobs for different
+  pull requests run at once. Under either token cap, a job whose `atcr`
   prints no usage line is logged as a failure, since its spend is unknown.
 - **A failed job keeps its claim.** The issue+state claim and the day's count
   are written before the job runs, so a job that fails afterwards — whether it
