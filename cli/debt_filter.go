@@ -109,11 +109,11 @@ func runDebtFilter(cmd *cobra.Command, _ []string) error {
 	}
 
 	f := debtFilter{
-		Severity:   mustFlag(cmd, "severity"),
-		Status:     mustFlag(cmd, "status"),
-		Confidence: mustFlag(cmd, "confidence"),
-		EstFloor:   floor,
-		EstCeil:    ceil,
+		SeverityList: mustFlag(cmd, "severity"),
+		Status:       mustFlag(cmd, "status"),
+		Confidence:   mustFlag(cmd, "confidence"),
+		EstFloor:     floor,
+		EstCeil:      ceil,
 	}
 	// One summary read feeds the count and the selection, so a writer landing
 	// mid-command cannot make summary.matched disagree with what was selected.
@@ -175,7 +175,7 @@ func summarizeDebtFilter(folded []localdebt.Summary, f debtFilter) (debtFilterSu
 	scope := debtFilter{Status: f.Status}
 	inMode := debtFilter{Status: f.Status, EstFloor: f.EstFloor, EstCeil: f.EstCeil}
 	inSev := inMode
-	inSev.Severity = f.Severity
+	inSev.SeverityList = f.SeverityList
 	var s debtFilterSummary
 	var matched []localdebt.Summary
 	for _, sum := range folded {

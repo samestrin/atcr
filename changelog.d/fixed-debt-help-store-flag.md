@@ -1,0 +1,1 @@
+- `atcr debt --help` now points at the canonical `--store` flag instead of the hidden deprecated `--dir` alias when describing how to target a store other than the current repo's (epic 131 T1).

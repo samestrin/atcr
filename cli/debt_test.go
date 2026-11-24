@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1278,4 +1279,123 @@ func TestRenderDebtTable_UndiscountedProblemUnchanged(t *testing.T) {
 			"the row ends with the truncated Problem alone, got %q", lines[1])
 		assert.NotContains(t, lines[1], "confidence discounted")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Epic 131 T1: `atcr debt` help text and the list/filter severity boundary.
+// ---------------------------------------------------------------------------
+
+// debtHelpMissingSubcommands reports the registered subcommands the Long help
+// never names, matched on word boundaries so "lock" is not satisfied by
+// "unlock" or "locks". Derived from cmd.Commands(), so a subcommand added
+// without a help mention is caught here rather than by a reader of --help.
+func debtHelpMissingSubcommands(cmd *cobra.Command) []string {
+	var missing []string
+	for _, sub := range cmd.Commands() {
+		name := regexp.MustCompile(`\b` + regexp.QuoteMeta(sub.Name()) + `\b`)
+		if !name.MatchString(cmd.Long) {
+			missing = append(missing, sub.Name())
+		}
+	}
+	return missing
+}
+
+// Row e3f1824380968609: the Long text once named only the original
+// subcommands and went stale as filter, clean, group and sync-outcomes
+// arrived. On current main every subcommand is named; this pins that, and the
+// second half proves the check catches the historical bad output.
+func TestDebt_HelpNamesEverySubcommand(t *testing.T) {
+	cmd := newDebtCmd()
+	assert.Empty(t, debtHelpMissingSubcommands(cmd),
+		"every registered debt subcommand must be named in the Long help")
+
+	stale := newDebtCmd()
+	stale.Long = strings.Replace(stale.Long, "filter, ", "", 1)
+	assert.Equal(t, []string{"filter"}, debtHelpMissingSubcommands(stale),
+		"the check must catch a Long text that drops a subcommand")
+}
+
+// Row 717b75e48ff0e897: the canonical store selector is --store; --dir is a
+// hidden deprecated alias, so the Long help must not advertise it.
+func TestDebt_HelpPointsAtTheCanonicalStoreFlag(t *testing.T) {
+	cmd := newDebtCmd()
+	assert.Contains(t, cmd.Long, "Use --store",
+		"the Long help must name the canonical store flag")
+	assert.NotContains(t, cmd.Long, "--dir",
+		"--dir is a hidden deprecated alias; the help must not point at it")
+}
+
+// Row e9996081c3584b5e (board answer filter-only, EST-8439): `debt list`'s
+// severity is ONE exact, case-insensitive value. The comma-list form belongs
+// to `debt filter` alone, so the shared matcher must not read a list-shaped
+// Severity as a list.
+func TestDebtList_SeverityMatchesExactlyNotAsCommaList(t *testing.T) {
+	recs := debtSampleRecords()
+
+	assert.Empty(t, applyDebtFilter(recs, debtFilter{Severity: "HIGH,LOW"}),
+		"a comma list is not a severity value; list's exact match must reject it")
+
+	// Known-good single values keep matching, case-insensitively and trimmed.
+	assert.Len(t, applyDebtFilter(recs, debtFilter{Severity: "high"}), 1)
+	assert.Len(t, applyDebtFilter(recs, debtFilter{Severity: " LOW "}), 1)
+}
+
+// The filter-only comma-list form keeps its list semantics: case-insensitive,
+// element-trimmed, and a single-element list is just the one severity.
+func TestDebtFilter_SeverityListMatchesCommaForm(t *testing.T) {
+	recs := debtSampleRecords()
+
+	for _, tc := range []struct {
+		name string
+		f    debtFilter
+		want int
+	}{
+		{"comma list keeps both", debtFilter{SeverityList: "HIGH,LOW"}, 2},
+		{"case-insensitive and trimmed", debtFilter{SeverityList: "high , low"}, 2},
+		{"single element", debtFilter{SeverityList: "LOW"}, 1},
+		{"combined with component", debtFilter{SeverityList: "MEDIUM,LOW", Component: "internal/autofix"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Len(t, applyDebtFilter(recs, tc.f), tc.want)
+		})
+	}
+}
+
+// The CLI boundary the board answer pins: `debt list --severity HIGH,LOW`
+// matches nothing (validateDebtListFilters rejects the unrecognized value as a
+// usage error, the TD-011 behavior — no rows either way), while
+// `debt filter --severity HIGH,LOW` keeps both severities.
+func TestDebtSeverity_ListAndFilterBoundary(t *testing.T) {
+	high := localdebt.Record{
+		SchemaVersion: localdebt.SchemaVersion, RunID: "2026-11-sev", Timestamp: "2026-11-01T09:00:00Z",
+		Severity: "HIGH", File: "pkg/a.go", Line: 1,
+		Problem: "p", Fix: "f", Category: "correctness", EstMinutes: 10,
+	}
+	low := high
+	low.Severity, low.File, low.EstMinutes = "LOW", "pkg/b.go", 20
+	high.StampID()
+	low.StampID()
+	dir := writeLocalDebt(t, high, low)
+
+	out, err := runDebt(t, "list", "--dir", dir, "--severity", "HIGH,LOW", "--json")
+	require.Error(t, err, "list must not accept a comma list as a severity")
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "--severity")
+	assert.NotContains(t, out, high.ID, "no row may match")
+	assert.NotContains(t, out, low.ID, "no row may match")
+
+	out, err = runDebt(t, "list", "--dir", dir, "--severity", "high", "--json")
+	require.NoError(t, err)
+	var listed []localdebt.Record
+	require.NoError(t, json.Unmarshal([]byte(out), &listed))
+	require.Len(t, listed, 1, "exact, case-insensitive: only the HIGH item")
+	assert.Equal(t, high.ID, listed[0].ID)
+
+	out, err = runDebt(t, "filter", "--dir", dir, "--severity", "HIGH,LOW", "--mode", "all", "--max", "0", "--json")
+	require.NoError(t, err)
+	var doc debtFilterDoc
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	assert.Equal(t, 2, doc.Summary.Matched)
+	require.Len(t, doc.Items, 2, "filter keeps the comma-list form")
+	assert.ElementsMatch(t, []string{doc.Items[0].ID, doc.Items[1].ID}, []string{high.ID, low.ID})
 }

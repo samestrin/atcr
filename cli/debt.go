@@ -17,9 +17,9 @@ import (
 )
 
 // newDebtCmd builds `atcr debt`: query, capture, aggregate, resolve, and compact
-// the local technical-debt store. As of Plan 35.13 all five subcommands read and
+// the local technical-debt store. As of Plan 35.13 all subcommands read and
 // write ONE store — the .atcr/-scoped, month-sharded JSONL backlog under
-// .atcr/debt/ that `atcr reconcile` populates — resolved through a --dir flag
+// .atcr/debt/ that `atcr reconcile` populates — resolved through a --store flag
 // with a shared default. backfill-justifications joins them as a one-off repair
 // for excerpts persisted before the extractor that produced them was corrected. The previous .planning/-scoped README+shard store that
 // list/add/dashboard used is no longer read or written by any atcr code.
@@ -33,7 +33,7 @@ func newDebtCmd() *cobra.Command {
 			"add, dashboard, report, resolve, recluster, compact, convert,\n" +
 			"backfill-justifications, sync-outcomes, lock, unlock, and locks — operate\n" +
 			"on that one store, so an item filed by add is visible\n" +
-			"to list and closeable by resolve. Use --dir to point them at a store\n" +
+			"to list and closeable by resolve. Use --store to point them at a store\n" +
 			"other than the current repo's.",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
@@ -497,7 +497,7 @@ func mustFlag(cmd *cobra.Command, name string) string {
 // There is deliberately no Group field: group is cadence workflow vocabulary,
 // excluded from the record schema by the atcr<->cadence seam.
 type debtFilter struct {
-	Severity  string // exact, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW)
+	Severity  string // ONE exact value, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW); the comma-list form is SeverityList
 	Status    string // exact (see debtListStatuses); "open" matches an empty status
 	Category  string // substring, case-insensitive
 	Component string // path-prefix match against the record's File
@@ -505,9 +505,10 @@ type debtFilter struct {
 
 	// The remaining fields serve `debt filter` only; `debt list` leaves them zero.
 	// All stay comparable so selectDebtForList's pass-through check holds.
-	Confidence string // comma list, case-insensitive (low|medium|high); also narrows Severity to a comma list
-	EstFloor   int    // keep est_minutes >= EstFloor
-	EstCeil    int    // keep est_minutes < EstCeil; 0 = no ceiling
+	SeverityList string // comma list, case-insensitive (CRITICAL|HIGH|MEDIUM|LOW); `debt list` matches Severity exactly (board answer filter-only, EST-8439)
+	Confidence   string // comma list, case-insensitive (low|medium|high)
+	EstFloor     int    // keep est_minutes >= EstFloor
+	EstCeil      int    // keep est_minutes < EstCeil; 0 = no ceiling
 }
 
 // debtView is the projection filtering and sorting act on. A full
@@ -552,7 +553,14 @@ func viewOfSummary(s localdebt.Summary) debtView {
 func (f debtFilter) match(r localdebt.Record) bool { return f.matchView(viewOfRecord(r)) }
 
 func (f debtFilter) matchView(r debtView) bool {
-	if f.Severity != "" && !inFoldedList(f.Severity, r.Severity) {
+	// Severity is ONE exact value: `debt list` never accepted a comma list
+	// (Epic 94; validateDebtListFilters rejects one as a usage error), so the
+	// shared matcher must not quietly implement list semantics for it. The
+	// comma-list form lives in SeverityList, which only `debt filter` sets.
+	if f.Severity != "" && !strings.EqualFold(strings.TrimSpace(f.Severity), r.Severity) {
+		return false
+	}
+	if f.SeverityList != "" && !inFoldedList(f.SeverityList, r.Severity) {
 		return false
 	}
 	if f.Confidence != "" && !inFoldedList(f.Confidence, r.Confidence) {
@@ -597,7 +605,8 @@ func (f debtFilter) matchView(r debtView) bool {
 }
 
 // inFoldedList reports whether v equals one element of the comma-separated list,
-// case-insensitively. A single-value list is the exact match `debt list` relies on.
+// case-insensitively. It serves `debt filter`'s comma-list fields (SeverityList,
+// Confidence); `debt list`'s Severity is matched exactly in matchView.
 func inFoldedList(list, v string) bool {
 	for _, e := range strings.Split(list, ",") {
 		if strings.EqualFold(strings.TrimSpace(e), v) {
