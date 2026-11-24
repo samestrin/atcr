@@ -3,6 +3,7 @@ package localdebt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -933,4 +935,42 @@ func TestItemLockList_FailedFetchLocalTagForOtherIDStillWarns(t *testing.T) {
 	require.Empty(t, locks)
 	require.Len(t, warnings, 1)
 	require.Contains(t, warnings[0].Reason, "not our ref")
+}
+
+// gitFailureReason keeps run's error but cuts its stderr to one line, reduces
+// every absolute path to its base name and caps the length (epic 128 T4).
+func TestGitFailureReason(t *testing.T) {
+	stub := func(stderr string) error {
+		return fmt.Errorf("git fetch: exit status 128: %s", stderr)
+	}
+	cases := map[string]struct {
+		stderr string
+		err    error
+		want   string
+	}{
+		"quoted path with a space": {stderr: "fatal: '/home/alice/acme corp/repo' does not appear to be a git repository", want: "git fetch: exit status 128: fatal: 'repo' does not appear to be a git repository"},
+		"file url":                 {stderr: "fatal: unable to access 'file:///home/alice/remote.git/': x", want: "git fetch: exit status 128: fatal: unable to access 'file:remote.git': x"},
+		"windows path":             {stderr: `fatal: C:\Users\alice\repo\objects\aa is corrupt`, want: "git fetch: exit status 128: fatal: aa is corrupt"},
+		"bare path":                {stderr: "fatal: not a git repository: /home/alice/x/.git", want: "git fetch: exit status 128: fatal: not a git repository: .git"},
+		"first line without fatal": {stderr: "error: one\nerror: two", want: "git fetch: exit status 128: error: one"},
+		"ref names are kept":       {stderr: "fatal: couldn't find remote ref refs/atcr/debt-locks/54442d303031", want: "git fetch: exit status 128: fatal: couldn't find remote ref refs/atcr/debt-locks/54442d303031"},
+		"timeout passes through":   {err: errors.New("git fetch timed out after 1s"), stderr: "partial", want: "git fetch timed out after 1s"},
+		"no stderr":                {err: errors.New("git fetch: exit status 1"), want: "git fetch: exit status 1"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := c.err
+			if err == nil {
+				err = stub(c.stderr)
+			}
+			require.Equal(t, c.want, gitFailureReason(err, c.stderr))
+		})
+	}
+	t.Run("cap keeps whole runes", func(t *testing.T) {
+		stderr := "fatal: " + strings.Repeat("é", maxItemLockReasonBytes)
+		r := gitFailureReason(stub(stderr), stderr)
+		require.LessOrEqual(t, len(r), maxItemLockReasonBytes)
+		require.True(t, utf8.ValidString(r))
+		require.True(t, strings.HasSuffix(r, "..."))
+	})
 }

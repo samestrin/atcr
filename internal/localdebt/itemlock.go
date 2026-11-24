@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -301,8 +302,8 @@ func (l ItemLocker) Unlock(ctx context.Context, ids []string) ([]ItemLock, error
 // List reads every lock the store remote holds, oldest first, then by id. It
 // only reads: it checks no holder for liveness and never frees a lock (Epic 93
 // T2). Holder is not used. A ref under ItemLockRefPrefix whose name is not a
-// hex-encoded id, whose fetch fails, or whose tag cannot be read as a lock is
-// returned as an ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
+// hex-encoded id, whose fetch fails and whose tag the clone does not already
+// hold, or whose tag cannot be read as a lock is returned as an ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
 // shown and never hides the rest (epic 122 T4, owner decision 2026-11-18;
 // before that it failed the whole listing). A remote that cannot be reached is
 // still an error: no listing can be made at all.
@@ -385,9 +386,10 @@ func fetchItemLocks(ctx context.Context, g itemLockRunner, remote string, found 
 // listing: a tag that cannot be read, parsed, or does not record the ref's id
 // becomes an ItemLockWarning instead of an error, and every other lock is
 // still returned. found maps id to tag object as listItemLockRefs returns it.
-// A ref whose fetch fails is also a warning: one ref the remote can no longer
-// serve fails the whole batch fetch, so a failed batch is retried one fetch
-// per ref (epic 127 T2, row 485c4410f55dc612).
+// A ref whose fetch fails is also a warning, unless its tag is already in the
+// clone: one ref the remote can no longer serve fails the whole batch fetch,
+// so a failed batch is retried one fetch per ref (epic 127 T2, row
+// 485c4410f55dc612).
 //
 // A failed batch is first told apart from a dead remote by a control probe
 // (epic 127 F1): the same ls-remote that already listed the refs. If the probe
@@ -435,38 +437,98 @@ func fetchItemLocksLenient(ctx context.Context, g itemLockRunner, remote string,
 				fetchFailed[id] = fmt.Sprintf("not fetched: the per-ref fetch sweep exceeded its %s budget", g.timeout)
 				continue
 			}
-			if _, _, ferr := g.run(sweepCtx, "", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, ItemLockRef(id)); ferr != nil {
-				fetchFailed[id] = ferr.Error()
+			if _, errOut, ferr := g.run(sweepCtx, "", "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, ItemLockRef(id)); ferr != nil {
+				fetchFailed[id] = gitFailureReason(ferr, errOut)
 			}
 		}
 	}
 	for _, id := range ids {
 		ref := ItemLockRef(id)
-		warn := func(reason string) {
+		// A failed fetch still tries the tag: an object is named by its
+		// content, so a copy already in the clone (the clone took the lock, or
+		// fetched it before a transient failure) is the very lock the ref
+		// names (epic 128 T4, row edb8131a869f4133). Only when the clone cannot
+		// read it either is the fetch failure the warning.
+		lk, reason := readItemLockTag(ctx, g, id, found[id])
+		if failed, ok := fetchFailed[id]; ok && reason != "" {
+			reason = failed
+		}
+		if reason != "" {
 			warnings = append(warnings, ItemLockWarning{Ref: ref, Remote: remote, Reason: reason})
-		}
-		if reason, ok := fetchFailed[id]; ok {
-			warn(reason)
-			continue
-		}
-		body, _, err := g.run(ctx, "", "cat-file", "tag", found[id])
-		if err != nil {
-			warn(err.Error())
-			continue
-		}
-		lk, err := parseItemLockTag(body)
-		if err != nil {
-			warn(err.Error())
-			continue
-		}
-		if lk.ID != id {
-			warn(fmt.Sprintf("the tag records id %q", lk.ID))
 			continue
 		}
 		lk.Ref, lk.Remote = ref, remote
 		result[id] = remoteItemLock{ItemLock: lk, sha: found[id]}
 	}
 	return result, warnings, nil
+}
+
+// readItemLockTag reads the lock tag object sha from the clone and checks it
+// records id. A tag that cannot be read as id's lock returns why, as an
+// ItemLockWarning Reason.
+func readItemLockTag(ctx context.Context, g itemLockRunner, id, sha string) (ItemLock, string) {
+	body, errOut, err := g.run(ctx, "", "cat-file", "tag", sha)
+	if err != nil {
+		return ItemLock{}, gitFailureReason(err, errOut)
+	}
+	lk, err := parseItemLockTag(body)
+	if err != nil {
+		return ItemLock{}, err.Error()
+	}
+	if lk.ID != id {
+		return ItemLock{}, fmt.Sprintf("the tag records id %q", lk.ID)
+	}
+	return lk, ""
+}
+
+// itemLockAbsPath matches an absolute path in git's stderr, Unix or Windows:
+// either single-quoted whole, spaces included, as git quotes a path (groups 1
+// and 2 are the quote and the path), or unquoted after the start of the text,
+// a space, a quote, '(', '=' or ':', so the path of a file:// or ssh:// URL is
+// matched too (groups 3 and 4 are the lead character and the path).
+var itemLockAbsPath = regexp.MustCompile(`(')((?:[A-Za-z]:)?[/\\][^']*)'|(^|[\s'"(=:])((?:[A-Za-z]:)?[/\\][^\s'"()]*)`)
+
+// gitFailureReason renders a failed itemLockRunner call as an ItemLockWarning
+// Reason (epic 128 T4, row 10b6c4815798e34d). run's error ends with git's whole
+// stderr; that is cut to the one line naming the cause (the first "fatal:"
+// line, else the first line), every absolute path is reduced to its base name
+// as basePathErr does for an *os.PathError, and the Reason is capped at
+// maxItemLockReasonBytes.
+func gitFailureReason(err error, stderr string) string {
+	msg := err.Error()
+	if stderr != "" && strings.HasSuffix(msg, stderr) {
+		lines := strings.Split(stderr, "\n")
+		line := lines[0]
+		for _, l := range lines {
+			if strings.HasPrefix(l, "fatal:") {
+				line = l
+				break
+			}
+		}
+		msg = strings.TrimSuffix(msg, stderr) + strings.TrimSpace(line)
+	}
+	msg = itemLockAbsPath.ReplaceAllStringFunc(msg, func(m string) string {
+		sub := itemLockAbsPath.FindStringSubmatch(m)
+		lead, p, tail := sub[3], sub[4], ""
+		if sub[1] != "" {
+			lead, p, tail = sub[1], sub[2], sub[1]
+		}
+		p = strings.TrimRight(p, `/\`)
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			p = p[i+1:]
+		}
+		return lead + p + tail
+	})
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	if len(msg) > maxItemLockReasonBytes {
+		const more = "..."
+		cut := maxItemLockReasonBytes - len(more)
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + more
+	}
+	return msg
 }
 
 // listItemLockRefs returns the tag object each id's lock ref names on the
