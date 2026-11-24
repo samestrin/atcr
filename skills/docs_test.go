@@ -86,6 +86,14 @@ func TestDocs_TechnicalDebtDocumentsUnifiedStore(t *testing.T) {
 		{"AC13", "dashboard subcommand", "atcr debt dashboard"},
 		{"AC13", "resolve subcommand", "atcr debt resolve"},
 		{"AC13", "compact subcommand", "atcr debt compact"},
+		// TD skills/docs_test.go:68 (row 14e037233f220368): the bare strings
+		// "atcr debt import" / "atcr debt report" also appear in the migration
+		// walkthrough and the subcommand table, so only the section headings
+		// are unique to the sections. Pin the headings (backticks included, no
+		// trailing space) so deleting either section fails even with the
+		// walkthrough and table left in place.
+		{"TD", "import section heading", "### `atcr debt import`"},
+		{"TD", "report section heading", "### `atcr debt report`"},
 		{"AC13", "dashboard redirect flag", "--output"},
 		{"AC13", "machine-readable flag", "--json"},
 		{"AC13", "id contract", "SHA-256"},
