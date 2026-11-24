@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/integrations/linear"
@@ -63,7 +64,26 @@ type LinearAutoFix struct {
 	Commenter PRCommenter
 	// Now is the clock for the daily cap; nil is time.Now.
 	Now func() time.Time
+
+	// serial, under a daily token cap, holds one job from its claim until its
+	// fixer returns, so the next claim sees that job's charge.
+	serialOnce sync.Once
+	serial     chan struct{}
 }
+
+// lockSerial takes the token-cap lock, or returns ctx's error once ctx is
+// done first. A job waiting behind another stays cancellable.
+func (a *LinearAutoFix) lockSerial(ctx context.Context) error {
+	a.serialOnce.Do(func() { a.serial = make(chan struct{}, 1) })
+	select {
+	case a.serial <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *LinearAutoFix) unlockSerial() { <-a.serial }
 
 // LinearRunner turns a verified Linear issue update into a review job: an
 // issue of an allowlisted team that moved to a trigger status has its linked
@@ -212,6 +232,11 @@ func (r *LinearRunner) autoFixJob(issue, state string) (Job, bool) {
 // state, and runs the fix. Once the day's job cap or token cap is used it posts
 // a refusal on the pull request instead, carrying the cap and nothing else. A
 // job that went over its per-job token cap is reported once it has run.
+//
+// Under a daily token cap one lock is held from the claim until the fixer
+// returns: a job is charged only when it finishes, so a claim made while
+// another job runs would check the cap against a total missing that job's
+// spend. Without a token cap jobs run at once.
 func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr linear.PR, t AutoFixTarget) error {
 	a := r.AutoFix
 	label := t.Repo + "#" + strconv.Itoa(t.Number)
@@ -226,6 +251,12 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 	now := time.Now
 	if a.Now != nil {
 		now = a.Now
+	}
+	if a.State.DailyTokenCap > 0 {
+		if err := a.lockSerial(ctx); err != nil {
+			return fmt.Errorf("webhook: auto-fix of %s: waiting for the running job: %w", label, err)
+		}
+		defer a.unlockSerial()
 	}
 	err = a.State.Claim(issue, state, now())
 	switch {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -533,6 +534,9 @@ type fakeFixer struct {
 	started chan struct{}
 	gate    chan struct{}
 	err     error // returned by every run that is not cancelled
+	// charge, when set, runs once the gate opens, as the real runner charges
+	// a job's usage when it finishes.
+	charge func(AutoFixTarget)
 }
 
 func (f *fakeFixer) Run(ctx context.Context, t AutoFixTarget) error {
@@ -549,6 +553,9 @@ func (f *fakeFixer) Run(ctx context.Context, t AutoFixTarget) error {
 			return ctx.Err()
 		}
 	}
+	if f.charge != nil {
+		f.charge(t)
+	}
 	return f.err
 }
 
@@ -558,23 +565,28 @@ func (f *fakeFixer) runs() []AutoFixTarget {
 	return append([]AutoFixTarget(nil), f.targets...)
 }
 
-// fakeGitHub serves the pull request head (branch "feature", same repo) and
-// records each PR comment.
+// fakeGitHub serves the head of any acme/widget pull request (branch
+// "feature", same repo) and records each PR comment and head lookup.
 type fakeGitHub struct {
 	ts       *httptest.Server
 	headRepo string
 	mu       sync.Mutex
 	comments []string
+	heads    []string // the PR numbers whose head was looked up
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
 	t.Helper()
 	g := &fakeGitHub{headRepo: "acme/widget"}
 	g.ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pull, isPull := strings.CutPrefix(r.URL.Path, "/repos/acme/widget/pulls/")
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
-			_, _ = fmt.Fprintf(w, `{"number":7,"head":{"ref":"feature","repo":{"full_name":%q}}}`, g.headRepo)
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+		case r.Method == http.MethodGet && isPull && pull != "":
+			g.mu.Lock()
+			g.heads = append(g.heads, pull)
+			g.mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"number":%s,"head":{"ref":"feature","repo":{"full_name":%q}}}`, pull, g.headRepo)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
 			var body struct {
 				Body string `json:"body"`
 			}
@@ -589,6 +601,12 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 	}))
 	t.Cleanup(g.ts.Close)
 	return g
+}
+
+func (g *fakeGitHub) headLookups(number string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(slices.DeleteFunc(append([]string(nil), g.heads...), func(n string) bool { return n != number }))
 }
 
 func (g *fakeGitHub) posted() []string {
@@ -782,6 +800,105 @@ func TestLinearAutoFix_OverJobTokenCapIsReported(t *testing.T) {
 	assert.Equal(t, 1, h.logs.count("auto-fix of acme/widget#7 went over its per-job token cap"))
 	assert.Equal(t, 1, h.logs.count(ErrAutoFixJobTokenCap.Error()), "the job still fails with the over-cap error")
 	assert.Empty(t, gh.posted())
+}
+
+// Epic 135 T4: under a daily token cap a job holds one lock from its claim
+// until its fixer returns, so a second pull request's claim waits, sees the
+// first job's charge and is refused at the cap instead of running uncharged.
+func TestLinearAutoFix_DailyTokenCapSerializesClaimThroughCharge(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{
+		"iss-1": widgetPR(),
+		"iss-2": {Owner: "acme", Repo: "widget", Number: 8},
+	}}
+	fixer := &fakeFixer{started: make(chan struct{}, 2), gate: make(chan struct{})}
+	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	state := h.runner.AutoFix.State
+	state.DailyTokenCap = 100
+	fixer.charge = func(AutoFixTarget) { assert.NoError(t, state.AddTokens(100, time.Now())) }
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	<-fixer.started
+	h.send(t, linearBody("iss-2", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-2")
+	// The second job has its head branch; without the lock it would claim and
+	// start now, before the first job is charged.
+	require.Eventually(t, func() bool { return gh.headLookups("8") == 1 }, 10*time.Second, 5*time.Millisecond)
+	select {
+	case <-fixer.started:
+		t.Fatal("the second job started while the first was uncharged")
+	case <-time.After(200 * time.Millisecond):
+	}
+	assert.Equal(t, 1, state.Count(time.Now()), "the second claim waits for the first job")
+	close(fixer.gate)
+	h.drain(t)
+
+	runs := fixer.runs()
+	require.Len(t, runs, 1)
+	assert.Equal(t, 7, runs[0].Number)
+	assert.Equal(t, 1, state.Count(time.Now()), "the refused claim records nothing")
+	assert.Equal(t, 100, state.Tokens(time.Now()))
+	comments := gh.posted()
+	require.Len(t, comments, 1)
+	assert.Contains(t, comments[0], "daily token cap reached")
+	assert.Contains(t, comments[0], "acme/widget#8")
+	assert.Equal(t, 1, h.logs.count(ErrAutoFixDailyTokenCap.Error()))
+}
+
+// Epic 135 T4: a job waiting behind a running one under a daily token cap
+// returns once its context ends, and claims nothing.
+func TestLinearAutoFix_WaitingJobIsCancellable(t *testing.T) {
+	fixer := &fakeFixer{}
+	h, gh, _ := newAutoFixHarness(t, &fakeLookup{}, fixer, 5)
+	a := h.runner.AutoFix
+	a.State.DailyTokenCap = 100
+	require.NoError(t, a.lockSerial(context.Background()), "a running job holds the lock")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- h.runner.runAutoFix(ctx, "iss-2", "st-fix", widgetPR(), AutoFixTarget{Repo: "acme/widget", Number: 7})
+	}()
+	require.Eventually(t, func() bool { return gh.headLookups("7") == 1 }, 10*time.Second, 5*time.Millisecond)
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting job did not return once cancelled")
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, err.Error(), "waiting for the running job")
+	assert.Empty(t, fixer.runs())
+	assert.Zero(t, a.State.Count(time.Now()), "the cancelled job claims nothing")
+	assert.Empty(t, gh.posted())
+}
+
+// Epic 135 T4: with no daily token cap, auto-fix jobs for two pull requests
+// still run at once.
+func TestLinearAutoFix_NoDailyTokenCapRunsJobsAtOnce(t *testing.T) {
+	lookup := &fakeLookup{prs: map[string]linear.PR{
+		"iss-1": widgetPR(),
+		"iss-2": {Owner: "acme", Repo: "widget", Number: 8},
+	}}
+	fixer := &fakeFixer{started: make(chan struct{}, 2), gate: make(chan struct{})}
+	h, _, _ := newAutoFixHarness(t, lookup, fixer, 5)
+	state := h.runner.AutoFix.State
+	fixer.charge = func(AutoFixTarget) { assert.NoError(t, state.AddTokens(100, time.Now())) }
+
+	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
+	h.send(t, linearBody("iss-2", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-2")
+	for range 2 {
+		select {
+		case <-fixer.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("both jobs did not start while neither had returned")
+		}
+	}
+	close(fixer.gate)
+	h.drain(t)
+
+	assert.Len(t, fixer.runs(), 2)
+	assert.Equal(t, 2, state.Count(time.Now()))
+	assert.Equal(t, 200, state.Tokens(time.Now()))
 }
 
 // A status in both lists starts the auto-fix; a review status still reviews.

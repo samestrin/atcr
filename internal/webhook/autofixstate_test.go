@@ -615,16 +615,71 @@ func TestAutoFixStateZeroTokenCapAcrossRollover(t *testing.T) {
 	}
 }
 
+// TestAutoFixStateAddTokensSaturates pins that a charge past math.MaxInt
+// still records the day as saturated, in memory and on disk, and says so with
+// ErrAutoFixTokenOverflow.
 func TestAutoFixStateAddTokensSaturates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, path, 1)
+	if err := s.AddTokens(math.MaxInt-1, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddTokens(5, now); !errors.Is(err, ErrAutoFixTokenOverflow) {
+		t.Fatalf("AddTokens past math.MaxInt = %v, want ErrAutoFixTokenOverflow", err)
+	}
+	if got := s.Tokens(now); got != math.MaxInt {
+		t.Fatalf("Tokens = %d, want math.MaxInt", got)
+	}
+	if got := openState(t, path, 1).Tokens(now); got != math.MaxInt {
+		t.Fatalf("Tokens after reopen = %d, want math.MaxInt", got)
+	}
+}
+
+// TestAutoFixStateAddTokensExactMaxInt pins that a total of exactly
+// math.MaxInt is not an overflow.
+func TestAutoFixStateAddTokensExactMaxInt(t *testing.T) {
 	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
 	s := openState(t, filepath.Join(t.TempDir(), "autofix.json"), 1)
 	if err := s.AddTokens(math.MaxInt-1, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddTokens(5, now); err != nil {
-		t.Fatal(err)
+	if err := s.AddTokens(1, now); err != nil {
+		t.Fatalf("AddTokens to exactly math.MaxInt: %v", err)
 	}
 	if got := s.Tokens(now); got != math.MaxInt {
 		t.Fatalf("Tokens = %d, want math.MaxInt", got)
+	}
+}
+
+// TestAutoFixStateAddTokensOverflowWriteFailureRecordsNothing pins that an
+// overflowing charge whose write fails returns the write error, not the
+// overflow, and leaves the day's total as it was.
+func TestAutoFixStateAddTokensOverflowWriteFailureRecordsNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	s := openState(t, path, 1)
+	if err := s.AddTokens(math.MaxInt-1, now); err != nil {
+		t.Fatal(err)
+	}
+	// A directory in the file's slot makes the rename over it fail.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := s.AddTokens(5, now)
+	if err == nil {
+		t.Fatal("AddTokens with unwritable state: want error")
+	}
+	if errors.Is(err, ErrAutoFixTokenOverflow) {
+		t.Fatalf("AddTokens with unwritable state = %v, want the write error without ErrAutoFixTokenOverflow", err)
+	}
+	if got := s.Tokens(now); got != math.MaxInt-1 {
+		t.Fatalf("Tokens after failed write = %d, want math.MaxInt-1", got)
 	}
 }
