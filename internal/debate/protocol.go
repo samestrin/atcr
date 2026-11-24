@@ -83,7 +83,8 @@ type Record struct {
 // defense), then judge (given both) — so the same scripted completer is consumed
 // in seat order. secretGuard is the secret_guard policy every seat's request
 // is sent under (see buildDebateAgent); under block a seat whose prompt holds a
-// credential sends nothing and is recorded in Halted like any other failure.
+// credential sends nothing and is recorded in Halted like any other failure,
+// with the guard error as its entry in HaltCauses.
 func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) Record {
 	rec := Record{Item: item, Cast: cast, Resolved: true, SingleModel: cast.SingleModel}
 
@@ -167,11 +168,18 @@ func (rec *Record) recordTurnCause(label, content, reasoning, status string) {
 
 // runTurn drives one seat through the tool loop, records the turn to the
 // transcript, and returns the seat's statement. A halted seat appends its label
-// to rec.Halted and returns "".
+// to rec.Halted and returns ""; a halt with a known cause also records it in
+// rec.HaltCauses and on the transcript turn.
 func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher, tr *Transcript) string {
-	content, reasoning, status := driveSeat(ctx, seat, prompt, secretGuard, cc, disp)
+	content, reasoning, status, cause := driveSeat(ctx, seat, prompt, secretGuard, cc, disp)
 	rec.Asked = append(rec.Asked, seat.Label)
 	rec.recordTurnCause(seat.Label, content, string(reasoning), status)
+	if cause != "" {
+		if rec.HaltCauses == nil {
+			rec.HaltCauses = map[string]string{}
+		}
+		rec.HaltCauses[seat.Label] = cause
+	}
 	tr.RecordTurn(TurnEvent{
 		Role:      seat.Label,
 		Agent:     seat.Agent,
@@ -180,6 +188,7 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt, s
 		Statement: content,
 		Reasoning: string(reasoning),
 		Status:    nonOKStatus(status),
+		Cause:     cause,
 	})
 	return content
 }
@@ -187,7 +196,9 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt, s
 // driveSeat runs one seat through the Epic 2.0 tool loop via a throwaway engine,
 // mirroring verify.invokeSkeptic. It returns the seat's final content and the
 // engine status; a tripped budget or non-OK status both surface as a non-OK
-// status so the caller treats the turn as halted.
+// status so the caller treats the turn as halted. The fourth return is the
+// halt's cause when it is known — today only a secret_guard block, as the
+// guard's error text — and empty otherwise.
 //
 // It mirrors invokeSkeptic's LOOP but not its small-window protection, and that
 // difference is deliberate rather than overlooked. verify derives a tool ceiling
@@ -203,20 +214,21 @@ func (rec *Record) runTurn(ctx context.Context, seat Caster, turn int, prompt, s
 // design question, not a mechanical port. Until it is answered, the operator is
 // warned instead: internal/doctor's smallWindowClause names this lane explicitly
 // alongside the verification one.
-func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher) (string, llmclient.Reasoning, string) {
+func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc fanout.ChatCompleter, disp Dispatcher) (string, llmclient.Reasoning, string, string) {
 	if cc == nil {
-		return "", "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed, ""
 	}
 	logger := log.FromContext(ctx)
 	// Guard the prompt here, not only in llmclient.Chat: a seat without
 	// function calling, or with no dispatcher, is sent down fanout's
 	// single-shot path (CompleteWithMeta), which never scans. Under block a
 	// prompt holding a credential, or one the scan could not check, is never
-	// sent and the seat halts like any other failed turn.
+	// sent and the seat halts like any other failed turn, with the guard error
+	// recorded as its cause (it names the policy, never the credential).
 	guarded, err := fanout.GuardOutbound(ctx, secretGuard, seat.Label+" seat "+seat.Agent, []fanout.OutboundText{{Label: seat.Label + " prompt", Text: prompt}})
 	if err != nil {
 		logger.Warn("debate: seat prompt not sent", "seat", seat.Label, "agent", seat.Agent, "err", err.Error())
-		return "", "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed, err.Error()
 	}
 	agent := buildDebateAgent(seat, guarded[0], secretGuard)
 	opts := []fanout.EngineOption{fanout.WithLogger(logger)}
@@ -235,7 +247,7 @@ func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc 
 	// breaks, this arm becomes live and the test goes red (TD
 	// internal/debate/protocol.go:186).
 	if len(results) == 0 {
-		return "", "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed, ""
 	}
 	r := results[0]
 	// A truncated or salvaged reply carries only the salvaged chain-of-thought,
@@ -259,7 +271,7 @@ func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc 
 	// durable ruling, so a promoted reasoning draft must never stand in for
 	// either, whatever finish_reason it arrived on.
 	if r.ResponseTruncated || r.Salvaged {
-		return "", "", fanout.StatusFailed
+		return "", "", fanout.StatusFailed, ""
 	}
 	// An endpoint that reasons inline puts a <think> block in Content even on a
 	// clean reply, which the guard above never sees. This is the one choke point
@@ -292,9 +304,9 @@ func driveSeat(ctx context.Context, seat Caster, prompt, secretGuard string, cc 
 	// RunDebate table, "forced answer was entirely a think block").
 	statement, reasoning := llmclient.SplitThink(r.Content)
 	if r.Status != fanout.StatusOK || len(r.TrippedBudgets) > 0 {
-		return statement, reasoning, fanout.StatusFailed
+		return statement, reasoning, fanout.StatusFailed, ""
 	}
-	return statement, reasoning, fanout.StatusOK
+	return statement, reasoning, fanout.StatusOK, ""
 }
 
 // nonOKStatus returns the status string only when it is not StatusOK, so a clean
