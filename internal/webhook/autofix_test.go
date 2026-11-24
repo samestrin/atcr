@@ -467,7 +467,7 @@ func TestAutoFixRunner_DayOverTokenCapRefusesNextClaim(t *testing.T) {
 	t.Setenv(testPushTokenEnv, testPushToken)
 	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; exit 0", usageLine(2000, 500)))
 	r, state := newCappedRunner(t, f, stub, &logLines{}, 0)
-	state.DailyTokenCap = 2500
+	state.SetDailyTokenCap(2500)
 
 	require.NoError(t, state.Claim("ISS-1", "st", usageNow))
 	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}))

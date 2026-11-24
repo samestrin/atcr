@@ -252,7 +252,7 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 	if a.Now != nil {
 		now = a.Now
 	}
-	if a.State.DailyTokenCap > 0 {
+	if a.State.DailyTokenCap() > 0 {
 		if err := a.lockSerial(ctx); err != nil {
 			return fmt.Errorf("webhook: auto-fix of %s: waiting for the running job: %w", label, err)
 		}
@@ -266,7 +266,7 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 		return r.refuseAutoFix(ctx, issue, label, pr, "daily cap reached", text, err)
 	case errors.Is(err, ErrAutoFixDailyTokenCap):
 		text := fmt.Sprintf("ATCR auto-fix did not run for %s: daily token cap reached (%d tokens per UTC day). "+
-			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, a.State.DailyTokenCap)
+			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, a.State.DailyTokenCap())
 		return r.refuseAutoFix(ctx, issue, label, pr, "daily token cap reached", text, err)
 	case err != nil:
 		return fmt.Errorf("linear issue %s: %w", issue, err)

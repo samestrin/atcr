@@ -193,7 +193,7 @@ func runWebhook(cmd *cobra.Command, _ []string) error {
 			if err != nil {
 				return usageError(err)
 			}
-			state.DailyTokenCap = a.DailyTokenCap
+			state.SetDailyTokenCap(a.DailyTokenCap)
 			// The push token reads the PR head and posts the cap refusal: the
 			// review token may be unset, and is never handed push rights.
 			gh := &ghaction.Client{APIURL: githubAPIURL, Token: pushToken}

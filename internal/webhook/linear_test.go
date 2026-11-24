@@ -751,7 +751,7 @@ func TestLinearAutoFix_DailyTokenCapPostsCommentAndRunsNone(t *testing.T) {
 	lookup := &fakeLookup{prs: map[string]linear.PR{"iss-1": widgetPR()}}
 	fixer := &fakeFixer{}
 	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
-	h.runner.AutoFix.State.DailyTokenCap = 1000
+	h.runner.AutoFix.State.SetDailyTokenCap(1000)
 	require.NoError(t, h.runner.AutoFix.State.AddTokens(1000, time.Now()))
 
 	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
@@ -774,7 +774,7 @@ func TestLinearAutoFix_DailyTokenCapWithoutCommenterLogs(t *testing.T) {
 	fixer := &fakeFixer{}
 	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
 	h.runner.AutoFix.Commenter = nil
-	h.runner.AutoFix.State.DailyTokenCap = 10
+	h.runner.AutoFix.State.SetDailyTokenCap(10)
 	require.NoError(t, h.runner.AutoFix.State.AddTokens(10, time.Now()))
 
 	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
@@ -813,7 +813,7 @@ func TestLinearAutoFix_DailyTokenCapSerializesClaimThroughCharge(t *testing.T) {
 	fixer := &fakeFixer{started: make(chan struct{}, 2), gate: make(chan struct{})}
 	h, gh, _ := newAutoFixHarness(t, lookup, fixer, 5)
 	state := h.runner.AutoFix.State
-	state.DailyTokenCap = 100
+	state.SetDailyTokenCap(100)
 	fixer.charge = func(AutoFixTarget) { assert.NoError(t, state.AddTokens(100, time.Now())) }
 
 	h.send(t, linearBody("iss-1", "EST", "st-fix", "Fix It", time.Now(), "stateId"), "d-1")
@@ -849,7 +849,7 @@ func TestLinearAutoFix_WaitingJobIsCancellable(t *testing.T) {
 	fixer := &fakeFixer{}
 	h, gh, _ := newAutoFixHarness(t, &fakeLookup{}, fixer, 5)
 	a := h.runner.AutoFix
-	a.State.DailyTokenCap = 100
+	a.State.SetDailyTokenCap(100)
 	require.NoError(t, a.lockSerial(context.Background()), "a running job holds the lock")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
