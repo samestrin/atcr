@@ -304,9 +304,10 @@ func streamSummaryFile(path string, br *bufio.Reader, opts ReadOpts, fn func(Sum
 // at once (the fold), and ReadAll when full records are needed (rendering).
 //
 // Like ReadAll, it first finishes a committed conversion left unfinished
-// (finishPendingConversion), so it must not be called under the store lock.
+// (finishPendingConversion), reports one it cannot finish in opts.Result, and must
+// not be called under the store lock.
 func StreamSummaries(dir string, opts ReadOpts, fn func(Summary) error) error {
-	if err := finishPendingConversion(dir, opts.Writer); err != nil {
+	if err := finishPendingConversionForRead(dir, opts); err != nil {
 		return err
 	}
 	files, err := RecordFiles(dir)

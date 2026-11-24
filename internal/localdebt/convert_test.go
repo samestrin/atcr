@@ -885,7 +885,8 @@ func TestConversionPending_OnlyNotExistIsAbsent(t *testing.T) {
 		"Convert":     func(dir string) error { _, err := Convert(dir, quiet); return err },
 		"ConvertPlan": func(dir string) error { _, err := ConvertPlan(dir, quiet); return err },
 		"finishPendingConversion": func(dir string) error {
-			return finishPendingConversion(dir, io.Discard)
+			_, err := finishPendingConversion(dir, io.Discard)
+			return err
 		},
 		"finishPendingConversionLocked": func(dir string) error {
 			return withLock(dir, "test", func() error { return finishPendingConversionLocked(dir) })
@@ -988,8 +989,9 @@ func TestFinishPendingConversion_ReturnsTheLockedJournalCheckError(t *testing.T)
 	}
 	t.Cleanup(func() { afterContainmentCheck = func() {} })
 	var w strings.Builder
-	err := finishPendingConversion(dir, &w)
+	unfinished, err := finishPendingConversion(dir, &w)
 	require.Error(t, err, "a journal the locked re-check cannot check is returned")
+	assert.False(t, unfinished, "an error is not also an unfinished plan")
 	assert.Contains(t, err.Error(), "checking for an interrupted localdebt conversion")
 	assert.Empty(t, w.String(), "it is not reported as a plan that could not be finished")
 }
@@ -1000,7 +1002,9 @@ func TestFinishPendingConversion_WarnsForAPlanItCannotFinish(t *testing.T) {
 	dir, _ := halfFinishedConversion(t)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, convertSubdir, convertJournal), []byte("not json"), 0o600))
 	var w strings.Builder
-	require.NoError(t, finishPendingConversion(dir, &w))
+	unfinished, err := finishPendingConversion(dir, &w)
+	require.NoError(t, err)
+	assert.True(t, unfinished, "the plan it cannot finish is returned as unfinished")
 	assert.Contains(t, w.String(), "an interrupted conversion could not be finished")
 }
 
@@ -1043,6 +1047,8 @@ func TestFinishPendingConversion_AFinishedPlanIsNotAWarning(t *testing.T) {
 	}
 	t.Cleanup(func() { afterContainmentCheck = func() {} })
 	var w strings.Builder
-	require.NoError(t, finishPendingConversion(dir, &w))
+	unfinished, err := finishPendingConversion(dir, &w)
+	require.NoError(t, err)
+	assert.False(t, unfinished, "a plan finished meanwhile is not unfinished")
 	assert.Empty(t, w.String(), "a plan finished meanwhile is not reported")
 }
