@@ -113,7 +113,7 @@ func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.
 	require.NoError(t, os.Mkdir(root, 0o755))
 	dir, err := projectStoreDir(root, "debt")
 	require.NoError(t, err)
-	t.Cleanup(func() { projectStores.Delete(filepath.Clean(dir)) })
+	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
 	require.NoError(t, os.Remove(root))
 
 	err = ensureStoreDir(dir)
@@ -121,6 +121,57 @@ func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.
 	assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
 	assert.Contains(t, err.Error(), `"gone-repo"`, "the refusal names the missing repository root")
 	_, statErr := os.Stat(root)
+	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
+}
+
+// TestEnsureStoreDir_ProjectTierRootReplacedByAFileIsRefused pins the !info.IsDir()
+// half of the project-tier root check (row e4120ba70e4c1d35): a registered root
+// that now exists as a regular file is refused by the root check itself, not left
+// to fail later inside MkdirAll with an error that never names the root.
+func TestEnsureStoreDir_ProjectTierRootReplacedByAFileIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "file-repo")
+	require.NoError(t, os.Mkdir(root, 0o755))
+	dir, err := projectStoreDir(root, "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+	require.NoError(t, os.Remove(root))
+	require.NoError(t, os.WriteFile(root, []byte("not a repo\n"), 0o600))
+
+	err = ensureStoreDir(dir)
+	require.Error(t, err, "a registered root that is a regular file must be refused")
+	assert.Contains(t, err.Error(), "repository root", "the refusal comes from the root check")
+	assert.Contains(t, err.Error(), `"file-repo"`, "the refusal names the repository root")
+	info, statErr := os.Stat(root)
+	require.NoError(t, statErr)
+	assert.False(t, info.IsDir(), "the file at the root path must be left alone")
+}
+
+// TestProjectStores_KeyedByAbsolutePath pins row 7a03d6351e9f221a: projectStores
+// was keyed by filepath.Clean(dir), so a store resolved against a relative root
+// and later looked up by its absolute spelling (or the reverse) missed the entry
+// and fell back to the grandparent rule, which resurrected a vanished depth-1
+// root. Both spellings of one store now hit one entry.
+func TestProjectStores_KeyedByAbsolutePath(t *testing.T) {
+	parent := t.TempDir()
+	t.Chdir(parent)
+	require.NoError(t, os.Mkdir("rel-repo", 0o755))
+	dir, err := projectStoreDir("rel-repo", "debt")
+	require.NoError(t, err)
+	require.False(t, filepath.IsAbs(dir), "precondition: the store was resolved against a relative root")
+	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	for _, spelling := range []string{dir, absDir, "./" + dir} {
+		_, ok := projectStores.Load(projectStoreKey(spelling))
+		assert.True(t, ok, "%q must find the project-store entry", spelling)
+	}
+
+	require.NoError(t, os.Remove("rel-repo"))
+	err = ensureStoreDir(absDir)
+	require.Error(t, err, "the absolute spelling of a project store must keep the root anchor")
+	assert.Contains(t, err.Error(), `"rel-repo"`, "the refusal names the missing repository root")
+	_, statErr := os.Stat(filepath.Join(parent, "rel-repo"))
 	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
 }
 
@@ -132,7 +183,7 @@ func TestEnsureStoreDir_ProjectTierStoreUnderLiveRootIsCreated(t *testing.T) {
 	for _, v := range []string{"debt", "docs/planning/debt"} {
 		dir, err := projectStoreDir(root, v)
 		require.NoError(t, err)
-		t.Cleanup(func() { projectStores.Delete(filepath.Clean(dir)) })
+		t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
 
 		require.NoError(t, ensureStoreDir(dir), v)
 		info, err := os.Stat(dir)
