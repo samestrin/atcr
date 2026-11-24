@@ -81,14 +81,20 @@ func projectStoreDir(root, v string) (string, error) {
 	if err := containedIn(root, dir); err != nil {
 		return reject(err.Error())
 	}
-	projectStores.Store(filepath.Clean(dir), root)
+	projectStores.Store(projectStoreKey(dir), root)
 	return dir, nil
 }
 
-// projectStores maps each directory projectStoreDir has handed out (cleaned) to
-// the repository root it must stay inside, so withLock can re-check containment
-// at write time without every caller passing the root along.
+// projectStores maps each directory projectStoreDir has handed out (keyed by
+// projectStoreKey) to the repository root it must stay inside, so withLock can
+// re-check containment at write time without every caller passing the root along.
 var projectStores sync.Map
+
+// projectStoreKey is the projectStores key for dir: every Store, Load and Delete
+// goes through it so two spellings of one store are one entry.
+func projectStoreKey(dir string) string {
+	return filepath.Clean(dir)
+}
 
 // afterContainmentCheck runs between withLock's pre-lock containment check and
 // taking the lock. It is a var so a test can swap a link inside that window;
@@ -104,7 +110,7 @@ var afterContainmentCheck = func() {}
 // and each open inside fn, which only an os.Root anchored at the repository root
 // would close.
 func checkStoreContainment(dir string) error {
-	root, ok := projectStores.Load(filepath.Clean(dir))
+	root, ok := projectStores.Load(projectStoreKey(dir))
 	if !ok {
 		return nil
 	}

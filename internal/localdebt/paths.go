@@ -62,7 +62,7 @@ func ensureStoreDir(dir string) error {
 		}
 		return nil
 	}
-	if root, ok := projectStores.Load(filepath.Clean(dir)); ok {
+	if root, ok := projectStores.Load(projectStoreKey(dir)); ok {
 		if info, err := os.Stat(root.(string)); err != nil || !info.IsDir() {
 			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(root.(string)))
 		}
