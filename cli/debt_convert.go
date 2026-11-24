@@ -8,7 +8,22 @@ import (
 	"github.com/samestrin/atcr/internal/localdebt"
 )
 
+// debtConvertFuncs carries the conversions runDebtConvert calls. A test
+// injects a failing conversion through newDebtConvertCmdWith instead of
+// swapping package-level variables.
+type debtConvertFuncs struct {
+	convert func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error)
+	plan    func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error)
+}
+
 func newDebtConvertCmd() *cobra.Command {
+	return newDebtConvertCmdWith(debtConvertFuncs{
+		convert: localdebt.Convert,
+		plan:    localdebt.ConvertPlan,
+	})
+}
+
+func newDebtConvertCmdWith(fns debtConvertFuncs) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "convert",
 		Short: "Convert the local TD store's month shards to the event layout (one way)",
@@ -25,21 +40,14 @@ func newDebtConvertCmd() *cobra.Command {
 			"The conversion is one way; there is no command back.\n" +
 			"Run it with --dry-run first to see what a real run would move.",
 		Args: usageArgs(cobra.NoArgs),
-		RunE: runDebtConvert,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runDebtConvert(cmd, fns) },
 	}
 	addDebtStoreFlag(cmd)
 	cmd.Flags().Bool("dry-run", false, "report what would be converted without changing the store")
 	return cmd
 }
 
-// debtConvert and debtConvertPlan are the conversions runDebtConvert calls; a test
-// swaps them to return a partial result with an error.
-var (
-	debtConvert     = localdebt.Convert
-	debtConvertPlan = localdebt.ConvertPlan
-)
-
-func runDebtConvert(cmd *cobra.Command, _ []string) error {
+func runDebtConvert(cmd *cobra.Command, fns debtConvertFuncs) error {
 	dir, err := debtStoreDir(cmd)
 	if err != nil {
 		return err
@@ -47,24 +55,26 @@ func runDebtConvert(cmd *cobra.Command, _ []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
-	convert := debtConvert
+	convert := fns.convert
 	if dryRun {
-		convert = debtConvertPlan
+		convert = fns.plan
 	}
 	res, err := convert(dir, opts)
-	out := cmd.OutOrStdout()
 	if err != nil {
 		// A run that failed may still have finished an interrupted conversion or
 		// opted the store in (localdebt.Convert reports both with the error), and
-		// every later write is then an event file: say so before the error.
+		// every later write is then an event file: say so before the error, on
+		// stderr, so a script parsing stdout never reads a failed run as success.
+		errOut := cmd.ErrOrStderr()
 		if res.Resumed {
-			_, _ = fmt.Fprintln(out, "Finished an interrupted conversion.")
+			_, _ = fmt.Fprintln(errOut, "Finished an interrupted conversion.")
 		}
 		if res.OptedIn && !dryRun {
-			_, _ = fmt.Fprintln(out, optedInLine)
+			_, _ = fmt.Fprintln(errOut, optedInLine)
 		}
 		return fmt.Errorf("convert: %w", err)
 	}
+	out := cmd.OutOrStdout()
 
 	if !res.StoreFound {
 		_, _ = fmt.Fprintln(out, "No local TD store to convert.")
