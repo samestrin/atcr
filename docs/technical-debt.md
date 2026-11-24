@@ -886,7 +886,7 @@ Flags: `--store`, `--dry-run`.
   (`.convert/COMMIT` unreadable, for example a permission error) is an error,
   not a warning: the command cannot tell whether a record would be counted twice.
   If a conversion fails after it opted the store in to the event layout, it says
-  so before the error. `atcr debt compact --dry-run`
+  so on stderr before the error, so stdout never reads as a success. `atcr debt compact --dry-run`
   and `atcr debt backfill-justifications --dry-run` write nothing, so they refuse
   until the conversion is finished.
 - **Finishing a conversion never removes a record it did not move.** Before

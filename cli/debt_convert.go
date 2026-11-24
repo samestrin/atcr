@@ -52,19 +52,21 @@ func runDebtConvert(cmd *cobra.Command, _ []string) error {
 		convert = debtConvertPlan
 	}
 	res, err := convert(dir, opts)
-	out := cmd.OutOrStdout()
 	if err != nil {
 		// A run that failed may still have finished an interrupted conversion or
 		// opted the store in (localdebt.Convert reports both with the error), and
-		// every later write is then an event file: say so before the error.
+		// every later write is then an event file: say so before the error, on
+		// stderr, so a script parsing stdout never reads a failed run as success.
+		errOut := cmd.ErrOrStderr()
 		if res.Resumed {
-			_, _ = fmt.Fprintln(out, "Finished an interrupted conversion.")
+			_, _ = fmt.Fprintln(errOut, "Finished an interrupted conversion.")
 		}
 		if res.OptedIn && !dryRun {
-			_, _ = fmt.Fprintln(out, optedInLine)
+			_, _ = fmt.Fprintln(errOut, optedInLine)
 		}
 		return fmt.Errorf("convert: %w", err)
 	}
+	out := cmd.OutOrStdout()
 
 	if !res.StoreFound {
 		_, _ = fmt.Fprintln(out, "No local TD store to convert.")
