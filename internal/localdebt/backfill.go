@@ -702,9 +702,10 @@ func runOwnedBy(reviewDir, reconciledAt, runID string) bool {
 // readReconciledAt returns the reconciled_at in reviewDir's reconciled/summary.json,
 // or "" when the file is missing, not a regular file, unreadable, over
 // maxSummaryBytes, unparseable or carries none — every case reviewDirOwnsRun reads
-// as owning nothing. Both the Lstat and the open go through an os.Root of
-// reviewDir/reconciled, so a reconciled/ or summary.json symlink that resolves
-// outside that directory is refused rather than followed. The Lstat pre-checks the
+// as owning nothing. reconciled/ must be a real directory of reviewDir, never a
+// symlink, and both the summary's Lstat and its open go through an os.Root of it,
+// so a summary.json symlink that resolves outside reconciled/ is refused rather
+// than followed (TD 088dae89858474f8). The Lstat pre-checks the
 // size and refuses a non-regular path, but the path can change between the Lstat
 // and the open, so the default open (openSummaryFile) does not block on a FIFO, and
 // readSummary checks the opened DESCRIPTOR is regular — the backfill pass holds the
@@ -737,6 +738,12 @@ func readSummary(reviewDir string, open func(dir *os.Root, name string) (*os.Fil
 		return "", false
 	}
 	defer func() { _ = root.Close() }()
+	// A symlinked reconciled/ owns nothing, wherever it leads. A directory swapped
+	// for a link after this Lstat can still be followed by OpenRoot, but only to a
+	// directory inside reviewDir: the review root refuses anything further.
+	if di, err := root.Lstat("reconciled"); err != nil || !di.IsDir() {
+		return "", false
+	}
 	dir, err := root.OpenRoot("reconciled")
 	if err != nil {
 		return "", false
