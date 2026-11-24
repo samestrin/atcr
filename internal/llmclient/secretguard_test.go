@@ -257,3 +257,34 @@ func TestChat_SecretGuardUsesThePayloadScanner(t *testing.T) {
 	require.True(t, errors.Is(err, ErrSecretGuardBlocked), "got %v", err)
 	assert.EqualValues(t, 0, hits.Load())
 }
+
+// An empty Content or text Part has nothing to scan, so the scanner is never
+// handed one.
+func TestChat_SecretGuardSkipsEmptyText(t *testing.T) {
+	srv, hits, _ := guardServer(t)
+	scanned := stubScanner(t, nil)
+
+	msgs := []Message{
+		{Role: "user", Content: strp("")},
+		{Role: "user", Parts: []ContentPart{TextPart(""), TextPart("clean")}},
+	}
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), guardInv(srv, "block", 0), msgs, nil)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, hits.Load())
+	assert.Equal(t, []string{"clean"}, *scanned, "empty texts are not scanned")
+}
+
+// Hits in two text Parts of one message name that message once.
+func TestChat_SecretGuardListsEachMessageOnce(t *testing.T) {
+	srv, hits, _ := guardServer(t)
+	stubScanner(t, nil)
+
+	msgs := []Message{
+		{Role: "user", Content: strp("clean")},
+		{Role: "user", Parts: []ContentPart{TextPart("a " + chatAWSKey), TextPart("b " + chatAWSKey)}},
+	}
+	_, err := fastRetry(srv.Client()).Chat(context.Background(), guardInv(srv, "block", 0), msgs, nil)
+	require.True(t, errors.Is(err, ErrSecretGuardBlocked), "got %v", err)
+	assert.EqualValues(t, 0, hits.Load())
+	assert.Contains(t, err.Error(), "2 secret(s) [aws-access-token] in message 1;")
+}
