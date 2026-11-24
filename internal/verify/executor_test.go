@@ -18,6 +18,7 @@ import (
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -1271,4 +1272,58 @@ func (c *ctxRecordingExecutor) Complete(ctx context.Context, _ llmclient.Invocat
 		*c.seen = hookobs.CallFrom(ctx)
 	}
 	return "a fix", nil
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what it
+// wrote. fanout.GuardOutbound prints its warnings straight to os.Stderr, so a
+// test that counts them must not run in parallel with one that also writes there.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	defer func() { os.Stderr = orig }()
+	fn()
+	require.NoError(t, w.Close())
+	return <-done
+}
+
+// Row b7d5bfe83df919a3: the snippet-path prompt is guarded once per finding, not
+// once per generate attempt. A diff-smell retry resends the finding the first
+// attempt already guarded, so under warn it must not print a second warning for
+// the same secret, and under redact the retry prompt stays redacted while still
+// carrying the rejection evidence.
+func TestGenerateFixes_SnippetPromptGuardedOncePerFinding(t *testing.T) {
+	for _, policy := range []string{"warn", "redact"} {
+		t.Run(policy, func(t *testing.T) {
+			reg := execRegistry("MEDIUM")
+			reg.SecretGuard = policy
+			findings := secretFinding()
+			rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
+			stderr := captureStderr(t, func() {
+				generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+			})
+
+			require.Equal(t, 2, rec.callCount(), "a HARD smell must trigger exactly one retry")
+			assert.Equal(t, strings.TrimSpace(gateCleanDiff), findings[0].Fix)
+			retry := rec.promptAt(1)
+			assert.Contains(t, retry, smellTestOnly, "the retry still carries the rejection evidence")
+			assert.Equal(t, 1, strings.Count(stderr, "to the fix executor"), "one secret_guard line per finding, not per attempt:\n%s", stderr)
+			if policy == "warn" {
+				assert.Contains(t, rec.promptAt(0), verifyAWSKey, "warn sends the prompt unchanged")
+				assert.Contains(t, retry, verifyAWSKey, "warn sends the retry unchanged")
+				return
+			}
+			for i := range 2 {
+				assert.NotContains(t, rec.promptAt(i), verifyAWSKey, "attempt %d must stay redacted", i)
+				assert.Contains(t, rec.promptAt(i), payload.SecretPlaceholder, "attempt %d", i)
+			}
+		})
+	}
 }
