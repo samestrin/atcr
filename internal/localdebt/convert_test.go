@@ -922,3 +922,111 @@ func TestConversionPending_OnlyNotExistIsAbsent(t *testing.T) {
 		})
 	}
 }
+
+// loopConvertStaging makes the store's .convert a symlink to itself, so the Lstat
+// of its COMMIT journal fails with ELOOP: a check failure root cannot bypass.
+func loopConvertStaging(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.Symlink(convertSubdir, filepath.Join(dir, convertSubdir)))
+	_, err := os.Lstat(filepath.Join(dir, convertSubdir, convertJournal))
+	require.Error(t, err, "fixture: the journal Lstat fails")
+	require.False(t, os.IsNotExist(err), "fixture: and not with ENOENT")
+}
+
+// TestConvert_ChecksTheJournalOfAStoreWithNoRecordFile (TD row 5f2465480bb1c8d2):
+// a store with no record file can still hold a conversion journal, so the run
+// checks it before it reports "no store": a journal it cannot check is an error.
+func TestConvert_ChecksTheJournalOfAStoreWithNoRecordFile(t *testing.T) {
+	for name, broken := range map[string]func(*testing.T, string){
+		"EACCES": lockConvertStaging,
+		"ELOOP":  loopConvertStaging,
+	} {
+		for _, dryRun := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/dry-run=%v", name, dryRun), func(t *testing.T) {
+				dir := DefaultDir(t.TempDir())
+				broken(t, dir)
+				require.False(t, hasShardFiles(dir), "fixture: no record file")
+				res, err := convert(dir, quiet, dryRun)
+				require.Error(t, err, "a journal that cannot be checked is not an absent store")
+				assert.Contains(t, err.Error(), "checking for an interrupted localdebt conversion")
+				assert.False(t, res.OptedIn)
+			})
+		}
+	}
+}
+
+// TestConvert_ReportsOnlyAnOptInItMade (TD row 6caa8adccb3e6d47): OptedIn on a
+// failed run is decided under the store lock, from what the run itself did, not
+// from the layout read after the lock is released, which another writer may have
+// opted in meanwhile.
+func TestConvert_ReportsOnlyAnOptInItMade(t *testing.T) {
+	dir := fullTie(t)
+	require.False(t, UsesEventLayout(dir), "fixture: the store is on month shards")
+	convertAfterStage = func(string) {
+		// Another opt-in, not this run's: the run is refused before its own.
+		require.NoError(t, enableEventLayoutLocked(dir))
+	}
+	t.Cleanup(func() { convertAfterStage = nil })
+	res, err := Convert(dir, quiet)
+	require.ErrorIs(t, err, ErrFoldChanged)
+	require.True(t, UsesEventLayout(dir), "fixture: the store is opted in after the run")
+	assert.False(t, res.OptedIn, "a run refused before its opt-in reports none")
+}
+
+// TestFinishPendingConversion_ReturnsTheLockedJournalCheckError (TD row
+// 341218e0eaa14dec): the journal is checked again under the lock, and a failure
+// of that check is returned, as the unlocked check's is; only a plan that could
+// not be finished is a warning.
+func TestFinishPendingConversion_ReturnsTheLockedJournalCheckError(t *testing.T) {
+	dir, _ := halfFinishedConversion(t)
+	staging := filepath.Join(dir, convertSubdir)
+	afterContainmentCheck = func() {
+		// Between the unlocked check and the locked one.
+		require.NoError(t, os.Rename(staging, staging+".moved"))
+		require.NoError(t, os.Symlink(convertSubdir, staging))
+	}
+	t.Cleanup(func() { afterContainmentCheck = func() {} })
+	var w strings.Builder
+	err := finishPendingConversion(dir, &w)
+	require.Error(t, err, "a journal the locked re-check cannot check is returned")
+	assert.Contains(t, err.Error(), "checking for an interrupted localdebt conversion")
+	assert.Empty(t, w.String(), "it is not reported as a plan that could not be finished")
+}
+
+// TestFinishPendingConversion_WarnsForAPlanItCannotFinish: a committed plan that
+// cannot be finished is still a warning, and the store reads as it stands.
+func TestFinishPendingConversion_WarnsForAPlanItCannotFinish(t *testing.T) {
+	dir, _ := halfFinishedConversion(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, convertSubdir, convertJournal), []byte("not json"), 0o600))
+	var w strings.Builder
+	require.NoError(t, finishPendingConversion(dir, &w))
+	assert.Contains(t, w.String(), "an interrupted conversion could not be finished")
+}
+
+// TestConversionPending_NamesTheJournalDir (TD row 5883302dfe4d2d23): a journal
+// that cannot be checked fails every read, so the error names the store's .convert
+// directory and what removing it costs; a .convert that is a file, not a
+// directory, holds no journal and fails nothing.
+func TestConversionPending_NamesTheJournalDir(t *testing.T) {
+	t.Run("unreadable", func(t *testing.T) {
+		dir := DefaultDir(t.TempDir())
+		loopConvertStaging(t, dir)
+		_, err := conversionPending(dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), filepath.Join(filepath.Base(dir), convertSubdir))
+		assert.Contains(t, err.Error(), "abandons the interrupted conversion")
+		assert.NotContains(t, err.Error(), dir, "the absolute store path is redacted")
+	})
+	t.Run("ENOTDIR", func(t *testing.T) {
+		dir := buildStore(t, layoutShards)
+		before := foldedAll(t, dir)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, convertSubdir), []byte("stray"), 0o600))
+		pending, err := conversionPending(dir)
+		require.NoError(t, err, "a .convert file is not a journal")
+		assert.False(t, pending)
+		recs, err := ReadAll(dir, quiet)
+		require.NoError(t, err)
+		assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }))
+	})
+}
