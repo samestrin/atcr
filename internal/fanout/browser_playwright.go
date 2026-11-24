@@ -90,9 +90,12 @@ var playwrightConfigNames = []string{
 // sh and a tar with create (-c) and append (-r); append is not in every tar
 // (busybox's has none), so a tar that fails stops the pass with a line on
 // stderr naming the file and the screenshots kept, and its own message is left
-// in the run output. The command's exit status is preserved.
+// in the run output. COPYFILE_DISABLE=1 stops macOS's bsdtar from packing an
+// AppleDouble "._" entry beside each file with extended attributes, which would
+// double the entries past the cap; other tars ignore it. The command's exit
+// status is preserved.
 var playwrightRunShell = `export NODE_PATH=/src/node_modules PATH="/src/node_modules/.bin:$PATH" ` +
-	`PLAYWRIGHT_JSON_OUTPUT_NAME=` + playwrightReportPath + ` npm_config_yes=false; ` +
+	`PLAYWRIGHT_JSON_OUTPUT_NAME=` + playwrightReportPath + ` npm_config_yes=false COPYFILE_DISABLE=1; ` +
 	`[ -e node_modules ] || ln -s /src/node_modules node_modules 2>/dev/null; ` +
 	`mkdir -p ` + playwrightWorkDir + `; "$@"; _atcr_rc=$?; ` +
 	`rm -f ` + playwrightScreenshotsPath + ` ` + playwrightScreenshotsCount + `; ` +
