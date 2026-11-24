@@ -17,9 +17,13 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/audit"
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/verify"
+	"github.com/samestrin/atcr/internal/webhook"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1229,4 +1233,127 @@ func TestReviewCmd_PreviewURL_RejectsRemoteHTTP_ExitsUsage(t *testing.T) {
 	err := root.ExecuteContext(context.Background())
 	require.Equal(t, exitUsage, exitCode(err))
 	assert.ErrorContains(t, err, "--preview-url must use https://")
+}
+
+// --- Epic 135 T3 (row bd204cf0ee0067a6): the auto-fix usage line on every exit
+// after PrepareReview ---------------------------------------------------------
+
+// autoFixUsageLines are the stdout lines that report a run's token usage: the
+// usage line itself or the line saying it is unavailable.
+func autoFixUsageLines(stdout string) []string {
+	var got []string
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(l, webhook.AutoFixUsagePrefix) || strings.HasPrefix(l, "auto-fix: token usage unavailable") {
+			got = append(got, l)
+		}
+	}
+	return got
+}
+
+// requireUsageLineLast asserts stdout reports usage exactly once and that the
+// report is its last line, returning that line.
+func requireUsageLineLast(t *testing.T, stdout string) string {
+	t.Helper()
+	got := autoFixUsageLines(stdout)
+	require.Len(t, got, 1, "exactly one usage report, got:\n%s", stdout)
+	require.Equal(t, got[0], lastLine(stdout), "the usage report must end the output:\n%s", stdout)
+	return got[0]
+}
+
+// runReviewAutoFixSplit is runReviewAutoFix against the provider at srvURL with
+// stdout and stderr kept apart, so a test can read stdout's last line.
+func runReviewAutoFixSplit(t *testing.T, srvURL string, extra ...string) (int, string, string) {
+	t.Helper()
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	liveReviewConfig(t, srvURL, "solo")
+	appendProjectConfig(t, "consensus: off\nauto_fix:\n  validate_command: [\"true\"]\n")
+
+	oldResolve := resolveHeadSHAFn
+	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
+	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
+	oldClient := newAutoFixGitHubFn
+	newAutoFixGitHubFn = func(string, string) autoFixGitHub { return &fakeGitHub{} }
+	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
+
+	args := append([]string{"review", "--base", "HEAD^", "--fail-on", "LOW",
+		"--auto-fix", "--auto-fix-base", "main", "--no-sandbox", "--repo", "o/r", "--token", "tok"}, extra...)
+	return execCmdSplit(t, args...)
+}
+
+// usageProvider is a live mock provider that reports 10 prompt and 5
+// completion tokens per call, so the solo reviewer's usage line is nonzero.
+func usageProvider(t *testing.T) *httptest.Server {
+	return perAgentMockProviderWithUsage(t, map[string]string{"m-solo": "HIGH|a.txt:2|wrong word|fix it|correctness|5|two"})
+}
+
+const soloUsageLine = "atcr-auto-fix-usage: tokens_in=10 tokens_out=5 scope=review-fanout not_counted=verify,debate,reconcile"
+
+// A successful auto-fix run prints the usage line once, last: orchestrateAutoFix
+// no longer prints its own, so the run never reports usage twice.
+func TestReviewAutoFix_UsageLineOnceOnSuccess(t *testing.T) {
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL)
+	require.Equal(t, 0, code, stdout+stderr)
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A --verify failure after the fan-out spent its tokens still ends the output
+// with the usage line.
+func TestReviewAutoFix_UsageLineOnVerifyFailure(t *testing.T) {
+	orig := verifyRun
+	called := false
+	verifyRun = func(context.Context, string, string, *registry.Registry, verify.Options) (verify.Result, error) {
+		called = true
+		return verify.Result{}, errors.New("skeptic exploded")
+	}
+	t.Cleanup(func() { verifyRun = orig })
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--verify")
+	require.True(t, called, "the verify stage ran")
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.NotContains(t, stdout, "auto-fix:", "the auto-fix stage never ran")
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A --debate failure after the fan-out still ends the output with the usage line.
+func TestReviewAutoFix_UsageLineOnDebateFailure(t *testing.T) {
+	orig := debateRun
+	called := false
+	debateRun = func(context.Context, string, string, *registry.Registry, debate.Options) (debate.Result, error) {
+		called = true
+		return debate.Result{}, errors.New("debate exploded")
+	}
+	t.Cleanup(func() { debateRun = orig })
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--debate")
+	require.True(t, called, "the debate stage ran")
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.NotContains(t, stdout, "auto-fix:", "the auto-fix stage never ran")
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A fan-out in which every agent fails exits before reconcile; the review dir
+// exists, so the output still ends with a usage report (the failed agents'
+// zero usage, or the unavailable line if the summary records none).
+func TestReviewAutoFix_UsageLineOnFanoutFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, srv.URL)
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.Contains(t, stdout, "0/1 agents succeeded")
+	requireUsageLineLast(t, stdout)
+}
+
+// A failure before PrepareReview creates the review directory cannot report
+// usage: there is no pool summary to read and no review tokens were spent, so
+// no usage report is printed at all.
+func TestReviewAutoFix_NoUsageLineBeforeReviewDirExists(t *testing.T) {
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--base", "no-such-ref")
+	require.Equal(t, 2, code, stdout+stderr)
+	require.Empty(t, autoFixUsageLines(stdout+stderr), "no review dir, so no usage report:\n%s", stdout+stderr)
 }
