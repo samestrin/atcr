@@ -244,6 +244,49 @@ type ReviewerFalseAlarms struct {
 	UnmatchedPerCase *float64 `json:"unmatched_per_case,omitempty"`
 }
 
+// UnmatchedFinding is one finding matchCase did not count as matched, kept with
+// enough of its text to be judged by a person: a true positive the category matcher
+// missed, or a real false alarm. It is the row-level evidence behind
+// ReviewerFalseAlarms.Unmatched, so a run-result's unmatched_findings has exactly
+// that many entries for a reviewer.
+//
+// Run-result-only, like ReviewerFalseAlarms: scorecard.PublicRecord is frozen and
+// BuildSubmission does not carry this array forward. Nothing here feeds scoring or
+// the reproducibility hash.
+type UnmatchedFinding struct {
+	Model   string `json:"model"`
+	Persona string `json:"persona"`
+	CaseID  string `json:"case_id"`
+	// Index is the finding's 1-based position among the reviewer's findings for the
+	// case, in pool order (skipped rows last). With CaseID, Model and Persona it is
+	// the finding's id; the pool format carries no id of its own.
+	Index    int    `json:"index"`
+	Category string `json:"category"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	// Message is the finding's PROBLEM text; for a row the parser could not align it
+	// is the raw row. Truncated to MaxUnmatchedMessage runes.
+	Message string `json:"message,omitempty"`
+}
+
+// MaxUnmatchedMessage bounds the text kept per unmatched finding.
+const MaxUnmatchedMessage = 1000
+
+// UnmatchedIndexes returns the positions in raised (0-based) that matchCase does not
+// count as matched for a case expecting `expected`. It shares matchCase's
+// satisfaction walk, so the list's length is always len(raised) - matched.
+func UnmatchedIndexes(expected, raised []string) []int {
+	raisedSet, normalizedRaised := normalizeSet(raised)
+	_, satisfying := satisfactions(normalizeDistinct(expected), raisedSet)
+	var out []int
+	for i, cat := range normalizedRaised {
+		if !satisfying[cat] {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 // FalseAlarms computes each reviewer's ReviewerFalseAlarms row. A finding is
 // unmatched when matchCase does not count it as matched, so the figure and
 // cost_per_corroborated_finding_usd's denominator are complements over the same

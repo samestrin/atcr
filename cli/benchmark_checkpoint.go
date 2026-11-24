@@ -100,6 +100,11 @@ type checkpointCase struct {
 	// folds the score exactly as before and adds no reviewer_fit rows. Every entry
 	// this binary writes carries a value of at least 1.
 	Replicate int `json:"replicate,omitempty"`
+
+	// UnmatchedRecorded marks an entry written by a binary that recorded each
+	// reviewer's Unmatched rows, so a replay can tell "none unmatched" from "never
+	// recorded". Additive.
+	UnmatchedRecorded bool `json:"unmatched_recorded,omitempty"`
 }
 
 // replicate returns the entry's replicate number, reading a legacy 0 as 1.
@@ -129,13 +134,16 @@ type caseRun struct {
 // it in case order keeps the float sum and latency median byte-identical to an
 // uninterrupted run.
 type checkpointReviewer struct {
-	Agent         string   `json:"agent"`
-	Model         string   `json:"model"`
-	Persona       string   `json:"persona"`
-	Raised        []string `json:"raised"`
-	UsageReported bool     `json:"usage_reported"`
-	CostUSD       float64  `json:"cost_usd"`
-	LatencyMS     int64    `json:"latency_ms"`
+	Agent   string   `json:"agent"`
+	Model   string   `json:"model"`
+	Persona string   `json:"persona"`
+	Raised  []string `json:"raised"`
+	// Unmatched is the subset of Raised that matched no expected category, with its
+	// text, so a resumed run reports what an uninterrupted one does. Additive.
+	Unmatched     []benchmark.UnmatchedFinding `json:"unmatched,omitempty"`
+	UsageReported bool                         `json:"usage_reported"`
+	CostUSD       float64                      `json:"cost_usd"`
+	LatencyMS     int64                        `json:"latency_ms"`
 
 	// Outcome is a benchmark.Outcome* value describing what actually happened on
 	// this case — the signal that separates a clean review from unparseable prose

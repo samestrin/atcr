@@ -414,6 +414,17 @@ type RunResult struct {
 	// and omitted when unmeasured. Only the standard (category) tier emits it.
 	FalseAlarms []ReviewerFalseAlarms `json:"reviewer_false_alarms,omitempty"`
 
+	// UnmatchedFindings lists every finding behind FalseAlarms' Unmatched counts, with
+	// its case, category, file, line and text, so an operator can adjudicate it. Run-
+	// result-only and score-neutral, like FalseAlarms. Standard tier only; empty when
+	// nothing was unmatched.
+	UnmatchedFindings []UnmatchedFinding `json:"unmatched_findings,omitempty"`
+
+	// UnmatchedNotRecorded names cases replayed from a checkpoint written before
+	// unmatched findings were recorded. Their unmatched findings are absent from
+	// UnmatchedFindings, so an empty list there must not be read as "none" for them.
+	UnmatchedNotRecorded []string `json:"unmatched_not_recorded,omitempty"`
+
 	// PositionalRecall is the repo-state-v1 tier's located-finding recall per
 	// reviewer, with out-of-diff recall reported SEPARATELY from overall recall
 	// (epic 35.16.10, AC4). Produced by ScorePositional; this field only carries it.
