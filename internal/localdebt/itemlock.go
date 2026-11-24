@@ -54,6 +54,7 @@ const ItemLockHolderEnv = "ATCR_DEBT_HOLDER"
 const (
 	maxItemLockIDBytes     = 100 // hex doubles it; a ref component must stay under 255
 	maxItemLockHolderBytes = 256
+	maxItemLockReasonBytes = 300 // a git failure in an ItemLockWarning Reason
 	itemLockTagName        = "atcr-debt-lock"
 )
 

@@ -820,3 +820,117 @@ func TestItemLockList_PerRefSweepSharesOneDeadline(t *testing.T) {
 	require.Equal(t, 2, fetches, "batch fetch plus one per-ref fetch: the second per-ref fetch must not start after the shared deadline")
 	require.Less(t, elapsed, 5*time.Second, "the sweep must be bounded by one shared timeout, not one per ref")
 }
+
+// Row 10b6c4815798e34d (epic 128 T4): a per-ref fetch warning keeps git's
+// stderr, but as one bounded line with absolute paths reduced to base names,
+// the redaction basePathErr gives an *os.PathError. Before, the Reason was
+// ferr.Error() whole: every stderr line, unbounded, with the paths in it.
+func TestItemLockList_PerRefFetchReasonIsOneRedactedBoundedStderrLine(t *testing.T) {
+	const private = "/home/alice/clients/acme/.git/objects/aa"
+	stderr := "error: inflate: data stream error (incorrect header check)\n" +
+		"fatal: loose object " + strings.Repeat("a", 40) + " (stored in " + private + "/" + strings.Repeat("b", 38) + ") is corrupt\n" +
+		"fatal: the remote end hung up unexpectedly"
+	long := "fatal: " + strings.Repeat("x", 4*maxItemLockReasonBytes)
+	cases := map[string]struct {
+		stderr string
+		want   []string
+	}{
+		"path in stderr": {stderr: stderr, want: []string{"git fetch", "loose object", "stored in " + strings.Repeat("b", 38)}},
+		"long stderr":    {stderr: long, want: []string{"git fetch", "fatal: xxx"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			itemLockGitStub(t, func(args []string) (string, string, int, time.Duration) {
+				switch args[0] {
+				case "rev-parse":
+					return ".git", "", 0, 0
+				case "remote":
+					return "origin", "", 0, 0
+				case "ls-remote":
+					return itemLockStubRefs("TD-001"), "", 0, 0
+				case "fetch":
+					return "", c.stderr, 128, 0
+				case "cat-file":
+					return "", "fatal: Not a valid object name", 128, 0
+				}
+				return "", "", 0, 0
+			})
+			_, warnings, err := ItemLocker{Dir: t.TempDir()}.List(context.Background())
+			require.NoError(t, err)
+			require.Len(t, warnings, 1)
+			r := warnings[0].Reason
+			for _, w := range c.want {
+				require.Contains(t, r, w)
+			}
+			require.NotContains(t, r, "/home/alice", "an absolute path in git's stderr must be reduced to its base name")
+			require.NotContains(t, r, "\n", "the Reason is one stderr line")
+			require.NotContains(t, r, "hung up", "only the line naming the cause is kept")
+			require.LessOrEqual(t, len(r), maxItemLockReasonBytes)
+		})
+	}
+}
+
+// Row edb8131a869f4133 (epic 128 T4): a failed per-ref fetch does not mean the
+// lock is unreadable. The remote is reachable but every fetch fails
+// transiently, while the tag object each ref names is already in the clone
+// (real git cannot stage this: a fetch of an object the clone holds succeeds
+// without a transfer). The listing must read the tag from the clone and list
+// the lock, not drop it as a warning.
+func TestItemLockList_FailedFetchStillListsLockAlreadyInClone(t *testing.T) {
+	tag := func(id string) string {
+		return "object x\ntype commit\ntag " + itemLockTagName + "\n\nid: " + id + "\nholder: alice\nat: 2026-11-06T12:00:00Z"
+	}
+	itemLockGitStub(t, func(args []string) (string, string, int, time.Duration) {
+		switch args[0] {
+		case "rev-parse":
+			return ".git", "", 0, 0
+		case "remote":
+			return "origin", "", 0, 0
+		case "ls-remote":
+			return itemLockStubRefs("TD-001", "TD-002"), "", 0, 0
+		case "fetch":
+			return "", "fatal: the remote end hung up unexpectedly", 128, 0
+		case "cat-file":
+			// itemLockStubRefs names one tag object for every ref; a real
+			// clone would hold one per ref. Serve TD-001's lock only, so
+			// TD-002 shows the fallback is per ref.
+			return tag("TD-001"), "", 0, 0
+		}
+		return "", "", 0, 0
+	})
+	locks, warnings, err := ItemLocker{Dir: t.TempDir()}.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, locks, 1, "the lock already in the clone is listed despite its failed fetch")
+	require.Equal(t, "TD-001", locks[0].ID)
+	require.Equal(t, "alice", locks[0].Holder)
+	require.Equal(t, ItemLockRef("TD-001"), locks[0].Ref)
+	require.Equal(t, "origin", locks[0].Remote)
+	require.Len(t, warnings, 1, "a ref whose local tag is not its own lock keeps the fetch warning")
+	require.Equal(t, ItemLockRef("TD-002"), warnings[0].Ref)
+	require.Contains(t, warnings[0].Reason, "hung up")
+}
+
+// The fallback read must name the ref's own lock: a local object the ref names
+// that is not a lock for that id leaves the fetch failure as the warning.
+func TestItemLockList_FailedFetchLocalTagForOtherIDStillWarns(t *testing.T) {
+	itemLockGitStub(t, func(args []string) (string, string, int, time.Duration) {
+		switch args[0] {
+		case "rev-parse":
+			return ".git", "", 0, 0
+		case "remote":
+			return "origin", "", 0, 0
+		case "ls-remote":
+			return itemLockStubRefs("TD-001"), "", 0, 0
+		case "fetch":
+			return "", "fatal: git upload-pack: not our ref", 128, 0
+		case "cat-file":
+			return "object x\ntype commit\n\nid: TD-999\nholder: bob\nat: 2026-11-06T12:00:00Z", "", 0, 0
+		}
+		return "", "", 0, 0
+	})
+	locks, warnings, err := ItemLocker{Dir: t.TempDir()}.List(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, locks)
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0].Reason, "not our ref")
+}
