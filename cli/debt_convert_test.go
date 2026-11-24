@@ -108,6 +108,35 @@ func TestDebtConvert_SaysTheStoreIsOptedIn(t *testing.T) {
 	assert.NotContains(t, out, "opted in", "an opted-in store is not reported again")
 }
 
+// TestDebtConvert_FailedRunKeepsStdoutClean (TD row 610793884f1987d3): on a
+// failed run the progress lines ("Finished an interrupted conversion.", the
+// opted-in line) go to stderr, so a script parsing stdout never reads a failed
+// run as success.
+func TestDebtConvert_FailedRunKeepsStdoutClean(t *testing.T) {
+	boom := errors.New("simulated failure")
+	f := func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error) {
+		return localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true}, boom
+	}
+	origConvert, origPlan := debtConvert, debtConvertPlan
+	debtConvert, debtConvertPlan = f, f
+	t.Cleanup(func() { debtConvert, debtConvertPlan = origConvert, origPlan })
+	dir := convertFixture(t)
+
+	stdout, stderr, err := runDebtSplit(t, "convert", "--store", dir)
+	require.ErrorIs(t, err, boom)
+	assert.NotContains(t, stdout, "Finished an interrupted conversion.", "a failed run's stdout must not look like success")
+	assert.NotContains(t, stdout, "opted in", "a failed run's stdout must not look like success")
+	assert.Contains(t, stderr, "Finished an interrupted conversion.")
+	assert.Contains(t, stderr, optedInLine)
+
+	// A failed dry run still reports a resumed conversion, also off stdout.
+	stdout, stderr, err = runDebtSplit(t, "convert", "--store", dir, "--dry-run")
+	require.ErrorIs(t, err, boom)
+	assert.NotContains(t, stdout, "Finished an interrupted conversion.")
+	assert.Contains(t, stderr, "Finished an interrupted conversion.")
+	assert.NotContains(t, stdout+stderr, "opted in", "a failed dry run opted nothing in")
+}
+
 // TestDebtConvert_SaysTheStoreIsOptedInWhenItFails (TD row dc2a27d4d9d88e64): a
 // conversion that opted the store in and then failed returns that with its error,
 // and the command says so before the error, since every later write is now an
