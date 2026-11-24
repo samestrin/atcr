@@ -66,6 +66,13 @@ type Record struct {
 	// Record because the distinction is only available at the strip, while the reason
 	// token is chosen in debateOne.
 	Suppressed []string
+
+	// HaltCauses maps a halted seat's label to why it halted, for the halts whose
+	// cause is known. Today that is only a secret_guard block, recorded as the
+	// guard's refusal, so a guard halt is not mistaken for a provider failure or
+	// a tripped budget; every other halt stays in Halted with no entry here. Nil
+	// when no halt carried a cause. TD internal/debate/protocol.go:197.
+	HaltCauses map[string]string
 }
 
 // RunDebate drives the bounded three-turn exchange for one already-cast item and

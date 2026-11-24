@@ -711,3 +711,57 @@ func TestRunTurn_RecordsSuppressedEvenWhenTheSeatAlsoHalted(t *testing.T) {
 	assert.NotContains(t, silent.Suppressed, LabelProposer)
 	assert.NotContains(t, silent.Halted, LabelProposer)
 }
+
+// A secret_guard block in driveSeat used to halt the seat as a bare StatusFailed:
+// the guard's refusal reached only a warn log, so the Record and the transcript
+// turn could not tell a guard halt from a provider failure or a tripped budget,
+// whose remedies differ (TD internal/debate/protocol.go:197). The guard error is
+// now the seat's halt cause on both; a halt with any other cause carries none,
+// and the cause never holds the credential the guard refused.
+func TestRunDebate_SecretGuardBlockRecordsTheHaltCause(t *testing.T) {
+	item := debateItem()
+	item.Problem = "hard-coded key " + debateAWSKey
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	tr := OpenTranscript(path)
+	cc := &fakeChatCompleter{}
+	rec := RunDebate(context.Background(), item, fcCast(), "block", cc, &fakeDispatcher{}, tr)
+	require.NoError(t, tr.Close())
+
+	assert.Empty(t, cc.invocations(), "no blocked seat reaches the completer")
+	want := fanout.ErrOutboundBlocked.Error()
+	assert.Equal(t, []string{LabelProposer, LabelChallenger, LabelJudge}, rec.Halted)
+	assert.Equal(t, map[string]string{LabelProposer: want, LabelChallenger: want, LabelJudge: want}, rec.HaltCauses)
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), debateAWSKey, "the recorded cause never holds the refused credential")
+	var causes []string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var ev TurnEvent
+		require.NoError(t, json.Unmarshal(sc.Bytes(), &ev))
+		assert.Equal(t, fanout.StatusFailed, ev.Status, "seat %s", ev.Role)
+		causes = append(causes, ev.Cause)
+	}
+	assert.Equal(t, []string{want, want, want}, causes)
+}
+
+// Only a guard halt carries a cause: a provider failure is still a bare halt, and
+// a clean turn writes no cause field to the transcript.
+func TestRunDebate_NonGuardHaltRecordsNoCause(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	tr := OpenTranscript(path)
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{err: errors.New("provider 500")},
+	}}
+	rec := RunDebate(context.Background(), debateItem(), fcCast(), "block", cc, &fakeDispatcher{}, tr)
+	require.NoError(t, tr.Close())
+
+	assert.Equal(t, []string{LabelJudge}, rec.Halted)
+	assert.Empty(t, rec.HaltCauses)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"cause"`)
+}
