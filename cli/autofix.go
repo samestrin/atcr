@@ -771,22 +771,6 @@ var newAutoFixGitHubFn = func(apiURL, token string) autoFixGitHub {
 	return &ghaction.Client{APIURL: apiURL, Token: token}
 }
 
-// orchestrateAutoFix is the thin live bridge wired into `atcr review --auto-fix`:
-// it turns the reconciled findings into apply entries, resolves the base commit
-// and a fresh branch name, and hands everything to runAutoFix with a real
-// GitHub client. The heavy end-to-end proof (sequencing against stubs) lives in
-// Phase 6; this adapter only assembles the run. It is guarded entirely by the
-// --auto-fix flag, so the default review path is byte-identical (AC 06-01).
-//
-// Whatever the outcome, its last output line is the usage line
-// (writeAutoFixUsage): the review's tokens were spent either way. When the
-// usage cannot be read, the last line says so instead.
-func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
-	err := orchestrateAutoFixRun(ctx, out, be, reviewDir, threshold, baseBranch)
-	writeAutoFixUsage(out, reviewDir)
-	return err
-}
-
 // writeAutoFixUsage prints the machine-readable usage line:
 //
 //	atcr-auto-fix-usage: tokens_in=<n> tokens_out=<n> scope=review-fanout not_counted=verify,debate,reconcile
@@ -826,7 +810,16 @@ func writeAutoFixUsage(out io.Writer, reviewDir string) {
 		webhook.AutoFixUsagePrefix, in, outTokens)
 }
 
-func orchestrateAutoFixRun(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
+// orchestrateAutoFix is the thin live bridge wired into `atcr review --auto-fix`:
+// it turns the reconciled findings into apply entries, resolves the base commit
+// and a fresh branch name, and hands everything to runAutoFix with a real
+// GitHub client. The heavy end-to-end proof (sequencing against stubs) lives in
+// Phase 6; this adapter only assembles the run. It is guarded entirely by the
+// --auto-fix flag, so the default review path is byte-identical (AC 06-01).
+//
+// It prints no usage line: runReview prints it (writeAutoFixUsage) on every
+// exit once the review directory exists, this one included.
+func orchestrateAutoFix(ctx context.Context, out io.Writer, be autoFixBackend, reviewDir, threshold, baseBranch string) error {
 	if strings.TrimSpace(baseBranch) == "" {
 		return fmt.Errorf("auto-fix: could not resolve a base branch to open the pull request against")
 	}

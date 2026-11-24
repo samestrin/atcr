@@ -2959,7 +2959,7 @@ var axiCitationPins = map[string]string{
 	"cli/report.go:28-37":                     "cmd := &cobra.Command{",
 	"cli/report.go:34":                        "cmd.Flags().String(\"format\", \"md\", \"output format: \"+formatHelp())",
 	"cli/report.go:53-63":                     "func runReport(cmd *cobra.Command, args []string) error {",
-	"cli/review.go:1284-1286":                 "if legacyPipeFromContext(ctx) {",
+	"cli/review.go:1298-1300":                 "if legacyPipeFromContext(ctx) {",
 	"cli/skill.go:44-51":                      "var skillHarnesses = map[string]skillHarness{",
 	"cli/status.go:111-125":                   "if len(st.Agents) > 0 {",
 	"cli/status.go:92-125":                    "func statusAXIPayload(st *fanout.ReviewStatus) toon.Object {",

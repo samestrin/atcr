@@ -17,9 +17,14 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/audit"
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/verify"
+	"github.com/samestrin/atcr/internal/webhook"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1229,4 +1234,311 @@ func TestReviewCmd_PreviewURL_RejectsRemoteHTTP_ExitsUsage(t *testing.T) {
 	err := root.ExecuteContext(context.Background())
 	require.Equal(t, exitUsage, exitCode(err))
 	assert.ErrorContains(t, err, "--preview-url must use https://")
+}
+
+// --- Epic 135 T3 (row bd204cf0ee0067a6): the auto-fix usage line on every exit
+// after PrepareReview ---------------------------------------------------------
+
+// autoFixUsageLines are the stdout lines that report a run's token usage: the
+// usage line itself or the line saying it is unavailable.
+func autoFixUsageLines(stdout string) []string {
+	var got []string
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(l, webhook.AutoFixUsagePrefix) || strings.HasPrefix(l, "auto-fix: token usage unavailable") {
+			got = append(got, l)
+		}
+	}
+	return got
+}
+
+// requireUsageLineLast asserts stdout reports usage exactly once and that the
+// report is its last line, returning that line.
+func requireUsageLineLast(t *testing.T, stdout string) string {
+	t.Helper()
+	got := autoFixUsageLines(stdout)
+	require.Len(t, got, 1, "exactly one usage report, got:\n%s", stdout)
+	require.Equal(t, got[0], lastLine(stdout), "the usage report must end the output:\n%s", stdout)
+	return got[0]
+}
+
+// runReviewAutoFixSplit is runReviewAutoFix against the provider at srvURL with
+// stdout and stderr kept apart, so a test can read stdout's last line.
+func runReviewAutoFixSplit(t *testing.T, srvURL string, extra ...string) (int, string, string) {
+	t.Helper()
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	liveReviewConfig(t, srvURL, "solo")
+	appendProjectConfig(t, "consensus: off\nauto_fix:\n  validate_command: [\"true\"]\n")
+
+	oldResolve := resolveHeadSHAFn
+	resolveHeadSHAFn = func(context.Context, string) (string, error) { return "deadbeef", nil }
+	t.Cleanup(func() { resolveHeadSHAFn = oldResolve })
+	oldClient := newAutoFixGitHubFn
+	newAutoFixGitHubFn = func(string, string) autoFixGitHub { return &fakeGitHub{} }
+	t.Cleanup(func() { newAutoFixGitHubFn = oldClient })
+
+	args := append([]string{"review", "--base", "HEAD^", "--fail-on", "LOW",
+		"--auto-fix", "--auto-fix-base", "main", "--no-sandbox", "--repo", "o/r", "--token", "tok"}, extra...)
+	return execCmdSplit(t, args...)
+}
+
+// usageProvider is a live mock provider that reports 10 prompt and 5
+// completion tokens per call, so the solo reviewer's usage line is nonzero.
+func usageProvider(t *testing.T) *httptest.Server {
+	return perAgentMockProviderWithUsage(t, map[string]string{"m-solo": "HIGH|a.txt:2|wrong word|fix it|correctness|5|two"})
+}
+
+const soloUsageLine = "atcr-auto-fix-usage: tokens_in=10 tokens_out=5 scope=review-fanout not_counted=verify,debate,reconcile"
+
+// A successful auto-fix run prints the usage line once, last: orchestrateAutoFix
+// no longer prints its own, so the run never reports usage twice.
+func TestReviewAutoFix_UsageLineOnceOnSuccess(t *testing.T) {
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL)
+	require.Equal(t, 0, code, stdout+stderr)
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A --verify failure after the fan-out spent its tokens still ends the output
+// with the usage line.
+func TestReviewAutoFix_UsageLineOnVerifyFailure(t *testing.T) {
+	orig := verifyRun
+	called := false
+	verifyRun = func(context.Context, string, string, *registry.Registry, verify.Options) (verify.Result, error) {
+		called = true
+		return verify.Result{}, errors.New("skeptic exploded")
+	}
+	t.Cleanup(func() { verifyRun = orig })
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--verify")
+	require.True(t, called, "the verify stage ran")
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.NotContains(t, stdout, "auto-fix:", "the auto-fix stage never ran")
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A --debate failure after the fan-out still ends the output with the usage line.
+func TestReviewAutoFix_UsageLineOnDebateFailure(t *testing.T) {
+	orig := debateRun
+	called := false
+	debateRun = func(context.Context, string, string, *registry.Registry, debate.Options) (debate.Result, error) {
+		called = true
+		return debate.Result{}, errors.New("debate exploded")
+	}
+	t.Cleanup(func() { debateRun = orig })
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--debate")
+	require.True(t, called, "the debate stage ran")
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.NotContains(t, stdout, "auto-fix:", "the auto-fix stage never ran")
+	require.Equal(t, soloUsageLine, requireUsageLineLast(t, stdout))
+}
+
+// A fan-out in which every agent fails exits before reconcile; the review dir
+// exists, so the output still ends with a usage report (the failed agents'
+// zero usage, or the unavailable line if the summary records none).
+func TestReviewAutoFix_UsageLineOnFanoutFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	code, stdout, stderr := runReviewAutoFixSplit(t, srv.URL)
+	require.NotEqual(t, 0, code, stdout+stderr)
+	require.Contains(t, stdout, "0/1 agents succeeded")
+	requireUsageLineLast(t, stdout)
+}
+
+// A failure before PrepareReview creates the review directory cannot report
+// usage: there is no pool summary to read and no review tokens were spent, so
+// no usage report is printed at all.
+func TestReviewAutoFix_NoUsageLineBeforeReviewDirExists(t *testing.T) {
+	code, stdout, stderr := runReviewAutoFixSplit(t, usageProvider(t).URL, "--base", "no-such-ref")
+	require.Equal(t, 2, code, stdout+stderr)
+	require.Empty(t, autoFixUsageLines(stdout+stderr), "no review dir, so no usage report:\n%s", stdout+stderr)
+}
+
+// runReviewAutoFixExit runs the auto-fix stage and then the usage report
+// exactly as runReview's last two steps do (orchestrateAutoFix, then the
+// deferred writeAutoFixUsage), asserting the stage printed no usage report of
+// its own. The cases below moved here from TestOrchestrateAutoFix_UsageLine*
+// when the usage line left orchestrateAutoFix (epic 135 T3).
+func runReviewAutoFixExit(t *testing.T, buf *strings.Builder, reviewDir, threshold, baseBranch string) error {
+	t.Helper()
+	err := orchestrateAutoFix(context.Background(), buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, threshold, baseBranch)
+	require.Empty(t, autoFixUsageLines(buf.String()), "orchestrateAutoFix must not print the usage line itself")
+	writeAutoFixUsage(buf, reviewDir)
+	return err
+}
+
+// writeAgentUsage writes <reviewDir>/sources/pool/summary.json with the given
+// agents' statuses, the file fanout.ReadPoolSummary reads.
+func writeAgentUsage(t *testing.T, reviewDir string, agents []fanout.AgentStatus) {
+	t.Helper()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	data, err := json.Marshal(fanout.PoolSummary{Agents: agents, Total: len(agents), Succeeded: len(agents)})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), data, 0o644))
+}
+
+// lastLine is the final non-empty line of s.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
+// TestReviewAutoFixExit_UsageLineSumsPoolTokens: the run's last output line is
+// the usage line, carrying the review fan-out agents' summed tokens and naming
+// the stages it does not count.
+func TestReviewAutoFixExit_UsageLineSumsPoolTokens(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "usage", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{
+		{Agent: "bruce", TokensIn: 1200, TokensOut: 300},
+		{Agent: "greta", TokensIn: 800, TokensOut: 45},
+		{Agent: "failed"},
+	})
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=2000 tokens_out=345 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestReviewAutoFixExit_UsageLineZero: a run whose agents report no usage still
+// prints the usage line, with zeros.
+func TestReviewAutoFixExit_UsageLineZero(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "nousage", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{{Agent: "bruce"}})
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=0 tokens_out=0 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestReviewAutoFixExit_UsageLineOnError: a run that fails still spent its
+// review tokens, so the usage line is printed before the error is returned.
+func TestReviewAutoFixExit_UsageLineOnError(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	writeAgentUsage(t, reviewDir, []fanout.AgentStatus{{Agent: "bruce", TokensIn: 7, TokensOut: 3}})
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "")
+	require.Error(t, err)
+	require.Equal(t,
+		"atcr-auto-fix-usage: tokens_in=7 tokens_out=3 scope=review-fanout not_counted=verify,debate,reconcile",
+		lastLine(buf.String()))
+}
+
+// TestReviewAutoFixExit_UsageLineNoSummary: a review dir with no pool summary
+// says the usage is unavailable and prints no usage line, so the webhook runner
+// reports the job as unaccounted (ErrAutoFixNoUsage) instead of charging zero.
+func TestReviewAutoFixExit_UsageLineNoSummary(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "nosummary", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// TestReviewAutoFixExit_UsageLineUnreadableSummary: a pool summary that exists
+// but cannot be parsed is unavailable usage too, never a zero usage line.
+func TestReviewAutoFixExit_UsageLineUnreadableSummary(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), []byte("{not json"), 0o644))
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "")
+	require.Error(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// writeRawPoolSummary writes <reviewDir>/sources/pool/summary.json verbatim,
+// for summaries writeAgentUsage cannot express (an empty object, a failure
+// marker with no roster).
+func writeRawPoolSummary(t *testing.T, reviewDir string, data []byte) {
+	t.Helper()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), data, 0o644))
+}
+
+// TestReviewAutoFixExit_UsageLineEmptySummary: a `{}` summary parses but lists
+// no agents, so it records no usage — it must be reported as unavailable, never
+// as a zero usage line the webhook runner would charge as a free run
+// (row f0ad465f0fd4883b).
+func TestReviewAutoFixExit_UsageLineEmptySummary(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "emptysummary", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeRawPoolSummary(t, reviewDir, []byte("{}"))
+	var buf strings.Builder
+	err := runReviewAutoFixExit(t, &buf, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// TestReviewAutoFixExit_UsageLineFailureMarker: a summary carrying
+// FailureMarker is writeFailureSummary's best-effort record of a write-phase
+// fault — its per-agent token data never reached disk. It must be reported as
+// unavailable usage, not summed into a zero (or partial) usage line
+// (row f0ad465f0fd4883b).
+func TestReviewAutoFixExit_UsageLineFailureMarker(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "failuremarker", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	// The shape writeFailureSummary produces: tallies and the marker, no roster.
+	data, err := json.Marshal(fanout.PoolSummary{Total: 2, Failed: 2, FailureMarker: true})
+	require.NoError(t, err)
+	writeRawPoolSummary(t, reviewDir, data)
+	var buf strings.Builder
+	err = runReviewAutoFixExit(t, &buf, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// TestReviewAutoFixExit_UsageLineFailureMarkerWithAgents: the marker wins even
+// if a roster with tokens somehow accompanies it — the record is untrustworthy
+// by construction, so no usage line may be derived from it.
+func TestReviewAutoFixExit_UsageLineFailureMarkerWithAgents(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	data, err := json.Marshal(fanout.PoolSummary{
+		Agents:        []fanout.AgentStatus{{Agent: "bruce", TokensIn: 100, TokensOut: 20}},
+		Total:         1,
+		FailureMarker: true,
+	})
+	require.NoError(t, err)
+	writeRawPoolSummary(t, reviewDir, data)
+	var buf strings.Builder
+	err = runReviewAutoFixExit(t, &buf, reviewDir, "", "")
+	require.Error(t, err) // no reconciled findings in a bare dir; usage is still the last line
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
 }
