@@ -136,8 +136,10 @@ func TestFixtureCommandContext_PanicsWhenDirCannotBeResolved(t *testing.T) {
 	fixtureAbsFn = func(string) (string, error) { return "", errors.New("getwd: no such file or directory") }
 	t.Cleanup(func() { fixtureAbsFn = orig })
 	defer func() {
-		if recover() == nil {
-			t.Fatal("FixtureCommandContext did not panic on an unresolvable relative dir")
+		// Only the resolver's own panic counts: "relative" resolved for real lands
+		// inside this checkout and panics on the atcr-checkout guard instead.
+		if r := recover(); r == nil || !strings.Contains(fmt.Sprint(r), "resolving fixture dir") {
+			t.Fatalf("FixtureCommandContext panic = %v, want the unresolvable-dir panic", r)
 		}
 	}()
 	FixtureCommandContext(context.Background(), "relative", "status")
