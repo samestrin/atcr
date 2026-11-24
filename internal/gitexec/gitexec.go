@@ -55,6 +55,12 @@ var CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
 	return hardenEnv(exec.CommandContext(ctx, "git", arg...))
 }
 
+// fixtureAbsFn makes FixtureCommandContext's dir absolute. It is a package var so
+// a test can substitute a failing resolver: filepath.Abs fails only when
+// os.Getwd does, and removing the cwd does not make os.Getwd fail on macOS,
+// which answers from $PWD.
+var fixtureAbsFn = filepath.Abs
+
 // FixtureCommandContext builds a hardened `git <arg...>` command for a TEST
 // FIXTURE repository rooted at dir. It is for tests only: production git calls go
 // through CommandFn/CommandContextFn.
@@ -80,7 +86,7 @@ var CommandContextFn = func(ctx context.Context, arg ...string) *exec.Cmd {
 // .invalid; a test enforces it). On 2026-10-30 a fixture identity, t@t.t, reached
 // atcr's public history and showed a stranger's GitHub account as a contributor.
 func FixtureCommandContext(ctx context.Context, dir string, arg ...string) *exec.Cmd {
-	abs, err := filepath.Abs(dir)
+	abs, err := fixtureAbsFn(dir)
 	if err != nil {
 		panic(fmt.Sprintf("gitexec: FixtureCommandContext: resolving fixture dir %q: %v", dir, err))
 	}

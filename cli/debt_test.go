@@ -3,10 +3,10 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -964,20 +964,18 @@ func TestDebtStoreDir_NoMarkerFallsBackToWorkingDir(t *testing.T) {
 	assert.Equal(t, localdebt.DefaultDir(filepath.Dir(filepath.Dir(got))), got)
 }
 
-// When the working directory cannot be read (here it was removed under the
-// process), there is no root to walk from, so the store resolves against "."
-// exactly as it did before the walk existed, rather than failing the command.
+// When the working directory cannot be read, there is no root to walk from, so
+// the store resolves against "." exactly as it did before the walk existed,
+// rather than failing the command. The failure is injected: a removed cwd does
+// not make os.Getwd fail on macOS, which answers from $PWD.
 func TestDebtStoreDir_GetwdFailureFallsBackToRelativeDefault(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("windows cannot remove the working directory of a live process")
-	}
 	t.Setenv("HOME", t.TempDir())
-	gone := filepath.Join(t.TempDir(), "gone")
-	require.NoError(t, os.MkdirAll(gone, 0o755))
-	t.Chdir(gone)
-	require.NoError(t, os.Remove(gone))
+	t.Chdir(t.TempDir())
+	orig := debtGetwdFn
+	debtGetwdFn = func() (string, error) { return "", errors.New("getwd: no such file or directory") }
+	t.Cleanup(func() { debtGetwdFn = orig })
 	_, err := debtRepoRoot()
-	require.Error(t, err, "the precondition: Getwd fails in a removed directory")
+	require.Error(t, err, "the precondition: Getwd fails")
 
 	cmd := newDebtListCmd()
 	require.NoError(t, cmd.Flags().Parse(nil))

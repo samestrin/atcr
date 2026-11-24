@@ -322,9 +322,42 @@ func TestCheckLoopbackPortsFree_InterfaceAddressTimeoutIsNotLocal(t *testing.T) 
 	assert.Equal(t, []string{"[fe80::e493:3041:b67b:a5b2%utun0]:49178"}, timedOut, "the interface address is still probed")
 }
 
+func TestCheckLoopbackPortsFree_TunnelInterfaceTimeoutIsNotLocal(t *testing.T) {
+	// Seen on the owner's Mac (EST-8465): every probe to the Tailscale address
+	// on a utun interface, fd7a:115c:a1e0::/48, timed out, so darwin runs with
+	// loopback ports were refused. A point-to-point (tunnel) interface's own
+	// address is reached through the tunnel, not lo0, the same as the utun0
+	// link-local case: nothing on the host answers there and the loopback grant
+	// does not reach it. Each such address is probed once per call.
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}}, nil
+	}
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("100.101.102.103"), Mask: net.CIDRMask(32, 32)},
+			&net.IPNet{IP: net.ParseIP("fd7a:115c:a1e0::1234"), Mask: net.CIDRMask(128, 128)},
+		}, nil
+	}
+	var timedOut []string
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if strings.Contains(addr, "100.101.102.103") || strings.Contains(addr, "fd7a:115c") {
+			timedOut = append(timedOut, addr)
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	require.NoError(t, checkLoopbackPortsFree(context.Background(), []int{3000, 3001}))
+	assert.Equal(t, []string{"100.101.102.103:3000", "[fd7a:115c:a1e0::1234]:3000"}, timedOut,
+		"each tunnel address is probed, and once it has timed out not again")
+}
+
 func TestCheckLoopbackPortsFree_RoutableInterfaceAddressTimeoutFailsClosed(t *testing.T) {
-	// The utun0 exemption is for zone-suffixed link-local addresses only. A
-	// host's routable LAN address is reached over lo0 (PR #753), so a probe
+	// The utun0 exemption is for zone-suffixed link-local addresses and the
+	// addresses of point-to-point (tunnel) interfaces only. A host's routable
+	// LAN address is reached over lo0 (PR #753), so a probe
 	// there is answered or refused at once; a timeout means a firewall in
 	// stealth mode dropped the SYN, and a service bound to that address may
 	// still be reachable through the grant. The port's state is unknown.
