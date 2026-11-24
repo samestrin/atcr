@@ -1,0 +1,3 @@
+- `atcr debt convert` on a store with no record file now checks for an interrupted conversion before it reports "No local TD store", and fails when that check fails (epic 128).
+- A failed `atcr debt convert` reports an opt-in to the event layout only when that run made it (epic 128).
+- A store read whose conversion journal cannot be checked under the store lock now fails instead of printing a warning. The error names the store's `.convert` directory and says that removing it abandons the interrupted conversion. A stray `.convert` file that is not a directory no longer fails every read (epic 128).

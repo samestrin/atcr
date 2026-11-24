@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // Conversion (Epic 92 T3) moves a store's month shards to the event layout
@@ -112,13 +113,24 @@ func ConvertPlan(dir string, opts ReadOpts) (ConvertResult, error) {
 
 func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 	var res ConvertResult
-	// Sampled before the lock, which creates the store dir (as Compact does).
-	if !hasShardFiles(dir) {
+	// Sampled before the lock, which creates the store dir (as Compact does). A
+	// store with no record file is absent only when no conversion journal is there
+	// either: a check that fails is reported by the locked run.
+	if storeAbsent(dir) {
 		return res, nil
 	}
-	err := withLock(dir, "convert", func() error {
+	// mayOptIn is set before each step that can opt the store in, so a failed run
+	// reports an opt-in only when it made one, decided under the lock: after it, a
+	// later writer may have opted the store in.
+	var mayOptIn bool
+	err := withLock(dir, "convert", func() (err error) {
 		res.StoreFound = true
 		res.OptedIn = !UsesEventLayout(dir)
+		defer func() {
+			if err != nil {
+				res.OptedIn = res.OptedIn && mayOptIn && UsesEventLayout(dir)
+			}
+		}()
 		// The copy a crashed dry run left behind. A real run needs no cache dir, so
 		// one it cannot name has no copy to remove.
 		dryStage, stageErr := dryRunStaging(dir)
@@ -136,6 +148,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			if dryRun {
 				return errConversionPending
 			}
+			mayOptIn = true
 			if err := finishConversion(dir); err != nil {
 				return err
 			}
@@ -160,6 +173,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			if dryRun {
 				return nil
 			}
+			mayOptIn = true
 			return enableEventLayoutLocked(dir)
 		}
 
@@ -206,6 +220,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 			return nil
 		}
 
+		mayOptIn = true
 		if err := enableEventLayoutLocked(dir); err != nil {
 			return discard(err)
 		}
@@ -222,14 +237,7 @@ func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 		}
 		return nil
 	})
-	if err != nil {
-		// A failed run reports an opt-in only when it made one: a refused or dry
-		// run opted nothing in, and a run that failed past enableEventLayoutLocked
-		// did.
-		res.OptedIn = res.OptedIn && !dryRun && UsesEventLayout(dir)
-		return res, err
-	}
-	return res, nil
+	return res, err
 }
 
 // dryRunStaging is where a dry run on the store at dir stages its events:
@@ -454,28 +462,52 @@ var errConversionPending = errors.New("an interrupted conversion is pending; run
 // conversionPending reports whether the store at dir holds a committed conversion
 // that is not finished. Only a journal that does not exist means none is pending: a
 // journal that cannot be checked (EACCES, say) may name a committed plan whose
-// records every read would count twice, so it is an error.
+// records every read would count twice, so it is an error, and it names the
+// .convert directory a user can remove to read the store again. A .convert that is
+// not a directory (ENOTDIR) holds no journal.
 func conversionPending(dir string) (bool, error) {
 	_, err := os.Lstat(filepath.Join(dir, convertSubdir, convertJournal))
 	switch {
 	case err == nil:
 		return true, nil
-	case os.IsNotExist(err):
+	case os.IsNotExist(err), errors.Is(err, syscall.ENOTDIR):
 		return false, nil
 	}
-	return false, fmt.Errorf("checking for an interrupted localdebt conversion: %w", basePathErr(err))
+	staging := filepath.Join(filepath.Base(dir), convertSubdir)
+	return false, fmt.Errorf("checking for an interrupted localdebt conversion: %w; until %s can be read, "+
+		"its records may be counted twice, so the store is not read. Removing %s abandons the interrupted "+
+		"conversion", basePathErr(err), staging, staging)
 }
 
 // finishPendingConversion finishes a committed conversion for a read path that does
 // not hold the store lock. A plan it cannot finish is reported to w and the store is
-// read as it stands, so a read-only store still reads. A journal it cannot check is
-// returned: it cannot tell whether the store reads every record once.
+// read as it stands, so a read-only store still reads. A journal it cannot check,
+// before the lock or again under it, is returned: it cannot tell whether the store
+// reads every record once.
 func finishPendingConversion(dir string, w io.Writer) error {
 	pending, err := conversionPending(dir)
 	if err != nil || !pending {
 		return err
 	}
-	if err := withLock(dir, "convert-finish", func() error { return finishPendingConversionLocked(dir) }); err != nil {
+	var checkErr error
+	err = withLock(dir, "convert-finish", func() error {
+		pending, err := conversionPending(dir)
+		if err != nil {
+			checkErr = err
+			return nil
+		}
+		if !pending {
+			return nil
+		}
+		if err := finishConversion(dir); err != nil {
+			return fmt.Errorf("finishing an interrupted localdebt conversion: %w", err)
+		}
+		return nil
+	})
+	if checkErr != nil {
+		return checkErr
+	}
+	if err != nil {
 		_, _ = fmt.Fprintf(diagWriter(w), "localdebt: an interrupted conversion could not be finished (%v); "+
 			"some records may be counted twice until `atcr debt convert` finishes it\n", err)
 	}
