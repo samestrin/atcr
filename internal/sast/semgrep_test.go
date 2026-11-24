@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,16 +17,22 @@ import (
 
 // fakeSemgrepScript stands in for the semgrep binary. It records its argv and
 // working directory, then behaves per FAKE_SEMGREP_MODE: print the fixture
-// SARIF (default), exit non-zero, print non-SARIF, hang past the timeout, or
-// hang in a forked child that keeps stdout open after the shell is killed.
+// SARIF (default), exit non-zero, print non-SARIF, hang, or hang in a forked
+// child that keeps stdout open after the shell is killed. The hang modes
+// touch a "ready" file once they are about to block, so a test can end the
+// run on that signal rather than on wall time.
 const fakeSemgrepScript = `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_SEMGREP_DIR/args"
 pwd > "$FAKE_SEMGREP_DIR/cwd"
 case "$FAKE_SEMGREP_MODE" in
   fail) echo "app/db.go: secret-looking stderr" >&2; exit 2 ;;
   badjson) echo "not sarif"; exit 0 ;;
-  hang) exec sleep 30 ;;
-  hangchild) sleep 30 & wait ;;
+  hang) : > "$FAKE_SEMGREP_DIR/ready"; exec sleep 300 ;;
+  hangchild)
+    sleep 300 &
+    echo $! > "$FAKE_SEMGREP_DIR/childpid"
+    : > "$FAKE_SEMGREP_DIR/ready"
+    wait ;;
 esac
 cat "$FAKE_SEMGREP_SARIF"
 `
@@ -49,12 +56,55 @@ func installFakeSemgrep(t *testing.T, mode string) string {
 	return dir
 }
 
-// shrinkSemgrepTimeout keeps the hang cases fast.
-func shrinkSemgrepTimeout(t *testing.T, d time.Duration) {
+// setSemgrepRunContext swaps the per-run context factory for the test.
+func setSemgrepRunContext(t *testing.T, f func(context.Context) (context.Context, context.CancelFunc)) {
 	t.Helper()
-	prev := semgrepTimeout
-	semgrepTimeout = d
-	t.Cleanup(func() { semgrepTimeout = prev })
+	prev := semgrepRunContext
+	semgrepRunContext = f
+	t.Cleanup(func() { semgrepRunContext = prev })
+}
+
+// timeOutWhenReady ends the semgrep run as its timeout would, but only once
+// the fake binary has signalled (via dir/ready) that it is blocked, so the
+// outcome never depends on how fast a loaded host starts the process. The
+// returned channel receives the moment the run context was ended.
+func timeOutWhenReady(t *testing.T, dir string) <-chan time.Time {
+	t.Helper()
+	fired := make(chan time.Time, 1)
+	ready := filepath.Join(dir, "ready")
+	setSemgrepRunContext(t, func(ctx context.Context) (context.Context, context.CancelFunc) {
+		runCtx, cancel := context.WithCancel(ctx)
+		go func() {
+			tick := time.NewTicker(5 * time.Millisecond)
+			defer tick.Stop()
+			for {
+				if _, err := os.Stat(ready); err == nil {
+					fired <- time.Now()
+					cancel()
+					return
+				}
+				select {
+				case <-runCtx.Done():
+					return
+				case <-tick.C:
+				}
+			}
+		}()
+		return runCtx, cancel
+	})
+	// The hangchild sleep outlives the killed shell; do not leave it behind.
+	t.Cleanup(func() {
+		raw, err := os.ReadFile(filepath.Join(dir, "childpid"))
+		if err != nil {
+			return
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+			if p, err := os.FindProcess(pid); err == nil {
+				_ = p.Kill()
+			}
+		}
+	})
+	return fired
 }
 
 func readLines(t *testing.T, path string) []string {
@@ -128,16 +178,16 @@ func assertUnavailable(t *testing.T, err error) *UnavailableError {
 
 func TestSemgrep_MissingBinaryIsUnavailable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	shrinkSemgrepTimeout(t, 300*time.Millisecond)
+	setSemgrepRunContext(t, func(ctx context.Context) (context.Context, context.CancelFunc) {
+		t.Error("a missing binary must not start a timed run")
+		return context.WithCancel(ctx)
+	})
 
-	start := time.Now()
 	findings, err := Semgrep{}.Run(context.Background(), fixtureRoot(t), nil)
-	elapsed := time.Since(start)
 
 	assert.Nil(t, findings)
 	ue := assertUnavailable(t, err)
 	assert.Contains(t, ue.Reason, "not found")
-	assert.Less(t, elapsed, 300*time.Millisecond, "a missing binary must not wait out the timeout")
 }
 
 func TestSemgrep_FailuresAreUnavailable(t *testing.T) {
@@ -146,11 +196,12 @@ func TestSemgrep_FailuresAreUnavailable(t *testing.T) {
 		mode   string
 		script string
 		reason string
+		hangs  bool
 	}{
 		{name: "non-zero exit", mode: "fail", reason: "status 2"},
 		{name: "output is not SARIF", mode: "badjson", reason: "SARIF"},
-		{name: "hung binary", mode: "hang", reason: "timed out"},
-		{name: "hung child holding stdout", mode: "hangchild", reason: "timed out"},
+		{name: "hung binary", mode: "hang", reason: "timed out", hangs: true},
+		{name: "hung child holding stdout", mode: "hangchild", reason: "timed out", hangs: true},
 		// Run fails without an ExitError: the kernel cannot start it.
 		{name: "cannot start", script: "#!/nonexistent/interpreter\n", reason: "could not run"},
 	}
@@ -160,19 +211,29 @@ func TestSemgrep_FailuresAreUnavailable(t *testing.T) {
 			if tc.script != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "semgrep"), []byte(tc.script), 0o755))
 			}
-			const timeout = 300 * time.Millisecond
-			shrinkSemgrepTimeout(t, timeout)
+			// Cases that do not hang keep the real timeout, so a slow
+			// process start can never turn their failure into a timeout.
+			var fired <-chan time.Time
+			if tc.hangs {
+				fired = timeOutWhenReady(t, dir)
+			}
 
-			start := time.Now()
 			findings, err := Semgrep{}.Run(context.Background(), fixtureRoot(t), nil)
-			elapsed := time.Since(start)
+			returned := time.Now()
 
 			assert.Nil(t, findings)
 			ue := assertUnavailable(t, err)
 			assert.Contains(t, ue.Reason, tc.reason)
-			// The timeout bounds the run; WaitDelay bounds the pipe drain
-			// after the kill. Generous slack for a loaded CI host.
-			assert.Less(t, elapsed, timeout+3*time.Second, "the fixed timeout did not bound the run")
+			if tc.hangs {
+				// The kill ends the run and WaitDelay bounds the pipe drain;
+				// without them Run would wait out the fake's 300s sleep.
+				select {
+				case at := <-fired:
+					assert.Less(t, returned.Sub(at), time.Minute, "the kill did not bound the run")
+				default:
+					t.Fatal("run ended before the fake binary signalled it was blocked")
+				}
+			}
 		})
 	}
 }
@@ -189,7 +250,6 @@ func TestSemgrep_CallerCancelIsNotUnavailable(t *testing.T) {
 
 func TestSemgrep_CancelMidRunIsNotUnavailable(t *testing.T) {
 	installFakeSemgrep(t, "hang")
-	shrinkSemgrepTimeout(t, 30*time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 

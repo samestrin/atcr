@@ -14,9 +14,15 @@ import (
 // empty. "auto" is not used: it requires metrics, which the runner turns off.
 const DefaultSemgrepConfig = "p/default"
 
-// semgrepTimeout bounds each semgrep invocation. Fixed, not configurable; a
-// var only so tests can shrink it.
-var semgrepTimeout = 2 * time.Minute
+// semgrepTimeout bounds each semgrep invocation. Fixed, not configurable.
+const semgrepTimeout = 2 * time.Minute
+
+// semgrepRunContext derives the context that bounds one semgrep invocation.
+// A var only so tests can end a hung run on a signal from the fake binary
+// instead of racing a shortened wall-clock timeout.
+var semgrepRunContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, semgrepTimeout)
+}
 
 // ErrUnavailable is matched (errors.Is) by every *UnavailableError.
 var ErrUnavailable = errors.New("sast: scanner unavailable")
@@ -81,7 +87,7 @@ func (s Semgrep) Run(ctx context.Context, root string, files []string) ([]Findin
 		args = append(args, files...)
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, semgrepTimeout)
+	runCtx, cancel := semgrepRunContext(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, bin, args...)
 	cmd.Dir = realRoot
