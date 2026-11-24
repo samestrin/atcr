@@ -1327,3 +1327,37 @@ func TestGenerateFixes_SnippetPromptGuardedOncePerFinding(t *testing.T) {
 		})
 	}
 }
+
+// The retry scans only the evidence it adds: a secret quoted from the model's
+// rejected diff is redacted under redact, and under block the retry sends
+// nothing and fails through generateFixes' failure path.
+func TestGenerateFixes_SnippetRetryEvidenceGuarded(t *testing.T) {
+	// The smell evidence names the rejected diff's file, so a secret in its path
+	// reaches the retry prompt.
+	rejected := strings.ReplaceAll(dsTestOnly, "internal/verify/", "internal/"+verifyAWSKey+"/")
+	for _, policy := range []string{"redact", "block"} {
+		t.Run(policy, func(t *testing.T) {
+			reg := execRegistry("MEDIUM")
+			reg.SecretGuard = policy
+			findings := gateFinding("a.go")
+			rec := &sequencedExecutor{outs: []string{rejected, gateCleanDiff}}
+			stderr := captureStderr(t, func() {
+				generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+			})
+			assert.NotContains(t, rec.promptAt(0), payload.SecretPlaceholder, "the first attempt carries no secret")
+			if policy == "block" {
+				assert.Equal(t, 1, rec.callCount(), "block sends no retry")
+				assert.Empty(t, findings[0].Fix)
+				assert.Contains(t, findings[0].FixWarning, "secret_guard=block")
+				assert.NotContains(t, findings[0].FixWarning, verifyAWSKey)
+				assert.Contains(t, stderr, "nothing sent to the fix executor")
+				return
+			}
+			require.Equal(t, 2, rec.callCount())
+			assert.NotContains(t, rec.promptAt(1), verifyAWSKey, "the retry evidence is redacted")
+			assert.Contains(t, rec.promptAt(1), payload.SecretPlaceholder)
+			assert.Contains(t, rec.promptAt(1), smellTestOnly)
+			assert.Equal(t, strings.TrimSpace(gateCleanDiff), findings[0].Fix)
+		})
+	}
+}
