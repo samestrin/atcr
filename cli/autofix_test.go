@@ -565,6 +565,76 @@ func TestOrchestrateAutoFix_UsageLineUnreadableSummary(t *testing.T) {
 	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
 }
 
+// writeRawPoolSummary writes <reviewDir>/sources/pool/summary.json verbatim,
+// for summaries writeAgentUsage cannot express (an empty object, a failure
+// marker with no roster).
+func writeRawPoolSummary(t *testing.T, reviewDir string, data []byte) {
+	t.Helper()
+	pool := filepath.Join(reviewDir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(pool, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pool, "summary.json"), data, 0o644))
+}
+
+// TestOrchestrateAutoFix_UsageLineEmptySummary: a `{}` summary parses but lists
+// no agents, so it records no usage — it must be reported as unavailable, never
+// as a zero usage line the webhook runner would charge as a free run
+// (row f0ad465f0fd4883b).
+func TestOrchestrateAutoFix_UsageLineEmptySummary(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "emptysummary", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	writeRawPoolSummary(t, reviewDir, []byte("{}"))
+	var buf strings.Builder
+	err := orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// TestOrchestrateAutoFix_UsageLineFailureMarker: a summary carrying
+// FailureMarker is writeFailureSummary's best-effort record of a write-phase
+// fault — its per-agent token data never reached disk. It must be reported as
+// unavailable usage, not summed into a zero (or partial) usage line
+// (row f0ad465f0fd4883b).
+func TestOrchestrateAutoFix_UsageLineFailureMarker(t *testing.T) {
+	isolate(t)
+	id := verifyFixture(t, "failuremarker", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Fix: ""},
+	})
+	reviewDir := filepath.Join(".atcr", "reviews", id)
+	// The shape writeFailureSummary produces: tallies and the marker, no roster.
+	data, err := json.Marshal(fanout.PoolSummary{Total: 2, Failed: 2, FailureMarker: true})
+	require.NoError(t, err)
+	writeRawPoolSummary(t, reviewDir, data)
+	var buf strings.Builder
+	err = orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "main")
+	require.NoError(t, err)
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
+// TestOrchestrateAutoFix_UsageLineFailureMarkerWithAgents: the marker wins even
+// if a roster with tokens somehow accompanies it — the record is untrustworthy
+// by construction, so no usage line may be derived from it.
+func TestOrchestrateAutoFix_UsageLineFailureMarkerWithAgents(t *testing.T) {
+	isolate(t)
+	reviewDir := t.TempDir()
+	data, err := json.Marshal(fanout.PoolSummary{
+		Agents:        []fanout.AgentStatus{{Agent: "bruce", TokensIn: 100, TokensOut: 20}},
+		Total:         1,
+		FailureMarker: true,
+	})
+	require.NoError(t, err)
+	writeRawPoolSummary(t, reviewDir, data)
+	var buf strings.Builder
+	err = orchestrateAutoFix(context.Background(), &buf, autoFixBackend{applyTarget: t.TempDir()}, reviewDir, "", "")
+	require.Error(t, err) // no reconciled findings in a bare dir; usage is still the last line
+	require.Contains(t, lastLine(buf.String()), "auto-fix: token usage unavailable")
+	require.NotContains(t, buf.String(), webhook.AutoFixUsagePrefix)
+}
+
 // --- runAutoFix sequencing (the Story-4/5 gate: no GitHub before validation) -
 
 // fakeGitHub records calls and lets a test assert the sequencing guarantee.
