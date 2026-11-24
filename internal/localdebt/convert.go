@@ -114,8 +114,8 @@ func ConvertPlan(dir string, opts ReadOpts) (ConvertResult, error) {
 func convert(dir string, opts ReadOpts, dryRun bool) (ConvertResult, error) {
 	var res ConvertResult
 	// Sampled before the lock, which creates the store dir (as Compact does). A
-	// store with no record file is absent only when no conversion journal is, or
-	// cannot be checked, there either: the locked run reports a check that fails.
+	// store with no record file is absent only when no conversion journal is there
+	// either: a check that fails is reported by the locked run.
 	if storeAbsent(dir) {
 		return res, nil
 	}

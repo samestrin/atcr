@@ -1592,9 +1592,9 @@ func hasShardFiles(dir string) bool {
 }
 
 // storeAbsent reports that dir holds no record files and no pending conversion,
-// so Compact and CompactPlan return before withLock, which would create the
-// directory, its lock and (for Compact) a watermark: a missing or mistyped store
-// stays missing. A dir that cannot be listed, or whose conversion journal cannot be
+// so Compact, CompactPlan and Convert return before withLock, which would create
+// the directory, its lock and (for Compact) a watermark: a missing or mistyped
+// store stays missing. A dir that cannot be listed, or whose conversion journal cannot be
 // checked, is not absent; the locked path reports its error.
 func storeAbsent(dir string) bool {
 	files, err := RecordFiles(dir)
