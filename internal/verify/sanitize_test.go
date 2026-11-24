@@ -73,6 +73,13 @@ func TestSanitizeInterAgentText(t *testing.T) {
 			want: "Keep me.",
 		},
 		{
+			// Row 47e224d35d2b086d's example: `go` is not a command word and `| tee`
+			// is not a pipe into a shell, so this benign fix line reaches the skeptic.
+			name: "benign build piped into tee kept",
+			in:   "Rebuild and keep the log:\ngo build ./... | tee build.log",
+			want: "Rebuild and keep the log:\ngo build ./... | tee build.log",
+		},
+		{
 			name: "pipe to shell anywhere on the line removed",
 			in:   "Keep me.\nThe fix is to fetch it | bash\nKeep me too.",
 			want: "Keep me.\nKeep me too.",

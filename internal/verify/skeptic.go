@@ -156,13 +156,15 @@ var skepticOverrideRe = regexp.MustCompile(`(?is)` + overridePhrases + `|(?m:^[^
 // fences, command lines and every other line, because they are the evidence the
 // skeptic must check; it removes only control and format characters
 // (stripControlChars) and the instruction-override phrases themselves
-// (skepticOverrideRe), leaving the rest of the text. Control characters go first so
-// a zero-width character cannot split a phrase. Phrases are matched against the
+// (skepticOverrideRe), leaving the rest of the text. Line breaks are normalized to
+// \n first, so a bare CR (a control character) becomes a line start for the role
+// prefix rather than being stripped into one line with it. Control characters go
+// next so a zero-width character cannot split a phrase. Phrases are matched against the
 // whole text so a newline cannot split one either, and removal repeats until
 // nothing matches so it cannot join the text around a phrase into a new one; every
 // match is non-empty, so each pass shortens the text and the loop ends.
 func filterSkepticEvidence(s string) string {
-	s = stripControlChars(s)
+	s = stripControlChars(normalizeNewlines(s))
 	for skepticOverrideRe.MatchString(s) {
 		s = skepticOverrideRe.ReplaceAllString(s, "")
 	}
