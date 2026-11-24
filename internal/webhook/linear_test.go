@@ -843,6 +843,35 @@ func TestLinearAutoFix_DailyTokenCapSerializesClaimThroughCharge(t *testing.T) {
 	assert.Equal(t, 1, h.logs.count(ErrAutoFixDailyTokenCap.Error()))
 }
 
+// Epic 135 T4: a job waiting behind a running one under a daily token cap
+// returns once its context ends, and claims nothing.
+func TestLinearAutoFix_WaitingJobIsCancellable(t *testing.T) {
+	fixer := &fakeFixer{}
+	h, gh, _ := newAutoFixHarness(t, &fakeLookup{}, fixer, 5)
+	a := h.runner.AutoFix
+	a.State.DailyTokenCap = 100
+	require.NoError(t, a.lockSerial(context.Background()), "a running job holds the lock")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- h.runner.runAutoFix(ctx, "iss-2", "st-fix", widgetPR(), AutoFixTarget{Repo: "acme/widget", Number: 7})
+	}()
+	require.Eventually(t, func() bool { return gh.headLookups("7") == 1 }, 10*time.Second, 5*time.Millisecond)
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the waiting job did not return once cancelled")
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, err.Error(), "waiting for the running job")
+	assert.Empty(t, fixer.runs())
+	assert.Zero(t, a.State.Count(time.Now()), "the cancelled job claims nothing")
+	assert.Empty(t, gh.posted())
+}
+
 // Epic 135 T4: with no daily token cap, auto-fix jobs for two pull requests
 // still run at once.
 func TestLinearAutoFix_NoDailyTokenCapRunsJobsAtOnce(t *testing.T) {
