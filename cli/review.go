@@ -791,6 +791,15 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		}
 		return usageError(err)
 	}
+	// --auto-fix reports the review's token usage (writeAutoFixUsage) as the last
+	// output line of every exit from here on: the review directory now exists,
+	// and a fan-out, verify, debate or auto-fix failure has spent tokens the
+	// webhook runner must charge. Registered first so it runs after every later
+	// defer. A failure above this point created no review and spent no review
+	// tokens, so it reports none.
+	if autoFix {
+		defer writeAutoFixUsage(cmd.OutOrStdout(), prep.Dir)
+	}
 	// Record each reviewer's persona role for the markdown reports' `name
 	// (role)` labels (Epic 83.0 T5), from the registry and persona dirs this
 	// review already loaded. Display metadata: a failed write leaves bare names.
