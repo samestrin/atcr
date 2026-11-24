@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -108,21 +109,46 @@ func TestDebtConvert_SaysTheStoreIsOptedIn(t *testing.T) {
 	assert.NotContains(t, out, "opted in", "an opted-in store is not reported again")
 }
 
+// runDebtConvertWith runs `atcr debt convert <args>` with the conversion
+// functions injected through the command (TD row 78086b8c0a91c4fe): the wired
+// convert subcommand is replaced by the same constructor the real command
+// uses, given a seam, so no package-level variable is swapped. Stdout and
+// stderr are kept apart.
+func runDebtConvertWith(t *testing.T, fns debtConvertFuncs, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	cmd := newDebtCmd()
+	for _, c := range cmd.Commands() {
+		if c.Name() == "convert" {
+			cmd.RemoveCommand(c)
+			break
+		}
+	}
+	cmd.AddCommand(newDebtConvertCmdWith(fns))
+	var out, errBuf bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetArgs(append([]string{"convert"}, args...))
+	err = cmd.Execute()
+	return out.String(), errBuf.String(), err
+}
+
+// failingConvertFuncs returns a seam whose conversions both report res and err.
+func failingConvertFuncs(res localdebt.ConvertResult, err error) debtConvertFuncs {
+	f := func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error) { return res, err }
+	return debtConvertFuncs{convert: f, plan: f}
+}
+
 // TestDebtConvert_FailedRunKeepsStdoutClean (TD row 610793884f1987d3): on a
 // failed run the progress lines ("Finished an interrupted conversion.", the
 // opted-in line) go to stderr, so a script parsing stdout never reads a failed
 // run as success.
 func TestDebtConvert_FailedRunKeepsStdoutClean(t *testing.T) {
 	boom := errors.New("simulated failure")
-	f := func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error) {
-		return localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true}, boom
-	}
-	origConvert, origPlan := debtConvert, debtConvertPlan
-	debtConvert, debtConvertPlan = f, f
-	t.Cleanup(func() { debtConvert, debtConvertPlan = origConvert, origPlan })
+	fns := failingConvertFuncs(localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true}, boom)
 	dir := convertFixture(t)
 
-	stdout, stderr, err := runDebtSplit(t, "convert", "--store", dir)
+	stdout, stderr, err := runDebtConvertWith(t, fns, "--store", dir)
 	require.ErrorIs(t, err, boom)
 	assert.NotContains(t, stdout, "Finished an interrupted conversion.", "a failed run's stdout must not look like success")
 	assert.NotContains(t, stdout, "opted in", "a failed run's stdout must not look like success")
@@ -130,7 +156,7 @@ func TestDebtConvert_FailedRunKeepsStdoutClean(t *testing.T) {
 	assert.Contains(t, stderr, optedInLine)
 
 	// A failed dry run still reports a resumed conversion, also off stdout.
-	stdout, stderr, err = runDebtSplit(t, "convert", "--store", dir, "--dry-run")
+	stdout, stderr, err = runDebtConvertWith(t, fns, "--store", dir, "--dry-run")
 	require.ErrorIs(t, err, boom)
 	assert.NotContains(t, stdout, "Finished an interrupted conversion.")
 	assert.Contains(t, stderr, "Finished an interrupted conversion.")
@@ -143,26 +169,21 @@ func TestDebtConvert_FailedRunKeepsStdoutClean(t *testing.T) {
 // event file. A dry run, or a run that opted nothing in, says nothing of it.
 func TestDebtConvert_SaysTheStoreIsOptedInWhenItFails(t *testing.T) {
 	boom := errors.New("simulated failure")
-	stub := func(res localdebt.ConvertResult) {
-		f := func(string, localdebt.ReadOpts) (localdebt.ConvertResult, error) { return res, boom }
-		origConvert, origPlan := debtConvert, debtConvertPlan
-		debtConvert, debtConvertPlan = f, f
-		t.Cleanup(func() { debtConvert, debtConvertPlan = origConvert, origPlan })
-	}
 	dir := convertFixture(t)
 
-	stub(localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true})
-	out, err := runDebt(t, "convert", "--store", dir)
+	fns := failingConvertFuncs(localdebt.ConvertResult{StoreFound: true, OptedIn: true, Resumed: true}, boom)
+	stdout, stderr, err := runDebtConvertWith(t, fns, "--store", dir)
+	out := stdout + stderr
 	require.ErrorIs(t, err, boom)
 	assert.Contains(t, out, "The store is now opted in to the event layout: every later add and resolution writes an event file (items/).")
 	assert.Contains(t, out, "Finished an interrupted conversion.")
 
-	out, err = runDebt(t, "convert", "--store", dir, "--dry-run")
+	stdout, stderr, err = runDebtConvertWith(t, fns, "--store", dir, "--dry-run")
 	require.ErrorIs(t, err, boom)
-	assert.NotContains(t, out, "opted in", "a failed dry run opted nothing in")
+	assert.NotContains(t, stdout+stderr, "opted in", "a failed dry run opted nothing in")
 
-	stub(localdebt.ConvertResult{StoreFound: true})
-	out, err = runDebt(t, "convert", "--store", dir)
+	fns = failingConvertFuncs(localdebt.ConvertResult{StoreFound: true}, boom)
+	stdout, stderr, err = runDebtConvertWith(t, fns, "--store", dir)
 	require.ErrorIs(t, err, boom)
-	assert.NotContains(t, out, "opted in", "a run that opted nothing in says nothing of it")
+	assert.NotContains(t, stdout+stderr, "opted in", "a run that opted nothing in says nothing of it")
 }
