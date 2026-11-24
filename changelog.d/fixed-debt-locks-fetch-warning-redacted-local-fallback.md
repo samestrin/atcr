@@ -1,0 +1,1 @@
+- `atcr debt locks` shows a failed lock fetch as one short line of git's message, with any absolute path cut to its last name, instead of git's whole multi-line output with full paths. A lock whose fetch fails but whose tag is already in your clone is now listed instead of being dropped as a warning (epic 128 T4).
