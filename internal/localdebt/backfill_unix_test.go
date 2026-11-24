@@ -55,12 +55,12 @@ func TestReviewDirOwnsRun_FIFOSummaryOwnsNothing(t *testing.T) {
 func TestReadSummary_FIFOSwappedInAfterLstatOwnsNothing(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	path := writeRegularSummary(t, reviewDir)
-	open := func(name string) (*os.File, error) {
-		require.NoError(t, os.Remove(name))
-		if err := syscall.Mkfifo(name, 0o600); err != nil {
+	open := func(dir *os.Root, name string) (*os.File, error) {
+		require.NoError(t, dir.Remove(name))
+		if err := syscall.Mkfifo(filepath.Join(dir.Name(), name), 0o600); err != nil {
 			t.Skipf("mkfifo unsupported: %v", err)
 		}
-		return defaultBackfillSeams().open(name)
+		return defaultBackfillSeams().open(dir, name)
 	}
 
 	type result struct {
@@ -93,7 +93,8 @@ func TestReadSummary_FIFOSwappedInAfterLstatOwnsNothing(t *testing.T) {
 func TestReadSummary_NonRegularHandleOwnsNothing(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
 	writeRegularSummary(t, reviewDir)
-	open := func(name string) (*os.File, error) {
+	open := func(dir *os.Root, base string) (*os.File, error) {
+		name := filepath.Join(dir.Name(), base)
 		require.NoError(t, os.Remove(name))
 		if err := syscall.Mkfifo(name, 0o600); err != nil {
 			t.Skipf("mkfifo unsupported: %v", err)
@@ -126,8 +127,8 @@ func TestReadSummary_NonRegularHandleOwnsNothing(t *testing.T) {
 }
 
 // TD db483cca5f54a5d2 — the default summary opener refuses a symlink at the open
-// (O_NOFOLLOW on unix), so a link swapped in after the Lstat cannot redirect the
-// read. Every default-open path owes this: the seams default, the ownershipCache
+// that resolves outside reconciled/ (the os.Root it opens under), so a link
+// swapped in after the Lstat cannot redirect the read. Every default-open path owes this: the seams default, the ownershipCache
 // zero value, and the uncached reviewDirOwnsRun wrapper.
 func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 	reviewDir := filepath.Join(t.TempDir(), "multi-agent")
@@ -137,7 +138,10 @@ func TestSummaryDefaultOpen_RefusesSymlink(t *testing.T) {
 	link := filepath.Join(reviewDir, "reconciled", "summary.json")
 	require.NoError(t, os.Symlink(target, link))
 
-	f, err := defaultBackfillSeams().open(link)
+	dir, err := os.OpenRoot(filepath.Dir(link))
+	require.NoError(t, err)
+	defer func() { _ = dir.Close() }()
+	f, err := defaultBackfillSeams().open(dir, filepath.Base(link))
 	if f != nil {
 		_ = f.Close()
 	}
@@ -172,6 +176,10 @@ func TestSummaryDefaultOpen_RefusesSymlinkedReconciledDir(t *testing.T) {
 		"the cache's default open must refuse a symlinked reconciled/")
 	assert.False(t, reviewDirOwnsRun(reviewDir, runID),
 		"the uncached wrapper's default open must refuse a symlinked reconciled/")
+
+	at, oversized = readSummary(filepath.Join(root, "missing"), defaultBackfillSeams().open, slog.Default())
+	assert.Empty(t, at, "a review dir that cannot be opened as a root owns nothing")
+	assert.False(t, oversized)
 
 	require.NoError(t, os.Remove(filepath.Join(reviewDir, "reconciled")))
 	writeRegularSummary(t, reviewDir)
