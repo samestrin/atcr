@@ -407,3 +407,47 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 		})
 	}
 }
+
+// TestAssemble_AllowConsumedReleasesARepeatedBullet is debt row
+// bcc4c5e9e4d3fa67: a bullet that legitimately repeats an earlier release's
+// entry is refused by default, the refusal names both causes, and
+// --allow-consumed releases it.
+func TestAssemble_AllowConsumedReleasesARepeatedBullet(t *testing.T) {
+	const repeated = "- old entry. (epic 1)"
+	dir := setup(t, baseChangelog, map[string]string{"added-again.md": repeated + "\n"})
+	frag := filepath.Join(dir, "changelog.d", "added-again.md")
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01")
+	if code != 1 {
+		t.Fatalf("default: code %d, want 1: %s", code, stderr)
+	}
+	for _, want := range []string{
+		frag, repeated,
+		"an assemble that could not delete", "delete those fragment files by hand, then re-run",
+		"repeats an entry from an earlier release", "re-run with --allow-consumed",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "to recover, delete") {
+		t.Errorf("refusal still tells the operator only to delete the fragments:\n%s", stderr)
+	}
+	if got := readFile(t, filepath.Join(dir, "CHANGELOG.md")); got != before {
+		t.Errorf("CHANGELOG.md changed on refusal:\n%s", got)
+	}
+
+	code, _, stderr = runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed")
+	if code != 0 {
+		t.Fatalf("--allow-consumed: code %d, want 0: %s", code, stderr)
+	}
+	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	want := "## [1.0.0] - 2026-11-01\n\n### Added\n\n" + repeated + "\n\n## [0.5.0]"
+	if !strings.Contains(got, want) {
+		t.Errorf("CHANGELOG.md lacks the released repeat %q:\n%s", want, got)
+	}
+	if _, err := os.Stat(frag); !os.IsNotExist(err) {
+		t.Errorf("fragment not removed after --allow-consumed: %v", err)
+	}
+}

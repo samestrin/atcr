@@ -1,6 +1,6 @@
 // Command changelog assembles the fragments in changelog.d/ into CHANGELOG.md.
 //
-//	go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run]
+//	go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed]
 //
 // Each fragment is a top-level file changelog.d/<category>-<slug>.md holding
 // one or more "- " bullets, where <category> is added, changed, deprecated,
@@ -11,8 +11,9 @@
 // is written to a temporary file and renamed into place before any fragment is
 // deleted, so a crash leaves the fragments where they were. It refuses, writing
 // nothing, when a complete fragment bullet (with its indented continuation
-// lines) is already in CHANGELOG.md, as a fragment left by a failed delete is.
-// --dry-run prints the section and writes nothing.
+// lines) is already in CHANGELOG.md, as a fragment left by a failed delete is;
+// --allow-consumed skips that check for a bullet that legitimately repeats an
+// earlier release's entry. --dry-run prints the section and writes nothing.
 //
 //	go run ./cmd/changelog check --base <commit> --head <commit>
 //
@@ -59,7 +60,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCheck(args[1:], stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "assemble" {
-		_, _ = fmt.Fprintln(stderr, "usage: changelog check --base <commit> --head <commit> | changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--dir changelog.d] [--changelog CHANGELOG.md]")
+		_, _ = fmt.Fprintln(stderr, "usage: changelog check --base <commit> --head <commit> | changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed] [--dir changelog.d] [--changelog CHANGELOG.md]")
 		return 2
 	}
 	fs := flag.NewFlagSet("changelog assemble", flag.ContinueOnError)
@@ -67,13 +68,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	version := fs.String("version", "", "release version, X.Y.Z (required)")
 	date := fs.String("date", "", "release date, YYYY-MM-DD (required)")
 	dryRun := fs.Bool("dry-run", false, "print the section; write nothing and delete nothing")
+	allowConsumed := fs.Bool("allow-consumed", false, "assemble a fragment bullet that is already in the changelog (a legitimate repeat of an earlier entry)")
 	dir := fs.String("dir", "changelog.d", "fragment directory")
 	changelog := fs.String("changelog", "CHANGELOG.md", "changelog file to update")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
 	if *version == "" || *date == "" || fs.NArg() > 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run]")
+		_, _ = fmt.Fprintln(stderr, "usage: changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed]")
 		return 2
 	}
 	if !versionRE.MatchString(*version) {
@@ -84,7 +86,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "changelog: invalid date %q: want YYYY-MM-DD\n", *date)
 		return 2
 	}
-	if err := assemble(*dir, *changelog, *version, *date, *dryRun, stdout); err != nil {
+	if err := assemble(*dir, *changelog, *version, *date, *dryRun, *allowConsumed, stdout); err != nil {
 		_, _ = fmt.Fprintln(stderr, "changelog:", err)
 		return 1
 	}
@@ -97,7 +99,7 @@ type fragment struct {
 	bullets string // trimmed body, ends without newline
 }
 
-func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.Writer) error {
+func assemble(dir, changelogPath, version, date string, dryRun, allowConsumed bool, stdout io.Writer) error {
 	frags, err := readFragments(dir)
 	if err != nil {
 		return err
@@ -114,8 +116,10 @@ func assemble(dir, changelogPath, version, date string, dryRun bool, stdout io.W
 	if err != nil {
 		return err
 	}
-	if err := refuseConsumed(changelogPath, string(old), frags); err != nil {
-		return err
+	if !allowConsumed {
+		if err := refuseConsumed(changelogPath, string(old), frags); err != nil {
+			return err
+		}
 	}
 	updated, err := insertSection(string(old), version, section)
 	if err != nil {
@@ -181,7 +185,9 @@ func readFragments(dir string) (map[string][]fragment, error) {
 
 // refuseConsumed fails when a fragment bullet is already in the changelog,
 // which is what a fragment that survived a failed remove looks like: without
-// this, the next assemble would render it again into the new section.
+// this, the next assemble would render it again into the new section. A bullet
+// that legitimately repeats an earlier entry looks the same, so the refusal
+// names both causes and --allow-consumed skips this check.
 func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment) error {
 	have := map[string]bool{}
 	for _, b := range splitBullets(changelog) {
@@ -205,7 +211,7 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 	if len(found) == 1 {
 		noun = "bullet is"
 	}
-	return fmt.Errorf("%d fragment %s already in %s, likely left by an assemble that could not delete its fragments:\n%s\nto recover, delete those fragment files by hand, then re-run",
+	return fmt.Errorf("%d fragment %s already in %s:\n%s\nif an assemble that could not delete its fragments left them, delete those fragment files by hand, then re-run; if a bullet repeats an entry from an earlier release on purpose, re-run with --allow-consumed",
 		len(found), noun, changelogPath, strings.Join(found, "\n"))
 }
 
