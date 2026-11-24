@@ -37,6 +37,12 @@ type TurnEvent struct {
 	// statement alone cannot tell an empty reply from one the strip emptied.
 	// TD internal/debate/protocol.go:177.
 	Reasoning string `json:"reasoning,omitempty"`
+	// Cause names why a halted seat sent nothing, empty when the halt has no
+	// recorded cause. Today only a secret_guard block sets it, to the guard's
+	// refusal: without it the turn reads as a bare failed status, the same as a
+	// provider error or a tripped budget, whose remedies differ. The guard
+	// error never holds the credential it refused. TD internal/debate/protocol.go:197.
+	Cause string `json:"cause,omitempty"`
 }
 
 // RulingEvent is the judge's parsed ruling, appended after the three turns so the

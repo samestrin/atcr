@@ -1,0 +1,1 @@
+- A debate seat that `secret_guard: block` stopped from sending now records why on its `debate/<item-id>/transcript.jsonl` turn, as a `cause` field holding the guard's refusal, instead of a bare failed status that read the same as a provider error or a tripped budget. The cause names the policy, never the credential. (technical debt, 2026-11-24)
