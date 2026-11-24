@@ -1,6 +1,6 @@
 // Command changelog assembles the fragments in changelog.d/ into CHANGELOG.md.
 //
-//	go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed]
+//	go run ./cmd/changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed=<fragment-path>]...
 //
 // Each fragment is a top-level file changelog.d/<category>-<slug>.md holding
 // one or more "- " bullets, where <category> is added, changed, deprecated,
@@ -12,8 +12,10 @@
 // deleted, so a crash leaves the fragments where they were. It refuses, writing
 // nothing, when a complete fragment bullet (with its indented continuation
 // lines) is already in CHANGELOG.md, as a fragment left by a failed delete is;
-// --allow-consumed skips that check for a bullet that legitimately repeats an
-// earlier release's entry. --dry-run prints the section and writes nothing.
+// --allow-consumed=<fragment-path>, repeatable, releases the named fragment
+// whose bullet legitimately repeats an earlier release's entry, and only that
+// one. --dry-run prints the section, warns about each bullet the real run
+// would refuse, and writes nothing.
 //
 //	go run ./cmd/changelog check --base <commit> --head <commit>
 //
@@ -60,7 +62,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCheck(args[1:], stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "assemble" {
-		_, _ = fmt.Fprintln(stderr, "usage: changelog check --base <commit> --head <commit> | changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed] [--dir changelog.d] [--changelog CHANGELOG.md]")
+		_, _ = fmt.Fprintln(stderr, "usage: changelog check --base <commit> --head <commit> | changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed=<fragment-path>]... [--dir changelog.d] [--changelog CHANGELOG.md]")
 		return 2
 	}
 	fs := flag.NewFlagSet("changelog assemble", flag.ContinueOnError)
@@ -68,14 +70,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	version := fs.String("version", "", "release version, X.Y.Z (required)")
 	date := fs.String("date", "", "release date, YYYY-MM-DD (required)")
 	dryRun := fs.Bool("dry-run", false, "print the section; write nothing and delete nothing")
-	allowConsumed := fs.Bool("allow-consumed", false, "assemble a fragment bullet that is already in the changelog (a legitimate repeat of an earlier entry)")
+	var allowConsumed pathList
+	fs.Var(&allowConsumed, "allow-consumed", "--allow-consumed=<fragment-path>, once per fragment: assemble that fragment even though a bullet in it is already in the changelog (a legitimate repeat of an earlier entry)")
 	dir := fs.String("dir", "changelog.d", "fragment directory")
 	changelog := fs.String("changelog", "CHANGELOG.md", "changelog file to update")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 2
 	}
 	if *version == "" || *date == "" || fs.NArg() > 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed]")
+		_, _ = fmt.Fprintln(stderr, "usage: changelog assemble --version X.Y.Z --date YYYY-MM-DD [--dry-run] [--allow-consumed=<fragment-path>]...")
 		return 2
 	}
 	if !versionRE.MatchString(*version) {
@@ -86,11 +89,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "changelog: invalid date %q: want YYYY-MM-DD\n", *date)
 		return 2
 	}
-	if err := assemble(*dir, *changelog, *version, *date, *dryRun, *allowConsumed, stdout); err != nil {
+	if err := assemble(*dir, *changelog, *version, *date, *dryRun, allowConsumed, stdout, stderr); err != nil {
 		_, _ = fmt.Fprintln(stderr, "changelog:", err)
 		return 1
 	}
 	return 0
+}
+
+// pathList is the repeatable --allow-consumed=<fragment-path>. It reports
+// itself as a bool flag so the flag package hands a bare --allow-consumed to
+// Set as "true" instead of taking the next argument as its path; Set rejects
+// that, so the bare flag, which once released every fragment, is a usage error.
+type pathList []string
+
+func (p *pathList) String() string { return strings.Join(*p, ",") }
+
+func (p *pathList) IsBoolFlag() bool { return true }
+
+func (p *pathList) Set(v string) error {
+	if v == "" || v == "true" {
+		return errors.New("needs a fragment path: --allow-consumed=<fragment-path>, once per fragment to release")
+	}
+	*p = append(*p, v)
+	return nil
 }
 
 type fragment struct {
@@ -99,7 +120,7 @@ type fragment struct {
 	bullets string // trimmed body, ends without newline
 }
 
-func assemble(dir, changelogPath, version, date string, dryRun, allowConsumed bool, stdout io.Writer) error {
+func assemble(dir, changelogPath, version, date string, dryRun bool, allowConsumed []string, stdout, stderr io.Writer) error {
 	frags, err := readFragments(dir)
 	if err != nil {
 		return err
@@ -107,19 +128,32 @@ func assemble(dir, changelogPath, version, date string, dryRun, allowConsumed bo
 	if len(frags) == 0 {
 		return fmt.Errorf("no fragments in %s", dir)
 	}
+	released, err := releasedFragments(allowConsumed, frags)
+	if err != nil {
+		return err
+	}
 	section := renderSection(version, date, frags)
 	if dryRun {
-		_, err := io.WriteString(stdout, section)
+		// Preview the consumed check the real run makes; a changelog that
+		// does not exist yet has nothing consumed.
+		old, err := os.ReadFile(changelogPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err == nil {
+			if err := refuseConsumed(changelogPath, string(old), frags, released); err != nil {
+				_, _ = fmt.Fprintln(stderr, "changelog: warning: the real run will refuse:", err)
+			}
+		}
+		_, err = io.WriteString(stdout, section)
 		return err
 	}
 	old, err := os.ReadFile(changelogPath)
 	if err != nil {
 		return err
 	}
-	if !allowConsumed {
-		if err := refuseConsumed(changelogPath, string(old), frags); err != nil {
-			return err
-		}
+	if err := refuseConsumed(changelogPath, string(old), frags, released); err != nil {
+		return err
 	}
 	updated, err := insertSection(string(old), version, section)
 	if err != nil {
@@ -183,12 +217,42 @@ func readFragments(dir string) (map[string][]fragment, error) {
 	return out, nil
 }
 
+// releasedFragments resolves each --allow-consumed path to the fragment it
+// names, keyed by fragment path. A path that names no fragment is an error, so
+// a typo cannot leave the fragment it meant refused with no hint why.
+func releasedFragments(paths []string, frags map[string][]fragment) (map[string]bool, error) {
+	byAbs := map[string]string{}
+	for _, c := range categories {
+		for _, f := range frags[c] {
+			abs, err := filepath.Abs(f.path)
+			if err != nil {
+				return nil, err
+			}
+			byAbs[abs] = f.path
+		}
+	}
+	released := map[string]bool{}
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, err
+		}
+		f, ok := byAbs[abs]
+		if !ok {
+			return nil, fmt.Errorf("--allow-consumed=%s: not a fragment in this run", p)
+		}
+		released[f] = true
+	}
+	return released, nil
+}
+
 // refuseConsumed fails when a fragment bullet is already in the changelog,
 // which is what a fragment that survived a failed remove looks like: without
 // this, the next assemble would render it again into the new section. A bullet
 // that legitimately repeats an earlier entry looks the same, so the refusal
-// names both causes and --allow-consumed skips this check.
-func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment) error {
+// names both causes, and a fragment in released (named by
+// --allow-consumed=<fragment-path>) is not checked.
+func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment, released map[string]bool) error {
 	have := map[string]bool{}
 	for _, b := range splitBullets(changelog) {
 		have[b] = true
@@ -196,6 +260,9 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 	var found []string
 	for _, c := range categories {
 		for _, f := range frags[c] {
+			if released[f.path] {
+				continue
+			}
 			for _, b := range splitBullets(f.bullets) {
 				if have[b] {
 					first, _, _ := strings.Cut(b, "\n")
@@ -211,7 +278,7 @@ func refuseConsumed(changelogPath, changelog string, frags map[string][]fragment
 	if len(found) == 1 {
 		noun = "bullet is"
 	}
-	return fmt.Errorf("%d fragment %s already in %s:\n%s\nif an assemble that could not delete its fragments left them, delete those fragment files by hand, then re-run; if a bullet repeats an entry from an earlier release on purpose, re-run with --allow-consumed",
+	return fmt.Errorf("%d fragment %s already in %s:\n%s\nif an assemble that could not delete its fragments left them, delete those fragment files by hand, then re-run; if a bullet repeats an entry from an earlier release on purpose, re-run with --allow-consumed=<fragment-path> for each such fragment",
 		len(found), noun, changelogPath, strings.Join(found, "\n"))
 }
 

@@ -365,10 +365,16 @@ func TestAssemble_RefusesBulletAlreadyInChangelog(t *testing.T) {
 				t.Errorf("survivor removed on refusal: %v", err)
 			}
 
-			// Dry-run is unchanged: it still prints the section.
+			// Dry-run still prints the section, and warns about the bullet the
+			// real run refuses (debt row 5e512b789302f4f8).
 			code, stdout, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02", "--dry-run")
 			if code != 0 || !strings.Contains(stdout, tt.wantErr) {
 				t.Errorf("dry-run: code %d, stdout %q, stderr %s", code, stdout, stderr)
+			}
+			for _, want := range []string{"warning:", survivor, tt.wantErr, "already in"} {
+				if !strings.Contains(stderr, want) {
+					t.Errorf("dry-run stderr lacks %q:\n%s", want, stderr)
+				}
 			}
 		})
 	}
@@ -411,7 +417,7 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 // TestAssemble_AllowConsumedReleasesARepeatedBullet is debt row
 // bcc4c5e9e4d3fa67: a bullet that legitimately repeats an earlier release's
 // entry is refused by default, the refusal names both causes, and
-// --allow-consumed releases it.
+// --allow-consumed=<fragment-path> releases it.
 func TestAssemble_AllowConsumedReleasesARepeatedBullet(t *testing.T) {
 	const repeated = "- old entry. (epic 1)"
 	dir := setup(t, baseChangelog, map[string]string{"added-again.md": repeated + "\n"})
@@ -438,7 +444,7 @@ func TestAssemble_AllowConsumedReleasesARepeatedBullet(t *testing.T) {
 		t.Errorf("CHANGELOG.md changed on refusal:\n%s", got)
 	}
 
-	code, _, stderr = runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed")
+	code, _, stderr = runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed="+frag)
 	if code != 0 {
 		t.Fatalf("--allow-consumed: code %d, want 0: %s", code, stderr)
 	}
@@ -450,4 +456,187 @@ func TestAssemble_AllowConsumedReleasesARepeatedBullet(t *testing.T) {
 	if _, err := os.Stat(frag); !os.IsNotExist(err) {
 		t.Errorf("fragment not removed after --allow-consumed: %v", err)
 	}
+}
+
+// consumedSetup writes a changelog whose 0.5.0 section holds two entries, and
+// three fragments: two repeating those entries and one new.
+func consumedSetup(t *testing.T) (dir, again1, again2, fresh string) {
+	t.Helper()
+	changelog := baseChangelog + "- other old entry. (epic 1)\n"
+	dir = setup(t, changelog, map[string]string{
+		"added-again1.md": "- old entry. (epic 1)\n",
+		"fixed-again2.md": "- other old entry. (epic 1)\n",
+		"changed-new.md":  "- new entry. (epic 2)\n",
+	})
+	d := filepath.Join(dir, "changelog.d")
+	return dir, filepath.Join(d, "added-again1.md"), filepath.Join(d, "fixed-again2.md"), filepath.Join(d, "changed-new.md")
+}
+
+// assertUntouched fails when CHANGELOG.md differs from before or a fragment is gone.
+func assertUntouched(t *testing.T, dir, before string, frags ...string) {
+	t.Helper()
+	if got := readFile(t, filepath.Join(dir, "CHANGELOG.md")); got != before {
+		t.Errorf("CHANGELOG.md changed:\n%s", got)
+	}
+	for _, f := range frags {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("fragment %s removed: %v", f, err)
+		}
+	}
+}
+
+// TestAssemble_AllowConsumedBareFlagIsAUsageError is debt rows c39c000c46770bfd
+// and 9b9305bb3f3afb31: the bare flag released every fragment, so it is now a
+// usage error that writes and deletes nothing.
+func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
+	for name, args := range map[string][]string{
+		"bare last":          {"--allow-consumed"},
+		"bare before a flag": {"--allow-consumed", "--dry-run"},
+		"explicit true":      {"--allow-consumed=true"},
+		"empty value":        {"--allow-consumed="},
+		"space-separated":    {"--allow-consumed", "changelog.d/added-again1.md"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, a1, a2, fresh := consumedSetup(t)
+			before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+			code, stdout, stderr := runIn(dir, append([]string{"--version", "1.0.0", "--date", "2026-11-01"}, args...)...)
+			if code != 2 {
+				t.Fatalf("code %d, want 2: %s", code, stderr)
+			}
+			if !strings.Contains(stderr, "--allow-consumed=<fragment-path>") {
+				t.Errorf("stderr does not name the path form:\n%s", stderr)
+			}
+			if stdout != "" {
+				t.Errorf("stdout not empty: %q", stdout)
+			}
+			assertUntouched(t, dir, before, a1, a2, fresh)
+		})
+	}
+}
+
+// TestAssemble_AllowConsumedRefusesAnUnnamedFragment: naming one consumed
+// fragment does not release another.
+func TestAssemble_AllowConsumedRefusesAnUnnamedFragment(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed="+a1)
+	if code != 1 {
+		t.Fatalf("code %d, want 1: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, a2) || !strings.Contains(stderr, "1 fragment bullet is already in") {
+		t.Errorf("refusal does not name only the unnamed fragment %s:\n%s", a2, stderr)
+	}
+	if strings.Contains(stderr, a1+":") {
+		t.Errorf("refusal names the released fragment %s:\n%s", a1, stderr)
+	}
+	assertUntouched(t, dir, before, a1, a2, fresh)
+}
+
+// TestAssemble_AllowConsumedReleasesExactlyTheNamedFragments: a repeated flag
+// releases each named fragment, in any spelling of its path.
+func TestAssemble_AllowConsumedReleasesExactlyTheNamedFragments(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	rel, err := filepath.Rel(mustGetwd(t), a2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01",
+		"--allow-consumed="+a1, "--allow-consumed="+filepath.Join(".", rel))
+	if code != 0 {
+		t.Fatalf("code %d, want 0: %s", code, stderr)
+	}
+	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	want := "## [1.0.0] - 2026-11-01\n\n### Added\n\n- old entry. (epic 1)\n\n### Changed\n\n- new entry. (epic 2)\n\n### Fixed\n\n- other old entry. (epic 1)\n\n## [0.5.0]"
+	if !strings.Contains(got, want) {
+		t.Errorf("CHANGELOG.md lacks %q:\n%s", want, got)
+	}
+	for _, f := range []string{a1, a2, fresh} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("fragment %s not removed: %v", f, err)
+		}
+	}
+}
+
+// TestAssemble_AllowConsumedUnknownPath: a path that is no fragment (a typo)
+// is refused before any write, so it cannot silently release nothing.
+func TestAssemble_AllowConsumedUnknownPath(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	typo := filepath.Join(dir, "changelog.d", "added-agian1.md")
+	for _, extra := range [][]string{nil, {"--dry-run"}} {
+		args := append([]string{"--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed=" + a1, "--allow-consumed=" + a2, "--allow-consumed=" + typo}, extra...)
+		code, stdout, stderr := runIn(dir, args...)
+		if code != 1 || !strings.Contains(stderr, typo) || !strings.Contains(stderr, "not a fragment") {
+			t.Errorf("%v: code %d, want 1 naming %s:\n%s", extra, code, typo, stderr)
+		}
+		if stdout != "" {
+			t.Errorf("%v: stdout not empty: %q", extra, stdout)
+		}
+		assertUntouched(t, dir, before, a1, a2, fresh)
+	}
+}
+
+// TestAssemble_DryRunWarnsOnlyAboutUnreleasedBullets is debt row
+// 5e512b789302f4f8: the dry run previews the consumed check the real run makes,
+// so it warns about the unnamed fragment and not the released one.
+func TestAssemble_DryRunWarnsOnlyAboutUnreleasedBullets(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, stdout, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--dry-run", "--allow-consumed="+a1)
+	if code != 0 {
+		t.Fatalf("code %d, want 0: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "## [1.0.0] - 2026-11-01") {
+		t.Errorf("dry run printed no section:\n%s", stdout)
+	}
+	for _, want := range []string{"warning:", "1 fragment bullet is already in", a2 + ": - other old entry. (epic 1)", "--allow-consumed=<fragment-path>"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, a1+":") {
+		t.Errorf("warning names the released fragment %s:\n%s", a1, stderr)
+	}
+	assertUntouched(t, dir, before, a1, a2, fresh)
+
+	// Every consumed fragment named: the dry run is clean.
+	code, _, stderr = runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--dry-run", "--allow-consumed="+a1, "--allow-consumed="+a2)
+	if code != 0 || stderr != "" {
+		t.Errorf("code %d, stderr %q, want 0 and empty", code, stderr)
+	}
+}
+
+// TestAssemble_DryRunWithoutChangelog: the consumed preview reads CHANGELOG.md
+// only when it exists; a dry run before it is created still prints the section.
+func TestAssemble_DryRunWithoutChangelog(t *testing.T) {
+	dir := setup(t, "", map[string]string{"added-x.md": "- add. (epic 1)\n"})
+	code, stdout, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--dry-run")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "- add. (epic 1)") {
+		t.Errorf("code %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "CHANGELOG.md")); !os.IsNotExist(err) {
+		t.Errorf("dry run created CHANGELOG.md: %v", err)
+	}
+}
+
+// TestAssemble_DryRunUnreadableChangelog: an error other than a missing file
+// fails the dry run rather than hiding the preview.
+func TestAssemble_DryRunUnreadableChangelog(t *testing.T) {
+	dir := setup(t, "", map[string]string{"added-x.md": "- add. (epic 1)\n"})
+	if err := os.Mkdir(filepath.Join(dir, "CHANGELOG.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--dry-run")
+	if code != 1 || stdout != "" {
+		t.Errorf("code %d, want 1, stdout %q, stderr %q", code, stdout, stderr)
+	}
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wd
 }
