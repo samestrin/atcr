@@ -1030,3 +1030,19 @@ func TestConversionPending_NamesTheJournalDir(t *testing.T) {
 		assert.Equal(t, before, sortedByID(FoldRecords(recs), func(r Record) string { return r.ID }))
 	})
 }
+
+// TestFinishPendingConversion_AFinishedPlanIsNotAWarning: another process that
+// finishes the plan between the unlocked check and the lock leaves nothing pending
+// for the locked re-check, which is neither an error nor a plan that could not be
+// finished.
+func TestFinishPendingConversion_AFinishedPlanIsNotAWarning(t *testing.T) {
+	dir, _ := halfFinishedConversion(t)
+	afterContainmentCheck = func() {
+		// Between the unlocked check and the locked one.
+		require.NoError(t, os.RemoveAll(filepath.Join(dir, convertSubdir)))
+	}
+	t.Cleanup(func() { afterContainmentCheck = func() {} })
+	var w strings.Builder
+	require.NoError(t, finishPendingConversion(dir, &w))
+	assert.Empty(t, w.String(), "a plan finished meanwhile is not reported")
+}
