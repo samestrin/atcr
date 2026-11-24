@@ -169,15 +169,19 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    go run ./cmd/changelog assemble --version 0.6.0 --date 2026-11-02
    ```
 
-   The `--dry-run` prints the section and changes nothing; read it first. The
-   real run inserts `## [0.6.0] - 2026-11-02` below `## [Unreleased]`, grouped
-   Added, Changed, Deprecated, Removed, Fixed, Security, and deletes the
-   fragments it used (`changelog.d/README.md` stays). It fails, writing nothing,
-   if a fragment name has no valid category, if `changelog.d/` has no fragments,
-   if the version already has a section, or if a fragment bullet is already in
-   `CHANGELOG.md`. It names each such fragment: if an earlier run could not
-   delete it, delete it by hand and re-run; if the bullet repeats an earlier
-   release's entry on purpose, re-run with `--allow-consumed`. Then update the compare links at
+   The `--dry-run` prints the section and changes nothing; read it first. It
+   also warns about each fragment bullet already in `CHANGELOG.md` that would
+   make the real run refuse. The real run inserts `## [0.6.0] - 2026-11-02`
+   below `## [Unreleased]`, grouped Added, Changed, Deprecated, Removed, Fixed,
+   Security, and deletes the fragments it used (`changelog.d/README.md` stays).
+   It fails, writing nothing, if a fragment name has no valid category, if
+   `changelog.d/` has no fragments, if the version already has a section, or if
+   a fragment bullet is already in `CHANGELOG.md`. It names each such fragment:
+   if an earlier run could not delete it, delete it by hand and re-run; if the
+   bullet repeats an earlier release's entry on purpose, re-run with
+   `--allow-consumed=<fragment-path>`, repeating the flag once per deliberate
+   repeat. Only the named fragments are allowed; the bare flag is a usage error
+   and any unnamed consumed fragment is still refused. Then update the compare links at
    the end of `CHANGELOG.md` by hand: point `[Unreleased]` at `v0.6.0...HEAD`
    and add `[0.6.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v0.6.0`
    (previous tag on the left). Merge that PR to `main` **before** pushing the
