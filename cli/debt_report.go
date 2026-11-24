@@ -76,8 +76,8 @@ func runDebtReport(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// Every record is rendered, so every record is read; there is no narrower
-	// selection to make, unlike the dashboard's top list.
+	// Every record is rendered, so every record is read in full and held at once: peak memory is O(all stored records).
+	// The full read is deliberate: the report renders Problem, Fix, ReportedBy and SourceReport, which Summary lacks.
 	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read local debt store: %w", localdebt.RedactPathErr(err))
