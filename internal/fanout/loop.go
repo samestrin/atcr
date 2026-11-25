@@ -57,15 +57,25 @@ func (l *toolLoop) replayable(m llmclient.Message) llmclient.Message {
 func (l *toolLoop) chatInvocation() llmclient.Invocation {
 	inv := l.agent.Invocation
 	inv.AlreadyGuardedMessages = l.guarded
+	inv.ScanCache = l.scans
 	return inv
 }
+
+// maxScanCacheTexts bounds a redact loop's scan cache. A run of defaultMaxTurns
+// sends far fewer messages; a longer one stops caching at the bound and scans
+// each later message on every turn, as with no cache.
+const maxScanCacheTexts = 256
 
 // markSent records that a Chat under inv returned without error after sending
 // the first sent messages. l.messages is append-only, so under warn (already
 // reported, sent unchanged) and block (found clean) those messages need no
 // second scan, and each one is scanned once over the loop rather than once per
 // turn. Not under redact: Chat redacts a copy, and the loop's history keeps
-// the original text, so every later request must redact it again.
+// the original text, so every later request must redact it again. What redact
+// skips instead is the re-scan: l.scans holds each text's hits from its first
+// successful scan, and Chat redacts from them (BenchmarkToolLoop_RedactRescan,
+// 2026-11-25: a 20-turn run of 8 KB tool results spent 8.6 s scanning with
+// gitleaks before this cache and 0.85 s with it).
 func (l *toolLoop) markSent(inv llmclient.Invocation, sent int) {
 	if inv.SecretGuard == secretGuardWarn || inv.SecretGuard == secretGuardBlock {
 		l.guarded = sent
@@ -186,6 +196,9 @@ type toolLoop struct {
 	// guarded is the count of leading messages already scanned under the
 	// agent's secret_guard policy (chatInvocation, markSent).
 	guarded int
+	// scans is the run's scan cache under redact, nil under any other policy
+	// (markSent).
+	scans *llmclient.ScanCache
 
 	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
 	// when transcript recording is disabled; every method on *tools.Transcript is
@@ -221,6 +234,9 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		nudgedSigs: map[string]bool{},
 		tr:         tr,
 		guarded:    a.Invocation.AlreadyGuardedMessages,
+	}
+	if a.Invocation.SecretGuard == secretGuardRedact {
+		l.scans = llmclient.NewScanCache(maxScanCacheTexts)
 	}
 	return l.run(ctx)
 }

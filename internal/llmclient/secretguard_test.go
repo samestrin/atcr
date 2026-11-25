@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -412,4 +413,78 @@ func TestComplete_SecretGuardRejectsBadInput(t *testing.T) {
 			assert.EqualValues(t, 0, hits.Load())
 		})
 	}
+}
+
+// A ScanCache on the invocation scans each distinct text once across calls,
+// and every call still redacts it: the cache holds the scan's hits, never the
+// redacted text, so the caller's history keeps its original strings and each
+// request is rewritten from them again.
+func TestChat_SecretGuardScanCacheScansEachTextOnce(t *testing.T) {
+	srv, hits, body := guardServer(t)
+	scanned := stubScanner(t, nil)
+
+	content := "key " + chatAWSKey
+	msgs := []Message{{Role: "user", Content: strp("prompt")}, {Role: "tool", Content: &content}}
+	inv := guardInv(srv, "redact", 1)
+	inv.ScanCache = NewScanCache(8)
+	c := fastRetry(srv.Client())
+	for call := 1; call <= 3; call++ {
+		_, err := c.Chat(context.Background(), inv, msgs, nil)
+		require.NoError(t, err, "call %d", call)
+		assert.NotContains(t, *body, chatAWSKey, "call %d is redacted", call)
+		assert.Contains(t, *body, payload.SecretPlaceholder, "call %d", call)
+		msgs = append(msgs, Message{Role: "user", Content: strp(fmt.Sprintf("turn %d", call))})
+	}
+	assert.EqualValues(t, 3, hits.Load())
+	assert.Equal(t, []string{content, "turn 1", "turn 2"}, *scanned, "each text is scanned on the first call that sends it")
+	assert.Equal(t, "key "+chatAWSKey, *msgs[1].Content, "the caller's history is untouched")
+}
+
+// A scan that failed is not cached, so the next call scans the text again
+// (gitleaks may recover); the hits the failed scan returned are still used.
+func TestChat_SecretGuardScanCacheRetriesErrors(t *testing.T) {
+	srv, _, body := guardServer(t)
+	scanned := stubScanner(t, payload.ErrSecretScanFailed)
+
+	content := "key " + chatAWSKey
+	inv := guardInv(srv, "redact", 0)
+	inv.ScanCache = NewScanCache(8)
+	c := fastRetry(srv.Client())
+	for call := 1; call <= 2; call++ {
+		_, err := c.Chat(context.Background(), inv, []Message{{Role: "tool", Content: &content}}, nil)
+		require.NoError(t, err)
+		assert.NotContains(t, *body, chatAWSKey, "call %d is redacted from the failed scan's hits", call)
+	}
+	assert.Equal(t, []string{content, content}, *scanned)
+}
+
+// The cache is bounded: once it holds max texts it stores no more, and a text
+// it did not store is scanned on every call, as without a cache.
+func TestChat_SecretGuardScanCacheIsBounded(t *testing.T) {
+	srv, _, _ := guardServer(t)
+	scanned := stubScanner(t, nil)
+
+	inv := guardInv(srv, "redact", 0)
+	inv.ScanCache = NewScanCache(1)
+	msgs := []Message{{Role: "user", Content: strp("a")}, {Role: "user", Content: strp("b")}}
+	c := fastRetry(srv.Client())
+	for range 2 {
+		_, err := c.Chat(context.Background(), inv, msgs, nil)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []string{"a", "b", "b"}, *scanned)
+}
+
+// Without a cache every call scans every unguarded text, as before.
+func TestChat_SecretGuardNoScanCacheRescans(t *testing.T) {
+	srv, _, _ := guardServer(t)
+	scanned := stubScanner(t, nil)
+
+	msgs := []Message{{Role: "user", Content: strp("a")}}
+	c := fastRetry(srv.Client())
+	for range 2 {
+		_, err := c.Chat(context.Background(), guardInv(srv, "redact", 0), msgs, nil)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []string{"a", "a"}, *scanned)
 }

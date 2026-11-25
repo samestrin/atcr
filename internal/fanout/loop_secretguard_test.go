@@ -91,6 +91,30 @@ func TestToolLoop_SecretGuardOnEveryChatCall(t *testing.T) {
 	}
 }
 
+// Under redact, where the history is never marked guarded, every Chat call of
+// one run carries the same scan cache, so each message is scanned once and
+// redacted on every call (BenchmarkToolLoop_RedactRescan). Under the other
+// policies the guarded count already scans each message once, and they carry
+// none.
+func TestToolLoop_RedactSharesOneScanCache(t *testing.T) {
+	for _, policy := range []string{secretGuardOff, secretGuardWarn, secretGuardRedact, secretGuardBlock} {
+		invs := recordLoopInvocations(t, policy, 1)
+		if policy != secretGuardRedact {
+			for i, inv := range invs {
+				assert.Nil(t, inv.ScanCache, "%s: call %d", policy, i+1)
+			}
+			continue
+		}
+		require.NotNil(t, invs[0].ScanCache)
+		for i, inv := range invs {
+			assert.Same(t, invs[0].ScanCache, inv.ScanCache, "call %d", i+1)
+		}
+	}
+	// Each run starts with its own cache.
+	assert.NotSame(t, recordLoopInvocations(t, secretGuardRedact, 1)[0].ScanCache,
+		recordLoopInvocations(t, secretGuardRedact, 1)[0].ScanCache)
+}
+
 // A tool agent not built by the review (verify, executor and debate build
 // their own) carries no policy and no guarded prompt. The loop adds neither:
 // an empty policy is llmclient's off until its caller opts in (epic 106.3),
