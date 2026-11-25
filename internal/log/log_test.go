@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -271,5 +272,50 @@ func TestFromContext_DiscardLoggerNoOutput(t *testing.T) {
 	second := FromContext(context.Background())
 	if first != second {
 		t.Fatal("discard logger should be cached, not reallocated per call")
+	}
+}
+
+// TestIsJSON pins the exported JSON-format predicate: it must accept exactly
+// the spellings New routes to the JSON handler (surrounding whitespace
+// trimmed, case folded), so a caller that gates raw stderr output on IsJSON
+// can never drift from the sink New selects (TD 27a419f98c7fc33f).
+func TestIsJSON(t *testing.T) {
+	cases := []struct {
+		format string
+		want   bool
+	}{
+		{"json", true},
+		{"JSON", true},
+		{"Json", true},
+		{" json ", true},
+		{"\tJSON\n", true},
+		{"", false},
+		{"text", false},
+		{" TEXT ", false},
+		{"ndjson", false},
+		{"jsonl", false},
+		{"js on", false},
+		{"json json", false},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%q", tc.format), func(t *testing.T) {
+			if got := IsJSON(tc.format); got != tc.want {
+				t.Fatalf("IsJSON(%q) = %v, want %v", tc.format, got, tc.want)
+			}
+			// The predicate must agree with the handler New actually builds.
+			logger, err := New("info", tc.format, io.Discard)
+			if tc.want {
+				if err != nil {
+					t.Fatalf("New(%q) returned error: %v", tc.format, err)
+				}
+				if _, ok := logger.Handler().(*slog.JSONHandler); !ok {
+					t.Fatalf("IsJSON(%q) = true but New built %T", tc.format, logger.Handler())
+				}
+			} else if err == nil {
+				if _, ok := logger.Handler().(*slog.JSONHandler); ok {
+					t.Fatalf("IsJSON(%q) = false but New built a JSON handler", tc.format)
+				}
+			}
+		})
 	}
 }
