@@ -539,6 +539,39 @@ func TestAutoFixRunner_LastUsageLineCounts(t *testing.T) {
 	assert.Equal(t, 35, state.Tokens(usageNow))
 }
 
+// TestAutoFixRunner_LastValidUsageLineCounts pins the charging rule of row
+// abcbab6750be9006: the last *valid* usage line the child prints is the one
+// charged, so an unparseable line printed after it does not erase the spend.
+func TestAutoFixRunner_LastValidUsageLineCounts(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	stub := newAutoFixStub(t, fmt.Sprintf(
+		"echo %q; echo 'atcr-auto-fix-usage: tokens_in=many tokens_out=1'; echo %q; exit 0",
+		usageLine(40, 2), "pull request opened"))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 1000)
+
+	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}))
+	assert.Equal(t, 42, state.Tokens(usageNow), "an invalid trailing line must not uncharge the last valid one")
+}
+
+// TestAutoFixRunner_ChildReportedUsageCanBeUnderstated pins the accepted risk of
+// row abcbab6750be9006: the usage line is untrusted, child-reported input, so
+// code in the checkout (which runs with the runner's privileges) can print a
+// lower line after the real one and have the lower amount charged. The token
+// caps are an accounting guard, not a security boundary. If this ever becomes a
+// runner-side meter this test is expected to change, deliberately.
+func TestAutoFixRunner_ChildReportedUsageCanBeUnderstated(t *testing.T) {
+	f := newAutoFixFixture(t)
+	t.Setenv(testPushTokenEnv, testPushToken)
+	// The real spend is 1100, over the 1000 cap; a later hostile line claims 1.
+	stub := newAutoFixStub(t, fmt.Sprintf("echo %q; echo %q; exit 0", usageLine(800, 300), usageLine(1, 0)))
+	r, state := newCappedRunner(t, f, stub, &logLines{}, 1000)
+
+	require.NoError(t, r.Run(context.Background(), AutoFixTarget{Repo: "acme/widget", Number: 7, Base: "feature/login"}),
+		"the understating line hides the over-cap spend, as accepted")
+	assert.Equal(t, 1, state.Tokens(usageNow))
+}
+
 // TestAutoFixRunner_JobCapWithoutState covers a per-job cap with no state to
 // charge: the over-cap error is still returned.
 func TestAutoFixRunner_JobCapWithoutState(t *testing.T) {
