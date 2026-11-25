@@ -107,10 +107,12 @@ var personaStampLstat = os.Lstat
 // readPersonaStampFile is the one read both stamp readers share. It Lstats path
 // and opens only a regular file, so a stamp that is a FIFO, a device or a
 // symlink to either is refused before an open that could block or a read that
-// never ends, and it reads at most maxPersonaStampBytes+1 bytes. present is
-// false only when nothing is at path (or a directory above it is missing);
-// any other Lstat error, a non-regular file, a file swapped between the Lstat
-// and the open, a read error or a stamp over the cap is present with err set.
+// never ends. On unix the open itself is O_NOFOLLOW|O_NONBLOCK, so a FIFO or a
+// symlink swapped in after the Lstat cannot block it either. It reads at most
+// maxPersonaStampBytes+1 bytes. present is false only when nothing is at path
+// (or a directory above it is missing); any other Lstat error, a non-regular
+// file, a file swapped between the Lstat and the open, a read error or a stamp
+// over the cap is present with err set.
 func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	info, err := personaStampLstat(path)
 	if err != nil {
@@ -122,7 +124,7 @@ func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	if !info.Mode().IsRegular() {
 		return nil, true, fmt.Errorf("%s: not a regular file (%s)", path, info.Mode().Type())
 	}
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
 	if err != nil {
 		return nil, true, err
 	}
