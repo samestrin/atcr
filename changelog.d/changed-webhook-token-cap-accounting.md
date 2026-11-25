@@ -1,0 +1,1 @@
+- The webhook guide now states that both auto-fix token caps are accounted after a job finishes: the per-job cap never stops a running job, and the daily cap refuses only later claims after charged spend reaches it, so one job can overshoot either. (epic 140 T3)

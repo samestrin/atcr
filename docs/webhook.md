@@ -311,10 +311,11 @@ webhook:
   to retry). A job whose pull request lookup fails, or whose pull request is
   busy with another job, uses neither the claim nor the daily count. One job
   per pull request runs at a time, as with reviews, and `webhook.job_timeout`
-  bounds the whole run. Two optional token caps sit beside the job-count cap:
-  `job_token_cap` caps the tokens one auto-fix job may spend, and
-  `daily_token_cap` caps the tokens all auto-fix jobs may spend in one UTC
-  day. Both default to no cap: zero or an absent key means no cap, and a
+  bounds the whole run. Two optional token caps sit beside the job-count cap,
+  and both are accounted after the fact: `job_token_cap` never stops a running
+  job, while `daily_token_cap` only refuses later claims once the day's charged
+  spend has reached it, so one job can overshoot either. Both default to no cap:
+  zero or an absent key means no cap, and a
   negative value is rejected at config load. The spend is the token usage
   line `atcr review --auto-fix` ends with, which counts the initial review
   fan-out only (verify, debate and reconcile spend are not counted). A job's
