@@ -147,6 +147,26 @@ jobs:
           go-version: '1.25'
           cache: true
 
+      - name: Provision Alpine-built BusyBox
+        # The sandbox's default image (alpine) ships BusyBox tar, and the
+        # seed-copy tests in internal/sandbox/docker_test.go run against it only
+        # when a busybox with tar --exclude is on PATH. Ubuntu's apt busybox has
+        # no --exclude, so this takes Alpine's static build (a dynamic one needs
+        # musl) from the default image's release, pinned by digest, and the Run
+        # Tests step sets ATCR_REQUIRE_BUSYBOX_TAR so the tests fail instead of
+        # skipping BusyBox if this ever stops working. apk verifies the package
+        # signature. Keep the image in step with DefaultDockerConfig().Image;
+        # TestSeedCopyTars_HeavyShardProvisionsAlpineBusyBox pins that.
+        if: matrix.name == 'heavy'
+        run: |
+          dir="$RUNNER_TEMP/busybox"
+          mkdir -p "$dir"
+          docker run --rm alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc \
+            sh -c 'apk add --no-cache -q busybox-static >&2 && cat /bin/busybox.static' > "$dir/busybox"
+          chmod +x "$dir/busybox"
+          "$dir/busybox" tar --help 2>&1 | grep -q -- --exclude || { echo "provisioned busybox tar has no --exclude"; exit 1; }
+          echo "$dir" >> "$GITHUB_PATH"
+
       - name: Run Tests
         # -race now runs on pull_request too, because it no longer runs anywhere
         # else before merge: .githooks/pre-push dropped it after `go test -race
@@ -168,6 +188,7 @@ jobs:
         # specifically so it always equals "everything minus the named
         # shards" even as packages are added, renamed, or removed.
         env:
+          ATCR_REQUIRE_BUSYBOX_TAR: ${{ matrix.name == 'heavy' && '1' || '' }}
           SPLIT: ${{ matrix.split }}
           BUCKETS: ${{ matrix.buckets }}
           SHARD: ${{ matrix.shard }}

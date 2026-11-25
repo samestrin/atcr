@@ -523,7 +523,8 @@ exit 0`)
 }
 
 // requireBusyBoxTarEnv names the variable that, set to 1, makes seedCopyTars
-// fail when BusyBox tar is not covered instead of logging it.
+// fail when BusyBox tar is not covered instead of logging it. The heavy Go Test
+// shard sets it (.github/workflows/ci.yml).
 const requireBusyBoxTarEnv = "ATCR_REQUIRE_BUSYBOX_TAR"
 
 // seedCopyTars returns the tar implementations the host-side seed-copy tests run
@@ -533,10 +534,12 @@ const requireBusyBoxTarEnv = "ATCR_REQUIRE_BUSYBOX_TAR"
 // covered; BusyBox is covered when a `busybox` binary on PATH was built with
 // --exclude support. Alpine's is (CONFIG_FEATURE_TAR_FROM=y); Ubuntu's is not,
 // and against it the seed copy fails closed with 125, so it is no stand-in for
-// the alpine image. BusyBox tar coverage is therefore local-only: the CI runners
-// are Ubuntu, and `apt install busybox` there installs a busybox without
-// --exclude, so it would be skipped just the same. CI coverage needs an
-// Alpine-built busybox in the Go Test job.
+// the alpine image, and `apt install busybox` on the Ubuntu CI runners is no use.
+// CI instead puts an Alpine-built busybox (the static build from the default
+// image's release) on PATH in the heavy Go Test shard and sets
+// ATCR_REQUIRE_BUSYBOX_TAR=1, under which a missing or --exclude-less busybox
+// fails the tests rather than leaving BusyBox tar uncovered. Locally, without
+// the variable, the gap is only logged.
 func seedCopyTars(t *testing.T) map[string]string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -547,23 +550,29 @@ func seedCopyTars(t *testing.T) map[string]string {
 		t.Skip("no tar on PATH")
 	}
 	tars := map[string]string{"host": filepath.Dir(host)}
+	uncovered := func(format string, args ...any) map[string]string {
+		msg := fmt.Sprintf(format, args...) + ": BusyBox tar not covered in this run"
+		if os.Getenv(requireBusyBoxTarEnv) == "1" {
+			t.Fatalf("%s (%s=1 requires it)", msg, requireBusyBoxTarEnv)
+		}
+		t.Log(msg)
+		return tars
+	}
 	bb, err := exec.LookPath("busybox")
 	if err != nil {
-		t.Log("busybox not on PATH: BusyBox tar not covered in this run")
-		return tars
+		return uncovered("busybox not on PATH")
 	}
 	// BusyBox prints its usage and exits non-zero for --help; only the text matters.
 	help, _ := exec.Command(bb, "tar", "--help").CombinedOutput()
-	if strings.Contains(string(help), "--exclude") {
-		dir := t.TempDir()
-		// The skeleton pass's find, mkdir and sh are BusyBox applets on alpine too.
-		for _, applet := range []string{"tar", "find", "mkdir", "sh"} {
-			require.NoError(t, os.Symlink(bb, filepath.Join(dir, applet)))
-		}
-		tars["busybox"] = dir
-	} else {
-		t.Logf("%s tar has no --exclude: BusyBox tar not covered in this run", bb)
+	if !strings.Contains(string(help), "--exclude") {
+		return uncovered("%s tar has no --exclude", bb)
 	}
+	dir := t.TempDir()
+	// The skeleton pass's find, mkdir and sh are BusyBox applets on alpine too.
+	for _, applet := range []string{"tar", "find", "mkdir", "sh"} {
+		require.NoError(t, os.Symlink(bb, filepath.Join(dir, applet)))
+	}
+	tars["busybox"] = dir
 	return tars
 }
 
