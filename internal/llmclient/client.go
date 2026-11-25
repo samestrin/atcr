@@ -151,14 +151,16 @@ type Invocation struct {
 	// set; it is declared, never probed.
 	SupportsVision bool
 	// SecretGuard is the secret_guard policy Chat applies to the outbound
-	// messages: "off", "warn", "redact" or "block". Empty is off, so a caller
-	// that does not set it is not scanned. Validation is the registry's job;
-	// Chat refuses any other value rather than guess.
+	// messages, and Complete* to Prompt: "off", "warn", "redact" or "block".
+	// Empty is off, so a caller that does not set it is not scanned.
+	// Validation is the registry's job; both refuse any other value rather
+	// than guess.
 	SecretGuard string
 	// AlreadyGuardedMessages counts the leading messages the caller already
 	// guarded (the fanout review prompt, say). Chat scans only the messages at
 	// and after it; a negative count, or one above len(messages), is
-	// ErrAlreadyGuardedMessages.
+	// ErrAlreadyGuardedMessages. Complete* sends Prompt as one message, so 1
+	// skips its scan and anything above 1 is that error.
 	AlreadyGuardedMessages int
 }
 
@@ -432,10 +434,18 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
+	// The prompt is the single message here, so Chat's guard applies as is:
+	// AlreadyGuardedMessages 1 means the caller scanned it already. Scanned
+	// before anything is encoded, so block refuses with no request sent.
+	// Complete and CompleteWithUsage delegate here (row 819f83f94a4cca42).
+	guarded, err := guardMessages(ctx, inv, []Message{{Role: "user", Content: &inv.Prompt}})
+	if err != nil {
+		return Completion{}, err
+	}
 	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
-		Messages:       []message{{Role: "user", Content: inv.Prompt}},
+		Messages:       []message{{Role: "user", Content: *guarded[0].Content}},
 		Temperature:    temperatureFor(inv.Temperature, thinking),
 		MaxTokens:      inv.MaxTokens,
 		ResponseFormat: newResponseFormat(inv.ResponseFormat),

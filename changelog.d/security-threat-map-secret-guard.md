@@ -1,0 +1,1 @@
+- The threat-map mapper prompt now passes the `secret_guard` scan under the run's policy: `block` sends nothing when the changed-file list holds a credential (the panel then reviews every file), and `redact` replaces it first. Single-shot provider calls apply an agent's `secret_guard` to their prompt as the tool loop already did. (epic 134 T3)

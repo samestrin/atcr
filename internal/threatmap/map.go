@@ -240,10 +240,21 @@ func NewAgent(name string, reg *registry.Registry, settings registry.Settings, d
 			ThinkingLevel:    ac.ThinkingLevel,
 			ThinkingStyle:    ac.ThinkingStyle,
 			PreserveThinking: ac.PreserveThinking,
+			// llmclient scans the mapper prompt under the run's policy; an
+			// unset one is warn, as on the review path (fanout.secretGuardPolicy).
+			SecretGuard: secretGuardPolicy(settings),
 		},
 		timeout: time.Duration(timeoutSecs) * time.Second,
 		llm:     llm,
 	}, nil
+}
+
+// secretGuardPolicy is the run's secret_guard, or warn when unset.
+func secretGuardPolicy(settings registry.Settings) string {
+	if p := strings.TrimSpace(settings.SecretGuard); p != "" {
+		return p
+	}
+	return "warn"
 }
 
 // resolvePersona loads the mapper persona text for the persona ref ref of the

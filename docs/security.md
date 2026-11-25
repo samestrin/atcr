@@ -170,6 +170,10 @@ they send only fixed probe text, never repository content. One more input to
 verify is covered: the deterministic SAST findings a review saves to
 `sast.json` (the scanner messages and rules the Fixer reads through the
 reconciled report) pass the same policy before the file is written.
+The threat-map mapper prompt (the changed-file list) is scanned too, under the
+run's `secret_guard`, project tier included; under `block` a list holding a
+credential is not sent, and the failed mapper means the panel reviews every
+file.
 
 Before the scan, credential files never enter a payload at all: `.env` and
 `.env.*`, `.envrc`, `.netrc`, `.pgpass`, `.git-credentials`, `.npmrc`,
