@@ -71,6 +71,21 @@ func clampForError(s string) string {
 	return s
 }
 
+// normalizeFormat canonicalizes a format value: surrounding whitespace
+// trimmed, case folded. New and IsJSON both derive their decision from it,
+// so the exported JSON predicate can never drift from the sink New selects.
+func normalizeFormat(format string) string {
+	return strings.ToLower(strings.TrimSpace(format))
+}
+
+// IsJSON reports whether format selects New's JSON handler. It accepts every
+// spelling New does (surrounding whitespace trimmed, case-insensitive), so
+// callers that keep raw text off an NDJSON-only stream can gate on the same
+// predicate that picks the sink.
+func IsJSON(format string) bool {
+	return normalizeFormat(format) == "json"
+}
+
 // New constructs a *slog.Logger writing to w at the given level and format.
 // Level accepts the values parsed by LevelFromString. Format accepts "text"
 // (the default when empty) or "json"; any other value returns an error. The
@@ -87,7 +102,7 @@ func New(level string, format string, w io.Writer) (*slog.Logger, error) {
 	opts := &slog.HandlerOptions{Level: lvl}
 
 	var handler slog.Handler
-	switch strings.ToLower(strings.TrimSpace(format)) {
+	switch normalizeFormat(format) {
 	case "", "text":
 		handler = slog.NewTextHandler(w, opts)
 	case "json":
