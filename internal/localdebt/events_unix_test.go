@@ -160,8 +160,12 @@ func TestSweepEventTemps_MinAge(t *testing.T) {
 	assert.FileExists(t, live, "a temp younger than minAge may be a live writer's and is kept")
 	assert.NoFileExists(t, dead, "a temp older than minAge is reaped")
 
+	// A future mtime (clock stepped back, skewed network FS) reads as younger
+	// than any minAge; the kernel-lock path (zero minAge) must still reap it.
+	future := plantEventTemp(t, items, ".c.json.tmp-3", -time.Hour)
 	sweepEventTemps(items, 0)
 	assert.NoFileExists(t, live, "a zero minAge reaps every temp")
+	assert.NoFileExists(t, future, "a zero minAge reaps a temp with a future mtime")
 	assert.FileExists(t, filepath.Join(items, eventLayoutMarker), "the marker is never swept")
 }
 
