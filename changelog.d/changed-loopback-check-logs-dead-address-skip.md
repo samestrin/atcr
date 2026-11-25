@@ -1,0 +1,1 @@
+- On macOS, the OS-level sandbox's loopback-port check now logs a warning when a link-local or tunnel address times out and is skipped for the remaining ports, naming the address and the ports left unchecked there. (epic 130 T3)

@@ -370,7 +370,7 @@ func TestCheckLoopbackPortsFree_RoutableInterfaceAddressTimeoutFailsClosed(t *te
 	}{
 		{"192.168.1.20", net.CIDRMask(24, 32)},
 		{"169.254.10.20", net.CIDRMask(24, 32)},
-		{"2001:db8::20", net.CIDRMask(24, 32)},
+		{"2001:db8::20", net.CIDRMask(64, 128)},
 	} {
 		ip := tc.ip
 		t.Run(ip, func(t *testing.T) {
