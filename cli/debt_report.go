@@ -130,6 +130,16 @@ type debtReportSection struct {
 //     raw section;
 //   - the records from no section last;
 //   - within a section, most severe first, then by file, line and id.
+//
+// Every cell goes through debtMarkdownCell, which shares debtMarkdownSafe with
+// the dashboard. That helper escapes `<` and `>` as well as the pipe, so a
+// Problem naming `<b>` renders as `&lt;b&gt;` in the report. The escape is
+// intended behaviour, not a report defect (debt row 2b26867a1d5792eb): the
+// --output file is Markdown, which renders embedded HTML verbatim, so a
+// model-authored tag in a finding would become live markup wherever the
+// published report is rendered. cli/debt_aggregate.go:765-771 documents that
+// HTML-injection guard, and cli/debt_report_test.go:105-106 pins it. Do not
+// "fix" the mismatch by dropping the escape here; the row is not-a-bug.
 func renderDebtReport(recs []localdebt.Record) string {
 	red := log.NewRedactor("") // token scrub only, as the dashboard does
 	bySection := map[debtReportKey]*debtReportSection{}
