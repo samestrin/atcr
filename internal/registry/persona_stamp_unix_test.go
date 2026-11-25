@@ -82,32 +82,36 @@ func TestPersonaStamp_SwapToFIFOSkipsWithoutMkfifo(t *testing.T) {
 	}
 }
 
+// swapToFIFOAfterLstat makes the FIFO and any skip on the test goroutine,
+// before the reader starts: the Lstat hook runs on the reader goroutine, where
+// t.Skip and require would end only that goroutine. The hook just swaps and
+// reports a failed swap with t.Errorf.
 func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSymlink bool) {
-	swap := func(t *testing.T, _, path string) {
-		if err := mkfifo(path, 0o600); err != nil {
-			t.Skipf("mkfifo unsupported: %v", err)
-		}
-	}
-	if viaSymlink {
-		swap = func(t *testing.T, dir, path string) {
-			fifo := filepath.Join(dir, "fifo")
-			if err := mkfifo(fifo, 0o600); err != nil {
-				t.Skipf("mkfifo unsupported: %v", err)
-			}
-			require.NoError(t, os.Symlink("fifo", path))
-		}
-	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, PersonaStampFile)
 	require.NoError(t, os.WriteFile(path, []byte(`{"files":{}}`), 0o600))
+	fifo := filepath.Join(dir, "fifo")
+	if err := mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo unsupported: %v", err)
+	}
+	swap := func(name string) error { return os.Rename(fifo, name) }
+	if viaSymlink {
+		swap = func(name string) error {
+			if err := os.Remove(name); err != nil {
+				return err
+			}
+			return os.Symlink("fifo", name)
+		}
+	}
 
 	orig := personaStampLstat
 	t.Cleanup(func() { personaStampLstat = orig })
 	personaStampLstat = func(name string) (os.FileInfo, error) {
 		info, err := orig(name)
 		if err == nil && info.Mode().IsRegular() {
-			require.NoError(t, os.Remove(name))
-			swap(t, dir, name)
+			if serr := swap(name); serr != nil {
+				t.Errorf("swap the stamp for a FIFO: %v", serr)
+			}
 		}
 		return info, err
 	}
@@ -118,10 +122,14 @@ func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSy
 	case damaged := <-done:
 		require.True(t, damaged)
 	case <-time.After(5 * time.Second):
-		// Open the FIFO for writing so the blocked reader returns.
-		if w, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+		// Release the blocked reader before failing, so it does not outlive
+		// the restored hook and the TempDir. A write-only nonblocking open
+		// fails with ENXIO; O_RDWR on a FIFO succeeds without a reader, and
+		// closing it right away hands the reader EOF.
+		if w, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
 			_ = w.Close()
 		}
+		<-done
 		t.Fatal("a stamp read blocked on a FIFO swapped in after the Lstat")
 	}
 }
