@@ -414,6 +414,58 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 	}
 }
 
+// TestAssemble_WrappedFragmentBulletKeepsWholeText is debt row
+// e97559e1f44fbf10: shipped fragments wrap their bullets over continuation
+// lines, so a wrapped-bullet fragment must assemble with every line intact
+// in the rendered section, and the consumed check must compare the whole
+// rejoined bullet, not just its first line.
+func TestAssemble_WrappedFragmentBulletKeepsWholeText(t *testing.T) {
+	// The four-line bullet as shipped by epic 147 T1 in
+	// changelog.d/fixed-assemble-allow-consumed-bool-spellings.md.
+	const wrapped = "- `changelog assemble --allow-consumed=True`, `=TRUE`, `=t`, `=F` (and every\n" +
+		"  other boolean spelling) now get the same usage error as `=false`, naming the\n" +
+		"  `--allow-consumed=<fragment-path>` spelling, instead of failing later with\n" +
+		"  \"not a fragment in this run\". (epic 147 T1)\n"
+	firstLine, _, _ := strings.Cut(wrapped, "\n")
+	dir := setup(t, baseChangelog, map[string]string{"fixed-bool-spellings.md": wrapped})
+	frag := filepath.Join(dir, "changelog.d", "fixed-bool-spellings.md")
+
+	// The rendered section keeps the full rejoined text, not the first line.
+	if code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01"); code != 0 {
+		t.Fatalf("code %d: %s", code, stderr)
+	}
+	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	want := "## [1.0.0] - 2026-11-01\n\n### Fixed\n\n" + strings.TrimSuffix(wrapped, "\n") + "\n\n## [0.5.0]"
+	if !strings.Contains(got, want) {
+		t.Errorf("rendered section lost wrapped text:\ngot:\n%s\nwant to contain:\n%s", got, want)
+	}
+	if _, err := os.Stat(frag); !os.IsNotExist(err) {
+		t.Errorf("fragment not removed: %v", err)
+	}
+
+	// The same wrapped fragment again is consumed: the whole rejoined bullet
+	// matches, so the next assemble refuses it and writes nothing.
+	writeFile(t, frag, wrapped)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, _, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02")
+	if code != 1 {
+		t.Fatalf("repeat: code %d, want 1: %s", code, stderr)
+	}
+	for _, want := range []string{frag, firstLine, "already in"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("repeat stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	assertUntouched(t, dir, before, frag)
+
+	// A fragment holding only the first line of the consumed bullet is a new
+	// bullet, not a repeat: a truncating splitBullets would refuse it.
+	writeFile(t, frag, firstLine+"\n")
+	if code, _, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02"); code != 0 {
+		t.Errorf("first-line-only fragment: code %d, want 0: %s", code, stderr)
+	}
+}
+
 // TestAssemble_AllowConsumedReleasesARepeatedBullet is debt row
 // bcc4c5e9e4d3fa67: a bullet that legitimately repeats an earlier release's
 // entry is refused by default, the refusal names both causes, and
@@ -493,7 +545,10 @@ func assertUntouched(t *testing.T, dir, before string, frags ...string) {
 // none of them can be a fragment name (<category>-<slug>.md). Rows
 // cddedaf7d2ccf90b and 3a33081d52f27a43: every spelling strconv.ParseBool
 // accepts (=True, =TRUE, =t, =F, ...) is the same mistake, not just the
-// enumerated literals.
+// enumerated literals. Rows ae190369b5f3a6a9, da48c87f7085d471,
+// 14bdb8cf2204f389 and 891b8efc33eb3ee0 (owner decision EST-8570: shape
+// gate): a value whose base name is not <category>-<slug>.md is refused, so
+// all twelve ParseBool spellings and yes/on/y get the same usage error.
 func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 	for name, args := range map[string][]string{
 		"bare last":          {"--allow-consumed"},
@@ -506,6 +561,16 @@ func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 		"uppercase TRUE":     {"--allow-consumed=TRUE"},
 		"short t":            {"--allow-consumed=t"},
 		"short F":            {"--allow-consumed=F"},
+		"short T":            {"--allow-consumed=T"},
+		"short f":            {"--allow-consumed=f"},
+		"capitalised False":  {"--allow-consumed=False"},
+		"uppercase FALSE":    {"--allow-consumed=FALSE"},
+		"yes":                {"--allow-consumed=yes"},
+		"on":                 {"--allow-consumed=on"},
+		"short y":            {"--allow-consumed=y"},
+		"no category":        {"--allow-consumed=changelog.d/notes.md"},
+		"no .md suffix":      {"--allow-consumed=changelog.d/added-x"},
+		"directory":          {"--allow-consumed=changelog.d"},
 		"empty value":        {"--allow-consumed="},
 		"space-separated":    {"--allow-consumed", "changelog.d/added-again1.md"},
 	} {
@@ -525,6 +590,22 @@ func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 			assertUntouched(t, dir, before, a1, a2, fresh)
 		})
 	}
+}
+
+// TestAssemble_AllowConsumedFragmentShapedValuePassesTheGate: a value shaped
+// like a fragment path is not a usage error; it reaches the fragment lookup,
+// which refuses it (exit 1, not a fragment) because it names no fragment here.
+func TestAssemble_AllowConsumedFragmentShapedValuePassesTheGate(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, stdout, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed=changelog.d/added-x.md")
+	if code != 1 || !strings.Contains(stderr, "changelog.d/added-x.md: not a fragment") {
+		t.Fatalf("code %d, want 1 naming no fragment:\n%s", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout not empty: %q", stdout)
+	}
+	assertUntouched(t, dir, before, a1, a2, fresh)
 }
 
 // TestAssemble_AllowConsumedRefusesAnUnnamedFragment: naming one consumed

@@ -353,10 +353,15 @@ func TestParseExecutorResponse_NoJSON(t *testing.T) {
 
 // --- buildExecutorAgent / buildExecutorAgentPrompt unit tests ---
 
+// TestBuildExecutorAgent_ForwardsProviderAndBudget pins provider routing, the
+// max_tool_calls budget and secret_guard forwarding (Epic 134 T1, row
+// 5f627af2f787d753): a non-empty policy must reach Invocation.SecretGuard
+// verbatim — the executor tool loop's Chat scans the prompt and every tool
+// result under it, so a builder that drops it sends unscanned.
 func TestBuildExecutorAgent_ForwardsProviderAndBudget(t *testing.T) {
 	ex := agentExecConfig()
 	ex.MaxToolCalls = intPtr(7)
-	a := buildExecutorAgent(ex, testExecProviderVal(), "the prompt", 0, "")
+	a := buildExecutorAgent(ex, testExecProviderVal(), "the prompt", 0, "redact")
 	assert.True(t, a.Tools, "agent-mode executor must enable tools")
 	assert.True(t, a.SupportsFC, "agent-mode executor must declare function calling so the loop fires")
 	assert.Equal(t, 7, a.MaxTurns, "max_tool_calls maps to the agent MaxTurns budget")
@@ -365,6 +370,7 @@ func TestBuildExecutorAgent_ForwardsProviderAndBudget(t *testing.T) {
 	assert.Equal(t, "m-exec", a.Invocation.Model)
 	require.NotNil(t, a.Invocation.Temperature)
 	assert.Equal(t, 0.0, *a.Invocation.Temperature, "executor fixes default to deterministic temperature")
+	assert.Equal(t, "redact", a.Invocation.SecretGuard, "secret_guard must reach the executor's Invocation — Chat scans under it")
 }
 
 func TestBuildExecutorAgent_DefaultMaxTurnsWhenUnset(t *testing.T) {

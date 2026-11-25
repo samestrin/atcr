@@ -1,0 +1,3 @@
+- `atcr debt` accepts a `--store` path with a `..` segment, such as `--store ../x`, as `docs/registry.md` already said; only the absolute path is checked, so a path that lands in a system directory is still refused (epic 138)
+- `atcr debt list` matches and sorts a stored severity with surrounding spaces, such as ` HIGH `, as that severity (epic 138)
+- `atcr debt list`, `group` and `validate` say in their own output when a store holds a conversion they could not finish, since some items may then be counted twice; `debt list` puts the note under its table, and on stderr with `--json` (epic 138)
