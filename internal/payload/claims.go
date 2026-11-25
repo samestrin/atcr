@@ -559,10 +559,21 @@ var sentenceAbbrevs = map[string]bool{
 // motivated this epic. Instead the token before the terminator must not be a
 // known abbreviation, which is the case the capital rule was really protecting.
 func splitSentences(s string) []string {
-	var out []string
+	out, _ := splitSentencesCounted(s)
+	return out
+}
+
+// splitSentencesCounted is splitSentences plus the number of rune visits it
+// made, counting the main loop, the whitespace skip and each backward
+// abbreviation scan. It is the test seam for the complexity guard: an operation
+// count is deterministic where a wall-clock ratio is noise on a loaded runner,
+// and a prefix re-scan shows up in it as a quadratic count. Returning the count
+// rather than bumping a package counter keeps concurrent callers independent.
+func splitSentencesCounted(s string) (out []string, ops int) {
 	start := 0
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
+		ops++
 		wide := isWideTerminator(runes[i])
 		if !wide && runes[i] != '.' && runes[i] != '!' && runes[i] != '?' {
 			continue
@@ -570,6 +581,7 @@ func splitSentences(s string) []string {
 		j := i + 1
 		for j < len(runes) && unicode.IsSpace(runes[j]) {
 			j++
+			ops++
 		}
 		atEnd := j >= len(runes)
 		// The gap is required: "v1.2" has no whitespace after the dot and is
@@ -581,8 +593,12 @@ func splitSentences(s string) []string {
 		}
 		// sentenceAbbrevs holds ASCII abbreviations only, and none of them ends in
 		// a fullwidth terminator, so the check cannot apply to one.
-		if !atEnd && !wide && isAbbrevBefore(runes, start, i) {
-			continue
+		if !atEnd && !wide {
+			abbrev, scanned := isAbbrevBefore(runes, start, i)
+			ops += scanned
+			if abbrev {
+				continue
+			}
 		}
 		out = append(out, strings.TrimSpace(string(runes[start:i+1])))
 		start = j
@@ -591,7 +607,7 @@ func splitSentences(s string) []string {
 	if start < len(runes) {
 		out = append(out, strings.TrimSpace(string(runes[start:])))
 	}
-	return out
+	return out, ops
 }
 
 // isWideTerminator reports whether r is a fullwidth sentence terminator. These
@@ -633,17 +649,19 @@ func isWideTerminator(r rune) bool {
 // not advance start, so the next terminator re-scanned everything before it, and
 // strings.Fields allocated a slice of the whole prefix each time. Measured on
 // 8 KiB of "etc. " that cost ~25 ms; the backward scan is proportional to one
-// token and allocates nothing.
-func isAbbrevBefore(runes []rune, start, end int) bool {
+// token and allocates nothing. scanned is the number of runes it stepped over,
+// which splitSentencesCounted adds to its operation count.
+func isAbbrevBefore(runes []rune, start, end int) (abbrev bool, scanned int) {
 	i := end
 	for i > start && !unicode.IsSpace(runes[i-1]) {
 		i--
 	}
+	scanned = end - i
 	if i == end {
-		return false
+		return false, scanned
 	}
 	last := strings.ToLower(strings.Trim(string(runes[i:end]), "(),;:\""))
-	return sentenceAbbrevs[last]
+	return sentenceAbbrevs[last], scanned
 }
 
 // ClaimLedgerPath is the sentinel Path carried by the claim-ledger FileEntry.

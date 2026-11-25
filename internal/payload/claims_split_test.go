@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -518,30 +517,22 @@ func TestSplitSentences_FullwidthSplitDoesNotOverreach(t *testing.T) {
 // was DefaultMaxClaimBytes, and commitMessages documents maxBytes <= 0 as
 // unlimited, so nothing bounded it on that path at all.
 func TestSplitSentences_AbbreviationDenseProseIsNotQuadratic(t *testing.T) {
-	// A complexity-class assertion, not a wall-clock budget: doubling the input
-	// costs ~2x for a linear scan and ~4x for a quadratic one, and that ratio is
-	// the same on a fast laptop and a loaded CI runner. The absolute escape hatch
-	// below keeps it from comparing two sub-millisecond measurements, where timer
-	// noise dominates and the ratio means nothing.
-	measure := func(reps int) time.Duration {
+	// A complexity-class assertion on counted scan operations, not on a clock:
+	// doubling the input costs exactly ~2x the operations for a linear scan and
+	// ~4x for a quadratic one, with no timer noise and no load-dependent skip.
+	measure := func(reps int) int {
 		input := strings.Repeat("etc. ", reps)
-		best := time.Duration(1<<63 - 1)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			_ = splitSentences(input)
-			if d := time.Since(start); d < best {
-				best = d
-			}
-		}
-		return best
+		got, ops := splitSentencesCounted(input)
+		// The seam must not change what is split: the counted and uncounted
+		// paths return the same sentences.
+		require.Equal(t, splitSentences(input), got)
+		return ops
 	}
 	small := measure(1600) // ~8 KiB, exactly DefaultMaxClaimBytes
 	big := measure(3200)   // twice that
-	if big < 5*time.Millisecond {
-		return // already linear-fast at 16 KiB; the ratio would be timer noise
-	}
+	require.Positive(t, small, "the seam counted no operations; the ratio below would be meaningless")
 	assert.Less(t, float64(big)/float64(small), 3.0,
-		"doubling the input more than tripled the cost: the abbreviation check is re-scanning the whole prefix per terminator (small=%s big=%s)", small, big)
+		"doubling the input more than tripled the scan operations: the abbreviation check is re-scanning the whole prefix per terminator (small=%d big=%d)", small, big)
 }
 
 func BenchmarkSplitSentences_AbbreviationDense(b *testing.B) {
