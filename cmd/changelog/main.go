@@ -38,7 +38,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -101,9 +100,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 // itself as a bool flag so the flag package hands a bare --allow-consumed to
 // Set as "true" instead of taking the next argument as its path; Set rejects
 // that, so the bare flag, which once released every fragment, is a usage error.
-// Every other boolean spelling (false, 1, 0, True, TRUE, t, F, ...) is the
-// same mistake and is rejected too: a fragment name is <category>-<slug>.md,
-// so no value strconv.ParseBool accepts can ever name a fragment.
+// Set accepts only the shape of a fragment path: a value whose base name is
+// not <category>-<slug>.md (categoryOf) is the same usage error, so every
+// boolean spelling (false, 1, True, t, yes, on, ...) and the empty value are
+// refused. A well-shaped path that names no fragment in this run is left to
+// releasedFragments, which refuses it as not a fragment.
 type pathList []string
 
 func (p *pathList) String() string { return strings.Join(*p, ",") }
@@ -111,7 +112,7 @@ func (p *pathList) String() string { return strings.Join(*p, ",") }
 func (p *pathList) IsBoolFlag() bool { return true }
 
 func (p *pathList) Set(v string) error {
-	if _, err := strconv.ParseBool(v); v == "" || err == nil {
+	if _, ok := categoryOf(filepath.Base(v)); !ok {
 		return errors.New("needs a fragment path: --allow-consumed=<fragment-path>, once per fragment to release")
 	}
 	*p = append(*p, v)
