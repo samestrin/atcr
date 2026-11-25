@@ -792,11 +792,15 @@ func runReview(cmd *cobra.Command, _ []string) (err error) {
 		return usageError(err)
 	}
 	// --auto-fix reports the review's token usage (writeAutoFixUsage) as the last
-	// output line of every exit from here on: the review directory now exists,
+	// stdout line of every exit from here on: the review directory now exists,
 	// and a fan-out, verify, debate or auto-fix failure has spent tokens the
-	// webhook runner must charge. Registered first so it runs after every later
-	// defer. A failure above this point created no review and spent no review
-	// tokens, so it reports none.
+	// webhook runner must charge. Registered as soon as PrepareReview succeeds,
+	// ahead of every defer registered after it, so LIFO runs those first and this
+	// line still prints last. It is not the function's first defer: the
+	// conditional --sync-cloud skip warning (cli/review.go:499) is registered
+	// earlier, so it runs after this one, but it writes to stderr only and cannot
+	// displace the stdout usage line. A failure above this point created no review
+	// and spent no review tokens, so it reports none.
 	if autoFix {
 		defer writeAutoFixUsage(cmd.OutOrStdout(), prep.Dir)
 	}
