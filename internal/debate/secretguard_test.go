@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -55,6 +56,80 @@ func TestDebateOne_SeatsCarryRegistrySecretGuard(t *testing.T) {
 			assert.Equal(t, want, inv.SecretGuard, "setting %q: seat %d", setting, i+1)
 			assert.Equal(t, 1, inv.AlreadyGuardedMessages, "setting %q: seat %d", setting, i+1)
 		}
+	}
+}
+
+// writeProjectConfig writes .atcr/config.yaml under a fresh repo root holding
+// body, and returns the root.
+func writeProjectConfig(t *testing.T, body string) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(registry.DefaultProjectConfigPath(root), []byte(body), 0o644))
+	return root
+}
+
+// Epic 134 T2 (row 47ffaa5a1ae5aff1): Debate resolves secret_guard through
+// ResolveSettings, so the project tier outranks the registry for every seat,
+// an explicit project off is honoured, and an absent tier falls through.
+func TestDebate_SeatsCarryProjectSecretGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		project string // "" = no .atcr/config.yaml
+		reg     string
+		want    string
+	}{
+		{name: "project block over registry warn", project: "agents: [a]\nsecret_guard: block\n", reg: "warn", want: "block"},
+		{name: "explicit project off over registry block", project: "agents: [a]\nsecret_guard: off\n", reg: "block", want: "off"},
+		{name: "project without secret_guard falls through", project: "agents: [a]\n", reg: "block", want: "block"},
+		{name: "no project config falls through", reg: "redact", want: "redact"},
+		{name: "no tier sets it", want: registry.DefaultSecretGuard},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.project != "" {
+				root = writeProjectConfig(t, tc.project)
+			}
+			reg := debateRoster()
+			reg.SecretGuard = tc.reg
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: "proposer defends"},
+				{content: "challenger attacks"},
+				{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+			}}
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			_, err := debateIn(context.Background(), root, dir, reg, Options{}, harness(cc))
+			require.NoError(t, err)
+			invs := cc.invocations()
+			require.Len(t, invs, 3, "one Chat call per seat")
+			for i, inv := range invs {
+				assert.Equal(t, tc.want, inv.SecretGuard, "seat %d", i+1)
+			}
+			assert.Equal(t, tc.reg, reg.SecretGuard, "the caller's registry is not mutated")
+		})
+	}
+}
+
+// An absent project config is the only load failure Debate skips: an
+// unreadable or invalid one is returned before any seat is sent.
+func TestDebate_ProjectConfigErrorPropagates(t *testing.T) {
+	unreadable := t.TempDir()
+	// A directory where the file should be: present, but not ErrNotExist.
+	require.NoError(t, os.MkdirAll(registry.DefaultProjectConfigPath(unreadable), 0o755))
+
+	for name, root := range map[string]string{
+		"invalid secret_guard": writeProjectConfig(t, "agents: [a]\nsecret_guard: sometimes\n"),
+		"unparseable yaml":     writeProjectConfig(t, "agents: [a\n"),
+		"unreadable":           unreadable,
+	} {
+		t.Run(name, func(t *testing.T) {
+			cc := &fakeChatCompleter{}
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			_, err := debateIn(context.Background(), root, dir, debateRoster(), Options{}, harness(cc))
+			require.Error(t, err)
+			assert.NotErrorIs(t, err, os.ErrNotExist)
+			assert.Empty(t, cc.invocations(), "no seat is sent")
+		})
 	}
 }
 

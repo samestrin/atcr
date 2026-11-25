@@ -126,7 +126,13 @@ func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		}
 		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
-	return runDebate(ctx, reviewDir, reg, opts, harness)
+	return debateIn(ctx, repoRoot, reviewDir, reg, opts, harness)
+}
+
+// debateIn is Debate with the harness injected, so a test can drive the
+// repoRoot-dependent setup without a git snapshot or a provider.
+func debateIn(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
+	return runDebate(ctx, reviewDir, reg, opts, newHarness)
 }
 
 // harnessFunc lazily builds the tool harness (chat completer + dispatcher) the
