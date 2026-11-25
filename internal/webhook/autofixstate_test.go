@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -235,6 +236,115 @@ func TestAutoFixStateClaimPrunesPastReplayHorizon(t *testing.T) {
 	}
 	if err := reopened.Claim("ISS-NEW", "st", now); !errors.Is(err, ErrAutoFixClaimed) {
 		t.Fatalf("repeat inside the horizon: got %v, want ErrAutoFixClaimed", err)
+	}
+}
+
+func TestAutoFixStateClaimPrunesSeenInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "autofix.json")
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-autoFixReplayHorizon - time.Hour)
+	recent := now.Add(-24 * time.Hour)
+
+	s := openState(t, path, 10)
+	for _, c := range []struct {
+		issue, state string
+		at           time.Time
+	}{
+		{"ISS-OLD", "st", old},
+		{"ISS-MIX", "old", old},
+		{"ISS-MIX", "new", recent},
+		{"ISS-NEW", "st", recent},
+	} {
+		if err := s.Claim(c.issue, c.state, c.at); err != nil {
+			t.Fatalf("claim %s/%s: %v", c.issue, c.state, err)
+		}
+	}
+	seen, mix, kept := s.data.Seen, s.data.Seen["ISS-MIX"], s.data.Seen["ISS-NEW"]
+
+	if err := s.Claim("ISS-3", "st", now); err != nil {
+		t.Fatalf("claim that prunes: %v", err)
+	}
+
+	// The same maps are edited, not copies of them.
+	if reflect.ValueOf(s.data.Seen).Pointer() != reflect.ValueOf(seen).Pointer() {
+		t.Error("Claim replaced the seen map, want it pruned in place")
+	}
+	if reflect.ValueOf(s.data.Seen["ISS-MIX"]).Pointer() != reflect.ValueOf(mix).Pointer() ||
+		reflect.ValueOf(s.data.Seen["ISS-NEW"]).Pointer() != reflect.ValueOf(kept).Pointer() {
+		t.Error("Claim replaced a kept issue's state map, want it pruned in place")
+	}
+	want := map[string]map[string]time.Time{
+		"ISS-MIX": {"new": recent},
+		"ISS-NEW": {"st": recent},
+		"ISS-3":   {"st": now},
+	}
+	if !reflect.DeepEqual(s.data.Seen, want) {
+		t.Fatalf("seen after prune = %v, want %v", s.data.Seen, want)
+	}
+	if reopened := openState(t, path, 10); !reflect.DeepEqual(reopened.data.Seen, want) {
+		t.Fatalf("seen on disk after prune = %v, want %v", reopened.data.Seen, want)
+	}
+}
+
+func TestAutoFixStatePruneWriteFailureRestoresSeen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "autofix.json")
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-autoFixReplayHorizon - time.Hour)
+	recent := now.Add(-24 * time.Hour)
+
+	s := openState(t, path, 10)
+	for _, c := range []struct {
+		issue, state string
+		at           time.Time
+	}{
+		{"ISS-OLD", "st", old},
+		{"ISS-MIX", "old", old},
+		{"ISS-MIX", "new", recent},
+		// The pair being claimed again is itself expired: the failed claim
+		// must put its old time back.
+		{"ISS-AGAIN", "st", old},
+	} {
+		if err := s.Claim(c.issue, c.state, c.at); err != nil {
+			t.Fatalf("claim %s/%s: %v", c.issue, c.state, err)
+		}
+	}
+	before := map[string]map[string]time.Time{
+		"ISS-OLD":   {"st": old},
+		"ISS-MIX":   {"old": old, "new": recent},
+		"ISS-AGAIN": {"st": old},
+	}
+	if !reflect.DeepEqual(s.data.Seen, before) {
+		t.Fatalf("seen before = %v, want %v", s.data.Seen, before)
+	}
+	day, count := s.data.Day, s.data.Count
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range []string{"ISS-3", "ISS-AGAIN", "ISS-MIX"} {
+		if err := s.Claim(issue, "st", now); err == nil {
+			t.Fatalf("claim %s with unwritable state: want error", issue)
+		}
+		if !reflect.DeepEqual(s.data.Seen, before) {
+			t.Fatalf("seen after failed %s claim = %v, want %v", issue, s.data.Seen, before)
+		}
+		if s.data.Day != day || s.data.Count != count {
+			t.Fatalf("day/count after failed %s claim = %s/%d, want %s/%d", issue, s.data.Day, s.data.Count, day, count)
+		}
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "x" {
+		t.Fatalf("state slot after failed writes holds %v, want only x", entries)
 	}
 }
 
