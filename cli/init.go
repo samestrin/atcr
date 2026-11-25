@@ -382,7 +382,8 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 	// replace a file at one of these paths before the rollback runs, and that file
 	// is left alone. The failing persona's paths are never recorded: nothing proves
 	// this run wrote them, and writePersonaUnit already removes its own partial
-	// .yaml on failure.
+	// .yaml on failure. The identity is captured by lstatIdentity, so it names the
+	// file at record time on every platform (see there for Windows).
 	type writtenFile struct {
 		path string
 		info fs.FileInfo
@@ -425,14 +426,40 @@ func installCommunityPersonas(client commpersonas.HTTPClient, baseURL, destDir s
 			return fmt.Errorf("failed to install community persona %q: %w%s", name, err, offlineHint)
 		}
 		// A binding-only persona has no .md, so a missing path is not recorded.
+		// Known window: InstallUnit does not return the identity of what it wrote,
+		// so a file another process swaps in between InstallUnit returning and this
+		// Lstat is recorded as this run's own and a later rollback removes it.
+		// Closing it needs InstallUnit to report what it wrote (internal/personas).
 		for _, path := range []string{yamlPath, mdPath} {
-			if info, err := os.Lstat(path); err == nil {
+			if info, err := lstatIdentity(path); err == nil {
 				written = append(written, writtenFile{path: path, info: info})
 			}
 		}
 		_, _ = fmt.Fprintf(out, "Installed %s (community)\n", name)
 	}
 	return nil
+}
+
+// errIdentityUnavailable reports that lstatIdentity could not load a file's
+// identity, so nothing proves which file the info describes.
+var errIdentityUnavailable = errors.New("file identity unavailable")
+
+// lstatIdentity returns path's os.Lstat info with its file identity loaded now.
+// On Windows os.Lstat leaves the volume serial and file index unloaded, and
+// os.SameFile loads them from the path on first use: an info compared later would
+// read whatever file holds the path then, so a swapped-in file would match
+// itself. Comparing the info with itself forces the load here; on other platforms
+// the identity is already in the info and the comparison is always true. An
+// identity that cannot be loaded is an error, so the caller does not record it.
+func lstatIdentity(path string) (fs.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(info, info) {
+		return nil, fmt.Errorf("%s: %w", path, errIdentityUnavailable)
+	}
+	return info, nil
 }
 
 // fileExists reports whether path is present. A non-ENOENT stat error is treated

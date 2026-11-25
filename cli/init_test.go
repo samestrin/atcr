@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1695,4 +1697,75 @@ func TestRefreshPersonas_StampOnlyRefreshSkipsProbe(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "is not writable", "the probe must not run when no persona file needs writing")
 	assert.Contains(t, err.Error(), ".stamp.json")
+}
+
+// TestInstallCommunityPersonas_RollbackSparesSwappedFileWithSameMtime covers
+// row 32b1b5571bee8c3e: the rollback's identity check must compare the file this
+// run wrote, captured when it was recorded, with the file at the path now. A file
+// swapped in under the same path and given the recorded mtime differs only in
+// identity, so it survives only if that identity was captured at record time. On
+// Windows os.Lstat leaves the file ID unloaded and os.SameFile loads it from the
+// path on first use; captured lazily, both sides would be read from the swapped
+// file and match.
+func TestInstallCommunityPersonas_RollbackSparesSwappedFileWithSameMtime(t *testing.T) {
+	index := `[
+	  {"name":"a","version":"1.0.0","description":"d","path":"a.yaml"},
+	  {"name":"c","version":"1.0.0","description":"d","path":"c.yaml"}
+	]`
+	dest := t.TempDir()
+	aYAML := filepath.Join(dest, "a.yaml")
+	var swap sync.Once
+	srv := plantingServer(t,
+		map[string]string{
+			"/index.json": index,
+			"/a.yaml":     communityUnitYAML,
+			"/a.md":       communityUnitMD,
+		},
+		"/c.yaml",
+		// The failing fetch may be retried; swap once, so a later swap cannot
+		// reuse the freed inode of the file this run wrote.
+		func() {
+			swap.Do(func() {
+				orig, err := os.Lstat(aYAML)
+				if !assert.NoError(t, err) {
+					return
+				}
+				tmp := filepath.Join(dest, "a.yaml.foreign")
+				assert.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
+				assert.NoError(t, os.Chtimes(tmp, orig.ModTime(), orig.ModTime()))
+				assert.NoError(t, os.Rename(tmp, aYAML))
+			})
+		},
+	)
+
+	err := installCommunityPersonas(srv.Client(), srv.URL, dest, []string{"a", "c"}, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err)
+
+	got, rerr := os.ReadFile(aYAML)
+	require.NoError(t, rerr, "a swapped-in file with the recorded mtime survives the rollback")
+	assert.Equal(t, "FOREIGN A YAML", string(got))
+}
+
+// TestLstatIdentity_CapturesIdentityAtCallTime pins the helper the rollback
+// records with: the info it returns still names the file it was taken from after
+// another file replaces that path, on every platform (on Windows only because
+// the identity is loaded before the helper returns).
+func TestLstatIdentity_CapturesIdentityAtCallTime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("ours"), 0o644))
+
+	info, err := lstatIdentity(path)
+	require.NoError(t, err)
+
+	tmp := filepath.Join(dir, "p.yaml.foreign")
+	require.NoError(t, os.WriteFile(tmp, []byte("theirs"), 0o644))
+	require.NoError(t, os.Rename(tmp, path))
+
+	cur, err := os.Lstat(path)
+	require.NoError(t, err)
+	assert.False(t, os.SameFile(cur, info), "the swapped-in file is not the recorded one")
+
+	_, err = lstatIdentity(filepath.Join(dir, "missing.yaml"))
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
