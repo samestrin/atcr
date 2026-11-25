@@ -146,7 +146,9 @@ maintainer explicitly pushes a `vX.Y.Z` tag.
 `atcr` currently has a single maintainer, Sam Estrin, and cutting a release is a
 solo maintainer decision — there is no formal release-manager rotation or
 multi-party approval step. Whoever holds the maintainer role inherits this
-responsibility as-is.
+responsibility as-is. The one required review is the no-mistakes pass on the
+release-prep branch (step 3 of [Cutting a Release](#cutting-a-release)), which
+the maintainer starts or delegates.
 
 ## Cutting a Release
 
@@ -184,7 +186,8 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    and any unnamed consumed fragment is still refused. Then update the compare links at
    the end of `CHANGELOG.md` by hand: point `[Unreleased]` at `v0.6.0...HEAD`
    and add `[0.6.0]: https://github.com/samestrin/atcr/compare/v0.5.0...v0.6.0`
-   (previous tag on the left). Merge that PR to `main` **before** pushing the
+   (previous tag on the left). Do not merge that PR yet: it first goes through
+   the no-mistakes pass in step 3. Merge it to `main` **before** pushing the
    tag: `TestChangelogHasSectionForEveryReleaseTag`
    ([`cli/changelog_tags_test.go`](../cli/changelog_tags_test.go)) fails CI on
    every branch once a `v*` tag exists with no matching `## [X.Y.Z]` heading.
@@ -195,7 +198,25 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    same PR adds, and nothing else under the heading changes but blank lines and
    `### ` headings left empty.
 
-3. **Dry-run locally first (non-optional — run it for every cut).** From an
+3. **Run no-mistakes on the release-prep branch (required for every release).**
+   `atcr` is listed on [axi.md](https://github.com/kunchenguid/axi/pull/291),
+   so since 2026-11-25 every release passes a no-mistakes review before its
+   tag. The branch from step 2 (the assembled `CHANGELOG.md` and any version
+   bump, open as a PR but **not merged**) goes through the pipeline, so it
+   reviews the release diff itself:
+
+   ```sh
+   no-mistakes axi run --intent "<release vX.Y.Z: what the release carries>"
+   ```
+
+   It runs on the owner's Mac with Kimi K3.1. The owner starts the run, or tells
+   the operator to; the operator runs no-mistakes only on the owner's word, never
+   on its own. Record the run id in the release PR description. Only after the
+   run reports `outcome: passed` is the PR merged (step 2) and the tag cut
+   (step 5). If it reports anything else, fix the branch and run it again; the
+   PR records the id of the run that passed.
+
+4. **Dry-run locally first (non-optional — run it for every cut).** From an
    up-to-date `main`, run:
 
    ```sh
@@ -211,7 +232,8 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    hard-to-retract** GitHub Release, so this dry run is a required step, not a
    convenience.
 
-4. **Cut the real tag.** From an up-to-date `main`:
+5. **Cut the real tag.** Only after the no-mistakes run in step 3 passed and
+   the release PR merged. From an up-to-date `main`:
 
    ```sh
    git tag v0.1.0
@@ -223,7 +245,7 @@ Install goreleaser locally first (`go install github.com/goreleaser/goreleaser/v
    once and could fire an unintended release (or the disjoint `reconcile/v*`
    module gate).
 
-5. **Let the workflow publish.** The tag push fires
+6. **Let the workflow publish.** The tag push fires
    [`release.yml`](../.github/workflows/release.yml), which runs
    `goreleaser release --clean` and publishes the GitHub Release automatically —
    no further manual step is required. Watch the workflow run to confirm it
