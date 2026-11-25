@@ -487,12 +487,18 @@ func assertUntouched(t *testing.T, dir, before string, frags ...string) {
 
 // TestAssemble_AllowConsumedBareFlagIsAUsageError is debt rows c39c000c46770bfd
 // and 9b9305bb3f3afb31: the bare flag released every fragment, so it is now a
-// usage error that writes and deletes nothing.
+// usage error that writes and deletes nothing. Rows 439a3ad68980281a and
+// f0813cb41f90f007: the other boolean spellings (=false, =1, =0) are the same
+// mistake and get the same usage error naming --allow-consumed=<fragment-path>;
+// none of them can be a fragment name (<category>-<slug>.md).
 func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 	for name, args := range map[string][]string{
 		"bare last":          {"--allow-consumed"},
 		"bare before a flag": {"--allow-consumed", "--dry-run"},
 		"explicit true":      {"--allow-consumed=true"},
+		"explicit false":     {"--allow-consumed=false"},
+		"numeric one":        {"--allow-consumed=1"},
+		"numeric zero":       {"--allow-consumed=0"},
 		"empty value":        {"--allow-consumed="},
 		"space-separated":    {"--allow-consumed", "changelog.d/added-again1.md"},
 	} {
@@ -544,6 +550,46 @@ func TestAssemble_AllowConsumedReleasesExactlyTheNamedFragments(t *testing.T) {
 		"--allow-consumed="+a1, "--allow-consumed="+filepath.Join(".", rel))
 	if code != 0 {
 		t.Fatalf("code %d, want 0: %s", code, stderr)
+	}
+	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	want := "## [1.0.0] - 2026-11-01\n\n### Added\n\n- old entry. (epic 1)\n\n### Changed\n\n- new entry. (epic 2)\n\n### Fixed\n\n- other old entry. (epic 1)\n\n## [0.5.0]"
+	if !strings.Contains(got, want) {
+		t.Errorf("CHANGELOG.md lacks %q:\n%s", want, got)
+	}
+	for _, f := range []string{a1, a2, fresh} {
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Errorf("fragment %s not removed: %v", f, err)
+		}
+	}
+}
+
+// TestAssemble_AllowConsumedRelativePathResolvesLikeDir is debt row
+// 022caa5a9600ed5d: a relative --allow-consumed path resolves against the
+// working directory exactly like the fragment paths read from a relative
+// --dir, so the same relative spelling that names a fragment releases it,
+// and a path relative to --dir itself names no fragment.
+func TestAssemble_AllowConsumedRelativePathResolvesLikeDir(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	t.Chdir(dir)
+
+	// A name relative to --dir itself resolves against the working directory,
+	// not against --dir, so it names no fragment and is refused.
+	var o, e bytes.Buffer
+	code := run([]string{"assemble", "--changelog", "CHANGELOG.md", "--dir", "changelog.d",
+		"--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed=added-again1.md"}, &o, &e)
+	if code != 1 || !strings.Contains(e.String(), "not a fragment") {
+		t.Fatalf("dir-relative name: code %d, want 1 naming no fragment:\n%s", code, e.String())
+	}
+
+	// The working-directory-relative spelling matches the fragment paths
+	// read from --dir and releases exactly the named fragments.
+	o.Reset()
+	e.Reset()
+	code = run([]string{"assemble", "--changelog", "CHANGELOG.md", "--dir", "changelog.d",
+		"--version", "1.0.0", "--date", "2026-11-01",
+		"--allow-consumed=changelog.d/added-again1.md", "--allow-consumed=./changelog.d/fixed-again2.md"}, &o, &e)
+	if code != 0 {
+		t.Fatalf("relative paths: code %d, want 0: %s", code, e.String())
 	}
 	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
 	want := "## [1.0.0] - 2026-11-01\n\n### Added\n\n- old entry. (epic 1)\n\n### Changed\n\n- new entry. (epic 2)\n\n### Fixed\n\n- other old entry. (epic 1)\n\n## [0.5.0]"
