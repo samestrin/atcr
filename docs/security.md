@@ -161,9 +161,11 @@ sprint-plan scope constraint sent to a review agent or its fallback, followed
 by the tool results and model turns added during the tool loop. The review
 prompt is scanned once when it is built; each later request scans the new
 messages under the same policy. Persona text is not scanned. Debate seats and
-the verify skeptic and fix-executor prompts are scanned too, under the
-registry's `secret_guard` (the embedded default `redact` when the registry sets
-none); the project tier is not applied to them. Doctor probes are not scanned:
+the verify skeptic and fix-executor prompts are scanned too. Debate seats
+resolve `secret_guard` the way a review does (the project overrides the
+registry); the verify skeptic and fix-executor prompts use the registry's (the
+embedded default `redact` when the registry sets none), and the project tier is
+not applied to them. Doctor probes are not scanned:
 they send only fixed probe text, never repository content. One more input to
 verify is covered: the deterministic SAST findings a review saves to
 `sast.json` (the scanner messages and rules the Fixer reads through the

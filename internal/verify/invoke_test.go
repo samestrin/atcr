@@ -60,6 +60,9 @@ func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
 
 // TestBuildSkepticAgent_ForwardsProviderAndBudgets locks the provider routing and
 // budget forwarding onto the constructed Agent/Invocation (the HIGH fix from 2.2.A).
+// It also pins secret_guard forwarding (Epic 134 T1, row e33fc47183bcfb2e): a
+// non-empty policy must reach Invocation.SecretGuard verbatim — the tool loop's
+// Chat scans every message under it, so a builder that drops it sends unscanned.
 func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
@@ -68,7 +71,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	sk.Config.TimeoutSecs = intPtr(30)
 	sk.Config.MaxRetries = intPtr(4)
 	sk.Config.InitialBackoffMs = intPtr(200)
-	a, derived := buildSkepticAgent(sk, "the prompt", false, "")
+	a, derived := buildSkepticAgent(sk, "the prompt", false, "redact")
 	assert.True(t, a.Tools)
 	assert.True(t, a.SupportsFC)
 	assert.False(t, derived, "a declared 4096 budget below the derived ceiling is the enforced number — its provenance is declared, not derived")
@@ -81,6 +84,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 	assert.Equal(t, "TEST_KEY", a.Invocation.APIKeyEnv)
 	assert.Equal(t, "skeptic-model", a.Invocation.Model)
 	assert.Equal(t, "the prompt", a.Invocation.Prompt)
+	assert.Equal(t, "redact", a.Invocation.SecretGuard, "secret_guard must reach the skeptic's Invocation — Chat scans under it")
 }
 
 // TestBuildSkepticAgent_ForwardsReplayReasoningOff (Epic 35.16.11.2.2.9.1): a

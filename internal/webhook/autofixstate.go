@@ -111,7 +111,9 @@ func OpenAutoFixState(path string, dailyCap int) (*AutoFixState, error) {
 }
 
 // SetDailyTokenCap sets the token usage per UTC day at which Claim refuses
-// further jobs; zero or less is no cap.
+// further jobs; zero or less is no cap. Call it at startup only, before any
+// job runs: runAutoFix reads the cap once per job, and a change while a job
+// runs would split that job's serial-lock decision from the cap Claim checks.
 func (s *AutoFixState) SetDailyTokenCap(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

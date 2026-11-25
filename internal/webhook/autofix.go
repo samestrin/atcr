@@ -174,6 +174,18 @@ func (r *AutoFixRunner) Run(ctx context.Context, t AutoFixTarget) error {
 
 // chargeUsage charges the usage out saw to State and checks it against
 // JobTokenCap.
+//
+// The usage is child-reported: it is whatever `atcr review --auto-fix` printed
+// on its own stdout, read back by parseAutoFixUsage (see the note there). The
+// token caps are therefore an accounting guard against a runaway or expensive
+// run, not a security boundary. Code running in the pull-request checkout has
+// the runner's own privileges and can print any usage line it likes, so it can
+// understate the spend charged here. Reading the child's line from a file the
+// runner owns, or signing it, would not help: that code runs as the same user,
+// with the same environment, so it can write or read whatever the runner hands
+// it. Metering the provider responses runner-side is the only real fix, and it
+// is a separate design; the understatement is accepted risk (row
+// abcbab6750be9006).
 func (r *AutoFixRunner) chargeUsage(label string, out *autoFixLogWriter) error {
 	in, outTokens, ok := out.Usage()
 	if !ok {
@@ -203,6 +215,13 @@ func (r *AutoFixRunner) chargeUsage(label string, out *autoFixLogWriter) error {
 //
 // It must start the line and carry tokens_in and tokens_out once each, as
 // non-negative integers; other fields are ignored.
+//
+// The line is untrusted, child-reported input: it arrives on the child's stdout
+// and the last usable line wins, so a child that prints a lower line after a
+// higher one is charged the lower amount. The caps this feeds are an
+// accounting guard, not a security boundary against hostile code running with
+// the runner's privileges; see chargeUsage for why no reader-side check can
+// make it one.
 func parseAutoFixUsage(line string) (in, out int, ok bool) {
 	rest, found := strings.CutPrefix(line, AutoFixUsagePrefix)
 	if !found {

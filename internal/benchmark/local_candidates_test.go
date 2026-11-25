@@ -261,6 +261,13 @@ func TestCheckLocalCandidate_CatchesABrokenThinkingProfile(t *testing.T) {
 	thinkingOff.MaxTokens = registry.DefaultMaxTokens
 	assert.Empty(t, checkLocalCandidate(thinkingOff), "a thinking model declared off needs no thinking cap")
 
+	// Exactly the floor is allowed: the check is <, not <=. 16384 is the value
+	// docs/registry.md tells an operator to declare, so it must stay valid
+	// (debt row e34997b2f7be9a95).
+	atFloor := validThinkingCandidate()
+	atFloor.MaxTokens = thinkingMaxTokensFloor
+	assert.Empty(t, checkLocalCandidate(atFloor), "max_tokens exactly at the floor (%d) needs no fault", thinkingMaxTokensFloor)
+
 	cases := map[string]struct {
 		mutate func(*localCandidate)
 		want   string
