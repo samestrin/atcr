@@ -100,6 +100,10 @@ func PersonaStampDamaged(personasDir string) bool {
 // persona copy (cli/init.go maxPersonaCopyBytes).
 const maxPersonaStampBytes = 1 << 20
 
+// personaStampLstat is os.Lstat; a test replaces it to swap the stamp between
+// the Lstat and the open.
+var personaStampLstat = os.Lstat
+
 // readPersonaStampFile is the one read both stamp readers share. It Lstats path
 // and opens only a regular file, so a stamp that is a FIFO, a device or a
 // symlink to either is refused before an open that could block or a read that
@@ -108,7 +112,7 @@ const maxPersonaStampBytes = 1 << 20
 // any other Lstat error, a non-regular file, a file swapped between the Lstat
 // and the open, a read error or a stamp over the cap is present with err set.
 func readPersonaStampFile(path string) (data []byte, present bool, err error) {
-	info, err := os.Lstat(path)
+	info, err := personaStampLstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
