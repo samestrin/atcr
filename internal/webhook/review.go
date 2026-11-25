@@ -148,7 +148,7 @@ func summarize(label string, findings []reconcile.Finding, s *scrubber, f replyF
 			sev = otherSeverity
 		}
 		counts[sev]++
-		entries = append(entries, entry{sev: sev, title: f.escape(s.plainTitle(fd.Problem))})
+		entries = append(entries, entry{sev: sev, title: f.escapeTitle(s.plainTitle(fd.Problem))})
 	}
 	slices.SortStableFunc(entries, func(a, b entry) int {
 		return cmp.Compare(reconcile.SeverityRank[b.sev], reconcile.SeverityRank[a.sev])
@@ -216,21 +216,31 @@ func (s *scrubber) plainTitle(problem string) string {
 	return line
 }
 
-// replyFormat is the markup of the target a summary is posted to.
+// replyFormat is the markup of the target a summary is posted to. The label
+// is trusted (the daemon built it from the allowlisted repo and PR number);
+// a finding title is untrusted model output, so it gets the stricter escaper.
 type replyFormat struct {
-	bold   string              // the bold delimiter
-	escape func(string) string // escapes untrusted text
+	bold        string              // the bold delimiter
+	escapeLabel func(string) string // escapes the trusted review label
+	escapeTitle func(string) string // escapes untrusted finding titles
 }
 
-// slackFormat is Slack mrkdwn, for a thread reply.
-var slackFormat = replyFormat{bold: "*", escape: slack.EscapeText}
+// slackFormat is Slack mrkdwn, for a thread reply. Slack autolinks neither
+// mentions nor issue references in escaped text, so one escaper serves both.
+var slackFormat = replyFormat{bold: "*", escapeLabel: slack.EscapeText, escapeTitle: slack.EscapeText}
 
 // githubFormat is GitHub markdown, for a PR comment.
-var githubFormat = replyFormat{bold: "**", escape: githubEscape}
+var githubFormat = replyFormat{bold: "**", escapeLabel: githubEscape, escapeTitle: githubEscapeTitle}
 
-// githubEscape escapes s for GitHub markdown and then breaks every mention
-// and issue reference in it, so untrusted text pings and links nobody.
-func githubEscape(s string) string { return neutralizeRefs(markdownEscaper.Replace(s)) }
+// githubEscape escapes the trusted review label for GitHub markdown. It
+// breaks mentions and bare issue references, but leaves a cross-repo
+// owner/repo#7 alone so the heading keeps its PR reference.
+func githubEscape(s string) string { return neutralizeRefs(markdownEscaper.Replace(s), false) }
+
+// githubEscapeTitle escapes an untrusted finding title for GitHub markdown.
+// Unlike githubEscape it breaks every #<digits>, including the cross-repo
+// owner/repo#7 shape and a # after a word character, so a title links nobody.
+func githubEscapeTitle(s string) string { return neutralizeRefs(markdownEscaper.Replace(s), true) }
 
 // markdownEscaper backslash-escapes the characters GitHub markdown can read as
 // emphasis, code, a link, an HTML tag or an entity, so untrusted text renders
@@ -243,20 +253,26 @@ var markdownEscaper = strings.NewReplacer(
 // neutralizeRefs inserts a zero-width space after each @ that starts a
 // mention and each # that starts an issue reference. GitHub reads one only at
 // the start of the text or after a character that is not an ASCII word
-// character, so a@b.example is left alone. A cross-repo owner/repo#7 links on
-// GitHub but is left alone too, so the trusted heading keeps its PR reference.
-// It runs after markdownEscaper, so an underscore arrives as \_ and @_x is
-// never read as a mention.
-func neutralizeRefs(s string) string {
+// character, so a@b.example is left alone. With breakAllIssueRefs (untrusted
+// titles) every #<digits> is broken, including a cross-repo owner/repo#7 or a
+// # after a word character; without it (the trusted label) the cross-repo
+// shape is left alone so the heading keeps its PR reference. It runs after
+// markdownEscaper, so an underscore arrives as \_ and @_x is never read as a
+// mention.
+func neutralizeRefs(s string, breakAllIssueRefs bool) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		b.WriteByte(c)
-		if i+1 == len(s) || (i > 0 && isASCIIWord(s[i-1])) {
+		if i+1 == len(s) {
 			continue
 		}
+		prevWord := i > 0 && isASCIIWord(s[i-1])
 		next := s[i+1]
-		if (c == '@' && isASCIIWord(next)) || (c == '#' && next >= '0' && next <= '9') {
+		if c == '@' && !prevWord && isASCIIWord(next) {
+			b.WriteString("\u200b")
+		}
+		if c == '#' && next >= '0' && next <= '9' && (breakAllIssueRefs || !prevWord) {
 			b.WriteString("\u200b")
 		}
 	}
@@ -269,7 +285,7 @@ func isASCIIWord(c byte) bool {
 
 // heading is the bold "ATCR review of label" line.
 func (f replyFormat) heading(label string) string {
-	return f.bold + "ATCR review of " + f.escape(label) + f.bold
+	return f.bold + "ATCR review of " + f.escapeLabel(label) + f.bold
 }
 
 func (r *ReviewRunner) logf(format string, args ...any) {
