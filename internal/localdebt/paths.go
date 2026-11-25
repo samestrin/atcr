@@ -47,9 +47,11 @@ func DefaultDir(root string) string {
 // For those same stores the anchor is the store's GRANDPARENT, which is the repo
 // root only for the default <root>/.atcr/debt layout: a user-tier or --store path
 // may sit at any depth, e.g. <root>/docs/planning/debt, whose anchor is
-// <root>/docs. The refusal therefore names the configured store and the missing grandparent instead of
-// calling the anchor the "store root" — the wrong diagnosis for a configured
-// store (TD internal/localdebt/paths.go:45, row 993fffb0c24de643).
+// <root>/docs. The refusal therefore names the configured store and the missing
+// grandparent instead of calling the anchor the "store root" — the wrong
+// diagnosis for a configured store (TD internal/localdebt/paths.go:45, row
+// 993fffb0c24de643). It also says the store is not a project-tier store, so a
+// registry miss is visible as the rule it fell to (row 573b54a6bb1024d7).
 //
 // A project-tier store (one projectStoreDir handed out, recorded in projectStores)
 // is anchored to its repository root instead: at depth 1 ("debt") the grandparent
@@ -57,8 +59,10 @@ func DefaultDir(root string) string {
 // resurrect the root (row 24dcb363e7cd6d72). The root is known for those stores,
 // so the check names it directly (refusing a root that is missing or is not a
 // directory) and missing directories between the root and the store are created.
-// Stores not in the registry (the default, the user tier, --store) keep the
-// grandparent rule above.
+// They are created through an os.Root opened on the repository root, not by
+// pathname, so a root removed after the check makes creation fail instead of
+// recreating it (row 9ffc484fcafdf7c1). Stores not in the registry (the default,
+// the user tier, --store) keep the grandparent rule above.
 func ensureStoreDir(dir string) error {
 	if info, err := os.Stat(dir); err == nil {
 		if !info.IsDir() {
@@ -66,25 +70,48 @@ func ensureStoreDir(dir string) error {
 		}
 		return nil
 	}
-	if root, ok := projectStores.Load(projectStoreKey(dir)); ok {
-		if info, err := os.Stat(root.(string)); err != nil || !info.IsDir() {
-			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(root.(string)))
-		}
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return basePathErr(err)
-		}
-		return nil
+	ps, ok, err := projectStoreFor(dir)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return ensureProjectStoreDir(dir, ps)
 	}
 	container := filepath.Dir(dir)    // <root>/.atcr for the default layout
 	anchor := filepath.Dir(container) // the store's grandparent: <root> for the default, or "." for the CWD-relative default
 	if info, err := os.Stat(anchor); err != nil || !info.IsDir() {
-		return fmt.Errorf("localdebt store %q cannot be created: its grandparent directory %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(anchor))
+		return fmt.Errorf("localdebt store %q cannot be created: its grandparent directory %q does not exist (not a project-tier store, so the grandparent is its anchor); refusing to recreate it", filepath.Base(dir), filepath.Base(anchor))
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return basePathErr(err)
 	}
 	return nil
 }
+
+// ensureProjectStoreDir creates the project-tier store ps names under an os.Root
+// opened on its repository root. On Linux and macOS a directory removed while
+// it is open accepts no new entries, so the root vanishing after it is opened
+// fails the MkdirAll rather than resurrecting the root at its old path.
+func ensureProjectStoreDir(dir string, ps projectStore) error {
+	r, err := os.OpenRoot(ps.root)
+	if err != nil {
+		return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(ps.root))
+	}
+	defer func() { _ = r.Close() }()
+	afterStoreRootChecked()
+	if err := r.MkdirAll(ps.rel, 0o700); err != nil {
+		if _, statErr := os.Stat(ps.root); statErr != nil {
+			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q was removed while the store was being created; refusing to recreate it", filepath.Base(dir), filepath.Base(ps.root))
+		}
+		return basePathErr(err)
+	}
+	return nil
+}
+
+// afterStoreRootChecked runs between ensureProjectStoreDir opening the repository
+// root and creating the store under it. It is a var so a test can remove the root
+// inside that window; production leaves it empty.
+var afterStoreRootChecked = func() {}
 
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix is
 // an RFC3339 timestamp (e.g. "2026-06-14T10:00:00Z-abc123" -> "2026-06"). The month

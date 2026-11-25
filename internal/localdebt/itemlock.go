@@ -303,7 +303,8 @@ func (l ItemLocker) Unlock(ctx context.Context, ids []string) ([]ItemLock, error
 // only reads: it checks no holder for liveness and never frees a lock (Epic 93
 // T2). Holder is not used. A ref under ItemLockRefPrefix whose name is not a
 // hex-encoded id, whose fetch fails and whose tag the clone does not already
-// hold, or whose tag cannot be read as a lock is returned as an ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
+// hold, or whose tag cannot be read as a lock is returned as an
+// ItemLockWarning alongside the valid locks, sorted by ref, so one bad ref is
 // shown and never hides the rest (epic 122 T4, owner decision 2026-11-18;
 // before that it failed the whole listing). A remote that cannot be reached is
 // still an error: no listing can be made at all.
