@@ -103,6 +103,22 @@ type NetworkFailure struct {
 	Error string
 }
 
+// The registry below is the extension point for named alternative backends; it
+// is deliberately not where production visual review gets its browser.
+//
+// Production visual review builds the backend itself: newVisualStage in
+// cli/review_visual.go (around lines 63-74) resolves the run's sandbox with
+// verify.ResolveExecBackend, constructs NewPlaywrightBackend with that sandbox,
+// runs its Preflight and injects the result straight into fanout.VisualStage as
+// the Browser field. Playwright is therefore not registered here. It needs a
+// sandbox resolved per run, which a package-level registry filled at import
+// time cannot supply, and the stage already holds the one backend it will use;
+// looking the same backend up by name would add a resolution step that can only
+// fail or find a differently sandboxed instance.
+//
+// RegisterBrowserBackend stays the extension point for named alternative
+// backends (backends that do not need a per-run sandbox of their own), so a new
+// runner is added without changing the engine or the visual stage.
 var (
 	browserBackendsMu sync.RWMutex
 	browserBackends   = map[string]BrowserBackend{}
