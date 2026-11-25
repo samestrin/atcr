@@ -82,10 +82,16 @@ func runDebtClean(cmd *cobra.Command, _ []string) error {
 	opts := localdebt.ReadOpts{Writer: cmd.ErrOrStderr()}
 
 	// The two-pass read selectDebtForList uses: classify and count over folded
-	// summaries, then hydrate full records only for the kept ids.
-	sums, err := localdebt.ReadSummaries(dir, opts)
+	// summaries, then hydrate full records only for the kept ids. Only pass 1
+	// reports the read result, as in readDebtForList; an unfinished conversion is
+	// told on stderr so stdout stays one document.
+	var res localdebt.ReadResult
+	sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: opts.Writer, Result: &res})
 	if err != nil {
 		return fmt.Errorf("read local debt store: %w", err)
+	}
+	if res.ConversionUnfinished {
+		noteConversionUnfinished(cmd.ErrOrStderr())
 	}
 	summary, kept := summarizeDebtClean(localdebt.FoldSummaries(sums))
 	if err := sortDebtSummaries(kept, sortKeySeverity); err != nil {
