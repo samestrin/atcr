@@ -100,6 +100,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 // itself as a bool flag so the flag package hands a bare --allow-consumed to
 // Set as "true" instead of taking the next argument as its path; Set rejects
 // that, so the bare flag, which once released every fragment, is a usage error.
+// The other boolean spellings (false, 1, 0) are the same mistake and are
+// rejected too: a fragment name is <category>-<slug>.md, so none of them can
+// ever name a fragment.
 type pathList []string
 
 func (p *pathList) String() string { return strings.Join(*p, ",") }
@@ -107,7 +110,8 @@ func (p *pathList) String() string { return strings.Join(*p, ",") }
 func (p *pathList) IsBoolFlag() bool { return true }
 
 func (p *pathList) Set(v string) error {
-	if v == "" || v == "true" {
+	switch v {
+	case "", "true", "false", "1", "0":
 		return errors.New("needs a fragment path: --allow-consumed=<fragment-path>, once per fragment to release")
 	}
 	*p = append(*p, v)
