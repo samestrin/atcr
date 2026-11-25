@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2268,4 +2269,30 @@ func TestReconcile_LogFormatJSONStderrIsNDJSON(t *testing.T) {
 		}
 		assert.Equal(t, want, lines[len(lines)-len(next):], "text mode keeps the raw Next: lines, last on stderr")
 	})
+}
+
+// TestJSONLogFormatMatchesLogNew pins reconcile's NDJSON-only-stderr predicate
+// to the sink internal/log.New actually builds: every --log-format spelling
+// that routes logs to the JSON handler must also be recognized by
+// jsonLogFormat, or the raw Next:/suppressed lines leak back onto an NDJSON
+// stderr (TD 27a419f98c7fc33f).
+func TestJSONLogFormatMatchesLogNew(t *testing.T) {
+	for _, format := range []string{
+		"json", "JSON", "Json", " json ", "\tJSON\n",
+		"", "text", "TEXT", " text ", "ndjson", "jsonl", "bogus",
+	} {
+		t.Run(fmt.Sprintf("%q", format), func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String("log-format", "text", "")
+			require.NoError(t, cmd.Flags().Set("log-format", format))
+
+			logger, err := log.New("info", format, io.Discard)
+			wantJSON := false
+			if err == nil {
+				_, wantJSON = logger.Handler().(*slog.JSONHandler)
+			}
+			assert.Equal(t, wantJSON, jsonLogFormat(cmd),
+				"jsonLogFormat must agree with the handler log.New selects for %q", format)
+		})
+	}
 }
