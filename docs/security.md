@@ -160,8 +160,10 @@ The guard covers the **review prompt and tool-loop results** — the payload
 sprint-plan scope constraint sent to a review agent or its fallback, followed
 by the tool results and model turns added during the tool loop. The review
 prompt is scanned once when it is built; each later request scans the new
-messages under the same policy. Persona text is not scanned. Debate seats and
-the verify skeptic and fix-executor prompts are scanned too. Debate seats
+messages under the same policy. Under `redact` every request is still sent
+redacted, rewritten from each message's first scan. Persona text is not
+scanned. Debate seats and the verify skeptic and fix-executor prompts are
+scanned too. Debate seats
 resolve `secret_guard` the way a review does (the project overrides the
 registry); the verify skeptic and fix-executor prompts use the registry's (the
 embedded default `redact` when the registry sets none), and the project tier is
