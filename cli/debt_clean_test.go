@@ -235,3 +235,32 @@ func TestDebtClean_UsageErrors(t *testing.T) {
 	code, _, _ := execCmdSplit(t, "debt", "clean", "--dir", dir, "--axi", "--legacy-pipe")
 	assert.Equal(t, 2, code)
 }
+
+// Row c796dd3096df18ed (epic 158): clean reads the store as debt list does, so a
+// read that cannot finish a conversion says so on stderr, and stdout stays one
+// JSON or TOON document.
+func TestDebtClean_SaysWhenAConversionIsUnfinished(t *testing.T) {
+	const note = "could not be finished, so some items may be counted twice"
+
+	t.Run("json", func(t *testing.T) {
+		code, stdout, stderr := execCmdSplit(t, "debt", "clean", "--store", unfinishableConversion(t))
+		require.Equal(t, 0, code)
+		var doc debtCleanDoc
+		require.NoError(t, json.Unmarshal([]byte(stdout), &doc), "stdout stays one JSON document")
+		assert.Contains(t, stderr, note)
+		assert.Contains(t, stderr, "atcr debt convert")
+	})
+
+	t.Run("axi", func(t *testing.T) {
+		code, stdout, stderr := execCmdSplit(t, "debt", "clean", "--store", unfinishableConversion(t), "--axi")
+		require.Equal(t, 0, code)
+		assert.NotContains(t, stdout, note, "the TOON payload carries no note")
+		assert.Contains(t, stderr, note)
+	})
+
+	t.Run("a store with no conversion has no note", func(t *testing.T) {
+		code, _, stderr := execCmdSplit(t, "debt", "clean", "--store", debtCleanStore(t))
+		require.Equal(t, 0, code)
+		assert.NotContains(t, stderr, note)
+	})
+}

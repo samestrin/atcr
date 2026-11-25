@@ -100,10 +100,6 @@ func PersonaStampDamaged(personasDir string) bool {
 // persona copy (cli/init.go maxPersonaCopyBytes).
 const maxPersonaStampBytes = 1 << 20
 
-// personaStampLstat is os.Lstat; a test replaces it to swap the stamp between
-// the Lstat and the open.
-var personaStampLstat = os.Lstat
-
 // readPersonaStampFile is the one read both stamp readers share. It Lstats path
 // and opens only a regular file, so a stamp that is a FIFO, a device or a
 // symlink to either is refused before an open that could block or a read that
@@ -114,7 +110,14 @@ var personaStampLstat = os.Lstat
 // file, a file swapped between the Lstat and the open, a read error or a stamp
 // over the cap is present with err set.
 func readPersonaStampFile(path string) (data []byte, present bool, err error) {
-	info, err := personaStampLstat(path)
+	return readPersonaStampFileWith(path, os.Lstat)
+}
+
+// readPersonaStampFileWith is readPersonaStampFile with the Lstat passed in, so
+// a test can swap the stamp between the Lstat and the open through its own
+// hook rather than a package-level variable another test could see.
+func readPersonaStampFileWith(path string, lstat func(string) (os.FileInfo, error)) (data []byte, present bool, err error) {
+	info, err := lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
@@ -124,9 +127,11 @@ func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	if !info.Mode().IsRegular() {
 		return nil, true, fmt.Errorf("%s: not a regular file (%s)", path, info.Mode().Type())
 	}
+	// The Lstat saw a regular file, so an open failure here (ELOOP from
+	// O_NOFOLLOW on a symlink, above all) most likely means a swap.
 	f, err := os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
 	if err != nil {
-		return nil, true, err
+		return nil, true, fmt.Errorf("%s: open (possible swap after lstat): %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
@@ -136,6 +141,11 @@ func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
 		return nil, true, fmt.Errorf("%s: changed between lstat and open", path)
 	}
+	// O_NONBLOCK stays set for the read, and that is harmless: past the check
+	// above f is the regular file the Lstat saw, and the flag changes nothing
+	// for a regular file (a read never returns EAGAIN; it reads what is there
+	// or hits EOF). It only guarded the open against a FIFO, so no SetNonblock
+	// is needed.
 	data, err = io.ReadAll(io.LimitReader(f, maxPersonaStampBytes+1))
 	if err != nil {
 		return nil, true, err

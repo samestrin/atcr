@@ -494,18 +494,26 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		}
 		return renderDebtJSON(out, recs)
 	}
-	if err := renderDebtListing(cmd, out, recs); err != nil {
+	if err := renderDebtListing(cmd, out, recs, res.ConversionUnfinished); err != nil {
 		return err
-	}
-	if res.ConversionUnfinished {
-		noteConversionUnfinished(out)
 	}
 	return nil
 }
 
 // renderDebtListing writes `debt list`'s human-readable output: the table, or
 // the empty-result message.
-func renderDebtListing(cmd *cobra.Command, out io.Writer, recs []localdebt.Record) error {
+//
+// The unfinished-conversion note belongs HERE, under the table, and not to the
+// caller after this returns (TD d3571b531ada3206): the note says "some items may
+// be counted twice", which is a statement about the rows above it. Hung off the
+// whole non-JSON branch it was printed on the EMPTY path too — "No matching
+// technical-debt items in <dir>." followed by a note about items, prose that
+// contradicts the line above and reads like a bug — and it was glued to
+// whatever this function produced rather than to the table specifically, so any
+// future stdout renderer reached through this branch would inherit a trailing
+// prose line. Placing it here means a renderer either renders the table (and
+// gets the note) or does not (and cannot).
+func renderDebtListing(cmd *cobra.Command, out io.Writer, recs []localdebt.Record, unfinishedConversion bool) error {
 	if len(recs) == 0 {
 		// Name the store the way `debt add` does ("Added ... to <dir>."): an
 		// undifferentiated "nothing here" from the WRONG store reads exactly like
@@ -515,7 +523,13 @@ func renderDebtListing(cmd *cobra.Command, out io.Writer, recs []localdebt.Recor
 		_, _ = fmt.Fprintf(out, "No matching technical-debt items in %s.\n", dir)
 		return nil
 	}
-	return renderDebtTable(out, recs)
+	if err := renderDebtTable(out, recs); err != nil {
+		return err
+	}
+	if unfinishedConversion {
+		noteConversionUnfinished(out)
+	}
+	return nil
 }
 
 // renderDebtJSON writes records as a JSON array (never null, so an empty store
