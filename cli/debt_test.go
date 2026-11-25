@@ -1553,6 +1553,21 @@ func TestDebtList_SaysWhenAConversionIsUnfinished(t *testing.T) {
 		assert.Contains(t, errOut.String(), note)
 	})
 
+	// Row d3571b531ada3206: the note is a statement about the ITEMS in the
+	// listing, so an empty listing must not carry one — "No matching
+	// technical-debt items in <dir>." followed by the note contradicts the line
+	// above it and reads like a bug.
+	t.Run("an empty result gets no note", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), ".atcr", "debt")
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, ".convert"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".convert", "COMMIT"), []byte("{not json"), 0o600))
+
+		out, err := runDebt(t, "list", "--store", dir)
+		require.NoError(t, err)
+		assert.Contains(t, out, "No matching technical-debt items", "the empty-result message still renders")
+		assert.NotContains(t, out, note, "an empty listing carries no unfinished-conversion note")
+	})
+
 	t.Run("a store with no conversion has no note", func(t *testing.T) {
 		out, err := runDebt(t, "list", "--store", writeLocalDebt(t))
 		require.NoError(t, err)
