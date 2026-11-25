@@ -100,7 +100,7 @@ func TestDebtReport_GroupsBySectionNewestFirst(t *testing.T) {
 	assert.Contains(t, looseSec, "| open | LOW | c/reconciled.go:4 |")
 
 	// Cells are Markdown-safe: a pipe is escaped rather than rewritten, so it
-	// cannot add a column and still reads as a pipe; HTML is escaped.
+	// cannot add a column and still reads as a pipe; HTML is escaped on purpose.
 	assert.Contains(t, oldSec, `old open problem with a \| pipe`)
 	assert.Contains(t, newSec, "&lt;b&gt;problem&lt;/b&gt;")
 	assert.NotContains(t, got, "<b>")
