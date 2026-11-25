@@ -54,6 +54,9 @@ type breakerProvider struct {
 	calls, fast map[string]int
 	// order is every real call's provider, in the order they were made.
 	order []string
+	// stall, when set, runs before a real call is recorded: a worker that won
+	// its lease but has not yet made its call, as a loaded runner deschedules it.
+	stall func(provider string)
 }
 
 func newBreakerProvider(clock *fakeUnitClock, down time.Duration) *breakerProvider {
@@ -68,6 +71,9 @@ func (c *breakerProvider) Complete(ctx context.Context, inv llmclient.Invocation
 		c.fast[inv.Model]++
 		c.mu.Unlock()
 		return "", &llmclient.CircuitOpenError{Provider: p}
+	}
+	if c.stall != nil {
+		c.stall(p)
 	}
 	c.mu.Lock()
 	c.calls[inv.Model]++
@@ -207,8 +213,13 @@ func TestThrottle_HalfOpenProbeLeasesAheadOfTheHealthyBacklog(t *testing.T) {
 
 // End to end: alpha's breaker is open when the run starts and alpha is healthy
 // again; beta has a long backlog of slow calls. Alpha's probe runs as soon as
-// the cooldown has passed, closes the breaker, and alpha drains alongside beta,
-// rather than waiting behind beta's whole backlog.
+// the cooldown has passed, closes the breaker, and alpha's units are leased
+// among beta's, rather than waiting behind beta's whole backlog.
+//
+// One worker: the fake clock moves only when the worker waits, so lease order
+// is call order and the run is one deterministic timeline. With two workers the
+// probe is still leased right after the first beta call, but the order of the
+// calls themselves is the goroutine scheduler's (see the next test).
 func TestBreakerRecovery_ProbeIsNotStarvedByAHealthyBacklog(t *testing.T) {
 	clock := newFakeUnitClock()
 	alpha, beta := "alpha-"+t.Name(), "beta-"+t.Name()
@@ -216,19 +227,8 @@ func TestBreakerRecovery_ProbeIsNotStarvedByAHealthyBacklog(t *testing.T) {
 	trippedBreaker(t, beta, clock, false)
 	c := newBreakerProvider(clock, 0)
 	c.took[beta] = 5 * time.Minute
-	var slots []Slot
-	for n := range 12 {
-		s := agentSlot(fmt.Sprintf("b%d", n))
-		s.Primary.Provider = beta
-		slots = append(slots, s)
-	}
-	for n := range 4 {
-		s := agentSlot(fmt.Sprintf("a%d", n))
-		s.Primary.Provider = alpha
-		slots = append(slots, s)
-	}
 
-	results := NewEngine(c, WithMaxParallel(2), retryEveryUnit(), withUnitClock(clock)).Run(context.Background(), slots)
+	results := NewEngine(c, WithMaxParallel(1), retryEveryUnit(), withUnitClock(clock)).Run(context.Background(), backlogSlots(alpha, beta))
 
 	for i, r := range results {
 		require.Equalf(t, StatusOK, r.Status, "unit %d: %v", i, r.Err)
@@ -241,8 +241,81 @@ func TestBreakerRecovery_ProbeIsNotStarvedByAHealthyBacklog(t *testing.T) {
 			break
 		}
 	}
-	require.GreaterOrEqual(t, first, 0)
-	assert.Lessf(t, first, 4, "alpha's probe ran within the first few calls, not after beta's twelve (order %v)", c.order)
+	assert.Equalf(t, 1, first, "alpha's probe ran right after the first beta call moved the clock past the cooldown, not after beta's twelve (order %v)", c.order)
+}
+
+// The same run on two workers, with the probe's worker descheduled between its
+// lease and its call until beta's backlog has drained. The order of the calls is
+// then the scheduler's, but the run is not: every unit is reviewed, the probe
+// closes the breaker, and while it was held no other alpha unit was leased to
+// fail fast on the open breaker.
+func TestBreakerRecovery_DelayedProbeCallStillRecovers(t *testing.T) {
+	clock := newFakeUnitClock()
+	alpha, beta := "alpha-"+t.Name(), "beta-"+t.Name()
+	b := trippedBreaker(t, alpha, clock, true)
+	trippedBreaker(t, beta, clock, false)
+	c := newBreakerProvider(clock, 0)
+	c.took[beta] = 5 * time.Minute
+	c.stall = stallProbeUntilDrained(t, alpha, beta, 12)
+
+	results := NewEngine(c, WithMaxParallel(2), retryEveryUnit(), withUnitClock(clock)).Run(context.Background(), backlogSlots(alpha, beta))
+
+	for i, r := range results {
+		require.Equalf(t, StatusOK, r.Status, "unit %d: %v", i, r.Err)
+	}
+	assert.Equal(t, circuitbreaker.StateClosed, b.State())
+	for n := range 4 {
+		a := fmt.Sprintf("a%d", n)
+		assert.Equalf(t, 1, c.calls[a], "%s made one real call", a)
+		assert.Zerof(t, c.fast[a], "%s never failed fast: the probe held alpha's only lease", a)
+	}
+}
+
+// backlogSlots is beta's backlog of twelve units ahead of alpha's four.
+func backlogSlots(alpha, beta string) []Slot {
+	var slots []Slot
+	for n := range 12 {
+		s := agentSlot(fmt.Sprintf("b%d", n))
+		s.Primary.Provider = beta
+		slots = append(slots, s)
+	}
+	for n := range 4 {
+		s := agentSlot(fmt.Sprintf("a%d", n))
+		s.Primary.Provider = alpha
+		slots = append(slots, s)
+	}
+	return slots
+}
+
+// stallProbeUntilDrained holds alpha's first call until beta has made n calls:
+// the schedule a loaded CI runner produced (PR #925 run 45285413080), where the
+// worker that leased alpha's probe was descheduled before it called and the
+// other worker drained beta's whole backlog, each call taking no real time.
+func stallProbeUntilDrained(t *testing.T, alpha, beta string, n int) func(string) {
+	t.Helper()
+	var mu sync.Mutex
+	betas, probed := 0, false
+	drained := make(chan struct{})
+	return func(p string) {
+		mu.Lock()
+		switch {
+		case p == beta:
+			if betas++; betas == n {
+				close(drained)
+			}
+			mu.Unlock()
+		case p == alpha && !probed:
+			probed = true
+			mu.Unlock()
+			select {
+			case <-drained:
+			case <-time.After(30 * time.Second):
+				t.Errorf("beta's backlog never drained while alpha's probe was held")
+			}
+		default:
+			mu.Unlock()
+		}
+	}
 }
 
 // Only a lease on which no chain member made a call waits for free. A primary
