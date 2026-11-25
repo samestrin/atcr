@@ -107,6 +107,20 @@ func projectStoreKey(dir string) string {
 	return abs
 }
 
+// projectStoreFor returns the repository root recorded for dir.
+func projectStoreFor(dir string) (string, bool) {
+	root, ok := projectStores.Load(projectStoreKey(dir))
+	if !ok {
+		return "", false
+	}
+	return root.(string), true
+}
+
+// forgetProjectStore drops dir's entry.
+func forgetProjectStore(dir string) {
+	projectStores.Delete(projectStoreKey(dir))
+}
+
 // afterContainmentCheck runs between withLock's pre-lock containment check and
 // taking the lock. It is a var so a test can swap a link inside that window;
 // production leaves it empty.

@@ -70,6 +70,7 @@ func ensureStoreDir(dir string) error {
 		if info, err := os.Stat(root.(string)); err != nil || !info.IsDir() {
 			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(root.(string)))
 		}
+		afterStoreRootChecked()
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return basePathErr(err)
 		}
@@ -85,6 +86,11 @@ func ensureStoreDir(dir string) error {
 	}
 	return nil
 }
+
+// afterStoreRootChecked runs between ensureStoreDir's repository-root check and
+// the creation of a project-tier store. It is a var so a test can remove the root
+// inside that window; production leaves it empty.
+var afterStoreRootChecked = func() {}
 
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix is
 // an RFC3339 timestamp (e.g. "2026-06-14T10:00:00Z-abc123" -> "2026-06"). The month

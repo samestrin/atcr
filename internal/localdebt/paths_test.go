@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -236,4 +237,99 @@ func TestRedactPathErr(t *testing.T) {
 
 	other := errors.New("boom")
 	assert.Same(t, other, RedactPathErr(other), "a non-PathError passes through unchanged")
+}
+
+// TestProjectStores_KeyedThroughSymlinks pins row 573b54a6bb1024d7: the
+// projectStores key was absolute but not symlink-resolved, so a store
+// registered through a linked parent and later reached by its real spelling
+// (or the reverse: /var vs /private/var on macOS, a bind mount) missed the
+// entry and fell to the grandparent rule, whose anchor at depth 1 is the
+// root's parent; MkdirAll then resurrected the vanished root.
+func TestProjectStores_KeyedThroughSymlinks(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	require.NoError(t, os.Mkdir(real, 0o755))
+	link := filepath.Join(base, "link")
+	if err := os.Symlink("real", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	require.NoError(t, os.Mkdir(filepath.Join(real, "repo"), 0o755))
+	dir, err := projectStoreDir(filepath.Join(link, "repo"), "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(dir) })
+
+	realDir := filepath.Join(real, "repo", "debt")
+	_, ok := projectStoreFor(realDir)
+	assert.True(t, ok, "the real spelling must find the entry registered through the link")
+
+	require.NoError(t, os.Remove(filepath.Join(real, "repo")))
+	err = ensureStoreDir(realDir)
+	require.Error(t, err, "the real spelling of a project store must keep the root anchor")
+	assert.Contains(t, err.Error(), `"repo"`, "the refusal names the missing repository root")
+	_, statErr := os.Stat(filepath.Join(real, "repo"))
+	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
+}
+
+// TestForgetProjectStore pins the registry's eviction API (row
+// 573b54a6bb1024d7): after forgetProjectStore no spelling of the store finds
+// an entry, so a test or long-lived process is not left with call-order state.
+func TestForgetProjectStore(t *testing.T) {
+	root := t.TempDir()
+	dir, err := projectStoreDir(root, "debt")
+	require.NoError(t, err)
+	_, ok := projectStoreFor(dir)
+	require.True(t, ok)
+	forgetProjectStore(dir)
+	_, ok = projectStoreFor(dir)
+	assert.False(t, ok, "a forgotten store must not be found")
+}
+
+// TestEnsureStoreDir_GrandparentRefusalNamesTheRule pins the observability half
+// of row 573b54a6bb1024d7: a store that is not in the project registry is
+// refused under the grandparent rule, and the error says so, so a registry miss
+// is distinguishable from a project-tier root refusal.
+func TestEnsureStoreDir_GrandparentRefusalNamesTheRule(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing", "notes", "debt")
+	err := ensureStoreDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a project-tier store", "the refusal must name the rule it applied")
+}
+
+// TestEnsureStoreDir_NonStringRegistryValueIsAnError pins row
+// 9ffc484fcafdf7c1: the registry value was read with a bare root.(string), so a
+// value of any other type panicked on the write path of every debt command.
+func TestEnsureStoreDir_NonStringRegistryValueIsAnError(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo", "debt")
+	projectStores.Store(projectStoreKey(dir), 42)
+	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+
+	var ensureErr, containErr error
+	require.NotPanics(t, func() { ensureErr = ensureStoreDir(dir) })
+	require.NotPanics(t, func() { containErr = checkStoreContainment(dir) })
+	assert.Error(t, ensureErr, "a malformed registry entry must be refused")
+	assert.Error(t, containErr, "a malformed registry entry must be refused")
+}
+
+// TestEnsureStoreDir_RootRemovedDuringCreationIsRefused pins the fix row
+// 9ffc484fcafdf7c1 asks for: the root was checked by path and the store then
+// created by path with MkdirAll, so a root removed between the two was
+// recreated. Creation is anchored to an opened root handle; a root that
+// vanishes after it is opened makes creation fail instead.
+func TestEnsureStoreDir_RootRemovedDuringCreationIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not remove a directory that is open")
+	}
+	root := filepath.Join(t.TempDir(), "racy-repo")
+	require.NoError(t, os.Mkdir(root, 0o755))
+	dir, err := projectStoreDir(root, "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(dir) })
+	afterStoreRootChecked = func() { require.NoError(t, os.Remove(root)) }
+	t.Cleanup(func() { afterStoreRootChecked = func() {} })
+
+	err = ensureStoreDir(dir)
+	require.Error(t, err, "a root removed during creation must be refused, not recreated")
+	assert.Contains(t, err.Error(), `"racy-repo"`, "the refusal names the repository root")
+	_, statErr := os.Stat(root)
+	assert.True(t, os.IsNotExist(statErr), "the removed root must not be created: %v", statErr)
 }
