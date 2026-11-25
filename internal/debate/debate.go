@@ -126,7 +126,40 @@ func Debate(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 		}
 		return hookobs.Wrap(ctx, llmclient.New()), disp, cleanup, nil
 	}
-	return runDebate(ctx, reviewDir, reg, opts, harness)
+	return debateIn(ctx, repoRoot, reviewDir, reg, opts, harness)
+}
+
+// debateIn is Debate with the harness injected, so a test can drive the
+// repoRoot-dependent setup without a git snapshot or a provider.
+func debateIn(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options, newHarness harnessFunc) (Result, error) {
+	reg, err := withProjectSecretGuard(repoRoot, reg)
+	if err != nil {
+		return Result{}, err
+	}
+	return runDebate(ctx, reviewDir, reg, opts, newHarness)
+}
+
+// withProjectSecretGuard returns a copy of reg whose SecretGuard is the policy
+// ResolveSettings resolves over the project tier at repoRoot, so a project
+// `secret_guard` (an explicit off included) outranks the registry's for every
+// seat, as it does for the review. Only an absent project config is skipped;
+// an unreadable or invalid one is returned, never treated as unset. The
+// caller's reg is not modified.
+func withProjectSecretGuard(repoRoot string, reg *registry.Registry) (*registry.Registry, error) {
+	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath(repoRoot))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		proj = nil
+	}
+	s, err := registry.ResolveSettings(registry.CLIOverrides{}, proj, reg)
+	if err != nil {
+		return nil, err
+	}
+	resolved := *reg
+	resolved.SecretGuard = s.SecretGuard
+	return &resolved, nil
 }
 
 // harnessFunc lazily builds the tool harness (chat completer + dispatcher) the
@@ -568,9 +601,9 @@ func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFindi
 }
 
 // secretGuardPolicy is the secret_guard policy debate seats are sent under:
-// the registry's, or the embedded default (redact) when it sets none. The
-// project tier is resolved only by the review's ResolveSettings, which Debate
-// does not run.
+// the registry's, or the embedded default (redact) when it sets none. Debate
+// has already folded the project tier into reg.SecretGuard
+// (withProjectSecretGuard); runDebate's direct callers send the registry's.
 func secretGuardPolicy(reg *registry.Registry) string {
 	if p := strings.TrimSpace(reg.SecretGuard); p != "" {
 		return p

@@ -493,7 +493,10 @@ func assertUntouched(t *testing.T, dir, before string, frags ...string) {
 // none of them can be a fragment name (<category>-<slug>.md). Rows
 // cddedaf7d2ccf90b and 3a33081d52f27a43: every spelling strconv.ParseBool
 // accepts (=True, =TRUE, =t, =F, ...) is the same mistake, not just the
-// enumerated literals.
+// enumerated literals. Rows ae190369b5f3a6a9, da48c87f7085d471,
+// 14bdb8cf2204f389 and 891b8efc33eb3ee0 (owner decision EST-8570: shape
+// gate): a value whose base name is not <category>-<slug>.md is refused, so
+// all twelve ParseBool spellings and yes/on/y get the same usage error.
 func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 	for name, args := range map[string][]string{
 		"bare last":          {"--allow-consumed"},
@@ -506,6 +509,16 @@ func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 		"uppercase TRUE":     {"--allow-consumed=TRUE"},
 		"short t":            {"--allow-consumed=t"},
 		"short F":            {"--allow-consumed=F"},
+		"short T":            {"--allow-consumed=T"},
+		"short f":            {"--allow-consumed=f"},
+		"capitalised False":  {"--allow-consumed=False"},
+		"uppercase FALSE":    {"--allow-consumed=FALSE"},
+		"yes":                {"--allow-consumed=yes"},
+		"on":                 {"--allow-consumed=on"},
+		"short y":            {"--allow-consumed=y"},
+		"no category":        {"--allow-consumed=changelog.d/notes.md"},
+		"no .md suffix":      {"--allow-consumed=changelog.d/added-x"},
+		"directory":          {"--allow-consumed=changelog.d"},
 		"empty value":        {"--allow-consumed="},
 		"space-separated":    {"--allow-consumed", "changelog.d/added-again1.md"},
 	} {
@@ -525,6 +538,22 @@ func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 			assertUntouched(t, dir, before, a1, a2, fresh)
 		})
 	}
+}
+
+// TestAssemble_AllowConsumedFragmentShapedValuePassesTheGate: a value shaped
+// like a fragment path is not a usage error; it reaches the fragment lookup,
+// which refuses it (exit 1, not a fragment) because it names no fragment here.
+func TestAssemble_AllowConsumedFragmentShapedValuePassesTheGate(t *testing.T) {
+	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, stdout, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01", "--allow-consumed=changelog.d/added-x.md")
+	if code != 1 || !strings.Contains(stderr, "changelog.d/added-x.md: not a fragment") {
+		t.Fatalf("code %d, want 1 naming no fragment:\n%s", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout not empty: %q", stdout)
+	}
+	assertUntouched(t, dir, before, a1, a2, fresh)
 }
 
 // TestAssemble_AllowConsumedRefusesAnUnnamedFragment: naming one consumed

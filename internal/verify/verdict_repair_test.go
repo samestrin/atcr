@@ -252,6 +252,14 @@ func TestInvokeSkeptic_RepairableCutOffReplyStillRefused(t *testing.T) {
 // TestInvokeSkeptic_CountsEachAcceptedRepair: the marker increments once for a
 // repaired verdict and not for an untouched one, and carries no reply text.
 // Not parallel: it reads a process-wide counter by delta.
+//
+// The guard argument is deliberately "" (Epic 134 T1, row ac989e7889a4a870):
+// this test measures the repair counter, not egress policy. An empty policy is
+// unset, which llmclient's guardMessages treats as a no-op (no scan, messages
+// unchanged — internal/llmclient/secretguard.go), so no secret-scanning
+// machinery runs and each counter delta is attributable to the repair step
+// alone. Guard forwarding and wire behavior are pinned by
+// TestBuildSkepticAgent_ForwardsProviderAndBudgets and secretguard_test.go.
 func TestInvokeSkeptic_CountsEachAcceptedRepair(t *testing.T) {
 	counter := func() int64 { return metrics.Counter(jsonRepairedVerdictMetric).Value() }
 	run := func(reply string) string {
