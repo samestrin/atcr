@@ -102,6 +102,51 @@ func TestRejectMachineLocalFields_ReplayReasoningBanned(t *testing.T) {
 	require.NoError(t, ValidateCommunityPersonaYAML("sample", []byte(base)))
 }
 
+// TD row a4852eff92319925 (config.go:1647): the preserve_thinking/replay_reasoning
+// warning sits behind the len(errs) == 0 guard, so an agent with any other fault
+// never buffers it. The assertion reads r.validationWarnings after a direct
+// validateAgent call because that is what pins the guard itself: a failed
+// LoadRegistry never emits buffered warnings either way (emitValidationWarnings
+// runs only after every validation stage passes), so a load-level test would
+// still pass if the warning moved outside the guard. The valid-pair control
+// case proves the warning fires when the guard opens.
+func TestValidateAgent_PreserveThinkingWarningGatedOnValidAgent(t *testing.T) {
+	zero := 0
+	cases := []struct {
+		name    string
+		mutate  func(*AgentConfig)
+		wantErr bool
+	}{
+		{"valid pair warns", func(*AgentConfig) {}, false},
+		{"max_tokens fault", func(a *AgentConfig) { a.MaxTokens = &zero }, true},
+		{"response_format fault", func(a *AgentConfig) { a.ResponseFormat = "json" }, true},
+		{"min_severity fault", func(a *AgentConfig) { a.MinSeverity = "URGENT" }, true},
+		{"missing model", func(a *AgentConfig) { a.Model = "" }, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := AgentConfig{
+				Provider: "p", Model: "m",
+				Thinking: ThinkingOn, ThinkingStyle: ThinkingStyleQwen,
+				PreserveThinking: ThinkingOn, ReplayReasoning: ReplayReasoningOff,
+			}
+			tc.mutate(&a)
+			r := &Registry{Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}}}
+			errs := r.validateAgent("myagent", a)
+			if tc.wantErr {
+				require.NotEmpty(t, errs, "the injected fault must fail validation")
+				for _, w := range r.validationWarnings {
+					assert.NotContains(t, w, "preserve_thinking", "an invalid agent must not buffer the preserve_thinking/replay_reasoning warning, got %q", w)
+				}
+				return
+			}
+			require.Empty(t, errs)
+			require.Len(t, r.validationWarnings, 1, "the valid pair buffers exactly its own warning")
+			assert.Contains(t, r.validationWarnings[0], "preserve_thinking: on has no effect with replay_reasoning: off")
+		})
+	}
+}
+
 // TD row config.go:1480: preserve_thinking: on asks the model to keep its
 // earlier reasoning, which only the tool loop's replay sends back, so with
 // replay_reasoning: off the pair is a no-op. It still loads, with exactly one
