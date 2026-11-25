@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,4 +127,62 @@ func TestCreateItemsGitignore_RefusesSymlinkPlantedAfterLstat(t *testing.T) {
 			assertStillSymlink(t, gi, target)
 		})
 	}
+}
+
+// plantEventTemp writes an event temp of the CreateTemp shape into items with its
+// modification time set age in the past, and returns its path.
+func plantEventTemp(t *testing.T, items, name string, age time.Duration) string {
+	t.Helper()
+	p := filepath.Join(items, name)
+	require.NoError(t, os.WriteFile(p, []byte("{partial"), 0o600))
+	when := time.Now().Add(-age)
+	require.NoError(t, os.Chtimes(p, when, when))
+	return p
+}
+
+// Rows a55384eaf4b4f883 and 84e68def42784348: unix and Windows hold a kernel
+// lock, so any temp the sweep sees belongs to a dead process and no age is
+// required. Only lock_other.go's legacy mkdir lock sets one.
+func TestEventTempSweepMinAge_ZeroOnKernelLocks(t *testing.T) {
+	assert.Zero(t, eventTempSweepMinAge)
+}
+
+// The sweep helper keeps an event temp younger than minAge and removes an older
+// one; a zero minAge removes every temp. The ages are faked with Chtimes.
+func TestSweepEventTemps_MinAge(t *testing.T) {
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	items := ItemsDir(dir)
+
+	live := plantEventTemp(t, items, ".a.json.tmp-1", time.Second)
+	dead := plantEventTemp(t, items, ".b.json.tmp-2", 2*time.Hour)
+	sweepEventTemps(items, time.Hour)
+	assert.FileExists(t, live, "a temp younger than minAge may be a live writer's and is kept")
+	assert.NoFileExists(t, dead, "a temp older than minAge is reaped")
+
+	sweepEventTemps(items, 0)
+	assert.NoFileExists(t, live, "a zero minAge reaps every temp")
+	assert.FileExists(t, filepath.Join(items, eventLayoutMarker), "the marker is never swept")
+}
+
+// The harm the rows name: on the legacy mkdir lock a waiter can reclaim a lock
+// whose holder is still writing, and the reclaimer's sweep then deleted the
+// holder's in-flight temp, failing its rename into place. With the legacy age
+// set, a write's sweep spares a fresh temp and still reaps a stale leftover.
+func TestAppend_LegacyLockSweepSparesLiveHoldersTemp(t *testing.T) {
+	orig := eventTempSweepMinAge
+	eventTempSweepMinAge = time.Hour
+	t.Cleanup(func() { eventTempSweepMinAge = orig })
+
+	dir := DefaultDir(t.TempDir())
+	require.NoError(t, EnableEventLayout(dir))
+	items := ItemsDir(dir)
+	live := plantEventTemp(t, items, ".a.json.tmp-1", time.Second)
+	dead := plantEventTemp(t, items, ".b.json.tmp-2", 2*time.Hour)
+
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
+
+	assert.FileExists(t, live, "a live holder's in-flight temp survives the reclaimer's sweep")
+	assert.NoFileExists(t, dead, "a stale crash leftover is still reaped")
+	assert.Len(t, eventFiles(t, dir), 1)
 }

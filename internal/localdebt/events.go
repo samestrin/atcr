@@ -176,6 +176,12 @@ func (p *itemsPrep) ensure(items string) {
 // a sweep error; a symlinked or otherwise non-regular .gitignore is left alone.
 func prepareItemsLocked(items string) {
 	_ = ensureItemsGitignore(items)
+	sweepEventTemps(items, eventTempSweepMinAge)
+}
+
+var eventTempSweepMinAge time.Duration
+
+func sweepEventTemps(items string, minAge time.Duration) {
 	entries, err := readItemsDir(items)
 	if err != nil {
 		return
