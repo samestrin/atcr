@@ -518,7 +518,8 @@ var (
 // host's own addresses rather than refusing it, the first such probe to time
 // out ends the check: a dropped connect says nothing about whether a host
 // service listens there. A link-local or tunnel address that times out is not
-// probed again for later ports in the same call.
+// probed again for later ports in the same call; the skip is logged as a
+// warning, once per address, naming the ports left unchecked there.
 //
 // The interface addresses are not belt-and-braces. Measured on the macOS CI
 // runner (PR #753): under a grant on port P the workload connected to a host
@@ -572,7 +573,7 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 	// dead holds the offLo hosts that have timed out in this call. Each such probe costs the full loopbackDialTimeout and learns
 	// nothing, so later ports skip them.
 	dead := map[string]bool{}
-	for _, p := range ports {
+	for i, p := range ports {
 		for _, host := range hosts {
 			if dead[host] {
 				continue
@@ -606,6 +607,13 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 				// the dial goes into the tunnel rather than over lo0.
 				if offLo[host] {
 					dead[host] = true
+					// The skip would otherwise be silent: the call can return
+					// nil without learning anything at this address for the
+					// later ports. Logged once, when the address goes dead.
+					if rest := ports[i+1:]; len(rest) > 0 {
+						log.FromContext(ctx).Warn("sandbox loopback check: address timed out; later ports not probed there",
+							"address", host, "port", p, "unchecked_ports", rest)
+					}
 					continue
 				}
 				return fmt.Errorf("%w: port %d on %s: %w", ErrOSLevelLoopbackCheckUnavailable, p, host, err)

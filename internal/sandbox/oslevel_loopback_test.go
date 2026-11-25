@@ -1,11 +1,13 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -361,13 +364,25 @@ func TestCheckLoopbackPortsFree_RoutableInterfaceAddressTimeoutFailsClosed(t *te
 	// there is answered or refused at once; a timeout means a firewall in
 	// stealth mode dropped the SYN, and a service bound to that address may
 	// still be reachable through the grant. The port's state is unknown.
-	for _, ip := range []string{"192.168.1.20", "169.254.10.20", "2001:db8::20"} {
+	for _, tc := range []struct {
+		ip   string
+		mask net.IPMask
+	}{
+		{"192.168.1.20", net.CIDRMask(24, 32)},
+		{"169.254.10.20", net.CIDRMask(24, 32)},
+		{"2001:db8::20", net.CIDRMask(64, 128)},
+	} {
+		ip := tc.ip
 		t.Run(ip, func(t *testing.T) {
+			addr := &net.IPNet{IP: net.ParseIP(ip), Mask: tc.mask}
+			// A mask of the wrong family (4 bytes for an IPv6 address) makes
+			// an IPNet that contains nothing, not even its own address.
+			require.True(t, addr.Contains(addr.IP), "fixture %v: mask length must match the address family", addr)
 			origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
 			t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
 			netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "en0"}}, nil }
 			interfaceAddrs = func(net.Interface) ([]net.Addr, error) {
-				return []net.Addr{&net.IPNet{IP: net.ParseIP(ip), Mask: net.CIDRMask(24, 32)}}, nil
+				return []net.Addr{addr}, nil
 			}
 			loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				if strings.Contains(addr, ip) {
@@ -410,6 +425,39 @@ func TestCheckLoopbackPortsFree_LinkLocalTimeoutIsProbedOncePerCall(t *testing.T
 	require.NoError(t, checkLoopbackPortsFree(context.Background(), []int{3000, 5173, 8080}))
 	assert.Equal(t, []string{"[fe80::e493:3041:b67b:a5b2%utun0]:3000"}, timedOut, "a dead link-local address is probed once per call")
 	assert.Len(t, refused, 6, "127.0.0.1 and ::1 are still probed on every port")
+}
+
+func TestCheckLoopbackPortsFree_DeadLinkLocalSkipIsLoggedOncePerCall(t *testing.T) {
+	// Skipping a dead link-local or tunnel address for later ports is silent
+	// otherwise: the call returns nil having never learned whether anything
+	// listens there on those ports. Each skipped address is logged once per
+	// call, naming the ports left unchecked, so an operator can see the
+	// unchecked class.
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "utun0"}}, nil }
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::e493:3041:b67b:a5b2"), Mask: net.CIDRMask(64, 128)}}, nil
+	}
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if strings.Contains(addr, "%utun0") {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
+	require.NoError(t, checkLoopbackPortsFree(ctx, []int{3000, 5173, 8080}))
+	out := buf.String()
+	assert.Equal(t, 1, strings.Count(out, "fe80::e493:3041:b67b:a5b2%utun0"), "one line per dead address per call: %s", out)
+	assert.Contains(t, out, "level=WARN")
+	assert.Contains(t, out, "unchecked_ports=\"[5173 8080]\"", "the line names the ports left unchecked: %s", out)
+
+	// A dead address on the last port leaves no port unchecked: nothing to log.
+	buf.Reset()
+	require.NoError(t, checkLoopbackPortsFree(ctx, []int{3000}))
+	assert.Empty(t, buf.String())
 }
 
 func TestCheckLoopbackPortsFree_LinkLocalThatAnswersIsProbedOnEveryPort(t *testing.T) {
