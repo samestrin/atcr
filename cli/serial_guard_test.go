@@ -572,7 +572,7 @@ func moduleImportDir(t *testing.T, dir string) importDirFunc {
 		require.NotEqual(t, root, parent, "no go.mod above %s", dir)
 		root = parent
 	}
-	mod := modulePath(t, filepath.Join(root, "go.mod"))
+	mod := goModulePath(t, filepath.Join(root, "go.mod"))
 	return func(p string) (string, error) {
 		if p == mod || strings.HasPrefix(p, mod+"/") {
 			return filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(p, mod))), nil
@@ -587,8 +587,8 @@ func moduleImportDir(t *testing.T, dir string) importDirFunc {
 	}
 }
 
-// modulePath reads the module directive of a go.mod file.
-func modulePath(t *testing.T, goMod string) string {
+// goModulePath reads the module directive of a go.mod file.
+func goModulePath(t *testing.T, goMod string) string {
 	t.Helper()
 	data, err := os.ReadFile(goMod)
 	require.NoError(t, err)
