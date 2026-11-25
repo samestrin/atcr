@@ -83,10 +83,8 @@ func TestPersonaStamp_SwapToSymlinkAfterLstatIsRefused(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(`{"files":{}}`), 0o600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "other"), []byte(`{"files":{"a":"b"}}`), 0o600))
 
-		orig := personaStampLstat
-		t.Cleanup(func() { personaStampLstat = orig })
-		personaStampLstat = func(name string) (os.FileInfo, error) {
-			info, err := orig(name)
+		hook := func(name string) (os.FileInfo, error) {
+			info, err := os.Lstat(name)
 			if err == nil && info.Mode().IsRegular() {
 				if rerr := os.Remove(name); rerr != nil {
 					t.Errorf("remove the stamp: %v", rerr)
@@ -97,7 +95,7 @@ func TestPersonaStamp_SwapToSymlinkAfterLstatIsRefused(t *testing.T) {
 			return info, err
 		}
 
-		data, present, err := readPersonaStampFile(path)
+		data, present, err := readPersonaStampFileWith(path, hook)
 		require.True(t, present)
 		require.Nil(t, data)
 		require.ErrorIs(t, err, syscall.ELOOP, "O_NOFOLLOW must refuse the link at the open")
@@ -168,10 +166,8 @@ func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSy
 		}
 	}
 
-	orig := personaStampLstat
-	t.Cleanup(func() { personaStampLstat = orig })
-	personaStampLstat = func(name string) (os.FileInfo, error) {
-		info, err := orig(name)
+	hook := func(name string) (os.FileInfo, error) {
+		info, err := os.Lstat(name)
 		if err == nil && info.Mode().IsRegular() {
 			if serr := swap(name); serr != nil {
 				t.Errorf("swap the stamp for a FIFO: %v", serr)
@@ -180,14 +176,25 @@ func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSy
 		return info, err
 	}
 
-	done := make(chan bool, 1)
-	go func() { done <- PersonaStampDamaged(dir) }()
+	// The hook goes straight to the read, so no package-level seam is swapped
+	// and a parallel test cannot see it. A swapped stamp is present with err
+	// set, which is what PersonaStampDamaged reports as damaged.
+	type result struct {
+		present bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, present, err := readPersonaStampFileWith(path, hook)
+		done <- result{present, err}
+	}()
 	select {
-	case damaged := <-done:
-		require.True(t, damaged)
+	case r := <-done:
+		require.True(t, r.present)
+		require.Error(t, r.err)
 	case <-time.After(5 * time.Second):
 		// Release the blocked reader before failing, so it does not outlive
-		// the restored hook and the TempDir. A write-only nonblocking open
+		// the TempDir. A write-only nonblocking open
 		// fails with ENXIO; O_RDWR on a FIFO succeeds without a reader, and
 		// closing it right away hands the reader EOF.
 		if w, err := os.OpenFile(path, os.O_RDWR, 0); err == nil {
