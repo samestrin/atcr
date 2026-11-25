@@ -1959,12 +1959,18 @@ type WebhookLinearAutoFixConfig struct {
 	PushTokenEnv string `yaml:"push_token_env"`
 	// DailyJobCap is the most auto-fix jobs started in one day; at least 1.
 	DailyJobCap int `yaml:"daily_job_cap"`
-	// JobTokenCap caps the tokens one auto-fix job may spend (Epic 105.2).
+	// JobTokenCap is the per-job token accounting limit (Epic 105.2). A job's
+	// usage is only known once the child exits, so an over-cap job is flagged
+	// (ErrAutoFixJobTokenCap) and its spend charged to the day after the fact;
+	// the cap never stops a job mid-run (internal/webhook/autofix.go).
 	// Optional: zero or absent means no cap; a negative value is rejected.
 	JobTokenCap int `yaml:"job_token_cap,omitempty"`
-	// DailyTokenCap caps the tokens auto-fix jobs may spend in one UTC day
-	// (Epic 105.2). Optional: zero or absent means no cap; a negative value is
-	// rejected.
+	// DailyTokenCap is the per-UTC-day token accounting limit (Epic 105.2).
+	// Every job's reported usage is charged to the day, over-cap jobs included;
+	// once the day's spend reaches this cap, future claims are refused
+	// (ErrAutoFixDailyTokenCap) — running jobs are not stopped
+	// (internal/webhook/autofixstate.go). Optional: zero or absent means no
+	// cap; a negative value is rejected.
 	DailyTokenCap int `yaml:"daily_token_cap,omitempty"`
 }
 

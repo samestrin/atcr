@@ -347,12 +347,13 @@ func TestSummarize_SlackKeepsMrkdwn(t *testing.T) {
 	assert.Contains(t, text, "Compare a &amp; b &lt; c")
 }
 
-// The GitHub escaper breaks a mention or an issue reference with a zero-width
-// space wherever GitHub would read one: an @ or a # at the start of the text
-// or after a character that is not an ASCII word character. Mid-word, as in
-// an email address, GitHub links nothing, so it is left alone. A cross-repo
-// owner/repo#7 does link on GitHub; it is left alone here so the trusted
-// heading keeps its PR reference, which leaves that shape linkable in a title.
+// The GitHub title escaper breaks a mention or an issue reference with a
+// zero-width space wherever GitHub would read one: an @ or a # at the start
+// of the text or after a character that is not an ASCII word character.
+// Mid-word, as in an email address, GitHub links nothing, so it is left
+// alone. Every #<digits> is broken in a title, including the cross-repo
+// owner/repo#7 shape and a # after a word character, so an untrusted title
+// links nobody; only the trusted heading keeps its PR reference.
 func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 	const zwsp = "\u200b"
 	cases := map[string]string{
@@ -366,7 +367,8 @@ func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 		"@@octocat":         "@@" + zwsp + "octocat",
 		"*@octocat*":        `\*@` + zwsp + `octocat\*`,
 		"mail a@b.example":  "mail a@b.example",
-		"acme/widget#7":     "acme/widget#7",
+		"acme/widget#7":     "acme/widget#" + zwsp + "7",
+		"bug#12":            "bug#" + zwsp + "12",
 		"x_@octocat":        `x\_@octocat`,
 		"#heading":          "#heading",
 		"# 12":              "# 12",
@@ -377,18 +379,32 @@ func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 		"Compare a & b < c": `Compare a \& b \< c`,
 	}
 	for in, want := range cases {
-		assert.Equal(t, want, githubFormat.escape(in), "input %q", in)
+		assert.Equal(t, want, githubFormat.escapeTitle(in), "input %q", in)
 	}
+}
+
+// The trusted-label escaper keeps the cross-repo PR reference the heading is
+// built from, and still breaks mentions and bare issue references.
+func TestGitHubEscape_LabelKeepsCrossRepoRef(t *testing.T) {
+	assert.Equal(t, "acme/widget#7", githubFormat.escapeLabel("acme/widget#7"))
+	assert.Equal(t, "@\u200boctocat broke #\u200b12", githubFormat.escapeLabel("@octocat broke #12"))
 }
 
 // A finding title that names a user or an issue reaches the PR comment with
 // the mention and the reference broken, so posting it pings and links nobody.
+// Every #<digits> in a title is broken, even one GitHub would read after a
+// word character (bug#12); only the trusted heading keeps its PR reference.
 func TestSummarize_GitHubNeutralizesMentionsInTitles(t *testing.T) {
-	text := summarize("acme/widget#7", []reconcile.Finding{{Severity: "HIGH", Problem: "@octocat broke #12"}}, nil, githubFormat)
+	text := summarize("acme/widget#7", []reconcile.Finding{
+		{Severity: "HIGH", Problem: "@octocat broke #12"},
+		{Severity: "LOW", Problem: "regression from bug#12"},
+	}, nil, githubFormat)
 	assert.True(t, strings.HasPrefix(text, "**ATCR review of acme/widget#7**:"), "heading keeps the PR reference: %q", text)
 	assert.Contains(t, text, "[HIGH] @\u200boctocat broke #\u200b12")
+	assert.Contains(t, text, "[LOW] regression from bug#\u200b12")
 	assert.NotContains(t, text, "@octocat")
 	assert.NotContains(t, text, "#12")
+	assert.NotContains(t, text, "bug#12")
 }
 
 func TestFindingTitle(t *testing.T) {

@@ -156,30 +156,65 @@ func (s *AutoFixState) Claim(issueID, stateID string, now time.Time) error {
 		return fmt.Errorf("%w: %d of %d tokens on %s", ErrAutoFixDailyTokenCap, tokens, s.dailyTokenCap, day)
 	}
 
+	// Seen is pruned and the new pair added in place, so a claim costs the
+	// expired pairs rather than a copy of the whole set. next shares the
+	// map; a failed write undoes both edits before returning.
+	undo := s.pruneSeen(now)
+	claimed := s.data.Seen[issueID]
+	created := claimed == nil
+	if created {
+		claimed = map[string]time.Time{}
+		s.data.Seen[issueID] = claimed
+	}
+	// The pair is not in claimed: an unexpired one was refused above and an
+	// expired one was just pruned.
+	claimed[stateID] = now.UTC()
 	next := s.data
-	next.Seen = make(map[string]map[string]time.Time, len(s.data.Seen)+1)
-	for issue, claimed := range s.data.Seen {
-		states := make(map[string]time.Time, len(claimed)+1)
-		for state, at := range claimed {
-			if !replayExpired(at, now) {
-				states[state] = at
-			}
-		}
-		if len(states) > 0 {
-			next.Seen[issue] = states
-		}
-	}
-	if next.Seen[issueID] == nil {
-		next.Seen[issueID] = map[string]time.Time{}
-	}
-	next.Seen[issueID][stateID] = now.UTC()
 	next.Day, next.Count, next.Tokens = day, count+1, tokens
 
 	if err := writeAutoFixState(s.path, next); err != nil {
+		if created {
+			delete(s.data.Seen, issueID)
+		} else {
+			delete(claimed, stateID)
+		}
+		undo()
 		return err
 	}
 	s.data = next
 	return nil
+}
+
+// pruneSeen deletes every pair past the replay horizon at now from Seen, and
+// every issue left with no pairs, and returns a func that puts them all back.
+// The caller holds mu.
+func (s *AutoFixState) pruneSeen(now time.Time) (undo func()) {
+	type pair struct {
+		issue, state string
+		at           time.Time
+	}
+	var pairs []pair
+	emptied := map[string]map[string]time.Time{}
+	for issue, claimed := range s.data.Seen {
+		for state, at := range claimed {
+			if replayExpired(at, now) {
+				pairs = append(pairs, pair{issue, state, at})
+				delete(claimed, state)
+			}
+		}
+		if len(claimed) == 0 {
+			emptied[issue] = claimed
+			delete(s.data.Seen, issue)
+		}
+	}
+	return func() {
+		for issue, claimed := range emptied {
+			s.data.Seen[issue] = claimed
+		}
+		for _, p := range pairs {
+			s.data.Seen[p.issue][p.state] = p.at
+		}
+	}
 }
 
 // Count returns the number of jobs claimed on now's UTC day.

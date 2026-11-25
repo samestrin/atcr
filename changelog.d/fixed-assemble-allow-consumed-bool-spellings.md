@@ -1,4 +1,6 @@
-- `changelog assemble --allow-consumed=True`, `=TRUE`, `=t`, `=F` (and every
-  other boolean spelling) now get the same usage error as `=false`, naming the
-  `--allow-consumed=<fragment-path>` spelling, instead of failing later with
-  "not a fragment in this run". (epic 147 T1)
+- `changelog assemble --allow-consumed=<value>` now accepts only the shape of
+  a fragment path, `<category>-<slug>.md`, so boolean spellings like `=True`,
+  `=yes` and `=on` and non-fragment names like `notes.md` get the exit-2 usage
+  error naming `--allow-consumed=<fragment-path>` instead of the earlier
+  exit-1 "not a fragment in this run". A well-shaped path that names no
+  fragment in the run still exits 1. (epic 147 T1, epic 150 T1)
