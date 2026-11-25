@@ -65,11 +65,13 @@ func newDebtCmd() *cobra.Command {
 // sibling --output on this command family already does. Without it --store went
 // verbatim to localdebt.Append, which MkdirAlls it: `--store <repo>/../../escaped`
 // silently created and wrote a store outside the repo, and a system directory
-// failed only as a raw mkdir permission error. Both the raw value (so a `..`
-// segment is caught as typed, before absolutization collapses it) and its
-// absolute form (so a relative path that lands in /etc is caught too) are
-// checked. Containment inside the repo root is deliberately NOT required:
-// pointing at another repo's store is --store's documented purpose.
+// failed only as a raw mkdir permission error. Only the absolute form is
+// checked, so a relative path that lands in /etc is caught however it is
+// spelled. The raw value is deliberately NOT checked: its `..` rule refused an
+// ordinary `--store ../x` (TD e4df8eca24b13ec2), and a `..` segment is no
+// escape for a flag that accepts any absolute path. Containment inside the repo
+// root is deliberately NOT required either: pointing at another repo's store
+// is --store's documented purpose.
 func addDebtStoreFlag(cmd *cobra.Command) {
 	cmd.Flags().String("store", defaultDebtResolveDir, "path to the local TD store; unset resolves debt.store from .atcr/config.yaml or ~/.config/atcr/registry.yaml, else <repo root>/.atcr/debt")
 	cmd.Flags().Lookup("store").DefValue = ""
@@ -97,9 +99,6 @@ func addDebtStoreFlag(cmd *cobra.Command) {
 		}
 		if _, err := validation.ExpandHome(dir); err != nil {
 			return usageError(fmt.Errorf("--%s: %w", name, err))
-		}
-		if err := validation.FilePath(dir); err != nil {
-			return usageError(fmt.Errorf("--%s %q: %w", name, dir, err))
 		}
 		abs, err := filepath.Abs(dir)
 		if err != nil {
@@ -229,12 +228,14 @@ func debtRepoRoot() (string, error) {
 //
 // A missing store is not an error: localdebt.ReadAll reports the "no backlog
 // yet" state as an empty result, which renders as the empty-result message.
-func loadLocalDebt(cmd *cobra.Command) ([]localdebt.Record, error) {
+//
+// res is filled by the read (see localdebt.ReadResult).
+func loadLocalDebt(cmd *cobra.Command, res *localdebt.ReadResult) ([]localdebt.Record, error) {
 	dir, err := debtStoreDir(cmd)
 	if err != nil {
 		return nil, err
 	}
-	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr()})
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{Writer: cmd.ErrOrStderr(), Result: res})
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
 	}
@@ -268,7 +269,33 @@ var hydrateDebtListIDs = hydrateDebtIDs
 // limit is --max: when positive, the sorted selection is truncated to its first
 // limit ids BEFORE pass 2, so at most limit records are hydrated — the same
 // place selectOpenIDs applies `debt resolve --max`. 0 is no cap.
+//
+// A read that could not finish a conversion is told on stderr by the command
+// (noteConversionUnfinished), so a JSON stdout (`debt group`, `debt validate`)
+// stays one document. `debt list` calls readDebtForList and places the note
+// itself.
 func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit int) ([]localdebt.Record, error) {
+	var res localdebt.ReadResult
+	recs, err := readDebtForList(cmd, f, sortKey, limit, &res)
+	if err != nil {
+		return nil, err
+	}
+	if res.ConversionUnfinished {
+		noteConversionUnfinished(cmd.ErrOrStderr())
+	}
+	return recs, nil
+}
+
+// noteConversionUnfinished is the command's own word that a read could not
+// finish a conversion (TD dec3579b5ad9cce8). localdebt writes one diagnostic
+// line when that happens, but a reader of the listing need not see it, and the
+// items it shows may count a record twice.
+func noteConversionUnfinished(w io.Writer) {
+	_, _ = fmt.Fprintln(w, "Note: this store holds a conversion that could not be finished, so some items may be counted twice; run `atcr debt convert` on it to finish the conversion.")
+}
+
+// readDebtForList is selectDebtForList with the read result handed back in res.
+func readDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit int, res *localdebt.ReadResult) ([]localdebt.Record, error) {
 	dir, err := debtStoreDir(cmd)
 	if err != nil {
 		return nil, err
@@ -288,7 +315,7 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit i
 	// the two-pass path: hydrating N ids beats materializing the whole store to
 	// render N rows.
 	if f == (debtFilter{}) && limit == 0 {
-		recs, err := loadLocalDebt(cmd)
+		recs, err := loadLocalDebt(cmd, res)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +325,8 @@ func selectDebtForList(cmd *cobra.Command, f debtFilter, sortKey string, limit i
 		return recs, nil
 	}
 
-	sums, err := localdebt.ReadSummaries(dir, opts)
+	// Only pass 1 reports the read result: it is the read that selects.
+	sums, err := localdebt.ReadSummaries(dir, localdebt.ReadOpts{Writer: opts.Writer, Result: res})
 	if err != nil {
 		return nil, fmt.Errorf("read local debt store: %w", err)
 	}
@@ -443,13 +471,14 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 		return usageError(fmt.Errorf("invalid --max %d: expected a non-negative number", limit))
 	}
 
-	recs, err := selectDebtForList(cmd, debtFilter{
+	var res localdebt.ReadResult
+	recs, err := readDebtForList(cmd, debtFilter{
 		Severity:  mustFlag(cmd, "severity"),
 		Status:    mustFlag(cmd, "status"),
 		Category:  mustFlag(cmd, "category"),
 		Component: mustFlag(cmd, "component"),
 		Origin:    mustFlag(cmd, "origin"),
-	}, mustFlag(cmd, "sort"), limit)
+	}, mustFlag(cmd, "sort"), limit, &res)
 	if err != nil {
 		return err
 	}
@@ -457,20 +486,35 @@ func runDebtList(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	// The JSON branch comes before the empty-result message: a consumer parsing
 	// the stream must get [] for an empty store, never a human-readable line it
-	// would have to special-case.
+	// would have to special-case. For the same reason its unfinished-conversion
+	// note goes to stderr.
 	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+		if res.ConversionUnfinished {
+			noteConversionUnfinished(cmd.ErrOrStderr())
+		}
 		return renderDebtJSON(out, recs)
 	}
+	if err := renderDebtListing(cmd, out, recs); err != nil {
+		return err
+	}
+	if res.ConversionUnfinished {
+		noteConversionUnfinished(out)
+	}
+	return nil
+}
+
+// renderDebtListing writes `debt list`'s human-readable output: the table, or
+// the empty-result message.
+func renderDebtListing(cmd *cobra.Command, out io.Writer, recs []localdebt.Record) error {
 	if len(recs) == 0 {
 		// Name the store the way `debt add` does ("Added ... to <dir>."): an
 		// undifferentiated "nothing here" from the WRONG store reads exactly like
 		// an empty backlog, with exit code 0 either way — the silent failure
 		// debtStoreDir exists to prevent.
-		dir, _ := debtStoreDir(cmd) // resolved without error by selectDebtForList above
+		dir, _ := debtStoreDir(cmd) // resolved without error by readDebtForList
 		_, _ = fmt.Fprintf(out, "No matching technical-debt items in %s.\n", dir)
 		return nil
 	}
-
 	return renderDebtTable(out, recs)
 }
 
@@ -534,9 +578,13 @@ type debtView struct {
 	Confidence string
 }
 
+// viewOfRecord and viewOfSummary trim the stored severity (TD f97107c387a0d9b5):
+// the store keeps it verbatim, and a " HIGH " from a hand-edited or
+// foreign-written line would otherwise match no --severity and sort below LOW.
+// Both trim, so the two passes of `debt list` still select alike.
 func viewOfRecord(r localdebt.Record) debtView {
 	return debtView{
-		Severity: r.Severity, Status: r.Status, Category: r.Category,
+		Severity: strings.TrimSpace(r.Severity), Status: r.Status, Category: r.Category,
 		File: r.File, Line: r.Line, EstMinutes: r.EstMinutes, Date: debtRecordDate(r),
 		Origin: r.EffectiveOrigin(), Confidence: r.Confidence,
 	}
@@ -548,7 +596,7 @@ func viewOfSummary(s localdebt.Summary) debtView {
 		date = s.Timestamp[:10]
 	}
 	return debtView{
-		Severity: s.Severity, Status: s.Status, Category: s.Category,
+		Severity: strings.TrimSpace(s.Severity), Status: s.Status, Category: s.Category,
 		File: s.File, Line: s.Line, EstMinutes: s.EstMinutes, Date: date,
 		Origin: s.EffectiveOrigin(), Confidence: s.Confidence,
 	}
