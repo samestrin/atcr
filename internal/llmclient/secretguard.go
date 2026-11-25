@@ -41,7 +41,8 @@ var scanSecrets = payload.ScanPayloadContext
 // caller's slice and strings alone; block returns ErrSecretGuardBlocked when
 // anything is found or the scan could not be trusted, the fail-closed rule of
 // internal/fanout/secretguard.go. Neither a warning nor an error holds secret
-// material: only message indexes and rule kinds are printed.
+// material: only message indexes and rule kinds are printed. A text
+// inv.ScanCache already holds is not scanned again; its stored hits are used.
 func guardMessages(ctx context.Context, inv Invocation, messages []Message) ([]Message, error) {
 	from := inv.AlreadyGuardedMessages
 	if from < 0 || from > len(messages) {
@@ -70,7 +71,7 @@ func guardMessages(ctx context.Context, inv Invocation, messages []Message) ([]M
 		if text == "" {
 			return text, false
 		}
-		hits, err := scanSecrets(ctx, text, nil)
+		hits, err := inv.ScanCache.scan(ctx, text)
 		if err != nil {
 			scanErr = err
 		}

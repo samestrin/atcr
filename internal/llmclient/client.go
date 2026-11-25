@@ -162,6 +162,10 @@ type Invocation struct {
 	// ErrAlreadyGuardedMessages. Complete* sends Prompt as one message, so 1
 	// skips its scan and anything above 1 is that error.
 	AlreadyGuardedMessages int
+	// ScanCache, when set, holds the secret scan of each text Chat scanned
+	// without error, so a text re-sent on a later call is not scanned again.
+	// Nil scans every unguarded text on every call.
+	ScanCache *ScanCache
 }
 
 type message struct {
