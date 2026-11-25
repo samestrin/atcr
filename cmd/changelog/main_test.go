@@ -414,6 +414,58 @@ func TestAssemble_NewBulletsPass(t *testing.T) {
 	}
 }
 
+// TestAssemble_WrappedFragmentBulletKeepsWholeText is debt row
+// e97559e1f44fbf10: shipped fragments wrap their bullets over continuation
+// lines, so a wrapped-bullet fragment must assemble with every line intact
+// in the rendered section, and the consumed check must compare the whole
+// rejoined bullet, not just its first line.
+func TestAssemble_WrappedFragmentBulletKeepsWholeText(t *testing.T) {
+	// The four-line bullet as shipped by epic 147 T1 in
+	// changelog.d/fixed-assemble-allow-consumed-bool-spellings.md.
+	const wrapped = "- `changelog assemble --allow-consumed=True`, `=TRUE`, `=t`, `=F` (and every\n" +
+		"  other boolean spelling) now get the same usage error as `=false`, naming the\n" +
+		"  `--allow-consumed=<fragment-path>` spelling, instead of failing later with\n" +
+		"  \"not a fragment in this run\". (epic 147 T1)\n"
+	firstLine, _, _ := strings.Cut(wrapped, "\n")
+	dir := setup(t, baseChangelog, map[string]string{"fixed-bool-spellings.md": wrapped})
+	frag := filepath.Join(dir, "changelog.d", "fixed-bool-spellings.md")
+
+	// The rendered section keeps the full rejoined text, not the first line.
+	if code, _, stderr := runIn(dir, "--version", "1.0.0", "--date", "2026-11-01"); code != 0 {
+		t.Fatalf("code %d: %s", code, stderr)
+	}
+	got := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	want := "## [1.0.0] - 2026-11-01\n\n### Fixed\n\n" + strings.TrimSuffix(wrapped, "\n") + "\n\n## [0.5.0]"
+	if !strings.Contains(got, want) {
+		t.Errorf("rendered section lost wrapped text:\ngot:\n%s\nwant to contain:\n%s", got, want)
+	}
+	if _, err := os.Stat(frag); !os.IsNotExist(err) {
+		t.Errorf("fragment not removed: %v", err)
+	}
+
+	// The same wrapped fragment again is consumed: the whole rejoined bullet
+	// matches, so the next assemble refuses it and writes nothing.
+	writeFile(t, frag, wrapped)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
+	code, _, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02")
+	if code != 1 {
+		t.Fatalf("repeat: code %d, want 1: %s", code, stderr)
+	}
+	for _, want := range []string{frag, firstLine, "already in"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("repeat stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	assertUntouched(t, dir, before, frag)
+
+	// A fragment holding only the first line of the consumed bullet is a new
+	// bullet, not a repeat: a truncating splitBullets would refuse it.
+	writeFile(t, frag, firstLine+"\n")
+	if code, _, stderr := runIn(dir, "--version", "1.1.0", "--date", "2026-11-02"); code != 0 {
+		t.Errorf("first-line-only fragment: code %d, want 0: %s", code, stderr)
+	}
+}
+
 // TestAssemble_AllowConsumedReleasesARepeatedBullet is debt row
 // bcc4c5e9e4d3fa67: a bullet that legitimately repeats an earlier release's
 // entry is refused by default, the refusal names both causes, and
