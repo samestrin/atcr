@@ -872,6 +872,52 @@ func TestLinearAutoFix_WaitingJobIsCancellable(t *testing.T) {
 	assert.Empty(t, gh.posted())
 }
 
+// Epic 140 T2: runAutoFix reads the daily token cap once, at the start of the
+// job. A cap changed after that read (SetDailyTokenCap is startup-only; the
+// clock hook stands in for a stray late call) moves neither the serial-lock
+// decision nor the cap the refusal text names.
+func TestLinearAutoFix_DailyTokenCapReadOncePerJob(t *testing.T) {
+	cases := map[string]struct {
+		start, late int
+		tokens      int
+		locked      bool
+		comment     string
+	}{
+		"refusal names the cap read at the start": {start: 100, late: 50, tokens: 100, locked: true, comment: "(100 tokens per UTC day)"},
+		"no cap at the start takes no lock":       {start: 0, late: 100, tokens: 0, locked: false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			fixer := &fakeFixer{}
+			h, gh, _ := newAutoFixHarness(t, &fakeLookup{}, fixer, 5)
+			a := h.runner.AutoFix
+			a.State.SetDailyTokenCap(c.start)
+			if c.tokens > 0 {
+				require.NoError(t, a.State.AddTokens(c.tokens, time.Now()))
+			}
+			var locked bool
+			a.Now = func() time.Time {
+				locked = len(a.serial) == 1
+				a.State.SetDailyTokenCap(c.late)
+				return time.Now()
+			}
+
+			_ = h.runner.runAutoFix(context.Background(), "iss-1", "st-fix", widgetPR(), AutoFixTarget{Repo: "acme/widget", Number: 7})
+
+			assert.Equal(t, c.locked, locked, "the serial-lock decision uses the cap read at the start")
+			if c.comment == "" {
+				assert.Empty(t, gh.posted())
+				assert.Len(t, fixer.runs(), 1)
+				return
+			}
+			assert.Empty(t, fixer.runs())
+			comments := gh.posted()
+			require.Len(t, comments, 1)
+			assert.Contains(t, comments[0], c.comment)
+		})
+	}
+}
+
 // Epic 135 T4: with no daily token cap, auto-fix jobs for two pull requests
 // still run at once.
 func TestLinearAutoFix_NoDailyTokenCapRunsJobsAtOnce(t *testing.T) {

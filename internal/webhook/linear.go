@@ -236,7 +236,8 @@ func (r *LinearRunner) autoFixJob(issue, state string) (Job, bool) {
 // Under a daily token cap one lock is held from the claim until the fixer
 // returns: a job is charged only when it finishes, so a claim made while
 // another job runs would check the cap against a total missing that job's
-// spend. Without a token cap jobs run at once.
+// spend. Without a token cap jobs run at once. The cap is read once, before
+// the lock: the lock decision and the refusal text name the same value.
 func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr linear.PR, t AutoFixTarget) error {
 	a := r.AutoFix
 	label := t.Repo + "#" + strconv.Itoa(t.Number)
@@ -252,7 +253,8 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 	if a.Now != nil {
 		now = a.Now
 	}
-	if a.State.DailyTokenCap() > 0 {
+	tokenCap := a.State.DailyTokenCap()
+	if tokenCap > 0 {
 		if err := a.lockSerial(ctx); err != nil {
 			return fmt.Errorf("webhook: auto-fix of %s: waiting for the running job: %w", label, err)
 		}
@@ -266,7 +268,7 @@ func (r *LinearRunner) runAutoFix(ctx context.Context, issue, state string, pr l
 		return r.refuseAutoFix(ctx, issue, label, pr, "daily cap reached", text, err)
 	case errors.Is(err, ErrAutoFixDailyTokenCap):
 		text := fmt.Sprintf("ATCR auto-fix did not run for %s: daily token cap reached (%d tokens per UTC day). "+
-			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, a.State.DailyTokenCap())
+			"Move the Linear issue to the auto-fix status again tomorrow to retry.", label, tokenCap)
 		return r.refuseAutoFix(ctx, issue, label, pr, "daily token cap reached", text, err)
 	case err != nil:
 		return fmt.Errorf("linear issue %s: %w", issue, err)
