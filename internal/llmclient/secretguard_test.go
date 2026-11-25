@@ -288,3 +288,128 @@ func TestChat_SecretGuardListsEachMessageOnce(t *testing.T) {
 	assert.EqualValues(t, 0, hits.Load())
 	assert.Contains(t, err.Error(), "2 secret(s) [aws-access-token] in message 1;")
 }
+
+// completeVariants runs each single-shot entry point, so every Complete*
+// test covers all three (row 819f83f94a4cca42).
+var completeVariants = []struct {
+	name string
+	call func(c *Client, inv Invocation) error
+}{
+	{"Complete", func(c *Client, inv Invocation) error {
+		_, err := c.Complete(context.Background(), inv)
+		return err
+	}},
+	{"CompleteWithUsage", func(c *Client, inv Invocation) error {
+		_, _, _, err := c.CompleteWithUsage(context.Background(), inv)
+		return err
+	}},
+	{"CompleteWithMeta", func(c *Client, inv Invocation) error {
+		_, err := c.CompleteWithMeta(context.Background(), inv)
+		return err
+	}},
+}
+
+func TestComplete_SecretGuardBlockRefusesBeforeSending(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, _ := guardServer(t)
+			stubScanner(t, nil)
+			inv := guardInv(srv, "block", 0)
+			inv.Prompt = "key " + chatAWSKey
+
+			err := v.call(fastRetry(srv.Client()), inv)
+			require.ErrorIs(t, err, ErrSecretGuardBlocked)
+			assert.Contains(t, err.Error(), "aws-access-token")
+			assert.NotContains(t, err.Error(), chatAWSKey, "the error never carries the secret")
+			assert.EqualValues(t, 0, hits.Load(), "no request is sent")
+		})
+	}
+}
+
+func TestComplete_SecretGuardBlockFailsClosedOnScanError(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, _ := guardServer(t)
+			stubScanner(t, payload.ErrSecretScanFailed)
+			inv := guardInv(srv, "block", 0)
+			inv.Prompt = "clean"
+
+			err := v.call(fastRetry(srv.Client()), inv)
+			require.ErrorIs(t, err, ErrSecretGuardBlocked)
+			require.ErrorIs(t, err, payload.ErrSecretScanFailed)
+			assert.EqualValues(t, 0, hits.Load())
+		})
+	}
+}
+
+func TestComplete_SecretGuardRedactSendsThePlaceholder(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, body := guardServer(t)
+			stubScanner(t, nil)
+			inv := guardInv(srv, "redact", 0)
+			inv.Prompt = "key " + chatAWSKey
+
+			require.NoError(t, v.call(fastRetry(srv.Client()), inv))
+			assert.EqualValues(t, 1, hits.Load())
+			assert.NotContains(t, *body, chatAWSKey)
+			assert.Contains(t, *body, payload.SecretPlaceholder)
+		})
+	}
+}
+
+func TestComplete_SecretGuardWarnSendsUnchanged(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, body := guardServer(t)
+			scanned := stubScanner(t, nil)
+			inv := guardInv(srv, "warn", 0)
+			inv.Prompt = "key " + chatAWSKey
+
+			require.NoError(t, v.call(fastRetry(srv.Client()), inv))
+			assert.Equal(t, []string{inv.Prompt}, *scanned)
+			assert.EqualValues(t, 1, hits.Load())
+			assert.Contains(t, *body, chatAWSKey)
+		})
+	}
+}
+
+// Unset and off never scan, and a caller that already guarded the prompt
+// (AlreadyGuardedMessages 1, as fanout sets) is not scanned twice.
+func TestComplete_SecretGuardSkipsOffAndGuardedPrompts(t *testing.T) {
+	for _, v := range completeVariants {
+		for _, tc := range []struct {
+			policy  string
+			guarded int
+		}{{"", 0}, {"off", 0}, {"block", 1}} {
+			t.Run(v.name+"/"+tc.policy, func(t *testing.T) {
+				srv, hits, body := guardServer(t)
+				scanned := stubScanner(t, nil)
+				inv := guardInv(srv, tc.policy, tc.guarded)
+				inv.Prompt = "key " + chatAWSKey
+
+				require.NoError(t, v.call(fastRetry(srv.Client()), inv))
+				assert.Empty(t, *scanned)
+				assert.EqualValues(t, 1, hits.Load())
+				assert.Contains(t, *body, chatAWSKey)
+			})
+		}
+	}
+}
+
+func TestComplete_SecretGuardRejectsBadInput(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, _ := guardServer(t)
+			stubScanner(t, nil)
+			inv := guardInv(srv, "block", 2)
+			inv.Prompt = "clean"
+			require.ErrorIs(t, v.call(fastRetry(srv.Client()), inv), ErrAlreadyGuardedMessages)
+
+			inv = guardInv(srv, "maybe", 0)
+			inv.Prompt = "clean"
+			require.ErrorContains(t, v.call(fastRetry(srv.Client()), inv), "unknown secret_guard policy")
+			assert.EqualValues(t, 0, hits.Load())
+		})
+	}
+}

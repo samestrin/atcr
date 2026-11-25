@@ -3,9 +3,12 @@ package threatmap
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -559,4 +562,54 @@ func TestNewAgent_OwnNamePersonaFileWins(t *testing.T) {
 			require.Equal(t, "scout {{.Payload}}", a.Persona())
 		})
 	}
+}
+
+// awsKey is split so the source holds no literal credential.
+const awsKey = "AKIA" + "QYLPMN5HHHFPZAM2"
+
+// The mapper's Invocation carries the run's secret_guard policy, and an unset
+// policy is warn, as on the review path (fanout.secretGuardPolicy).
+func TestNewAgent_CarriesTheSecretGuardPolicy(t *testing.T) {
+	for set, want := range map[string]string{"": "warn", "block": "block", "redact": "redact", "off": "off"} {
+		llm := &fakeLLM{reply: `{"keep": ["a.go"]}`}
+		a, err := NewAgent("mapper", testRegistry(), registry.Settings{TimeoutSecs: 30, SecretGuard: set}, registry.PersonaDirs{}, llm)
+		require.NoError(t, err)
+		_, err = a.Complete(context.Background(), "p")
+		require.NoError(t, err)
+		require.Len(t, llm.invs, 1)
+		require.Equal(t, want, llm.invs[0].SecretGuard, "secret_guard %q", set)
+		require.Zero(t, llm.invs[0].AlreadyGuardedMessages, "nothing guarded the mapper prompt before")
+	}
+}
+
+// A threat-map run under secret_guard: block sends nothing when its prompt
+// holds a credential: the real client scans the rendered prompt before any
+// request, and Map reports the refusal so the caller keeps every file.
+func TestMap_SecretGuardBlockSendsNothing(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"keep\": [\"a.go\"]}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CHEAP_KEY", "test-key")
+	t.Setenv("PATH", t.TempDir()) // the built-in ruleset, not a host scanner
+
+	reg := testRegistry()
+	reg.Providers["cheap"] = registry.Provider{APIKeyEnv: "CHEAP_KEY", BaseURL: srv.URL}
+	a, err := NewAgent("mapper", reg, registry.Settings{TimeoutSecs: 30, SecretGuard: "block"}, registry.PersonaDirs{},
+		llmclient.New(llmclient.WithHTTPClient(srv.Client())))
+	require.NoError(t, err)
+
+	keep, err := Map(context.Background(), a, []string{"a.go", "aws_access_key_id = " + awsKey})
+	require.ErrorIs(t, err, llmclient.ErrSecretGuardBlocked)
+	require.NotContains(t, err.Error(), awsKey, "the error never carries the secret")
+	require.Nil(t, keep)
+	require.EqualValues(t, 0, hits.Load(), "no request is sent")
+
+	// The same run with clean paths does reach the provider.
+	keep, err = Map(context.Background(), a, []string{"a.go"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a.go"}, keep)
+	require.EqualValues(t, 1, hits.Load())
 }
