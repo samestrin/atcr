@@ -490,7 +490,10 @@ func assertUntouched(t *testing.T, dir, before string, frags ...string) {
 // usage error that writes and deletes nothing. Rows 439a3ad68980281a and
 // f0813cb41f90f007: the other boolean spellings (=false, =1, =0) are the same
 // mistake and get the same usage error naming --allow-consumed=<fragment-path>;
-// none of them can be a fragment name (<category>-<slug>.md).
+// none of them can be a fragment name (<category>-<slug>.md). Rows
+// cddedaf7d2ccf90b and 3a33081d52f27a43: every spelling strconv.ParseBool
+// accepts (=True, =TRUE, =t, =F, ...) is the same mistake, not just the
+// enumerated literals.
 func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 	for name, args := range map[string][]string{
 		"bare last":          {"--allow-consumed"},
@@ -499,6 +502,10 @@ func TestAssemble_AllowConsumedBareFlagIsAUsageError(t *testing.T) {
 		"explicit false":     {"--allow-consumed=false"},
 		"numeric one":        {"--allow-consumed=1"},
 		"numeric zero":       {"--allow-consumed=0"},
+		"capitalised True":   {"--allow-consumed=True"},
+		"uppercase TRUE":     {"--allow-consumed=TRUE"},
+		"short t":            {"--allow-consumed=t"},
+		"short F":            {"--allow-consumed=F"},
 		"empty value":        {"--allow-consumed="},
 		"space-separated":    {"--allow-consumed", "changelog.d/added-again1.md"},
 	} {
@@ -567,9 +574,12 @@ func TestAssemble_AllowConsumedReleasesExactlyTheNamedFragments(t *testing.T) {
 // 022caa5a9600ed5d: a relative --allow-consumed path resolves against the
 // working directory exactly like the fragment paths read from a relative
 // --dir, so the same relative spelling that names a fragment releases it,
-// and a path relative to --dir itself names no fragment.
+// and a path relative to --dir itself names no fragment. Rows 1d439c278c963dd9
+// and f105e358b5c5421e: the refused call must leave CHANGELOG.md and every
+// fragment untouched, so a write-before-validate regression fails here.
 func TestAssemble_AllowConsumedRelativePathResolvesLikeDir(t *testing.T) {
 	dir, a1, a2, fresh := consumedSetup(t)
+	before := readFile(t, filepath.Join(dir, "CHANGELOG.md"))
 	t.Chdir(dir)
 
 	// A name relative to --dir itself resolves against the working directory,
@@ -580,6 +590,7 @@ func TestAssemble_AllowConsumedRelativePathResolvesLikeDir(t *testing.T) {
 	if code != 1 || !strings.Contains(e.String(), "not a fragment") {
 		t.Fatalf("dir-relative name: code %d, want 1 naming no fragment:\n%s", code, e.String())
 	}
+	assertUntouched(t, dir, before, a1, a2, fresh)
 
 	// The working-directory-relative spelling matches the fragment paths
 	// read from --dir and releases exactly the named fragments.
