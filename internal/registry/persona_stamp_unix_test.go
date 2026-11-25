@@ -3,8 +3,10 @@
 package registry
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -65,6 +67,68 @@ func TestPersonaStamp_SwapToFIFOAfterLstatDoesNotBlock(t *testing.T) {
 			swapToFIFOAfterLstat(t, syscall.Mkfifo, viaSymlink)
 		})
 	}
+}
+
+// TD persona_stamp.go:116,127 (rows 705fc6fc10e64368, d5e5c16e9630f7a5,
+// c620143f636c9b62) — a symlink swapped in after the Lstat failed the open
+// with a bare ELOOP that did not say why, and nothing pinned O_NOFOLLOW: the
+// existing swap test only links to a FIFO. Here the link points at a regular
+// file holding a valid stamp, so a follow would read it. The reader must
+// refuse it at the open (ELOOP, not the later identity check) and name a
+// possible swap after the Lstat.
+func TestPersonaStamp_SwapToSymlinkAfterLstatIsRefused(t *testing.T) {
+	t.Run("symlink to a regular file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, PersonaStampFile)
+		require.NoError(t, os.WriteFile(path, []byte(`{"files":{}}`), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "other"), []byte(`{"files":{"a":"b"}}`), 0o600))
+
+		orig := personaStampLstat
+		t.Cleanup(func() { personaStampLstat = orig })
+		personaStampLstat = func(name string) (os.FileInfo, error) {
+			info, err := orig(name)
+			if err == nil && info.Mode().IsRegular() {
+				if rerr := os.Remove(name); rerr != nil {
+					t.Errorf("remove the stamp: %v", rerr)
+				} else if serr := os.Symlink("other", name); serr != nil {
+					t.Errorf("swap the stamp for a symlink: %v", serr)
+				}
+			}
+			return info, err
+		}
+
+		data, present, err := readPersonaStampFile(path)
+		require.True(t, present)
+		require.Nil(t, data)
+		require.ErrorIs(t, err, syscall.ELOOP, "O_NOFOLLOW must refuse the link at the open")
+		require.ErrorContains(t, err, "possible swap after lstat")
+		require.ErrorContains(t, err, path)
+	})
+}
+
+// TD persona_stamp.go:127 (rows 630bd41174d656f2, acb6ae90ded75dbf) — the
+// stamp is opened with O_NONBLOCK and the flag stays set for the read. On a
+// regular file it changes nothing, so a regular stamp opened with the same
+// flags reads whole, directly and through readPersonaStampFile.
+func TestPersonaStamp_NonBlockOpenReadsRegularStamp(t *testing.T) {
+	require.NotZero(t, openNoFollowNonBlock&syscall.O_NONBLOCK, "the stamp open must carry O_NONBLOCK")
+	dir := t.TempDir()
+	path := filepath.Join(dir, PersonaStampFile)
+	// Bigger than one read buffer, so a short nonblocking read would show.
+	want := []byte(`{"files":{"x":"` + strings.Repeat("y", 256<<10) + `"}}`)
+	require.NoError(t, os.WriteFile(path, want, 0o600))
+
+	f, err := os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
+	require.NoError(t, err)
+	got, err := io.ReadAll(f)
+	require.NoError(t, f.Close())
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+
+	data, present, err := readPersonaStampFile(path)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Equal(t, want, data)
 }
 
 // A unix without mkfifo skips the swap test rather than failing it: the hook
