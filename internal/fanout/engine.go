@@ -816,7 +816,13 @@ func (r *Result) parseFindings() []stream.Finding {
 	}
 	onStop := perChunk && len(r.chunkSalvagedOnStop) == len(r.chunkContents)
 	for i, c := range r.chunkContents {
-		if perChunk && r.chunkSalvaged[i] && (!onStop || !r.chunkSalvagedOnStop[i]) {
+		// Name the two per-bin facts the skip turns on: the bin salvaged only
+		// reasoning, and the bin finished on a stop reason. Guard each read by the
+		// slice alignment checks above so a missing or misaligned slice reads as
+		// "not salvaged" / "not on-stop".
+		binSalvaged := perChunk && r.chunkSalvaged[i]
+		binOnStop := onStop && r.chunkSalvagedOnStop[i]
+		if binSalvaged && !binOnStop {
 			continue
 		}
 		answer, _ := llmclient.SplitThink(c)
