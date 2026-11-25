@@ -54,6 +54,9 @@ type breakerProvider struct {
 	calls, fast map[string]int
 	// order is every real call's provider, in the order they were made.
 	order []string
+	// stall, when set, runs before a real call is recorded: a worker that won
+	// its lease but has not yet made its call, as a loaded runner deschedules it.
+	stall func(provider string)
 }
 
 func newBreakerProvider(clock *fakeUnitClock, down time.Duration) *breakerProvider {
@@ -68,6 +71,9 @@ func (c *breakerProvider) Complete(ctx context.Context, inv llmclient.Invocation
 		c.fast[inv.Model]++
 		c.mu.Unlock()
 		return "", &llmclient.CircuitOpenError{Provider: p}
+	}
+	if c.stall != nil {
+		c.stall(p)
 	}
 	c.mu.Lock()
 	c.calls[inv.Model]++
@@ -216,6 +222,7 @@ func TestBreakerRecovery_ProbeIsNotStarvedByAHealthyBacklog(t *testing.T) {
 	trippedBreaker(t, beta, clock, false)
 	c := newBreakerProvider(clock, 0)
 	c.took[beta] = 5 * time.Minute
+	c.stall = stallProbeUntilDrained(t, alpha, beta, 12)
 	var slots []Slot
 	for n := range 12 {
 		s := agentSlot(fmt.Sprintf("b%d", n))
@@ -243,6 +250,37 @@ func TestBreakerRecovery_ProbeIsNotStarvedByAHealthyBacklog(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, first, 0)
 	assert.Lessf(t, first, 4, "alpha's probe ran within the first few calls, not after beta's twelve (order %v)", c.order)
+}
+
+// stallProbeUntilDrained holds alpha's first call until beta has made n calls:
+// the schedule a loaded CI runner produced (PR #925 run 45285413080), where the
+// worker that leased alpha's probe was descheduled before it called and the
+// other worker drained beta's whole backlog, each call taking no real time.
+func stallProbeUntilDrained(t *testing.T, alpha, beta string, n int) func(string) {
+	t.Helper()
+	var mu sync.Mutex
+	betas, probed := 0, false
+	drained := make(chan struct{})
+	return func(p string) {
+		mu.Lock()
+		switch {
+		case p == beta:
+			if betas++; betas == n {
+				close(drained)
+			}
+			mu.Unlock()
+		case p == alpha && !probed:
+			probed = true
+			mu.Unlock()
+			select {
+			case <-drained:
+			case <-time.After(30 * time.Second):
+				t.Errorf("beta's backlog never drained while alpha's probe was held")
+			}
+		default:
+			mu.Unlock()
+		}
+	}
 }
 
 // Only a lease on which no chain member made a call waits for free. A primary
