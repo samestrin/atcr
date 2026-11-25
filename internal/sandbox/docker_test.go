@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeDockerExitBody returns a shell body for writeFakeDocker that exits with
@@ -521,6 +522,10 @@ exit 0`)
 	}
 }
 
+// requireBusyBoxTarEnv names the variable that, set to 1, makes seedCopyTars
+// fail when BusyBox tar is not covered instead of logging it.
+const requireBusyBoxTarEnv = "ATCR_REQUIRE_BUSYBOX_TAR"
+
 // seedCopyTars returns the tar implementations the host-side seed-copy tests run
 // against, each as a directory to prepend to PATH so `tar` resolves to it. The
 // container images differ: alpine ships BusyBox tar and golang (Debian) ships GNU
@@ -562,10 +567,11 @@ func seedCopyTars(t *testing.T) map[string]string {
 	return tars
 }
 
-// TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage pins the seedCopyTars doc
-// comment: BusyBox tar coverage is local-only, and CI cannot pick it up with
-// `apt install busybox` because Ubuntu's busybox has no --exclude.
-func TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage(t *testing.T) {
+// TestSeedCopyTars_DocPinsCIBusyBoxCoverage pins the seedCopyTars doc comment:
+// CI covers BusyBox tar with an Alpine-built busybox under
+// ATCR_REQUIRE_BUSYBOX_TAR, and cannot use `apt install busybox` because
+// Ubuntu's busybox has no --exclude.
+func TestSeedCopyTars_DocPinsCIBusyBoxCoverage(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "docker_test.go", nil, parser.ParseComments)
 	require.NoError(t, err)
@@ -576,9 +582,134 @@ func TestSeedCopyTars_DocPinsLocalOnlyBusyBoxCoverage(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, doc, "seedCopyTars must keep its doc comment")
-	for _, want := range []string{"local-only", "apt install busybox", "--exclude"} {
-		assert.Contains(t, doc, want, "the doc comment must say BusyBox tar coverage is local-only and why CI cannot get it from apt")
+	for _, want := range []string{"Alpine-built busybox", requireBusyBoxTarEnv, "apt install busybox", "--exclude"} {
+		assert.Contains(t, doc, want, "the doc comment must say how CI covers BusyBox tar and why it cannot get it from apt")
 	}
+}
+
+// seedCopyChildPATH returns a PATH dir holding only the host tools the host
+// seed copy needs, so a child test run sees no busybox unless one is added.
+func seedCopyChildPATH(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range []string{"tar", "sh", "find", "mkdir", "touch"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("no %s on PATH", tool)
+		}
+		require.NoError(t, os.Symlink(p, filepath.Join(dir, tool)))
+	}
+	return dir
+}
+
+// runSeedCopyChild re-runs TestWritableSetup_HostRunExcludesHeavyDirs in a
+// child test binary with PATH and ATCR_REQUIRE_BUSYBOX_TAR replaced.
+func runSeedCopyChild(t *testing.T, path, req string) (string, error) {
+	t.Helper()
+	env := []string{"PATH=" + path}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, requireBusyBoxTarEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	if req != "" {
+		env = append(env, requireBusyBoxTarEnv+"="+req)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWritableSetup_HostRunExcludesHeavyDirs$", "-test.count=1", "-test.v")
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestSeedCopyTars_RequiredBusyBoxFailsWhenNotCovered pins the CI assertion
+// (epic 130 T5): with ATCR_REQUIRE_BUSYBOX_TAR=1, as the heavy Go Test shard
+// sets it, a missing busybox or one without tar --exclude fails the seed-copy
+// tests instead of quietly running the host tar alone. Without the variable the
+// same PATH still passes on the host tar, so local runs keep working.
+func TestSeedCopyTars_RequiredBusyBoxFailsWhenNotCovered(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("seed-copy script is POSIX sh")
+	}
+	noExclude := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(noExclude, "busybox"),
+		[]byte("#!/bin/sh\necho 'Usage: tar -[cxt] [-f TARFILE] [-C DIR] [FILE]...'\nexit 1\n"), 0o755))
+
+	t.Run("absent and required fails", func(t *testing.T) {
+		out, err := runSeedCopyChild(t, seedCopyChildPATH(t), "1")
+		require.Error(t, err, "a required busybox that is absent must fail: %s", out)
+		assert.Contains(t, out, "busybox not on PATH")
+		assert.Contains(t, out, requireBusyBoxTarEnv+"=1")
+	})
+	t.Run("no --exclude and required fails", func(t *testing.T) {
+		out, err := runSeedCopyChild(t, noExclude+string(os.PathListSeparator)+seedCopyChildPATH(t), "1")
+		require.Error(t, err, "a required busybox without --exclude must fail: %s", out)
+		assert.Contains(t, out, "tar has no --exclude")
+		assert.Contains(t, out, requireBusyBoxTarEnv+"=1")
+	})
+	t.Run("absent and not required passes on host tar", func(t *testing.T) {
+		out, err := runSeedCopyChild(t, seedCopyChildPATH(t), "")
+		require.NoError(t, err, "without %s the host tar alone must pass: %s", requireBusyBoxTarEnv, out)
+		assert.Contains(t, out, "--- PASS: TestWritableSetup_HostRunExcludesHeavyDirs/host/")
+		assert.NotContains(t, out, "TestWritableSetup_HostRunExcludesHeavyDirs/busybox/")
+	})
+}
+
+// TestSeedCopyTars_HeavyShardProvisionsAlpineBusyBox pins the CI side of epic
+// 130 T5: the heavy Go Test shard, which runs this package, installs an
+// Alpine-built busybox from the default sandbox image's release, pinned by
+// digest, and sets ATCR_REQUIRE_BUSYBOX_TAR so the BusyBox seed-copy case
+// cannot drop out of CI. Ubuntu's apt busybox has no tar --exclude.
+func TestSeedCopyTars_HeavyShardProvisionsAlpineBusyBox(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	require.NoError(t, err)
+	var wf struct {
+		Jobs map[string]struct {
+			Strategy struct {
+				Matrix struct {
+					Include []map[string]string `yaml:"include"`
+				} `yaml:"matrix"`
+			} `yaml:"strategy"`
+			Steps []struct {
+				Name string            `yaml:"name"`
+				If   string            `yaml:"if"`
+				Run  string            `yaml:"run"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &wf))
+	job, ok := wf.Jobs["test"]
+	require.True(t, ok, "ci.yml must keep its sharded test job")
+
+	var heavy bool
+	for _, m := range job.Strategy.Matrix.Include {
+		if m["name"] == "heavy" {
+			heavy = strings.Contains(m["packages"], "./internal/sandbox/")
+		}
+	}
+	require.True(t, heavy, "the heavy shard must run ./internal/sandbox/...")
+
+	var provisioned, required bool
+	for i, s := range job.Steps {
+		if s.Name == "Run Tests" {
+			assert.Equal(t, "${{ matrix.name == 'heavy' && '1' || '' }}", s.Env[requireBusyBoxTarEnv],
+				"the heavy shard's test run must require BusyBox tar coverage")
+			required = true
+			continue
+		}
+		if !strings.Contains(s.Run, "busybox") {
+			continue
+		}
+		provisioned = true
+		assert.False(t, required, "busybox must be on PATH before the tests run (step %d)", i)
+		assert.Equal(t, "matrix.name == 'heavy'", s.If)
+		assert.Contains(t, s.Run, DefaultDockerConfig().Image+"@sha256:", "busybox must come from the default sandbox image's Alpine release, pinned by digest")
+		assert.Contains(t, s.Run, "busybox-static", "a dynamically linked Alpine busybox needs musl and does not run on the Ubuntu runner")
+		assert.Contains(t, s.Run, "--exclude", "the step must check the provisioned tar has --exclude")
+		assert.NotContains(t, s.Run, "apt", "Ubuntu's busybox has no tar --exclude")
+	}
+	assert.True(t, provisioned, "the test job must provision an Alpine-built busybox")
+	assert.True(t, required, "the test job must keep its Run Tests step")
 }
 
 // renderSeedScript points the fixed /src and /work paths of a setup script at
