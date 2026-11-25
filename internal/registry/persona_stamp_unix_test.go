@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -144,10 +145,10 @@ func TestPersonaStamp_SwapToFIFOSkipsWithoutMkfifo(t *testing.T) {
 	}
 }
 
-// swapToFIFOAfterLstat makes the FIFO and any skip on the test goroutine,
-// before the reader starts: the Lstat hook runs on the reader goroutine, where
-// t.Skip and require would end only that goroutine. The hook just swaps and
-// reports a failed swap with t.Errorf.
+// swapToFIFOAfterLstat does all its test work on the test goroutine: the FIFO,
+// any skip, the swap and every require. The Lstat hook runs on the reader
+// goroutine, where t.Skip and require would end only that goroutine, so it
+// only Lstats, tells the test goroutine, and waits for the swap to finish.
 func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSymlink bool) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, PersonaStampFile)
@@ -156,23 +157,16 @@ func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSy
 	if err := mkfifo(fifo, 0o600); err != nil {
 		t.Skipf("mkfifo unsupported: %v", err)
 	}
-	swap := func(name string) error { return os.Rename(fifo, name) }
-	if viaSymlink {
-		swap = func(name string) error {
-			if err := os.Remove(name); err != nil {
-				return err
-			}
-			return os.Symlink("fifo", name)
-		}
-	}
 
+	lstated := make(chan struct{})
+	release := make(chan struct{})
+	// A require failing during the swap must not leave the hook waiting.
+	releaseHook := sync.OnceFunc(func() { close(release) })
+	defer releaseHook()
 	hook := func(name string) (os.FileInfo, error) {
 		info, err := os.Lstat(name)
-		if err == nil && info.Mode().IsRegular() {
-			if serr := swap(name); serr != nil {
-				t.Errorf("swap the stamp for a FIFO: %v", serr)
-			}
-		}
+		close(lstated)
+		<-release
 		return info, err
 	}
 
@@ -188,6 +182,20 @@ func swapToFIFOAfterLstat(t *testing.T, mkfifo func(string, uint32) error, viaSy
 		_, present, err := readPersonaStampFileWith(path, hook)
 		done <- result{present, err}
 	}()
+
+	select {
+	case <-lstated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reader never reached the Lstat")
+	}
+	if viaSymlink {
+		require.NoError(t, os.Remove(path))
+		require.NoError(t, os.Symlink("fifo", path))
+	} else {
+		require.NoError(t, os.Rename(fifo, path))
+	}
+	releaseHook()
+
 	select {
 	case r := <-done:
 		require.True(t, r.present)
