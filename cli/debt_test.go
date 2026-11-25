@@ -210,6 +210,7 @@ func TestDebtStoreFlag_RejectsTraversalAndSystemDirs(t *testing.T) {
 	climb := strings.Repeat("../", 64)
 	cases := map[string]string{
 		"traversal":        climb + "etc/atcr/debt",
+		"home traversal":   "~/" + climb + "etc/atcr/debt",
 		"embedded parent":  "store/" + climb + "etc/atcr/debt",
 		"system directory": "/etc/atcr/debt",
 	}
@@ -275,6 +276,28 @@ func TestDebtStoreFlag_AcceptsAParentRelativeDir(t *testing.T) {
 			require.Error(t, err, "%s /etc/x is still refused", flag)
 			assert.Equal(t, exitUsage, exitCode(err))
 			assert.Contains(t, err.Error(), "system directories")
+		})
+	}
+}
+
+// Row c27181552b65975d: a multi-level climb to an ordinary directory remains
+// legal too; only the resolved absolute path's system-directory guard applies.
+func TestDebtStoreFlag_AcceptsAMultiLevelParentRelativeDir(t *testing.T) {
+	base := t.TempDir()
+	work := filepath.Join(base, "one", "two", "work")
+	require.NoError(t, os.MkdirAll(filepath.Join(work, ".git"), 0o755))
+	t.Chdir(work)
+	store := writeLocalDebt(t)
+	target := filepath.Join(base, "x")
+	require.NoError(t, os.Rename(store, target))
+
+	for _, flag := range []string{"--store", "--dir"} {
+		t.Run(flag, func(t *testing.T) {
+			out, err := runDebt(t, "list", flag, "../../../x", "--json")
+			require.NoError(t, err, "%s ../../../x is accepted", flag)
+			var listed []localdebt.Record
+			require.NoError(t, json.Unmarshal([]byte(out), &listed))
+			assert.Len(t, listed, len(debtSampleRecords()), "and reads the store at ../../../x")
 		})
 	}
 }
