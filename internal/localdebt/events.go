@@ -167,8 +167,10 @@ func (p *itemsPrep) ensure(items string) {
 
 // prepareItemsLocked ships items/.gitignore if missing and sweeps crash
 // leftovers before a new temp is created. The caller holds the store lock, and
-// every temp write happens under that same lock, so any leftover seen here
-// belongs to a dead process (a SIGKILL skips the deferred remove). Like
+// every temp write happens under that same lock, so on the unix and Windows
+// kernel locks any leftover seen here belongs to a dead process (a SIGKILL skips
+// the deferred remove). The legacy mkdir lock can be reclaimed from a live
+// holder, so there the sweep keeps temps younger than eventTempSweepMinAge. Like
 // sweepStaleTemps (store.go), it runs on every lock hold that writes an event
 // (itemsPrep) and removal is best-effort: readers skip temps regardless, and a
 // failed remove is retried by the next hold. Failures are left to CreateTemp to
@@ -179,17 +181,34 @@ func prepareItemsLocked(items string) {
 	sweepEventTemps(items, eventTempSweepMinAge)
 }
 
+// eventTempSweepMinAge is the age an event temp must reach before
+// prepareItemsLocked reaps it. It is zero for the unix and Windows kernel locks,
+// whose holder cannot lose the lock while it writes. The legacy mkdir lock
+// (lock_other.go) sets it to lockStale in an init: a waiter reclaims that lock
+// once its owner epoch is lockStale old, so a live holder's temp, created after
+// it took the lock, is always younger than that and survives the reclaimer's
+// sweep.
 var eventTempSweepMinAge time.Duration
 
+// sweepEventTemps removes the event temps in items whose modification time is at
+// least minAge old; a zero minAge removes every temp without a stat. A temp whose
+// age cannot be read is kept. Removal is best-effort, as in prepareItemsLocked.
 func sweepEventTemps(items string, minAge time.Duration) {
 	entries, err := readItemsDir(items)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() && isEventTempName(e.Name()) {
-			_ = os.Remove(filepath.Join(items, e.Name()))
+		if e.IsDir() || !isEventTempName(e.Name()) {
+			continue
 		}
+		if minAge > 0 {
+			info, err := e.Info()
+			if err != nil || time.Since(info.ModTime()) < minAge {
+				continue
+			}
+		}
+		_ = os.Remove(filepath.Join(items, e.Name()))
 	}
 }
 

@@ -41,6 +41,11 @@ var (
 	lockStale = 30 * time.Second
 )
 
+// A waiter reclaims this lock from a holder whose owner epoch is lockStale old,
+// even while that holder is still writing, so the reclaimer's event temp sweep
+// must spare temps younger than that (eventTempSweepMinAge, events.go).
+func init() { eventTempSweepMinAge = lockStale }
+
 // withLock acquires a cross-process lock directory under dir and executes fn.
 func withLock(dir, session string, fn func() error) error {
 	lockDir := filepath.Join(dir, lockSubdir)
