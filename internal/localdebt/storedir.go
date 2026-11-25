@@ -81,24 +81,38 @@ func projectStoreDir(root, v string) (string, error) {
 	if err := containedIn(root, dir); err != nil {
 		return reject(err.Error())
 	}
-	projectStores.Store(projectStoreKey(dir), root)
+	registerProjectStore(dir, root, filepath.FromSlash(slashed))
 	return dir, nil
 }
 
 // projectStores maps each directory projectStoreDir has handed out (keyed by
-// projectStoreKey) to the repository root it must stay inside, so withLock can
-// re-check containment at write time without every caller passing the root along.
+// projectStoreKey and by projectStoreRealKey) to its projectStore, so withLock
+// can re-check containment at write time without every caller passing the root
+// along. Read it only through projectStoreFor and drop entries through
+// forgetProjectStore.
 //
-// The map has no eviction: re-resolving a store replaces its entry, so it grows
-// only with the number of distinct project-store paths a process resolves, which
-// is one per repository in practice. No pruning is done (EST-8389 Q3).
+// The map has no automatic eviction: re-resolving a store replaces its entries,
+// so it grows only with the number of distinct project-store paths a process
+// resolves, which is one per repository (two keys) in practice. No pruning is done
+// (EST-8389 Q3); tests drop their entries with forgetProjectStore.
 var projectStores sync.Map
 
-// projectStoreKey is the projectStores key for dir: the cleaned absolute path, so
-// a store resolved against a relative root and looked up by its absolute spelling
-// (or the reverse) is one entry, not two (row 7a03d6351e9f221a). Every Store,
-// Load and Delete goes through it. If the working directory cannot be read the
-// cleaned path is used as-is.
+// projectStore is a projectStores value: the repository root a project-tier
+// store was resolved against, the store's path relative to that root, and the
+// symlink-resolved key it was also recorded under (see projectStoreRealKey).
+type projectStore struct {
+	root    string
+	rel     string
+	realKey string
+}
+
+// projectStoreKey is the primary projectStores key for dir: the cleaned absolute
+// path, so a store resolved against a relative root and looked up by its
+// absolute spelling (or the reverse) is one entry, not two (row
+// 7a03d6351e9f221a). It follows no symlink: a link swapped into the store path
+// after resolve must still find the entry, or checkStoreContainment would wave
+// the swap through. If the working directory cannot be read the cleaned path is
+// used as-is.
 func projectStoreKey(dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -107,18 +121,65 @@ func projectStoreKey(dir string) string {
 	return abs
 }
 
-// projectStoreFor returns the repository root recorded for dir.
-func projectStoreFor(dir string) (string, bool) {
-	root, ok := projectStores.Load(projectStoreKey(dir))
-	if !ok {
-		return "", false
+// projectStoreRealKey is the secondary key: projectStoreKey with every symlink
+// on its longest resolvable prefix followed, so a store registered through a
+// linked parent and reached by its real path (/var vs /private/var on macOS, a
+// bind mount), or the reverse, still finds its entry (row 573b54a6bb1024d7). The
+// part that does not resolve (not created yet, or under a removed root) is
+// joined on as written, so a store whose root has vanished still matches
+// through the root's surviving parent.
+func projectStoreRealKey(dir string) string {
+	abs := projectStoreKey(dir)
+	rest := ""
+	for p := abs; ; {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
 	}
-	return root.(string), true
 }
 
-// forgetProjectStore drops dir's entry.
+// registerProjectStore records dir under both keys.
+func registerProjectStore(dir, root, rel string) {
+	ps := projectStore{root: root, rel: rel, realKey: projectStoreRealKey(dir)}
+	projectStores.Store(projectStoreKey(dir), ps)
+	projectStores.Store(ps.realKey, ps)
+}
+
+// projectStoreFor returns the projectStore recorded for dir and whether there is
+// one, trying the primary key first and the symlink-resolved key second. An
+// entry of any other type is an error rather than a panic on the write path
+// (row 9ffc484fcafdf7c1).
+func projectStoreFor(dir string) (projectStore, bool, error) {
+	v, ok := projectStores.Load(projectStoreKey(dir))
+	if !ok {
+		if v, ok = projectStores.Load(projectStoreRealKey(dir)); !ok {
+			return projectStore{}, false, nil
+		}
+	}
+	ps, isStore := v.(projectStore)
+	if !isStore {
+		return projectStore{}, true, fmt.Errorf("localdebt store %s: malformed project-store registry entry (%T)", filepath.Base(dir), v)
+	}
+	return ps, true, nil
+}
+
+// forgetProjectStore drops dir's projectStores entries: both keys it was
+// registered under, even when a link has since changed what dir resolves to.
 func forgetProjectStore(dir string) {
-	projectStores.Delete(projectStoreKey(dir))
+	key := projectStoreKey(dir)
+	if v, ok := projectStores.Load(key); ok {
+		if ps, isStore := v.(projectStore); isStore {
+			projectStores.Delete(ps.realKey)
+		}
+	}
+	projectStores.Delete(key)
+	projectStores.Delete(projectStoreRealKey(dir))
 }
 
 // afterContainmentCheck runs between withLock's pre-lock containment check and
@@ -135,11 +196,11 @@ var afterContainmentCheck = func() {}
 // and each open inside fn, which only an os.Root anchored at the repository root
 // would close.
 func checkStoreContainment(dir string) error {
-	root, ok := projectStores.Load(projectStoreKey(dir))
-	if !ok {
-		return nil
+	ps, ok, err := projectStoreFor(dir)
+	if err != nil || !ok {
+		return err
 	}
-	if err := containedIn(root.(string), dir); err != nil {
+	if err := containedIn(ps.root, dir); err != nil {
 		return fmt.Errorf("localdebt store %s: %w", filepath.Base(dir), err)
 	}
 	return nil

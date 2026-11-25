@@ -114,7 +114,7 @@ func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.
 	require.NoError(t, os.Mkdir(root, 0o755))
 	dir, err := projectStoreDir(root, "debt")
 	require.NoError(t, err)
-	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+	t.Cleanup(func() { forgetProjectStore(dir) })
 	require.NoError(t, os.Remove(root))
 
 	err = ensureStoreDir(dir)
@@ -134,7 +134,7 @@ func TestEnsureStoreDir_ProjectTierRootReplacedByAFileIsRefused(t *testing.T) {
 	require.NoError(t, os.Mkdir(root, 0o755))
 	dir, err := projectStoreDir(root, "debt")
 	require.NoError(t, err)
-	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+	t.Cleanup(func() { forgetProjectStore(dir) })
 	require.NoError(t, os.Remove(root))
 	require.NoError(t, os.WriteFile(root, []byte("not a repo\n"), 0o600))
 
@@ -159,7 +159,7 @@ func TestProjectStores_KeyedByAbsolutePath(t *testing.T) {
 	dir, err := projectStoreDir("rel-repo", "debt")
 	require.NoError(t, err)
 	require.False(t, filepath.IsAbs(dir), "precondition: the store was resolved against a relative root")
-	t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+	t.Cleanup(func() { forgetProjectStore(dir) })
 
 	absDir, err := filepath.Abs(dir)
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestEnsureStoreDir_ProjectTierStoreUnderLiveRootIsCreated(t *testing.T) {
 	for _, v := range []string{"debt", "docs/planning/debt"} {
 		dir, err := projectStoreDir(root, v)
 		require.NoError(t, err)
-		t.Cleanup(func() { projectStores.Delete(projectStoreKey(dir)) })
+		t.Cleanup(func() { forgetProjectStore(dir) })
 
 		require.NoError(t, ensureStoreDir(dir), v)
 		info, err := os.Stat(dir)
@@ -259,7 +259,8 @@ func TestProjectStores_KeyedThroughSymlinks(t *testing.T) {
 	t.Cleanup(func() { forgetProjectStore(dir) })
 
 	realDir := filepath.Join(real, "repo", "debt")
-	_, ok := projectStoreFor(realDir)
+	_, ok, err := projectStoreFor(realDir)
+	require.NoError(t, err)
 	assert.True(t, ok, "the real spelling must find the entry registered through the link")
 
 	require.NoError(t, os.Remove(filepath.Join(real, "repo")))
@@ -277,10 +278,12 @@ func TestForgetProjectStore(t *testing.T) {
 	root := t.TempDir()
 	dir, err := projectStoreDir(root, "debt")
 	require.NoError(t, err)
-	_, ok := projectStoreFor(dir)
+	_, ok, err := projectStoreFor(dir)
+	require.NoError(t, err)
 	require.True(t, ok)
 	forgetProjectStore(dir)
-	_, ok = projectStoreFor(dir)
+	_, ok, err = projectStoreFor(dir)
+	require.NoError(t, err)
 	assert.False(t, ok, "a forgotten store must not be found")
 }
 
