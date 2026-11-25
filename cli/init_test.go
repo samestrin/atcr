@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1713,21 +1714,27 @@ func TestInstallCommunityPersonas_RollbackSparesSwappedFileWithSameMtime(t *test
 	]`
 	dest := t.TempDir()
 	aYAML := filepath.Join(dest, "a.yaml")
+	var swap sync.Once
 	srv := plantingServer(t,
 		map[string]string{
 			"/index.json": index,
 			"/a.yaml":     communityUnitYAML,
+			"/a.md":       communityUnitMD,
 		},
 		"/c.yaml",
+		// The failing fetch may be retried; swap once, so a later swap cannot
+		// reuse the freed inode of the file this run wrote.
 		func() {
-			orig, err := os.Lstat(aYAML)
-			if !assert.NoError(t, err) {
-				return
-			}
-			tmp := filepath.Join(dest, "a.yaml.foreign")
-			assert.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
-			assert.NoError(t, os.Chtimes(tmp, orig.ModTime(), orig.ModTime()))
-			assert.NoError(t, os.Rename(tmp, aYAML))
+			swap.Do(func() {
+				orig, err := os.Lstat(aYAML)
+				if !assert.NoError(t, err) {
+					return
+				}
+				tmp := filepath.Join(dest, "a.yaml.foreign")
+				assert.NoError(t, os.WriteFile(tmp, []byte("FOREIGN A YAML"), 0o644))
+				assert.NoError(t, os.Chtimes(tmp, orig.ModTime(), orig.ModTime()))
+				assert.NoError(t, os.Rename(tmp, aYAML))
+			})
 		},
 	)
 
