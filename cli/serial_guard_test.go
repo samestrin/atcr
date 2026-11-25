@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,14 +29,88 @@ type seamViolation struct {
 	pos token.Position
 }
 
-// parallelSeamViolations returns, sorted by name, one entry per top-level function in
-// files that calls t.Parallel (anywhere in its body, nested function literals
-// included) and also writes a seam. A write is an assignment to the seam, its
-// address being taken, or a use of a package function that writes one, such
-// as stubVerifyRun; that last test runs to a fixed point, so a helper that
-// calls a seam-writing helper is itself a writer.
+// parallelSeamViolations returns, sorted by name, one entry per t.Parallel
+// call in a top-level function of files (nested function literals included)
+// that also writes a seam. A write is an assignment to the seam, taking its
+// address, or a use of a package function that writes one, such as
+// stubVerifyRun; writers are found to a fixed point, so a helper that calls a
+// seam-writing helper is itself a writer.
 func parallelSeamViolations(fset *token.FileSet, files []*ast.File) []seamViolation {
-	return nil
+	type fn struct {
+		name string
+		decl *ast.FuncDecl
+	}
+	var fns []fn
+	for _, f := range files {
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+				fns = append(fns, fn{fd.Name.Name, fd})
+			}
+		}
+	}
+
+	// uses reports whether body writes a seam directly or names a function
+	// already known to write one.
+	uses := func(body *ast.BlockStmt, writers map[string]bool) bool {
+		found := false
+		ast.Inspect(body, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch n := n.(type) {
+			case *ast.AssignStmt:
+				for _, lhs := range n.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && serialSeams[id.Name] {
+						found = true
+					}
+				}
+			case *ast.UnaryExpr:
+				if id, ok := n.X.(*ast.Ident); ok && n.Op == token.AND && serialSeams[id.Name] {
+					found = true
+				}
+			case *ast.Ident:
+				// A call or a function value. Method selectors land here too
+				// (Inspect visits Sel), matched by name since receiver types
+				// are not resolved without type checking.
+				if writers[n.Name] {
+					found = true
+				}
+			}
+			return !found
+		})
+		return found
+	}
+
+	writers := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for _, f := range fns {
+			if !writers[f.name] && uses(f.decl.Body, writers) {
+				writers[f.name] = true
+				changed = true
+			}
+		}
+	}
+
+	var out []seamViolation
+	for _, f := range fns {
+		if !writers[f.name] {
+			continue
+		}
+		ast.Inspect(f.decl.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Parallel" && len(call.Args) == 0 {
+				out = append(out, seamViolation{f.name, fset.Position(call.Pos())})
+				return false
+			}
+			return true
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].fn < out[j].fn })
+	return out
 }
 
 // TestPackageSeamSwapsStaySerial keeps the precondition every seam-swapping test
