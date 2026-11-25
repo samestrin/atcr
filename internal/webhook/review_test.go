@@ -383,12 +383,19 @@ func TestGitHubEscape_NeutralizesMentionsAndIssueRefs(t *testing.T) {
 
 // A finding title that names a user or an issue reaches the PR comment with
 // the mention and the reference broken, so posting it pings and links nobody.
+// Every #<digits> in a title is broken, even one GitHub would read after a
+// word character (bug#12); only the trusted heading keeps its PR reference.
 func TestSummarize_GitHubNeutralizesMentionsInTitles(t *testing.T) {
-	text := summarize("acme/widget#7", []reconcile.Finding{{Severity: "HIGH", Problem: "@octocat broke #12"}}, nil, githubFormat)
+	text := summarize("acme/widget#7", []reconcile.Finding{
+		{Severity: "HIGH", Problem: "@octocat broke #12"},
+		{Severity: "LOW", Problem: "regression from bug#12"},
+	}, nil, githubFormat)
 	assert.True(t, strings.HasPrefix(text, "**ATCR review of acme/widget#7**:"), "heading keeps the PR reference: %q", text)
 	assert.Contains(t, text, "[HIGH] @\u200boctocat broke #\u200b12")
+	assert.Contains(t, text, "[LOW] regression from bug#\u200b12")
 	assert.NotContains(t, text, "@octocat")
 	assert.NotContains(t, text, "#12")
+	assert.NotContains(t, text, "bug#12")
 }
 
 func TestFindingTitle(t *testing.T) {
