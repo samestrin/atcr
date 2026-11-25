@@ -124,9 +124,11 @@ func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	if !info.Mode().IsRegular() {
 		return nil, true, fmt.Errorf("%s: not a regular file (%s)", path, info.Mode().Type())
 	}
+	// The Lstat saw a regular file, so an open failure here (ELOOP from
+	// O_NOFOLLOW on a symlink, above all) most likely means a swap.
 	f, err := os.OpenFile(path, os.O_RDONLY|openNoFollowNonBlock, 0)
 	if err != nil {
-		return nil, true, err
+		return nil, true, fmt.Errorf("%s: open (possible swap after lstat): %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	opened, err := f.Stat()
@@ -136,6 +138,11 @@ func readPersonaStampFile(path string) (data []byte, present bool, err error) {
 	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
 		return nil, true, fmt.Errorf("%s: changed between lstat and open", path)
 	}
+	// O_NONBLOCK stays set for the read, and that is harmless: past the check
+	// above f is the regular file the Lstat saw, and the flag changes nothing
+	// for a regular file (a read never returns EAGAIN; it reads what is there
+	// or hits EOF). It only guarded the open against a FIFO, so no SetNonblock
+	// is needed.
 	data, err = io.ReadAll(io.LimitReader(f, maxPersonaStampBytes+1))
 	if err != nil {
 		return nil, true, err
