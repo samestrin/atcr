@@ -521,7 +521,10 @@ func TestCheckLoopbackPortsFree_DeadInterfaceAddressesCostOneTimeout(t *testing.
 
 func TestCheckLoopbackPortsFree_InterfaceProbesAreBounded(t *testing.T) {
 	// Concurrent probing is bounded: a host with many addresses does not open
-	// a socket per address at once. Every address is still probed.
+	// a socket per address at once. Every address is still probed. Each
+	// interface probe is held until loopbackProbeConcurrency of them are in
+	// flight; the test then waits briefly for one more. With the cap none can
+	// start, so the peak is exactly the cap; without it the rest start at once.
 	const n = 3*loopbackProbeConcurrency + 1
 	var addrs []net.Addr
 	for i := range n {
@@ -531,22 +534,53 @@ func TestCheckLoopbackPortsFree_InterfaceProbesAreBounded(t *testing.T) {
 	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
 	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "en0"}}, nil }
 	interfaceAddrs = func(net.Interface) ([]net.Addr, error) { return addrs, nil }
-	var inFlight, peak, dials atomic.Int32
+	var (
+		mu                      sync.Mutex
+		inFlight, peak, arrived int
+		dials                   atomic.Int32
+	)
+	full := make(chan struct{})
+	extra := make(chan struct{}, 1)
+	release := make(chan struct{})
 	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		dials.Add(1)
-		cur := inFlight.Add(1)
-		defer inFlight.Add(-1)
-		for {
-			old := peak.Load()
-			if cur <= old || peak.CompareAndSwap(old, cur) {
-				break
+		if strings.HasPrefix(addr, "192.168.1.") {
+			mu.Lock()
+			inFlight++
+			arrived++
+			peak = max(peak, inFlight)
+			a := arrived
+			mu.Unlock()
+			switch a {
+			case loopbackProbeConcurrency:
+				close(full)
+			case loopbackProbeConcurrency + 1:
+				extra <- struct{}{}
 			}
+			<-release
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
 		}
 		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
 	}
 
-	require.NoError(t, checkLoopbackPortsFree(context.Background(), []int{3000}))
-	assert.LessOrEqual(t, int(peak.Load()), loopbackProbeConcurrency, "no more than loopbackProbeConcurrency probes in flight")
+	done := make(chan error, 1)
+	go func() { done <- checkLoopbackPortsFree(context.Background(), []int{3000}) }()
+	select {
+	case <-full:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fewer than loopbackProbeConcurrency interface probes ever ran at once")
+	}
+	select {
+	case <-extra: // over the cap: the peak assertion below fails
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-done)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, loopbackProbeConcurrency, peak, "exactly loopbackProbeConcurrency probes in flight at the peak")
 	assert.Equal(t, int32(n+2), dials.Load(), "every address, plus 127.0.0.1 and ::1")
 }
 

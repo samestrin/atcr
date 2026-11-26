@@ -643,11 +643,10 @@ func checkLoopbackPortsFree(ctx context.Context, ports []int) error {
 		if len(live) == 0 {
 			continue
 		}
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("%w: %w", ErrOSLevelLoopbackCheckUnavailable, err)
-		}
 		// Probed together, so N dead tunnel addresses cost one
-		// loopbackDialTimeout rather than N.
+		// loopbackDialTimeout rather than N. A ctx that ends before or during
+		// the batch fails closed in judgeLoopbackProbe, which reads ctx after
+		// every probe.
 		errs := make([]error, len(live))
 		sem := make(chan struct{}, loopbackProbeConcurrency)
 		var wg sync.WaitGroup
