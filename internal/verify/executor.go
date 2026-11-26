@@ -54,6 +54,10 @@ var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption)
 	return fanout.NewEngine(cc, opts...)
 }
 
+// guardOutbound is the secret_guard scan the snippet path runs, a variable so a
+// test can stand in a hung scanner or one that returns too few texts.
+var guardOutbound = fanout.GuardOutbound
+
 // fixSnippetRadius is the number of lines read on each side of a finding's line to
 // give the executor real code context (Epic 7.0 snippet tier).
 const fixSnippetRadius = 30
@@ -384,7 +388,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				snippet = readFixSnippet(ctx, disp, sf, sl)
 				head, data = fixPromptSections(*f, snippet, ex)
 				var sent []string
-				sent, guardErr = fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: head}, {Label: "fix prompt", Text: data}})
+				sent, guardErr = guardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: head}, {Label: "fix prompt", Text: data}})
 				if guardErr == nil {
 					head, data = sent[0], sent[1]
 				}
@@ -401,7 +405,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					return "", "fix generation failed: " + guardErr.Error(), false, false
 				}
 				if smellRetry != "" {
-					sent, err := fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: smellRetry}})
+					sent, err := guardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: smellRetry}})
 					if err != nil {
 						return "", "fix generation failed: " + err.Error(), false, false
 					}
@@ -678,7 +682,7 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 	// unscanned (llmclient scans only Chat), so the prompt is guarded here and
 	// the returned text is what is sent. A block sends nothing and its error
 	// takes generateFixes' failure path to a FixWarning.
-	sent, err := fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: prompt}})
+	sent, err := guardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: prompt}})
 	if err != nil {
 		return "", false, false, err
 	}
