@@ -1486,12 +1486,17 @@ func swapGuardOutbound(t *testing.T, fn guardFunc) {
 }
 
 // hungScan is a secret scan that never finishes by itself: it returns only when
-// its context ends, or when the test is over so no goroutine outlives it.
+// its context ends, or when the test is over so no goroutine outlives it. Like
+// GuardOutbound it does not scan under off, which callExecutor gets for a
+// prompt generateFixes already guarded.
 func hungScan(t *testing.T) guardFunc {
 	t.Helper()
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	return func(ctx context.Context, _, _ string, _ []fanout.OutboundText) ([]string, error) {
+	return func(ctx context.Context, policy, _ string, texts []fanout.OutboundText) ([]string, error) {
+		if policy == secretGuardOff {
+			return passScan(texts), nil
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -1586,8 +1591,12 @@ func TestGenerateFixes_HungSmellRetryScanEndsAtTheFixDeadline(t *testing.T) {
 	assert.Equal(t, "fix generation failed: "+context.DeadlineExceeded.Error(), findings[0].FixWarning)
 }
 
-// shortScan returns one text fewer than it was given, with no error.
-func shortScan(_ context.Context, _, _ string, texts []fanout.OutboundText) ([]string, error) {
+// shortScan returns one text fewer than it was given, with no error; under off
+// it scans nothing, as GuardOutbound does.
+func shortScan(_ context.Context, policy, _ string, texts []fanout.OutboundText) ([]string, error) {
+	if policy == secretGuardOff {
+		return passScan(texts), nil
+	}
 	return passScan(texts)[:len(texts)-1], nil
 }
 
