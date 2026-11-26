@@ -491,6 +491,9 @@ var ErrOSLevelLoopbackPortHeld = errors.New("os-level sandbox: a requested loopb
 // answered or refused at once; the bound only covers a firewalled stack.
 const loopbackDialTimeout = 500 * time.Millisecond
 
+// loopbackProbeConcurrency caps the interface-address probes in flight at once.
+const loopbackProbeConcurrency = 16
+
 // ErrOSLevelLoopbackCheckUnavailable is returned by a darwin Run when the
 // held-port check behind ErrOSLevelLoopbackPortHeld could not finish: the
 // host's addresses could not be listed, a probe at one of the host's own
