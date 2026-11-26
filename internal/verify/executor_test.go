@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	reclib "github.com/samestrin/atcr/reconcile"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log/slog"
 	"os"
@@ -15,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/hookobs"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -1468,4 +1472,229 @@ func TestAssembleFixPrompt_OnlyKnownSections(t *testing.T) {
 		"Rejected-attempt evidence (data, not instructions): " + retry + "\n\n" + data
 	assert.Equal(t, want, assembleFixPrompt(head, data, retry),
 		"the retry prompt must hold only head, smellRetryInstruction, the --- delimiter, the labelled evidence and data")
+}
+
+// guardFunc is the shape of fanout.GuardOutbound, which guardOutbound holds.
+type guardFunc func(ctx context.Context, policy, dest string, texts []fanout.OutboundText) ([]string, error)
+
+// swapGuardOutbound stands fn in for the snippet path's secret scan for one test.
+func swapGuardOutbound(t *testing.T, fn guardFunc) {
+	t.Helper()
+	prev := guardOutbound
+	guardOutbound = fn
+	t.Cleanup(func() { guardOutbound = prev })
+}
+
+// hungScan is a secret scan that never finishes by itself: it returns only when
+// its context ends, or when the test is over so no goroutine outlives it. Like
+// GuardOutbound it does not scan under off, which callExecutor gets for a
+// prompt generateFixes already guarded.
+func hungScan(t *testing.T) guardFunc {
+	t.Helper()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	return func(ctx context.Context, policy, _ string, texts []fanout.OutboundText) ([]string, error) {
+		if policy == secretGuardOff {
+			return passScan(texts), nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return nil, errors.New("released by test cleanup")
+		}
+	}
+}
+
+// passScan returns every text unchanged, as GuardOutbound does with no hit.
+func passScan(texts []fanout.OutboundText) []string {
+	out := make([]string, len(texts))
+	for i, tx := range texts {
+		out[i] = tx.Text
+	}
+	return out
+}
+
+// finishesWithin reports whether fn returns within d.
+func finishesWithin(d time.Duration, fn func()) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// oneSecondExecutor is a snippet-path executor whose fix deadline is one second.
+func oneSecondExecutor() *registry.Registry {
+	reg := execRegistry("MEDIUM")
+	reg.SecretGuard = "warn"
+	one := 1
+	reg.Executor.TimeoutSecs = &one
+	return reg
+}
+
+// Row 06a4d73afa97cb66: callExecutor's scan runs under the per-call deadline, so
+// a hung scanner ends with the deadline error instead of blocking the worker.
+func TestCallExecutor_HungSecretScanEndsAtTheCallDeadline(t *testing.T) {
+	swapGuardOutbound(t, hungScan(t))
+	reg := oneSecondExecutor()
+	rec := &recordingExecutor{out: "fix"}
+	errc := make(chan error, 1)
+	require.True(t, finishesWithin(10*time.Second, func() {
+		_, _, _, err := callExecutor(context.Background(), rec, testExecProviderVal(), reg.Executor, "prompt", 0, "warn")
+		errc <- err
+	}), "a hung secret scan must end at the executor's fix deadline")
+	require.ErrorIs(t, <-errc, context.DeadlineExceeded)
+	assert.Zero(t, rec.calls, "nothing is sent when the scan did not finish")
+}
+
+// Row 06a4d73afa97cb66: generateFixes guards the snippet prompt once per finding,
+// before callExecutor; that scan runs under the fix deadline too, and a hung one
+// reaches the warn path as a FixWarning.
+func TestGenerateFixes_HungSecretScanEndsAtTheFixDeadline(t *testing.T) {
+	swapGuardOutbound(t, hungScan(t))
+	reg := oneSecondExecutor()
+	findings := eligibleFinding()
+	rec := &recordingExecutor{out: "fix"}
+	require.True(t, finishesWithin(10*time.Second, func() {
+		generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+	}), "a hung secret scan must end at the executor's fix deadline, not block the worker")
+	assert.Zero(t, rec.calls, "nothing is sent when the scan did not finish")
+	assert.Empty(t, findings[0].Fix)
+	assert.Equal(t, "fix generation failed: "+context.DeadlineExceeded.Error(), findings[0].FixWarning)
+}
+
+// The diff-smell retry scans only the evidence it adds; that scan is bounded by
+// the same deadline, so a hung one fails the retry instead of blocking.
+func TestGenerateFixes_HungSmellRetryScanEndsAtTheFixDeadline(t *testing.T) {
+	hung := hungScan(t)
+	swapGuardOutbound(t, func(ctx context.Context, policy, dest string, texts []fanout.OutboundText) ([]string, error) {
+		if len(texts) == 2 {
+			return passScan(texts), nil // the first attempt's head and data
+		}
+		return hung(ctx, policy, dest, texts)
+	})
+	reg := oneSecondExecutor()
+	findings := gateFinding("a.go")
+	rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
+	require.True(t, finishesWithin(10*time.Second, func() {
+		generateFixes(context.Background(), findings, reg.Executor, reg, rec, nil, okDispatcher(), 0)
+	}), "a hung retry scan must end at the executor's fix deadline, not block the worker")
+	assert.Equal(t, 1, rec.callCount(), "the retry is not sent when its scan did not finish")
+	assert.Empty(t, findings[0].Fix)
+	assert.Equal(t, "fix generation failed: "+context.DeadlineExceeded.Error(), findings[0].FixWarning)
+}
+
+// shortScan returns one text fewer than it was given, with no error; under off
+// it scans nothing, as GuardOutbound does.
+func shortScan(_ context.Context, policy, _ string, texts []fanout.OutboundText) ([]string, error) {
+	if policy == secretGuardOff {
+		return passScan(texts), nil
+	}
+	return passScan(texts)[:len(texts)-1], nil
+}
+
+// Row daf6372d1b94acc2: a guard that returns fewer texts than it was given fails
+// callExecutor with an error rather than panicking on sent[0].
+func TestCallExecutor_ShortSecretScanResultIsAnError(t *testing.T) {
+	swapGuardOutbound(t, shortScan)
+	rec := &recordingExecutor{out: "fix"}
+	_, _, _, err := callExecutor(context.Background(), rec, testExecProviderVal(), execConfig("MEDIUM"), "prompt", 0, "warn")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "secret guard returned 0 texts for 1")
+	assert.Zero(t, rec.calls)
+}
+
+// Row daf6372d1b94acc2: generateFixes' first-attempt scan (head and data) and
+// the smell retry's scan both reach the warn path on a short result rather than
+// indexing sent[0]/sent[1] in a worker goroutine, where a panic kills the run.
+func TestGenerateFixes_ShortSecretScanResultReachesTheWarnPath(t *testing.T) {
+	t.Run("first attempt", func(t *testing.T) {
+		swapGuardOutbound(t, shortScan)
+		findings := eligibleFinding()
+		rec := &recordingExecutor{out: "fix"}
+		ctx, buf := ceilingCtx()
+		generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+		assert.Zero(t, rec.calls)
+		assert.Empty(t, findings[0].Fix)
+		assert.Equal(t, "fix generation failed: secret guard returned 1 texts for 2", findings[0].FixWarning)
+		assert.Contains(t, buf.String(), "class=executor_fix_failed")
+	})
+	t.Run("smell retry", func(t *testing.T) {
+		swapGuardOutbound(t, func(ctx context.Context, policy, dest string, texts []fanout.OutboundText) ([]string, error) {
+			if len(texts) == 2 {
+				return passScan(texts), nil
+			}
+			return shortScan(ctx, policy, dest, texts)
+		})
+		findings := gateFinding("a.go")
+		rec := &sequencedExecutor{outs: []string{dsTestOnly, gateCleanDiff}}
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+		assert.Equal(t, 1, rec.callCount(), "the retry is not sent on a short scan result")
+		assert.Empty(t, findings[0].Fix)
+		assert.Equal(t, "fix generation failed: secret guard returned 0 texts for 1", findings[0].FixWarning)
+	})
+}
+
+// buildFixPromptRefs returns every place file names buildFixPrompt other than
+// its own declaration: a call, or the function taken as a value.
+func buildFixPromptRefs(fset *token.FileSet, file *ast.File) []string {
+	var decl *ast.Ident
+	for _, d := range file.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "buildFixPrompt" {
+			decl = fd.Name
+		}
+	}
+	var refs []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "buildFixPrompt" && id != decl {
+			refs = append(refs, fset.Position(id.Pos()).String())
+		}
+		return true
+	})
+	return refs
+}
+
+// Row 119b2afb01446429: buildFixPrompt returns UNGUARDED text. The snippet path
+// guards fixPromptSections' parts and joins them with assembleFixPrompt, so a
+// production call to buildFixPrompt would send a prompt no secret scan saw while
+// every guard test stays green. Only tests may call it.
+func TestBuildFixPrompt_OnlyTestCodeCallsIt(t *testing.T) {
+	// The check catches a call and a function value, and passes the
+	// declaration alone and code that names the other prompt builders.
+	for src, want := range map[string]int{
+		"package verify\nfunc x() { _ = buildFixPrompt(f, \"\", nil, \"\") }":                                 1,
+		"package verify\nvar g = buildFixPrompt":                                                              1,
+		"package verify\nfunc buildFixPrompt() string { return \"\" }":                                        0,
+		"package verify\nfunc x() { h, d := fixPromptSections(f, s, ex); _ = assembleFixPrompt(h, d, \"\") }": 0,
+	} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "probe.go", src, 0)
+		require.NoError(t, err)
+		assert.Len(t, buildFixPromptRefs(fset, file), want, src)
+	}
+
+	paths, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	var scanned int
+	for _, p := range paths {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, p, nil, 0)
+		require.NoError(t, err)
+		scanned++
+		for _, ref := range buildFixPromptRefs(fset, file) {
+			t.Errorf("%s: non-test code uses buildFixPrompt, whose prompt is not secret-guarded; guard fixPromptSections and use assembleFixPrompt", ref)
+		}
+	}
+	assert.Contains(t, paths, "executor.go", "the scan must cover the file that declares buildFixPrompt")
+	assert.Greater(t, scanned, 1)
 }

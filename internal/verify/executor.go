@@ -54,6 +54,10 @@ var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption)
 	return fanout.NewEngine(cc, opts...)
 }
 
+// guardOutbound is the secret_guard scan the snippet path runs, a variable so a
+// test can stand in a hung scanner or one that returns too few texts.
+var guardOutbound = fanout.GuardOutbound
+
 // fixSnippetRadius is the number of lines read on each side of a finding's line to
 // give the executor real code context (Epic 7.0 snippet tier).
 const fixSnippetRadius = 30
@@ -377,14 +381,17 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// guard inside generate scanned it again and, under warn or redact,
 			// printed the same warning twice; the retry now scans only the evidence
 			// it adds. A block fails every attempt with guardErr, sending nothing.
+			// Each scan runs under its own fix deadline, as the call does.
 			var head, data string
 			var guardErr error
 			if !agentPath {
 				sf, sl := fixTarget(*f)
 				snippet = readFixSnippet(ctx, disp, sf, sl)
 				head, data = fixPromptSections(*f, snippet, ex)
+				scanCtx, cancel := fixDeadline(ctx, ex, sharedTimeoutSecs)
 				var sent []string
-				sent, guardErr = fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: head}, {Label: "fix prompt", Text: data}})
+				sent, guardErr = guardFixPrompt(scanCtx, guard, head, data)
+				cancel()
 				if guardErr == nil {
 					head, data = sent[0], sent[1]
 				}
@@ -401,7 +408,9 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					return "", "fix generation failed: " + guardErr.Error(), false, false
 				}
 				if smellRetry != "" {
-					sent, err := fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: smellRetry}})
+					scanCtx, cancel := fixDeadline(ctx, ex, sharedTimeoutSecs)
+					sent, err := guardFixPrompt(scanCtx, guard, smellRetry)
+					cancel()
 					if err != nil {
 						return "", "fix generation failed: " + err.Error(), false, false
 					}
@@ -662,6 +671,35 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // has already guarded.
 const secretGuardOff = "off"
 
+// guardFixPrompt runs the secret_guard scan over texts and returns what may be
+// sent, one text per input. ctx carries the caller's fix deadline, so a hung
+// scanner ends there instead of holding a worker. A result of any other length
+// is an error for the warn path: indexing it would panic in a worker goroutine,
+// which no caller can recover, and kill the run.
+func guardFixPrompt(ctx context.Context, guard string, texts ...string) ([]string, error) {
+	out := make([]fanout.OutboundText, len(texts))
+	for i, t := range texts {
+		out[i] = fanout.OutboundText{Label: "fix prompt", Text: t}
+	}
+	sent, err := guardOutbound(ctx, guard, "the fix executor", out)
+	if err != nil {
+		return nil, err
+	}
+	if len(sent) != len(texts) {
+		return nil, fmt.Errorf("secret guard returned %d texts for %d", len(sent), len(texts))
+	}
+	return sent, nil
+}
+
+// fixDeadline scopes ctx to one executor round's deadline: the executor's own
+// fix_timeout when set, otherwise the resolved shared verify timeout (see
+// ExecutorConfig.EffectiveExecutorTimeoutSecs, which only consults
+// Settings.TimeoutSecs, so a partial Settings literal is sufficient here).
+func fixDeadline(ctx context.Context, ex *registry.ExecutorConfig, sharedTimeoutSecs int) (context.Context, context.CancelFunc) {
+	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
+	return context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+}
+
 // callExecutor invokes the executor model for one finding, applying a per-call
 // deadline scoped to this single call. The deadline is the executor's own
 // fix_timeout when set, otherwise the resolved shared verify timeout (600s
@@ -674,20 +712,17 @@ const secretGuardOff = "off"
 // The truncation and salvage bools are only ever true via the MetaCompleter path;
 // a Complete-only completer reports false for both.
 func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int, guard string) (string, bool, bool, error) {
-	// secret_guard (Epic 106.3): Complete and CompleteWithMeta send inv.Prompt
-	// unscanned (llmclient scans only Chat), so the prompt is guarded here and
-	// the returned text is what is sent. A block sends nothing and its error
-	// takes generateFixes' failure path to a FixWarning.
-	sent, err := fanout.GuardOutbound(ctx, guard, "the fix executor", []fanout.OutboundText{{Label: "fix prompt", Text: prompt}})
+	callCtx, cancel := fixDeadline(ctx, ex, sharedTimeoutSecs)
+	defer cancel()
+	// secret_guard (Epic 106.3): the prompt is guarded here, inside the per-call
+	// deadline so a hung scan cannot outlast it, and the returned text is what
+	// is sent. A block sends nothing and its error takes generateFixes' failure
+	// path to a FixWarning.
+	sent, err := guardFixPrompt(callCtx, guard, prompt)
 	if err != nil {
 		return "", false, false, err
 	}
 	prompt = sent[0]
-	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
-	// Settings literal is sufficient here.
-	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer cancel()
 	// Temperature is sent on every executor call (Epic 7.0.1): the resolver supplies
 	// the deterministic 0.0 default when temperature is unset, so fixes are
 	// predictable rather than inheriting the provider's own (often higher) default.

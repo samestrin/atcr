@@ -558,3 +558,73 @@ func TestParseExecutorResponse_EmptyFixStillErrorsPastADecoy(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty",
 		"a present-but-empty fix must still report emptiness, not a missing key")
 }
+
+// resultRecorder keeps every Result the engine returns so a test can see which
+// path the engine took.
+type resultRecorder struct {
+	inner   fanoutRunner
+	mu      sync.Mutex
+	results []fanout.Result
+}
+
+func (r *resultRecorder) Run(ctx context.Context, slots []fanout.Slot) []fanout.Result {
+	res := r.inner.Run(ctx, slots)
+	r.mu.Lock()
+	r.results = append(r.results, res...)
+	r.mu.Unlock()
+	return res
+}
+
+// Row 47ed83c571219e3f: invokeExecutor runs no scan of its own, so when the
+// engine degrades the agent-mode executor to single-shot (here: no dispatcher
+// reaches the engine) the prompt goes out through the real client's
+// CompleteWithMeta, which scans it under the Invocation's SecretGuard. On the
+// wire warn sends the credential, redact a placeholder, and block nothing,
+// with a named FixWarning; warn and redact say so in the run log.
+func TestGenerateFixes_AgentModeDegradedPromptSecretGuardOnTheWire(t *testing.T) {
+	for _, policy := range []string{"warn", "redact", "block"} {
+		t.Run(policy, func(t *testing.T) {
+			ws := &wireServer{}
+			srv := ws.start(t, `"{\"fix\": \"rotate the key\", \"explanation\": \"y\"}"`)
+			rec := &resultRecorder{}
+			prev := newFanoutEngine
+			newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption) fanoutRunner {
+				// invokeExecutor's own options, then the dispatcher taken away,
+				// so the engine degrades the tool agent to single-shot.
+				rec.inner = fanout.NewEngine(cc, append(opts, fanout.WithDispatcher(nil))...)
+				return rec
+			}
+			t.Cleanup(func() { newFanoutEngine = prev })
+			reg := execRegistry("MEDIUM")
+			reg.Providers[testExecProvider] = registry.Provider{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY"}
+			reg.Executor = agentExecConfig()
+			reg.SecretGuard = policy
+			findings := secretFinding()
+			snippet := &recordingExecutor{out: "SNIPPET PATH MUST NOT RUN"}
+			ctx, buf := ceilingCtx()
+			generateFixes(ctx, findings, reg.Executor, reg, snippet,
+				llmclient.New(llmclient.WithHTTPClient(srv.Client())), okDispatcher(), 0)
+			assert.Zero(t, snippet.calls)
+			require.Len(t, rec.results, 1)
+			assert.True(t, rec.results[0].ToolsDegraded, "the executor must have run the single-shot degrade path")
+			bodies := ws.sent()
+			assertWire(t, policy, bodies)
+			for _, b := range bodies {
+				assert.NotContains(t, b, `"tools"`, "a degraded call sends no tool definitions")
+			}
+			assert.NotContains(t, buf.String(), verifyAWSKey, "no warning may echo the credential")
+			switch policy {
+			case "block":
+				assert.Empty(t, findings[0].Fix)
+				assert.Contains(t, findings[0].FixWarning, "secret_guard=block")
+				assert.NotContains(t, findings[0].FixWarning, verifyAWSKey)
+			case "warn":
+				assert.Contains(t, buf.String(), "sent unchanged (secret_guard: warn)", "warn must say the credential went out")
+				assert.Equal(t, "rotate the key", findings[0].Fix)
+			default:
+				assert.Contains(t, buf.String(), "(secret_guard: redact)")
+				assert.Equal(t, "rotate the key", findings[0].Fix)
+			}
+		})
+	}
+}
