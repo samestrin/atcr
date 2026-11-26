@@ -377,7 +377,7 @@ func timeoutOnlyAt(want string) func(ctx context.Context, network, addr string) 
 
 func TestCheckLoopbackPortsFree_PointToPointOutsideTunnelRangesFailsClosed(t *testing.T) {
 	// The point-to-point exemption covers what was measured (EST-8465):
-	// Tailscale's addresses, in 100.64.0.0/10 and fd7a:115c::/48, on a utun
+	// Tailscale's addresses, in 100.64.0.0/10 and fd7a:115c:a1e0::/48, on a utun
 	// interface. Any other point-to-point address (an L2TP or PPP link, a tun
 	// device a CI harness or container runtime brings up) may be locally
 	// routed, so a timeout there still refuses the run. So does a
@@ -394,7 +394,8 @@ func TestCheckLoopbackPortsFree_PointToPointOutsideTunnelRangesFailsClosed(t *te
 		{"ppp0 IPv6", net.Interface{Name: "ppp0", Flags: net.FlagUp | net.FlagPointToPoint}, "2001:db8::7", 128, "point-to-point address of ppp0"},
 		{"utun just below 100.64.0.0/10", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "100.63.255.255", 32, "point-to-point address of utun4"},
 		{"utun just above 100.64.0.0/10", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "100.128.0.0", 32, "point-to-point address of utun4"},
-		{"utun just outside fd7a:115c::/48", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "fd7a:115d::1", 128, "point-to-point address of utun4"},
+		{"utun just outside fd7a:115c:a1e0::/48", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "fd7a:115c:a1df:ffff::1", 128, "point-to-point address of utun4"},
+		{"utun in fd7a:115c::/48 but not Tailscale's /48", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "fd7a:115c::1", 128, "point-to-point address of utun4"},
 		{"CGNAT address on broadcast en0", net.Interface{Name: "en0", Flags: net.FlagUp | net.FlagBroadcast}, "100.101.102.103", 10, "address of en0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
