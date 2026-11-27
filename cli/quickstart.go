@@ -442,9 +442,10 @@ func keyEnvFlow(o quickstartOpts, m *quickstart.Manifest) error {
 // interactive terminal). It decides whether echoing the pasted API key back is
 // safe: on a TTY the value only reaches the user's screen, but piped/redirected/
 // CI-captured output would persist the secret. Detected via the stdlib
-// os.ModeCharDevice bit so no external terminal dependency is required.
+// os.ModeCharDevice bit so no external terminal dependency is required. It
+// looks through runMain's stdout wrapper (stdoutFile).
 func writerIsTerminal(w io.Writer) bool {
-	f, ok := w.(*os.File)
+	f, ok := stdoutFile(w)
 	if !ok {
 		return false
 	}

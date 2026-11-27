@@ -144,9 +144,10 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 		telemetryClient = newProcessTelemetryClient(usageOverride)
 		return telemetryClient, true
 	})
-	root.SetOut(stdout)
+	out := &payloadWriter{w: stdout}
+	root.SetOut(out)
 	root.SetErr(stderr)
-	err := root.ExecuteContext(ctx)
+	cmd, err := root.ExecuteContextC(ctx)
 	// Best-effort drain before exit: the passive ping and the quality signal
 	// share this one process client (injected into every subcommand's context
 	// by the root PersistentPreRunE), and their sends are fire-and-forget
@@ -157,6 +158,15 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 	if err != nil {
 		code := exitCode(err)
 		if code != 0 {
+			// AXI mode reports the error as one document on stdout, unless a
+			// payload is already there (a --fail-on gate exit keeps its result
+			// and gets the stderr line, not a second document). cobra read its
+			// args from os.Args, so the mode re-resolution reads them too.
+			if !out.wrote && errorModeIsAXI(cmd, os.Args[1:], stdout) {
+				if werr := writeErrorDocument(stdout, err, code, errorHelp(root, cmd, os.Args[1:], err)); werr == nil {
+					return code
+				}
+			}
 			_, _ = fmt.Fprintln(stderr, "atcr:", terminalErrorLine(err))
 		}
 		return code
@@ -254,11 +264,11 @@ func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Wri
 // classifies as 1 (unwrapped generic failure). The epic's original proposal to
 // repurpose 2 as a distinct "internal/syntax error" code was considered and
 // REJECTED: 2 is already reserved for usage/config errors CI depends on, so AXI
-// introduces no new code and repurposes none. --axi structured diagnostics stay
-// on stderr (atcr's convention), NOT stdout (axi.md Principle 6), so --axi stdout
-// is always payload-only and the exit code is the branch signal. Reconciliation
-// documented in docs/ci-integration.md; cross-validated by `atcr verify`'s
-// independently-derived 0/1/2 table.
+// introduces no new code and repurposes none. An AXI-mode failure prints one
+// `error: true` document on stdout carrying this same code (axi.md Principle 6,
+// epic 165 T2; see writeErrorDocument), with nothing on stderr, so the exit code
+// stays the branch signal and the document says why. Cross-validated by `atcr
+// verify`'s independently-derived 0/1/2 table.
 const (
 	exitFailure = 1
 	exitUsage   = 2
