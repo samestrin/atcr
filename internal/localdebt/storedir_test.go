@@ -382,3 +382,28 @@ func TestRegisterProjectStore_UnresolvableRootIsAnError(t *testing.T) {
 	require.NoError(t, lerr)
 	assert.False(t, ok, "nothing is registered for a root that cannot be resolved")
 }
+
+// TestCheckStoreContainment_ReplacedRootSymlinkWithExistingStoreRefused: when
+// the re-pointed root's new target already holds the store directory,
+// ensureStoreDir returns before ensureProjectStoreDir runs, so the write-time
+// containment check must compare the root's identity too (row
+// 817955b54794fa39).
+func TestCheckStoreContainment_ReplacedRootSymlinkWithExistingStoreRefused(t *testing.T) {
+	original, other := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(other, "debt"), 0o755))
+	link := filepath.Join(t.TempDir(), "swapped-repo")
+	require.NoError(t, os.Symlink(original, link))
+	dir, err := projectStoreDir(link, "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(dir) })
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(other, link))
+
+	err = Append(dir, sampleRecord("2026-06-14T10:00:00Z-abc"))
+	require.Error(t, err, "a re-pointed root must be refused even when the store already exists there")
+	assert.Contains(t, err.Error(), "is no longer the directory")
+	assert.NotContains(t, err.Error(), other, "no absolute path reaches the error string")
+	entries, rerr := os.ReadDir(filepath.Join(other, "debt"))
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "nothing may be written through the re-pointed root")
+}
