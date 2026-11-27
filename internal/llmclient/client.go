@@ -425,6 +425,11 @@ type Completion struct {
 	Reasoning string
 }
 
+// completeGuardMessages is the guard CompleteWithMeta runs on the prompt; a
+// variable so tests can stub a malformed guard result (row fc6aae632c3ca6f7),
+// as scanSecrets is stubbed for the scanner.
+var completeGuardMessages = guardMessages
+
 // CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
 // whether the provider stopped on finish_reason "length". CompleteWithUsage and
 // Complete delegate to it, so the decode logic — including the reasoning_content
@@ -442,7 +447,7 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	// AlreadyGuardedMessages 1 means the caller scanned it already. Scanned
 	// before anything is encoded, so block refuses with no request sent.
 	// Complete and CompleteWithUsage delegate here (row 819f83f94a4cca42).
-	guarded, err := guardMessages(ctx, inv, []Message{{Role: "user", Content: &inv.Prompt}})
+	guarded, err := completeGuardMessages(ctx, inv, []Message{{Role: "user", Content: &inv.Prompt}})
 	if err != nil {
 		return Completion{}, err
 	}

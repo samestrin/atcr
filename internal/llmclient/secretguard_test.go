@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	atcrerrors "github.com/samestrin/atcr/internal/errors"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
@@ -412,6 +413,65 @@ func TestComplete_SecretGuardRejectsBadInput(t *testing.T) {
 			require.ErrorContains(t, v.call(fastRetry(srv.Client()), inv), "unknown secret_guard policy")
 			assert.EqualValues(t, 0, hits.Load())
 		})
+	}
+}
+
+// AlreadyGuardedMessages 3 on the single-shot path is ErrAlreadyGuardedMessages
+// on every Complete* variant, with no request sent: Complete* sends Prompt as
+// one message, so anything above 1 is out of range (Invocation doc,
+// client.go:159-164). Pins the documented error behaviour against a clamp
+// (row da5c6b591648ba42); value 2 is pinned by TestComplete_SecretGuardRejectsBadInput.
+func TestComplete_SecretGuardRejectsGuardedCountThree(t *testing.T) {
+	for _, v := range completeVariants {
+		t.Run(v.name, func(t *testing.T) {
+			srv, hits, _ := guardServer(t)
+			stubScanner(t, nil)
+			inv := guardInv(srv, "block", 3)
+			inv.Prompt = "clean"
+			err := v.call(fastRetry(srv.Client()), inv)
+			require.ErrorIs(t, err, ErrAlreadyGuardedMessages)
+			assert.ErrorContains(t, err, "3 of 1 messages")
+			assert.EqualValues(t, 0, hits.Load(), "no request is sent")
+		})
+	}
+}
+
+// A guard result that does not carry exactly one prompt message with text is
+// a broken invariant, not a panic: every Complete* variant returns a
+// non-retryable system error and sends nothing (row fc6aae632c3ca6f7).
+// guardMessages cannot produce these shapes today (it returns the one message
+// or a same-length clone), so the seam completeGuardMessages is stubbed, as
+// stubScanner stubs scanSecrets.
+func TestComplete_SecretGuardEmptyGuardResultFailsClosed(t *testing.T) {
+	for _, v := range completeVariants {
+		for _, tc := range []struct {
+			name    string
+			guarded []Message
+		}{
+			{"no messages", nil},
+			{"nil content", []Message{{Role: "user"}}},
+			{"two messages", []Message{{Role: "user", Content: strp("a")}, {Role: "user", Content: strp("b")}}},
+		} {
+			t.Run(v.name+"/"+tc.name, func(t *testing.T) {
+				srv, hits, _ := guardServer(t)
+				stubScanner(t, nil)
+				old := completeGuardMessages
+				completeGuardMessages = func(context.Context, Invocation, []Message) ([]Message, error) {
+					return tc.guarded, nil
+				}
+				t.Cleanup(func() { completeGuardMessages = old })
+				inv := guardInv(srv, "redact", 0)
+				inv.Prompt = "clean"
+
+				err := v.call(fastRetry(srv.Client()), inv)
+				require.ErrorContains(t, err, "secret guard returned no prompt message")
+				var ce *atcrerrors.ClassifiedError
+				require.ErrorAs(t, err, &ce)
+				assert.Equal(t, atcrerrors.SystemError, ce.Classification, "a broken guard invariant is a system error")
+				assert.False(t, atcrerrors.IsRetryable(err), "retrying cannot repair a broken invariant")
+				assert.EqualValues(t, 0, hits.Load(), "no request is sent")
+			})
+		}
 	}
 }
 
