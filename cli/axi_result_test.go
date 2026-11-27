@@ -73,6 +73,18 @@ func TestAXIResult_EmptyListNeedsHelp(t *testing.T) {
 	assert.Empty(t, buf.String())
 }
 
+// TestAXIResult_SummaryCannotShadowTheShape: a summary key the renderer owns
+// would duplicate it in the document, so it is refused and nothing is written.
+func TestAXIResult_SummaryCannotShadowTheShape(t *testing.T) {
+	for _, key := range []string{"ok", "count", "items", "help"} {
+		var buf bytes.Buffer
+		err := writeAXIResult(&buf, axiResult{Summary: []toon.Field{{Key: key, Value: 1}}})
+		require.Error(t, err, key)
+		assert.Contains(t, err.Error(), key)
+		assert.Empty(t, buf.String(), key)
+	}
+}
+
 // TestAXIResult_NotAList: a result that is not list-shaped (what changed) has no
 // count and no items, and Failed renders ok: false.
 func TestAXIResult_NotAList(t *testing.T) {
