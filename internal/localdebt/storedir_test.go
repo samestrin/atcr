@@ -325,3 +325,43 @@ func TestStoreDir_UserStoreBehindLinkStillWritable(t *testing.T) {
 	_, err = os.Stat(filepath.Join(outside, "debt", "2026-06.jsonl"))
 	require.NoError(t, err)
 }
+
+// TestRegisterProjectStore_RootIsCanonicalAndSurvivesChdir pins row
+// afeffed0bde65303: registerProjectStore kept root as given, so a store
+// resolved against a relative root and created after a chdir opened that
+// relative root against the NEW working directory, creating the store in a
+// different repository. The root is now recorded as filepath.Abs, with its
+// symlink-resolved path and file identity.
+func TestRegisterProjectStore_RootIsCanonicalAndSurvivesChdir(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	for _, p := range []string{first, second} {
+		require.NoError(t, os.Mkdir(filepath.Join(p, "rel-repo"), 0o755))
+	}
+	t.Chdir(first)
+	dir, err := projectStoreDir("rel-repo", "debt")
+	require.NoError(t, err)
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(absDir) })
+
+	wantRoot, err := filepath.Abs("rel-repo")
+	require.NoError(t, err)
+	ps, ok, err := projectStoreFor(absDir)
+	require.NoError(t, err)
+	require.True(t, ok, "the store must be registered")
+	assert.Equal(t, wantRoot, ps.root, "the registered root is absolute")
+	wantReal, err := filepath.EvalSymlinks(wantRoot)
+	require.NoError(t, err)
+	assert.Equal(t, wantReal, ps.realRoot, "the registered root's symlink-resolved path is recorded")
+	info, err := os.Stat(wantRoot)
+	require.NoError(t, err)
+	require.NotNil(t, ps.rootInfo, "the registered root's file identity is recorded")
+	assert.True(t, os.SameFile(info, ps.rootInfo), "the recorded identity is the root's")
+
+	t.Chdir(second)
+	require.NoError(t, ensureStoreDir(absDir))
+	_, err = os.Stat(filepath.Join(first, "rel-repo", "debt"))
+	require.NoError(t, err, "the store is created under the root it was resolved against")
+	_, err = os.Stat(filepath.Join(second, "rel-repo", "debt"))
+	assert.True(t, os.IsNotExist(err), "a later chdir must not move the store to another repository: %v", err)
+}

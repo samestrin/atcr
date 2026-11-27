@@ -101,9 +101,11 @@ var projectStores sync.Map
 // store was resolved against, the store's path relative to that root, and the
 // symlink-resolved key it was also recorded under (see projectStoreRealKey).
 type projectStore struct {
-	root    string
-	rel     string
-	realKey string
+	root     string
+	realRoot string
+	rootInfo os.FileInfo
+	rel      string
+	realKey  string
 }
 
 // projectStoreKey is the primary projectStores key for dir: the cleaned absolute

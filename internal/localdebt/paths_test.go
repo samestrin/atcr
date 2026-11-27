@@ -433,3 +433,51 @@ func TestEnsureStoreDir_RootRemovedDuringCreationIsRefused(t *testing.T) {
 	_, statErr := os.Stat(root)
 	assert.True(t, os.IsNotExist(statErr), "the removed root must not be created: %v", statErr)
 }
+
+// TestEnsureProjectStoreDir_ReplacedRootSymlinkIsRefused pins row
+// 817955b54794fa39 (board answer on EST-8941 card 9edbd519: identity check):
+// a repository root reached through a symlink that is re-pointed after the
+// store was resolved made OpenRoot open the NEW target, and containment
+// passed because the store still sat inside whatever the link named. The
+// opened root is now compared with the identity recorded at registration
+// (os.SameFile) before MkdirAll, so nothing is created in either tree.
+func TestEnsureProjectStoreDir_ReplacedRootSymlinkIsRefused(t *testing.T) {
+	t.Run("unchanged link is created through", func(t *testing.T) {
+		real := t.TempDir()
+		link := filepath.Join(t.TempDir(), "linked-repo")
+		require.NoError(t, os.Symlink(real, link))
+		dir, err := projectStoreDir(link, "debt")
+		require.NoError(t, err)
+		t.Cleanup(func() { forgetProjectStore(dir) })
+
+		require.NoError(t, ensureStoreDir(dir))
+		info, err := os.Stat(filepath.Join(real, "debt"))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+	t.Run("re-pointed link is refused before MkdirAll", func(t *testing.T) {
+		original, other := t.TempDir(), t.TempDir()
+		link := filepath.Join(t.TempDir(), "swapped-repo")
+		require.NoError(t, os.Symlink(original, link))
+		dir, err := projectStoreDir(link, "debt")
+		require.NoError(t, err)
+		t.Cleanup(func() { forgetProjectStore(dir) })
+		require.NoError(t, os.Remove(link))
+		require.NoError(t, os.Symlink(other, link))
+
+		err = ensureStoreDir(dir)
+		require.Error(t, err, "a root link re-pointed after registration must be refused")
+		assert.Contains(t, err.Error(), "is no longer the directory", "the refusal comes from the identity check")
+		assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
+		assert.Contains(t, err.Error(), `"swapped-repo"`, "the refusal names the repository root")
+		assert.NotContains(t, err.Error(), other, "no absolute path reaches the error string")
+
+		err = Append(dir, sampleRecord("2026-06-14T10:00:00Z-abc"))
+		require.Error(t, err, "the write path refuses the re-pointed root too")
+		for _, tree := range []string{original, other} {
+			entries, rerr := os.ReadDir(tree)
+			require.NoError(t, rerr)
+			assert.Empty(t, entries, "nothing may be created in %s", filepath.Base(tree))
+		}
+	})
+}
