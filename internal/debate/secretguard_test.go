@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -106,6 +107,68 @@ func TestDebate_SeatsCarryProjectSecretGuard(t *testing.T) {
 				assert.Equal(t, tc.want, inv.SecretGuard, "seat %d", i+1)
 			}
 			assert.Equal(t, tc.reg, reg.SecretGuard, "the caller's registry is not mutated")
+		})
+	}
+}
+
+// Epic 162 T4 (rows 13f7853d41f7e0f1, 34c258721e815c9e): repoRoot locates
+// .atcr/config.yaml through registry.DefaultProjectConfigPath, a plain
+// filepath.Join — so a relative or empty repoRoot resolves the project tier
+// against the process's working directory, and the config found there is
+// trusted as the repo's. `atcr debate` passes "." (cli/debate.go), so this is
+// the normal CLI path, not an error. The control case pins that the resolution
+// really is CWD-relative: the same relative root from a directory that does
+// not contain it falls through to the registry tier.
+func TestDebate_RelativeRepoRootResolvesAgainstWorkingDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// chdirParent: work from the temp root's parent and pass its base name
+		// as repoRoot; otherwise work from the temp root itself and pass "".
+		chdirParent bool
+		// missing: work from an unrelated directory, so the relative root does
+		// not exist under the CWD and no project config is found.
+		missing bool
+		want    string
+	}{
+		{name: "relative root", chdirParent: true, want: "block"},
+		{name: "empty root", want: "block"},
+		{name: "relative root absent under the CWD falls through", chdirParent: true, missing: true, want: "redact"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeProjectConfig(t, "agents: [a]\nsecret_guard: block\n")
+			var repoRoot string
+			switch {
+			case tc.missing:
+				t.Chdir(t.TempDir())
+				repoRoot = filepath.Base(root)
+			case tc.chdirParent:
+				t.Chdir(filepath.Dir(root))
+				repoRoot = filepath.Base(root)
+			default:
+				t.Chdir(root)
+			}
+			reg := debateRoster()
+			reg.SecretGuard = "redact"
+			agents, providers := maps.Clone(reg.Agents), maps.Clone(reg.Providers)
+			cc := &fakeChatCompleter{turns: []chatTurn{
+				{content: "proposer defends"},
+				{content: "challenger attacks"},
+				{content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+			}}
+			dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+			_, err := debateIn(context.Background(), repoRoot, dir, reg, Options{}, harness(cc))
+			require.NoError(t, err)
+			invs := cc.invocations()
+			require.Len(t, invs, 3, "one Chat call per seat")
+			for i, inv := range invs {
+				assert.Equal(t, tc.want, inv.SecretGuard, "seat %d", i+1)
+			}
+			// The caller's registry is not modified — not just SecretGuard:
+			// the copy shares the Agents/Providers maps, so pin that no map
+			// entry was added, removed or replaced through it either.
+			assert.Equal(t, "redact", reg.SecretGuard, "the caller's registry is not mutated")
+			assert.Equal(t, agents, reg.Agents, "the caller's Agents map is not written")
+			assert.Equal(t, providers, reg.Providers, "the caller's Providers map is not written")
 		})
 	}
 }
