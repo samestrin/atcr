@@ -114,6 +114,13 @@ type Result struct {
 // seats' read-only snapshot is taken from; reviewDir is the review whose
 // reconciled/ tree is read and re-emitted.
 //
+// repoRoot also locates `.atcr/config.yaml`, the project tier of the seats'
+// secret_guard resolution (withProjectSecretGuard). A relative or empty
+// repoRoot resolves that path against the process's working directory —
+// `atcr debate` passes "." — so a caller running outside the reviewed repo
+// must pass an absolute root, or the working directory's project config is
+// trusted as the repo's.
+//
 // Failure isolation holds end to end: a seat that errors, times out, or trips a
 // budget yields an unresolved item, never a dropped finding or a failed run. The
 // only errors returned are setup failures (missing reconciled findings, unreadable
@@ -143,8 +150,18 @@ func debateIn(ctx context.Context, repoRoot, reviewDir string, reg *registry.Reg
 // ResolveSettings resolves over the project tier at repoRoot, so a project
 // `secret_guard` (an explicit off included) outranks the registry's for every
 // seat, as it does for the review. Only an absent project config is skipped;
-// an unreadable or invalid one is returned, never treated as unset. The
-// caller's reg is not modified.
+// an unreadable or invalid one is returned, never treated as unset.
+//
+// repoRoot locates `.atcr/config.yaml` via registry.DefaultProjectConfigPath,
+// a plain filepath.Join: a relative or empty repoRoot resolves against the
+// process's working directory, and the config found there is trusted as the
+// project tier (pinned by TestDebate_RelativeRepoRootResolvesAgainstWorkingDir).
+// secret_guard has no CLI tier — registry and project only, see
+// registry.ResolveSettings — so the zero CLIOverrides drops nothing.
+//
+// The caller's reg is not modified: only the copy's SecretGuard field is
+// assigned. The copy shares the caller's Agents and Providers maps, which no
+// debate code writes (the test pins the caller's maps entry-for-entry).
 func withProjectSecretGuard(repoRoot string, reg *registry.Registry) (*registry.Registry, error) {
 	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath(repoRoot))
 	if err != nil {
