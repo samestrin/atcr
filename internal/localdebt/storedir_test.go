@@ -325,3 +325,85 @@ func TestStoreDir_UserStoreBehindLinkStillWritable(t *testing.T) {
 	_, err = os.Stat(filepath.Join(outside, "debt", "2026-06.jsonl"))
 	require.NoError(t, err)
 }
+
+// TestRegisterProjectStore_RootIsCanonicalAndSurvivesChdir pins row
+// afeffed0bde65303: registerProjectStore kept root as given, so a store
+// resolved against a relative root and created after a chdir opened that
+// relative root against the NEW working directory, creating the store in a
+// different repository. The root is now recorded as filepath.Abs, with its
+// symlink-resolved path and file identity.
+func TestRegisterProjectStore_RootIsCanonicalAndSurvivesChdir(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	for _, p := range []string{first, second} {
+		require.NoError(t, os.Mkdir(filepath.Join(p, "rel-repo"), 0o755))
+	}
+	t.Chdir(first)
+	dir, err := projectStoreDir("rel-repo", "debt")
+	require.NoError(t, err)
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(absDir) })
+
+	wantRoot, err := filepath.Abs("rel-repo")
+	require.NoError(t, err)
+	ps, ok, err := projectStoreFor(absDir)
+	require.NoError(t, err)
+	require.True(t, ok, "the store must be registered")
+	assert.Equal(t, wantRoot, ps.root, "the registered root is absolute")
+	wantReal, err := filepath.EvalSymlinks(wantRoot)
+	require.NoError(t, err)
+	assert.Equal(t, wantReal, ps.realRoot, "the registered root's symlink-resolved path is recorded")
+	info, err := os.Stat(wantRoot)
+	require.NoError(t, err)
+	require.NotNil(t, ps.rootInfo, "the registered root's file identity is recorded")
+	assert.True(t, os.SameFile(info, ps.rootInfo), "the recorded identity is the root's")
+
+	t.Chdir(second)
+	require.NoError(t, ensureStoreDir(absDir))
+	_, err = os.Stat(filepath.Join(first, "rel-repo", "debt"))
+	require.NoError(t, err, "the store is created under the root it was resolved against")
+	_, err = os.Stat(filepath.Join(second, "rel-repo", "debt"))
+	assert.True(t, os.IsNotExist(err), "a later chdir must not move the store to another repository: %v", err)
+}
+
+// TestRegisterProjectStore_UnresolvableRootIsAnError: a root that cannot be
+// resolved is refused rather than recorded without the identity
+// ensureProjectStoreDir checks, and the error carries no absolute path.
+func TestRegisterProjectStore_UnresolvableRootIsAnError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing-repo")
+	dir := filepath.Join(root, "debt")
+	t.Cleanup(func() { forgetProjectStore(dir) })
+
+	err := registerProjectStore(dir, root, "debt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot resolve the repository root")
+	assert.NotContains(t, err.Error(), root, "no absolute path reaches the error string")
+	_, ok, lerr := projectStoreFor(dir)
+	require.NoError(t, lerr)
+	assert.False(t, ok, "nothing is registered for a root that cannot be resolved")
+}
+
+// TestCheckStoreContainment_ReplacedRootSymlinkWithExistingStoreRefused: when
+// the re-pointed root's new target already holds the store directory,
+// ensureStoreDir returns before ensureProjectStoreDir runs, so the write-time
+// containment check must compare the root's identity too (row
+// 817955b54794fa39).
+func TestCheckStoreContainment_ReplacedRootSymlinkWithExistingStoreRefused(t *testing.T) {
+	original, other := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(other, "debt"), 0o755))
+	link := filepath.Join(t.TempDir(), "swapped-repo")
+	require.NoError(t, os.Symlink(original, link))
+	dir, err := projectStoreDir(link, "debt")
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(dir) })
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(other, link))
+
+	err = Append(dir, sampleRecord("2026-06-14T10:00:00Z-abc"))
+	require.Error(t, err, "a re-pointed root must be refused even when the store already exists there")
+	assert.Contains(t, err.Error(), "is no longer the directory")
+	assert.NotContains(t, err.Error(), other, "no absolute path reaches the error string")
+	entries, rerr := os.ReadDir(filepath.Join(other, "debt"))
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "nothing may be written through the re-pointed root")
+}
