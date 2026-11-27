@@ -30,6 +30,9 @@ func newReportCmd() *cobra.Command {
 		Short: "Render " + report.Formats() + " views over reconciled findings",
 		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE:  runReport,
+		// The root resolves the agent-path output mode for report too; runReport
+		// uses it only to pick the default --format for stdout (epic 165 T1).
+		Annotations: map[string]string{axiDefaultAnnotation: "format"},
 	}
 	cmd.Flags().String("format", "md", "output format: "+formatHelp())
 	addJSONFlag(cmd)
@@ -38,8 +41,13 @@ func newReportCmd() *cobra.Command {
 	return cmd
 }
 
+// reportFormatText is report's --format alias of md: the human-format name the
+// ATCR_FORMAT=text switch uses, accepted here and on no other command.
+const reportFormatText = "text"
+
 // formatHelp is report.Formats() with the legacy pipe format marked deprecated,
-// so --help does not advertise it on equal footing while the fallback exists.
+// so --help does not advertise it on equal footing while the fallback exists,
+// followed by the text alias and the agent-path default (epic 165 T1).
 func formatHelp() string {
 	formats := report.FormatList()
 	for i, f := range formats {
@@ -47,7 +55,7 @@ func formatHelp() string {
 			formats[i] = f + " (deprecated)"
 		}
 	}
-	return strings.Join(formats, ", ")
+	return strings.Join(formats, ", ") + "; text is an alias of md. With no --format, stdout gets axi when it is not a terminal or an agent is detected (--human or ATCR_FORMAT=text keep md)"
 }
 
 func runReport(cmd *cobra.Command, args []string) error {
@@ -58,6 +66,18 @@ func runReport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if format == reportFormatText {
+		format = report.FormatMarkdown
+	}
+	output, _ := cmd.Flags().GetString("output")
+	// On the agent path (axiFromContext; see resolveAXIMode) a report written to
+	// stdout defaults to AXI. An explicit --format or --json, and --output, keep
+	// their format: a file is read by whoever asked for it, not by this pipe. The
+	// disagreement radar has no AXI view, so it keeps md too.
+	if !cmd.Flags().Changed("format") && !boolFlag(cmd, "json") && output == "" &&
+		!boolFlag(cmd, "disagreements") && axiFromContext(cmd.Context()) {
+		format = report.FormatAXI
+	}
 	if !report.ValidFormat(format) {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are %s", format, report.Formats()))
 	}
@@ -67,7 +87,6 @@ func runReport(cmd *cobra.Command, args []string) error {
 	// symlink that points into one — is rejected at the input layer (exit 2). The
 	// resolved path is also the path written below, so the value validated is the
 	// value used (no link-follow bypass between check and write).
-	output, _ := cmd.Flags().GetString("output")
 	var outputPath string
 	if output != "" {
 		var err error
