@@ -3,6 +3,7 @@ package threatmap
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/personas"
 	"github.com/stretchr/testify/require"
@@ -568,9 +570,9 @@ func TestNewAgent_OwnNamePersonaFileWins(t *testing.T) {
 const awsKey = "AKIA" + "QYLPMN5HHHFPZAM2"
 
 // The mapper's Invocation carries the run's secret_guard policy, and an unset
-// policy is warn, as on the review path (fanout.secretGuardPolicy).
+// policy is the embedded default (registry.DefaultSecretGuard).
 func TestNewAgent_CarriesTheSecretGuardPolicy(t *testing.T) {
-	for set, want := range map[string]string{"": "warn", "block": "block", "redact": "redact", "off": "off"} {
+	for set, want := range map[string]string{"": registry.DefaultSecretGuard, "block": "block", "redact": "redact", "off": "off"} {
 		llm := &fakeLLM{reply: `{"keep": ["a.go"]}`}
 		a, err := NewAgent("mapper", testRegistry(), registry.Settings{TimeoutSecs: 30, SecretGuard: set}, registry.PersonaDirs{}, llm)
 		require.NoError(t, err)
@@ -612,4 +614,35 @@ func TestMap_SecretGuardBlockSendsNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a.go"}, keep)
 	require.EqualValues(t, 1, hits.Load())
+}
+
+// An unset secret_guard resolves to the embedded default
+// (registry.DefaultSecretGuard, redact), as docs/providers.md documents: the
+// real client sends the mapper prompt with the credential replaced by the
+// placeholder, and the captured provider request never carries the secret.
+func TestMap_UnsetSecretGuardRedactsTheProviderRequest(t *testing.T) {
+	var body atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body.Store(string(b))
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"keep\": [\"a.go\"]}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("CHEAP_KEY", "test-key")
+	t.Setenv("PATH", t.TempDir()) // the built-in ruleset, not a host scanner
+
+	reg := testRegistry()
+	reg.Providers["cheap"] = registry.Provider{APIKeyEnv: "CHEAP_KEY", BaseURL: srv.URL}
+	a, err := NewAgent("mapper", reg, registry.Settings{TimeoutSecs: 30}, registry.PersonaDirs{},
+		llmclient.New(llmclient.WithHTTPClient(srv.Client())))
+	require.NoError(t, err)
+
+	keep, err := Map(context.Background(), a, []string{"a.go", "aws_access_key_id = " + awsKey})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a.go"}, keep)
+	sent, ok := body.Load().(string)
+	require.True(t, ok, "the provider was reached")
+	require.NotContains(t, sent, awsKey, "the provider request never carries the secret")
+	require.Contains(t, sent, payload.SecretPlaceholder, "the credential is replaced by the redaction placeholder")
+	require.Equal(t, registry.DefaultSecretGuard, a.inv.SecretGuard, "the unset policy is the embedded default")
 }
