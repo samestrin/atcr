@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // axiContextKey is the unexported context key under which the --axi output mode
@@ -80,5 +83,76 @@ func newLegacyPipeContext(ctx context.Context, enabled bool) context.Context {
 // encoder. It falls back to false when the value is absent.
 func legacyPipeFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(legacyPipeContextKey{}).(bool)
+	return v
+}
+
+// agentEnvMarkers are environment variables an agent harness sets in the shells
+// it runs. Any one set to a non-empty value puts atcr on the agent path (epic
+// 165 T1), even when stdout is a terminal.
+var agentEnvMarkers = []string{"CLAUDECODE", "CODEX", "OPENCODE"}
+
+// outputIsTerminal reports whether f is an interactive terminal. A seam so tests
+// can stand a pipe in for a terminal.
+var outputIsTerminal = func(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
+
+// axiDefaultAnnotation marks a command without an --axi flag whose output still
+// follows the resolved mode (report picks its default --format from it).
+const axiDefaultAnnotation = "atcr.axi-default"
+
+// hasAXIMode reports whether cmd has an AXI rendering, and so whether the
+// agent-path default applies to it. Commands without one keep their text.
+func hasAXIMode(cmd *cobra.Command) bool {
+	return cmd.Flags().Lookup("axi") != nil || cmd.Annotations[axiDefaultAnnotation] != ""
+}
+
+// resolveAXIMode decides whether cmd renders AXI, first rule that applies wins:
+//  1. --axi or --human given on the command line (both at once is a usage error);
+//  2. an explicit non-AXI output choice: --json (debt commands) or --auto-fix
+//     (review's interactive flow);
+//  3. ATCR_FORMAT=axi or ATCR_FORMAT=text;
+//  4. an agent marker in the environment (agentEnvMarkers): AXI;
+//  5. stdout: AXI when it is a file that is not a terminal (a pipe, a redirect),
+//     human on a terminal. A writer that is not a file (an embedder's or a test's
+//     buffer) has no stdout to inspect and keeps the human output.
+//
+// An unrecognized ATCR_FORMAT warns on w and is ignored, like ATCR_LEGACY_PIPE.
+func resolveAXIMode(cmd *cobra.Command, w io.Writer) (bool, error) {
+	flags := cmd.Flags()
+	axiSet := flags.Lookup("axi") != nil && flags.Changed("axi")
+	human := optionalBoolFlag(cmd, "human")
+	if axiSet {
+		axi, _ := flags.GetBool("axi")
+		if axi && human {
+			return false, usageError(errors.New("--axi and --human are mutually exclusive"))
+		}
+		return axi, nil
+	}
+	if human || optionalBoolFlag(cmd, "json") || optionalBoolFlag(cmd, "auto-fix") {
+		return false, nil
+	}
+	if raw := strings.TrimSpace(os.Getenv("ATCR_FORMAT")); raw != "" {
+		switch strings.ToLower(raw) {
+		case "axi":
+			return true, nil
+		case "text":
+			return false, nil
+		}
+		_, _ = fmt.Fprintf(w, "warning: unrecognized ATCR_FORMAT value %q (want axi or text); using the default output\n", raw)
+	}
+	for _, k := range agentEnvMarkers {
+		if os.Getenv(k) != "" {
+			return true, nil
+		}
+	}
+	f, ok := cmd.OutOrStdout().(*os.File)
+	return ok && !outputIsTerminal(f), nil
+}
+
+// optionalBoolFlag is boolFlag for a flag cmd may not define: absent is false.
+func optionalBoolFlag(cmd *cobra.Command, name string) bool {
+	if cmd.Flags().Lookup(name) == nil {
+		return false
+	}
+	v, _ := cmd.Flags().GetBool(name)
 	return v
 }

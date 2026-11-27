@@ -508,8 +508,8 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 			cmd.SetContext(telemetry.NewContext(cmd.Context(), telemetryClient))
 			// Propagate the --axi output mode once, at this single flag-parse point,
 			// so review.go/resume.go read it via axiFromContext rather than re-parsing
-			// the flag at each stdout call site (AC 01-04). The flag lives only on
-			// `atcr review`; the Lookup guard leaves every other command unaffected.
+			// the flag at each stdout call site (AC 01-04). Only commands with an AXI
+			// mode (hasAXIMode) get it; every other command is unaffected.
 			// Resolve the legacy-pipe choice ONCE, at this single flag-parse point,
 			// for every command that can consume it: AXI surfaces (flag or env) and
 			// report's --format pipe (env). Non-consuming commands skip the env read
@@ -518,15 +518,22 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 			// included — so the resolution rule lives in exactly one place.
 			legacyFlag := false
 			legacy := false
-			if cmd.Flags().Lookup("axi") != nil || cmd.Name() == "report" {
+			if hasAXIMode(cmd) || cmd.Name() == "report" {
 				if cmd.Flags().Lookup("legacy-pipe") != nil {
 					legacyFlag, _ = cmd.Flags().GetBool("legacy-pipe")
 				}
 				legacy = legacyFlag || legacyPipeFromEnv(cmd.ErrOrStderr())
 			}
 			cmd.SetContext(newLegacyPipeContext(cmd.Context(), legacy))
-			if cmd.Flags().Lookup("axi") != nil {
-				axi, _ := cmd.Flags().GetBool("axi")
+			// A command with an AXI mode renders it by default on the agent path
+			// (epic 165 T1): resolveAXIMode weighs --axi/--human, ATCR_FORMAT, the
+			// agent markers and whether stdout is a terminal. Commands without an
+			// AXI mode keep their text and never consult it.
+			if hasAXIMode(cmd) {
+				axi, err := resolveAXIMode(cmd, cmd.ErrOrStderr())
+				if err != nil {
+					return err
+				}
 				cmd.SetContext(newAXIContext(cmd.Context(), axi))
 				// Fail-closed like --exec requires --verify: an explicit --legacy-pipe
 				// without --axi is inert, so a legacy consumer who forgets --axi gets a
@@ -543,7 +550,9 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 				// notice would describe output that never happens (TD: cli/review.go:295).
 				// A command annotated noLegacyPipeAnnotation (debt filter) has no pipe
 				// encoder, so the notice would describe output that never happens.
-				if axi && legacy && !dryRunFlagSet(cmd) && cmd.Annotations[noLegacyPipeAnnotation] == "" {
+				// report has no --axi flag and writes its own notice once it knows the
+				// format (runReport), so it is skipped here.
+				if axi && legacy && cmd.Flags().Lookup("axi") != nil && !dryRunFlagSet(cmd) && cmd.Annotations[noLegacyPipeAnnotation] == "" {
 					if legacyFlag {
 						warnLegacyPipe(cmd.Context(), "--legacy-pipe")
 					} else {
@@ -564,6 +573,10 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 	// --telemetry-endpoint redirects the anonymous usage ping (never the quality
 	// signal) to an operator's collector without a rebuild. Validated in the root
 	// PersistentPreRunE by ValidateTelemetryEndpoint.
+	// --human forces the human output on every command, overriding the agent-path
+	// AXI default (non-TTY stdout, ATCR_FORMAT=axi, an agent marker); see
+	// resolveAXIMode. Commands without an AXI mode accept it as a no-op.
+	root.PersistentFlags().Bool("human", false, "force human-readable output even when stdout is not a terminal or an agent is detected (also ATCR_FORMAT=text)")
 	root.PersistentFlags().String("telemetry-endpoint", "", "send the anonymous usage ping to this URL instead of the built-in one (https://, or http:// on a loopback host)")
 
 	// --axi is a LOCAL flag on the root command (not persistent): it is reachable
