@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -533,6 +534,132 @@ func TestChat_SecretGuardScanCacheIsBounded(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, []string{"a", "b", "b"}, *scanned)
+}
+
+// ScanCache.scan hands every caller its own copy of the hits: a caller that
+// mutates the slice it got back cannot poison the stored scan, so the next
+// call still sees the original hits (rows 2b7624d41b293a44, a74273e0462c92e2).
+func TestScanCache_ScanReturnsACopy(t *testing.T) {
+	scanned := stubScanner(t, nil)
+	c := NewScanCache(4)
+	text := "key " + chatAWSKey
+
+	first, err := c.scan(context.Background(), text)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	first[0].Kind = "mutated"
+	first[0].Start = -1
+
+	second, err := c.scan(context.Background(), text)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, "aws-access-token", second[0].Kind, "a cached hit is copied, not shared")
+	assert.Equal(t, len("key "), second[0].Start, "the stored hit keeps its offsets")
+	assert.Equal(t, []string{text}, *scanned, "the second call is served from the cache")
+}
+
+// Callers sharing one ScanCache across concurrent calls each mutate their own
+// returned hits. With the stored slice handed out uncopied this is a data race
+// on the shared backing array that the map's mutex does not catch; under
+// -race this test fails on the uncopied code and passes on the copy (row
+// a74273e0462c92e2). CI runs every package with -race.
+func TestScanCache_ScanCopiesAreRaceFree(t *testing.T) {
+	stubScanner(t, nil)
+	c := NewScanCache(4)
+	text := "key " + chatAWSKey
+	// Warm the cache first so every goroutine below takes the cached path and
+	// the stub scanner's unsynchronised scan log is never touched concurrently.
+	warm, err := c.scan(context.Background(), text)
+	require.NoError(t, err)
+	require.Len(t, warm, 1)
+
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := range 50 {
+				hits, err := c.scan(context.Background(), text)
+				if err != nil || len(hits) != 1 {
+					t.Errorf("goroutine %d iteration %d: hits %v, err %v", g, i, hits, err)
+					return
+				}
+				hits[0].Kind = fmt.Sprintf("mutated-%d-%d", g, i)
+				hits[0].Start = g
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	after, err := c.scan(context.Background(), text)
+	require.NoError(t, err)
+	require.Len(t, after, 1)
+	assert.Equal(t, "aws-access-token", after[0].Kind, "the stored scan survives concurrent callers")
+}
+
+// The guard's log lines name the caller: Chat's say "chat:" (row
+// b08aa592c80f6566 pins the single-shot side in
+// TestComplete_SecretGuardLogsNameTheCompleteCaller).
+func TestChat_SecretGuardLogsNameTheChatCaller(t *testing.T) {
+	srv, _, _ := guardServer(t)
+	stubScanner(t, nil)
+	var logs bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	_, err := fastRetry(srv.Client()).Chat(ctx, guardInv(srv, "redact", 0),
+		[]Message{{Role: "user", Content: strp("key " + chatAWSKey)}}, nil)
+	require.NoError(t, err)
+	assert.Contains(t, logs.String(), "chat: redacted 1 secret(s) [aws-access-token] in message 0 (secret_guard: redact)")
+}
+
+// Every Complete* variant's guard log lines say "complete:", not "chat:": a
+// warn/redact/scan-error line from a single-shot call must not read as a
+// tool-loop event (row b08aa592c80f6566).
+func TestComplete_SecretGuardLogsNameTheCompleteCaller(t *testing.T) {
+	variants := []struct {
+		name string
+		call func(c *Client, ctx context.Context, inv Invocation) error
+	}{
+		{"Complete", func(c *Client, ctx context.Context, inv Invocation) error {
+			_, err := c.Complete(ctx, inv)
+			return err
+		}},
+		{"CompleteWithUsage", func(c *Client, ctx context.Context, inv Invocation) error {
+			_, _, _, err := c.CompleteWithUsage(ctx, inv)
+			return err
+		}},
+		{"CompleteWithMeta", func(c *Client, ctx context.Context, inv Invocation) error {
+			_, err := c.CompleteWithMeta(ctx, inv)
+			return err
+		}},
+	}
+	for _, v := range variants {
+		for _, tc := range []struct {
+			name    string
+			policy  string
+			prompt  string
+			scanErr error
+			want    string
+		}{
+			{"redact", "redact", "key " + chatAWSKey, nil, "complete: redacted 1 secret(s) [aws-access-token] in message 0 (secret_guard: redact)"},
+			{"warn", "warn", "key " + chatAWSKey, nil, "complete: 1 secret(s) [aws-access-token] in message 0 sent unchanged (secret_guard: warn)"},
+			{"scan error", "warn", "clean", payload.ErrSecretScanFailed, "complete: secret scan:"},
+		} {
+			t.Run(v.name+"/"+tc.name, func(t *testing.T) {
+				srv, _, _ := guardServer(t)
+				stubScanner(t, tc.scanErr)
+				var logs bytes.Buffer
+				ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&logs, nil)))
+				inv := guardInv(srv, tc.policy, 0)
+				inv.Prompt = tc.prompt
+
+				require.NoError(t, v.call(fastRetry(srv.Client()), ctx, inv))
+				assert.Contains(t, logs.String(), tc.want)
+				assert.NotContains(t, logs.String(), "chat:", "a single-shot call is not a tool-loop event")
+				assert.NotContains(t, logs.String(), chatAWSKey, "the log never carries the secret")
+			})
+		}
+	}
 }
 
 // Without a cache every call scans every unguarded text, as before.

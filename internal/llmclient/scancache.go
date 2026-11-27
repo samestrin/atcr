@@ -2,6 +2,7 @@ package llmclient
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -27,7 +28,11 @@ func NewScanCache(max int) *ScanCache {
 }
 
 // scan returns text's hits from the cache, or from scanSecrets, storing them
-// when the scan succeeded and there is room.
+// when the scan succeeded and there is room. The returned slice is always the
+// caller's own: a cached hit is cloned on the way out and a fresh scan is
+// cloned on the way in, so the stored slice is never handed out. A caller that
+// mutates its hits — or shares one cache across concurrent calls — cannot
+// corrupt the stored scan or race another caller on the backing array.
 func (c *ScanCache) scan(ctx context.Context, text string) ([]payload.SecretHit, error) {
 	if c == nil {
 		return scanSecrets(ctx, text, nil)
@@ -36,7 +41,7 @@ func (c *ScanCache) scan(ctx context.Context, text string) ([]payload.SecretHit,
 	hits, ok := c.hits[text]
 	c.mu.Unlock()
 	if ok {
-		return hits, nil
+		return slices.Clone(hits), nil
 	}
 	hits, err := scanSecrets(ctx, text, nil)
 	if err != nil {
@@ -44,7 +49,7 @@ func (c *ScanCache) scan(ctx context.Context, text string) ([]payload.SecretHit,
 	}
 	c.mu.Lock()
 	if len(c.hits) < c.max {
-		c.hits[text] = hits
+		c.hits[text] = slices.Clone(hits)
 	}
 	c.mu.Unlock()
 	return hits, nil
