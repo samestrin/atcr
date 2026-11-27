@@ -1,6 +1,7 @@
 - Commands that have an AXI mode (bare `atcr`, `review`, `review --resume`,
   `reconcile`, `verify`, `debate`, `status`, `debt clean`, `debt filter`,
-  `debt group`, `debt validate`, and `report` when it writes to stdout) now print
+  `debt group`, `debt validate`, and `report` when it writes to stdout, except
+  `report --disagreements`, which has no AXI view and keeps markdown) now print
   their TOON/AXI output by default when stdout is not a terminal, when
   `ATCR_FORMAT=axi` is set, or when an agent marker (`CLAUDECODE`, `CODEX`,
   `OPENCODE`) is in the environment; on a terminal the human output is unchanged.

@@ -141,10 +141,11 @@ func runHome(cmd *cobra.Command) error {
 	}
 	st := resolveHomeState(ctx)
 
-	// --axi renders the same home-view data as a token-dense TOON payload, read
-	// from the context the root PersistentPreRunE populated from the root-local
-	// --axi flag (axiFromContext) — the same context-propagation plumbing
-	// review/resume reuse (Epic 31.0), not a parallel mode switch.
+	// AXI mode renders the same home-view data as a token-dense TOON payload. The
+	// mode is the one the root PersistentPreRunE resolved (resolveAXIMode: the
+	// root-local --axi flag, --human, ATCR_FORMAT, the agent markers, or a non-TTY
+	// stdout) and read here via axiFromContext — the same context-propagation
+	// plumbing review/resume reuse (Epic 31.0), not a parallel mode switch.
 	if axiFromContext(ctx) {
 		reviewID, status := "", "none"
 		switch {
