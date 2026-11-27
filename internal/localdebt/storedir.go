@@ -213,7 +213,10 @@ var afterContainmentCheck = func() {}
 
 // checkStoreContainment re-runs containedIn for a store that StoreDir resolved
 // from the project tier; any other directory (the user tier, --store, the
-// default) carries no containment rule and passes. withLock calls it before it
+// default) carries no containment rule and passes. The root must also still be
+// the directory registered for the store (checkRegisteredRoot): a re-pointed
+// root link whose new target already holds the store would otherwise skip
+// ensureProjectStoreDir's identity check entirely. withLock calls it before it
 // creates anything in the store and again once the lock is held, before fn, so a
 // link swapped in after resolve, or while the lock was awaited, is refused
 // rather than written through. What remains is the window between the last check
@@ -225,6 +228,13 @@ func checkStoreContainment(dir string) error {
 		return err
 	}
 	if err := containedIn(ps.root, dir); err != nil {
+		return fmt.Errorf("localdebt store %s: %w", filepath.Base(dir), err)
+	}
+	info, err := os.Stat(ps.root)
+	if err != nil {
+		return fmt.Errorf("localdebt store %s: cannot inspect the repository root: %w", filepath.Base(dir), basePathErr(err))
+	}
+	if err := checkRegisteredRoot(info, ps); err != nil {
 		return fmt.Errorf("localdebt store %s: %w", filepath.Base(dir), err)
 	}
 	return nil

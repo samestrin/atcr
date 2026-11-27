@@ -132,7 +132,13 @@ func checkOpenedStoreRoot(r *os.Root, ps projectStore) error {
 	if err != nil {
 		return fmt.Errorf("inspecting its repository root %q failed: %w", filepath.Base(ps.root), basePathErr(err))
 	}
-	if ps.rootInfo == nil || !os.SameFile(opened, ps.rootInfo) {
+	return checkRegisteredRoot(opened, ps)
+}
+
+// checkRegisteredRoot reports whether info is the root identity ps recorded at
+// registration. An entry with no recorded identity cannot prove it, so it fails.
+func checkRegisteredRoot(info os.FileInfo, ps projectStore) error {
+	if ps.rootInfo == nil || !os.SameFile(info, ps.rootInfo) {
 		return fmt.Errorf("its repository root %q is no longer the directory the store was resolved against (a root link re-pointed since?); refusing to write through it", filepath.Base(ps.root))
 	}
 	return nil
