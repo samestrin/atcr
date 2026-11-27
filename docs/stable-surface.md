@@ -12,6 +12,7 @@ The commands, flags, personas, config keys and environment variables below are t
 | Flag | Type | Default | Status |
 |---|---|---|---|
 | `--axi` | bool | `false` |  |
+| `--human` | bool | `false` |  |
 | `--legacy-pipe` | bool | `false` |  |
 | `--log-format` | string | `text` |  |
 | `--telemetry-endpoint` | string | `` |  |
@@ -836,6 +837,7 @@ Every `ATCR_*` name read through `os.Getenv` or `os.LookupEnv` in non-test Go so
 | `ATCR_CATALOG_URL` | `internal/personas/upgrade.go` |
 | `ATCR_DEBT_HOLDER` | `internal/localdebt/itemlock.go` |
 | `ATCR_DISABLE_AST_GROUPING` | `internal/reconcile/astgrouping.go` |
+| `ATCR_FORMAT` | `cli/axi.go` |
 | `ATCR_LEGACY_PIPE` | `cli/axi.go` |
 | `ATCR_LOG_LEVEL` | `cli/main.go` |
 | `ATCR_PERSONAS_URL` | `internal/personas/client.go` |
