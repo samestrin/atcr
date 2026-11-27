@@ -451,6 +451,13 @@ func (c *Client) CompleteWithMeta(ctx context.Context, inv Invocation) (Completi
 	if err != nil {
 		return Completion{}, err
 	}
+	// guardMessages returns the one message or a same-length clone, so this
+	// cannot fire today; it keeps a future guard change from turning the
+	// index below into a panic on all three entry points (row fc6aae632c3ca6f7).
+	// A broken invariant is a system error, not a retryable one.
+	if len(guarded) != 1 || guarded[0].Content == nil {
+		return Completion{}, atcrerrors.NewSystemError(errors.New("secret guard returned no prompt message"))
+	}
 	thinking := newThinkingFields(inv.Thinking, inv.ThinkingLevel, inv.ThinkingStyle, inv.PreserveThinking)
 	body, err := json.Marshal(chatRequest{
 		Model:          inv.Model,
