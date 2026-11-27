@@ -170,30 +170,30 @@ func (p *itemsPrep) ensure(items string) {
 // every temp write happens under that same lock, so on the unix and Windows
 // kernel locks any leftover seen here belongs to a dead process (a SIGKILL skips
 // the deferred remove). The legacy mkdir lock can be reclaimed from a live
-// holder, so there the sweep keeps temps younger than eventTempSweepMinAge. Like
-// sweepStaleTemps (store.go), it runs on every lock hold that writes an event
-// (itemsPrep) and removal is best-effort: readers skip temps regardless, and a
-// failed remove is retried by the next hold. Failures are left to CreateTemp to
-// report, so a broken items directory surfaces its own canonical error instead of
-// a sweep error; a symlinked or otherwise non-regular .gitignore is left alone.
+// holder, so there nothing is swept (eventTempSweep). Like sweepStaleTemps
+// (store.go), it runs on every lock hold that writes an event (itemsPrep) and
+// removal is best-effort: readers skip temps regardless, and a failed remove is
+// retried by the next hold. Failures are left to CreateTemp to report, so a
+// broken items directory surfaces its own canonical error instead of a sweep
+// error; a symlinked or otherwise non-regular .gitignore is left alone.
 func prepareItemsLocked(items string) {
 	_ = ensureItemsGitignore(items)
-	sweepEventTemps(items, eventTempSweepMinAge)
+	if eventTempSweep {
+		sweepEventTemps(items)
+	}
 }
 
-// eventTempSweepMinAge is the age an event temp must reach before
-// prepareItemsLocked reaps it. It is zero for the unix and Windows kernel locks,
-// whose holder cannot lose the lock while it writes. The legacy mkdir lock
-// (lock_other.go) sets it to lockStale in an init: a waiter reclaims that lock
-// once its owner epoch is lockStale old, so a live holder's temp, created after
-// it took the lock, is always younger than that and survives the reclaimer's
-// sweep.
-var eventTempSweepMinAge time.Duration
+// eventTempSweep reports whether prepareItemsLocked reaps event temps. It is
+// true for the unix and Windows kernel locks, whose holder cannot lose the lock
+// while it writes. The legacy mkdir lock (lock_legacy.go) turns it off in
+// lock_other.go's init: a waiter reclaims that lock from a holder whose owner
+// epoch is stale even while the holder is still writing, and no temp age tells
+// a stalled live writer's temp from a dead one's.
+var eventTempSweep = true
 
-// sweepEventTemps removes the event temps in items whose modification time is at
-// least minAge old; a zero minAge removes every temp without a stat. A temp whose
-// age cannot be read is kept. Removal is best-effort, as in prepareItemsLocked.
-func sweepEventTemps(items string, minAge time.Duration) {
+// sweepEventTemps removes every event temp in items, whatever its modification
+// time. Removal is best-effort, as in prepareItemsLocked.
+func sweepEventTemps(items string) {
 	entries, err := readItemsDir(items)
 	if err != nil {
 		return
@@ -201,12 +201,6 @@ func sweepEventTemps(items string, minAge time.Duration) {
 	for _, e := range entries {
 		if e.IsDir() || !isEventTempName(e.Name()) {
 			continue
-		}
-		if minAge > 0 {
-			info, err := e.Info()
-			if err != nil || time.Since(info.ModTime()) < minAge {
-				continue
-			}
 		}
 		_ = os.Remove(filepath.Join(items, e.Name()))
 	}
@@ -236,6 +230,11 @@ func eventFileName(rec Record, line []byte) (string, error) {
 	return rec.ID + "." + ts.UTC().Format(eventTimeLayout) + "-" + hex.EncodeToString(sum[:])[:eventHashLen] + eventExt, nil
 }
 
+// beforeEventRename runs between writeEventLocked's temp close and its rename,
+// with the temp's path. It is a var so a test can hold a writer mid-write;
+// production leaves it empty.
+var beforeEventRename = func(string) {}
+
 // writeEventLocked writes one encoded record as a new event file. The caller holds
 // the store lock and has run the write gate. The file is written to a dot-prefixed
 // temp name and renamed into place, so a reader never sees a partial event. A
@@ -263,6 +262,7 @@ func writeEventLocked(dir string, rec Record, line []byte, prep *itemsPrep) erro
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing localdebt event: %w", basePathErr(err))
 	}
+	beforeEventRename(tmpPath)
 	if err := os.Rename(tmpPath, filepath.Join(items, name)); err != nil {
 		// os.Rename raises an *os.LinkError, which basePathErr passes through
 		// untouched; quotedPathErr redacts both of its paths (backfill.go).
