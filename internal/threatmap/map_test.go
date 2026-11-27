@@ -570,9 +570,9 @@ func TestNewAgent_OwnNamePersonaFileWins(t *testing.T) {
 const awsKey = "AKIA" + "QYLPMN5HHHFPZAM2"
 
 // The mapper's Invocation carries the run's secret_guard policy, and an unset
-// policy is warn, as on the review path (fanout.secretGuardPolicy).
+// policy is the embedded default (registry.DefaultSecretGuard).
 func TestNewAgent_CarriesTheSecretGuardPolicy(t *testing.T) {
-	for set, want := range map[string]string{"": "warn", "block": "block", "redact": "redact", "off": "off"} {
+	for set, want := range map[string]string{"": registry.DefaultSecretGuard, "block": "block", "redact": "redact", "off": "off"} {
 		llm := &fakeLLM{reply: `{"keep": ["a.go"]}`}
 		a, err := NewAgent("mapper", testRegistry(), registry.Settings{TimeoutSecs: 30, SecretGuard: set}, registry.PersonaDirs{}, llm)
 		require.NoError(t, err)
