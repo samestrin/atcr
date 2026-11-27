@@ -81,7 +81,9 @@ func projectStoreDir(root, v string) (string, error) {
 	if err := containedIn(root, dir); err != nil {
 		return reject(err.Error())
 	}
-	registerProjectStore(dir, root, filepath.FromSlash(slashed))
+	if err := registerProjectStore(dir, root, filepath.FromSlash(slashed)); err != nil {
+		return "", fmt.Errorf(".atcr/config.yaml debt.store %q: %w", v, err)
+	}
 	return dir, nil
 }
 
@@ -98,8 +100,11 @@ func projectStoreDir(root, v string) (string, error) {
 var projectStores sync.Map
 
 // projectStore is a projectStores value: the repository root a project-tier
-// store was resolved against, the store's path relative to that root, and the
-// symlink-resolved key it was also recorded under (see projectStoreRealKey).
+// store was resolved against (absolute, so a later chdir cannot move it), that
+// root with its symlinks followed and its file identity at registration (so
+// ensureProjectStoreDir can tell a root link re-pointed since from the root it
+// resolved), the store's path relative to that root, and the symlink-resolved
+// key it was also recorded under (see projectStoreRealKey).
 type projectStore struct {
 	root     string
 	realRoot string
@@ -146,11 +151,28 @@ func projectStoreRealKey(dir string) string {
 	}
 }
 
-// registerProjectStore records dir under both keys.
-func registerProjectStore(dir, root, rel string) {
-	ps := projectStore{root: root, rel: rel, realKey: projectStoreRealKey(dir)}
+// registerProjectStore records dir under both keys, with root canonicalized:
+// filepath.Abs of root (row afeffed0bde65303), its EvalSymlinks path and its
+// file identity (row 817955b54794fa39). A root that cannot be made absolute,
+// resolved or stat'ed is an error rather than an entry ensureProjectStoreDir
+// could not check.
+func registerProjectStore(dir, root, rel string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("cannot make the repository root absolute: %v", basePathErr(err))
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return fmt.Errorf("cannot resolve the repository root: %v", basePathErr(err))
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		return fmt.Errorf("cannot inspect the repository root: %v", basePathErr(err))
+	}
+	ps := projectStore{root: absRoot, realRoot: realRoot, rootInfo: info, rel: rel, realKey: projectStoreRealKey(dir)}
 	projectStores.Store(projectStoreKey(dir), ps)
 	projectStores.Store(ps.realKey, ps)
+	return nil
 }
 
 // projectStoreFor returns the projectStore recorded for dir and whether there is

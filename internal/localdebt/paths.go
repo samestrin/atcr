@@ -94,9 +94,11 @@ func ensureStoreDir(dir string) error {
 }
 
 // ensureProjectStoreDir creates the project-tier store ps names under an os.Root
-// opened on its repository root. On Linux and macOS a directory removed while
-// it is open accepts no new entries, so the root vanishing after it is opened
-// fails the MkdirAll rather than resurrecting the root at its old path.
+// opened on its repository root. The opened root must be the directory
+// registered for the store (checkOpenedStoreRoot) before anything is created.
+// On Linux and macOS a directory removed while it is open accepts no new
+// entries, so the root vanishing after it is opened fails the MkdirAll rather
+// than resurrecting the root at its old path.
 func ensureProjectStoreDir(dir string, ps projectStore) error {
 	r, err := os.OpenRoot(ps.root)
 	if err != nil {
@@ -106,12 +108,32 @@ func ensureProjectStoreDir(dir string, ps projectStore) error {
 		return fmt.Errorf("localdebt store %q cannot be created: opening its repository root %q failed: %w", filepath.Base(dir), filepath.Base(ps.root), basePathErr(err))
 	}
 	defer func() { _ = r.Close() }()
+	if err := checkOpenedStoreRoot(r, ps); err != nil {
+		return fmt.Errorf("localdebt store %q cannot be created: %w", filepath.Base(dir), err)
+	}
 	afterStoreRootChecked()
 	if err := r.MkdirAll(ps.rel, 0o700); err != nil {
 		if _, statErr := os.Stat(ps.root); statErr != nil {
 			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q was removed while the store was being created; refusing to recreate it", filepath.Base(dir), filepath.Base(ps.root))
 		}
 		return basePathErr(err)
+	}
+	return nil
+}
+
+// checkOpenedStoreRoot reports whether r, the root ensureProjectStoreDir just
+// opened, is still the directory ps recorded at registration (os.SameFile on
+// the identity registerProjectStore took). OpenRoot follows a root that sits
+// behind a link, so a link re-pointed since the store was resolved would
+// otherwise open the new target, and containment would pass because the store
+// sits inside whatever the link names now (row 817955b54794fa39).
+func checkOpenedStoreRoot(r *os.Root, ps projectStore) error {
+	opened, err := r.Stat(".")
+	if err != nil {
+		return fmt.Errorf("inspecting its repository root %q failed: %w", filepath.Base(ps.root), basePathErr(err))
+	}
+	if ps.rootInfo == nil || !os.SameFile(opened, ps.rootInfo) {
+		return fmt.Errorf("its repository root %q is no longer the directory the store was resolved against (a root link re-pointed since?); refusing to write through it", filepath.Base(ps.root))
 	}
 	return nil
 }

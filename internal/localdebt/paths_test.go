@@ -481,3 +481,17 @@ func TestEnsureProjectStoreDir_ReplacedRootSymlinkIsRefused(t *testing.T) {
 		}
 	})
 }
+
+// TestEnsureProjectStoreDir_EntryWithoutIdentityIsRefused: an entry carrying
+// no recorded root identity cannot prove the opened root is the registered one,
+// so it is refused before MkdirAll rather than trusted.
+func TestEnsureProjectStoreDir_EntryWithoutIdentityIsRefused(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "debt")
+
+	err := ensureProjectStoreDir(dir, projectStore{root: root, realRoot: root, rel: "debt"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is no longer the directory")
+	_, statErr := os.Stat(dir)
+	assert.True(t, os.IsNotExist(statErr), "nothing is created: %v", statErr)
+}

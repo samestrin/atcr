@@ -365,3 +365,20 @@ func TestRegisterProjectStore_RootIsCanonicalAndSurvivesChdir(t *testing.T) {
 	_, err = os.Stat(filepath.Join(second, "rel-repo", "debt"))
 	assert.True(t, os.IsNotExist(err), "a later chdir must not move the store to another repository: %v", err)
 }
+
+// TestRegisterProjectStore_UnresolvableRootIsAnError: a root that cannot be
+// resolved is refused rather than recorded without the identity
+// ensureProjectStoreDir checks, and the error carries no absolute path.
+func TestRegisterProjectStore_UnresolvableRootIsAnError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing-repo")
+	dir := filepath.Join(root, "debt")
+	t.Cleanup(func() { forgetProjectStore(dir) })
+
+	err := registerProjectStore(dir, root, "debt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot resolve the repository root")
+	assert.NotContains(t, err.Error(), root, "no absolute path reaches the error string")
+	_, ok, lerr := projectStoreFor(dir)
+	require.NoError(t, lerr)
+	assert.False(t, ok, "nothing is registered for a root that cannot be resolved")
+}
