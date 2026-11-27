@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/samestrin/atcr/internal/gitexec"
 	"github.com/samestrin/atcr/internal/localdebt"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -79,7 +81,7 @@ func runDebtImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	plan, err := planDebtImport(items, importSourcePath(readme))
+	plan, err := planDebtImport(items, importSource(cmd.Context(), readme))
 	if err != nil {
 		return err
 	}
@@ -114,7 +116,7 @@ func runDebtImport(cmd *cobra.Command, args []string) error {
 // planDebtImport turns parsed rows into records and sorts each row into
 // Imported, Merged or Rejected. It reads no clock and touches no file: a row's
 // time comes from its section, so the same table always plans the same records.
-func planDebtImport(items []localdebt.TDItem, source string) (debtImportPlan, error) {
+func planDebtImport(items []localdebt.TDItem, source localdebt.SourceReport) (debtImportPlan, error) {
 	var plan debtImportPlan
 	var valid []debtImportRow
 	for _, it := range items {
@@ -153,7 +155,7 @@ func planDebtImport(items []localdebt.TDItem, source string) (debtImportPlan, er
 // importRecord builds the record a row imports as, or says why it cannot be
 // imported. Every text cell is stripped of control characters first, so the id
 // is a hash of the text the store keeps.
-func importRecord(it localdebt.TDItem, source string) (localdebt.Record, string, error) {
+func importRecord(it localdebt.TDItem, source localdebt.SourceReport) (localdebt.Record, string, error) {
 	if it.Invalid != "" {
 		return localdebt.Record{}, it.Invalid, nil
 	}
@@ -182,10 +184,10 @@ func importRecord(it localdebt.TDItem, source string) (localdebt.Record, string,
 		Attempts:      it.Attempts,
 		ReportedBy:    clean(it.Source),
 		Status:        status,
-		// The README path and section are kept so a report can group by section.
-		// The row's line is not: inserting a row above it would change every
-		// record below and defeat the rerun check.
-		SourceReport: &localdebt.SourceReport{Path: source, Section: clean(it.Section)},
+		// The README path (and commit, see importSource) and section are kept so a
+		// report can group by section. The row's line is not: inserting a row
+		// above it would change every record below and defeat the rerun check.
+		SourceReport: &localdebt.SourceReport{Path: source.Path, Commit: source.Commit, Section: clean(it.Section)},
 	}
 	for _, r := range it.Reviewers {
 		if r = clean(r); r != "" {
@@ -238,6 +240,69 @@ func importSectionTime(section string) (ts, reason string) {
 	return "", undated
 }
 
+// importSource names the README a record was read from. When the README is
+// the destination of a rename staged in its git repository (the migration
+// recipe's `git mv README.md README.import.md`), the record names the original
+// path and the HEAD commit that holds it, since the renamed copy is deleted once
+// imported. Otherwise it names the README as importSourcePath does, with no
+// commit. The original path is taken from git, never from the file's name.
+func importSource(ctx context.Context, readme string) localdebt.SourceReport {
+	if orig, head, ok := stagedRenameSource(ctx, readme); ok {
+		return localdebt.SourceReport{Path: orig, Commit: head}
+	}
+	return localdebt.SourceReport{Path: importSourcePath(readme)}
+}
+
+// stagedRenameSource returns the repo-relative path readme was renamed from in
+// its repository's index, and the HEAD commit holding that path. ok is false
+// when readme is not a staged rename's destination, including when it is in no
+// git repository, the repository has no commit yet, or any git call fails: the
+// provenance is best-effort and never stops an import.
+func stagedRenameSource(ctx context.Context, readme string) (orig, head string, ok bool) {
+	dir, name := filepath.Split(readme)
+	if dir == "" {
+		dir = "."
+	}
+	git := func(args ...string) (string, bool) {
+		gc := gitexec.CommandContextFn(ctx, append([]string{"--literal-pathspecs", "-C", dir}, args...)...)
+		out, err := gc.Output()
+		return string(out), err == nil
+	}
+	// The README's path from the repository root, as the index spells it.
+	out, found := git("ls-files", "-z", "--full-name", "--", name)
+	self, _, _ := strings.Cut(out, "\x00")
+	if !found || self == "" {
+		return "", "", false
+	}
+	out, found = git("diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color",
+		"--name-status", "-z", "--find-renames", "HEAD")
+	if !found {
+		return "", "", false
+	}
+	// -z output is a status, then one NUL-terminated path, or two for a rename
+	// (R<score> NUL <from> NUL <to> NUL). --find-renames reports no copies.
+	fields := strings.Split(out, "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		if !strings.HasPrefix(fields[i], "R") {
+			continue
+		}
+		if i+2 < len(fields) && fields[i+2] == self {
+			orig = fields[i+1]
+			break
+		}
+		i++ // the rename's second path
+	}
+	if orig == "" {
+		return "", "", false
+	}
+	out, found = git("rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	head = strings.TrimSpace(out)
+	if !found || head == "" {
+		return "", "", false
+	}
+	return orig, head, true
+}
+
 // importSourcePath names the README in a record: relative to the repo root when
 // it is inside it, its base name otherwise, so no absolute path (and the user
 // name in it) is written to a shared store.
@@ -257,13 +322,14 @@ func importSourcePath(readme string) string {
 // importKey is the identity of a record for the rerun check: its encoding with
 // the counters a fold or compaction stamps zeroed, so a compacted copy of an
 // imported record still matches the record the row imports as. The README's
-// path is left out too: it names where a row was read from, not the finding,
-// so the same table read from a renamed copy writes nothing new.
+// path and commit are left out too: they name where a row was read from, not
+// the finding, so the same table read from a renamed copy, or again once its
+// staged rename is committed, writes nothing new.
 func importKey(rec localdebt.Record) string {
 	rec.Occurrences, rec.CountedThrough, rec.FirstSeen = 0, "", ""
 	if rec.SourceReport != nil {
 		src := *rec.SourceReport
-		src.Path = ""
+		src.Path, src.Commit = "", ""
 		rec.SourceReport = &src
 	}
 	b, err := json.Marshal(rec)
