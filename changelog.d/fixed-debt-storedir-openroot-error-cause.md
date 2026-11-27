@@ -1,0 +1,1 @@
+- When a project-configured debt store cannot be created because its repository root exists but cannot be opened (it is a regular file, permissions deny access, a symlink loop), `atcr` now reports that actual cause instead of claiming the repository root does not exist; the missing-root refusal is kept for a root that is really gone (epic 163 T2).
