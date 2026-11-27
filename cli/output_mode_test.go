@@ -435,3 +435,21 @@ func TestOutputMode_ReportDisagreementsKeepsMarkdown(t *testing.T) {
 	require.Equal(t, 0, code, "stderr: %s", stderr)
 	assert.Equal(t, want, got)
 }
+
+// TestOutputMode_ReportLegacyPipeNoticeOnce: report writes its own legacy-pipe
+// notice once it knows the format, so the root never adds a second one on the
+// agent path, and a piped --format md report carries none at all.
+func TestOutputMode_ReportLegacyPipeNoticeOnce(t *testing.T) {
+	isolate(t)
+	clearOutputModeEnv(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	t.Setenv("ATCR_LEGACY_PIPE", "1")
+
+	code, _, stderr := execPiped(t, "report", "r")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Equal(t, 1, strings.Count(stderr, legacyPipeDeprecation), "one notice: %s", stderr)
+
+	code, _, stderr = execPiped(t, "report", "--format", "md", "r")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.NotContains(t, stderr, legacyPipeDeprecation)
+}
