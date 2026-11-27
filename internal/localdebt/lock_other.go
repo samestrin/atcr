@@ -1,29 +1,15 @@
 //go:build !unix && !windows
 
-// The legacy mkdir lock, kept only as the fallback for builds that are neither
-// unix nor Windows (js/wasm, wasip1, plan9), none of which atcr ships. Unix
-// builds use the flock lock in lock_unix.go and Windows builds the LockFileEx
-// lock in lock_windows.go. This fallback keeps the known faults Epic 38.0
-// removed from those: two waiters can both reclaim a stale lock and run fn at
-// once, a killed holder blocks every caller until lockStale passes, and a
-// late reclaimer can delete its successor's lock.
+// The legacy mkdir lock (lock_legacy.go), kept only as the fallback for builds
+// that are neither unix nor Windows (js/wasm, wasip1, plan9), none of which atcr
+// ships. Unix builds use the flock lock in lock_unix.go and Windows builds the
+// LockFileEx lock in lock_windows.go. This file only wires it in.
 
 package localdebt
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
-)
+import "time"
 
-const (
-	lockSubdir = ".lock"
-	lockOwner  = "owner.txt"
-	lockSleep  = 10 * time.Millisecond
-)
+const lockSleep = 10 * time.Millisecond
 
 // lockWait and lockStale are vars (not consts) so tests can shrink them to keep
 // lock-contention cases fast; production keeps the invariant below.
@@ -48,66 +34,5 @@ func init() { eventTempSweepMinAge = lockStale }
 
 // withLock acquires a cross-process lock directory under dir and executes fn.
 func withLock(dir, session string, fn func() error) error {
-	lockDir := filepath.Join(dir, lockSubdir)
-	ownerFile := filepath.Join(lockDir, lockOwner)
-
-	// Ensure the parent store directory exists — WITHOUT recreating a repo root
-	// that has since vanished (ensureStoreDir; TD internal/localdebt/root.go:123).
-	if err := checkStoreContainment(dir); err != nil {
-		return err
-	}
-	afterContainmentCheck()
-	if err := ensureStoreDir(dir); err != nil {
-		return fmt.Errorf("creating localdebt dir for lock: %w", err)
-	}
-
-	deadline := time.Now().Add(lockWait)
-	for {
-		err := os.Mkdir(lockDir, 0o700)
-		if err == nil {
-			// Acquired. Write owner metadata.
-			epoch := time.Now().Unix()
-			_ = os.WriteFile(ownerFile, []byte(fmt.Sprintf("session=%s|epoch=%d", session, epoch)), 0o600)
-			defer func() { _ = os.RemoveAll(lockDir) }()
-			if err := checkStoreContainment(dir); err != nil {
-				return err
-			}
-			return fn()
-		}
-		if !os.IsExist(err) {
-			return fmt.Errorf("acquire localdebt lock: %w", basePathErr(err))
-		}
-
-		// Lock is held. Check for stale owner.
-		if data, err := os.ReadFile(ownerFile); err == nil {
-			if e := parseOwnerEpoch(data); e > 0 {
-				if time.Since(time.Unix(e, 0)) > lockStale {
-					_ = os.RemoveAll(lockDir)
-					continue
-				}
-			}
-		}
-
-		if time.Now().After(deadline) {
-			// Redact to the base name: an absolute lockDir can embed a username
-			// (/Users/<name>/...), and the package's SECURITY contract (store.go:26-31)
-			// requires surfaced errors carry only the base name, like basePathErr.
-			return fmt.Errorf("timeout acquiring localdebt lock at %s", filepath.Base(lockDir))
-		}
-		time.Sleep(lockSleep)
-	}
-}
-
-func parseOwnerEpoch(data []byte) int64 {
-	s := strings.TrimSpace(string(data))
-	const prefix = "epoch="
-	i := strings.Index(s, prefix)
-	if i < 0 {
-		return 0
-	}
-	n, err := strconv.ParseInt(s[i+len(prefix):], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
+	return legacyLock{wait: lockWait, stale: lockStale, sleep: lockSleep}.with(dir, session, fn)
 }
