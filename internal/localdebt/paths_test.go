@@ -122,6 +122,14 @@ func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.
 	require.Error(t, err, "a vanished repo root under a depth-1 project store must be refused, not recreated")
 	assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
 	assert.Contains(t, err.Error(), `"gone-repo"`, "the refusal names the missing repository root")
+	// Pin the POSITIVE branch of the OpenRoot discriminator (epic 163 T2 review):
+	// a truly missing root (fs.ErrNotExist) must get the missing-root refusal,
+	// not the wrapped-cause message — both name the store and the root, so the
+	// assertions above alone cannot tell the branches apart.
+	assert.Contains(t, err.Error(), "does not exist; refusing to recreate it",
+		"a missing root must be reported by the missing-root refusal")
+	assert.NotContains(t, err.Error(), "opening its repository root",
+		"the wrapped-cause message is only for non-ErrNotExist OpenRoot failures")
 	_, statErr := os.Stat(root)
 	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
 }
