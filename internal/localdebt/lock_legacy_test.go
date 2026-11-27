@@ -32,8 +32,8 @@ func testLegacyLock() legacyLock {
 // does, and restores the kernel-lock policy when the test ends.
 func installLegacySweepPolicy(t *testing.T, lk legacyLock) {
 	t.Helper()
-	orig := eventTempSweepMinAge
-	t.Cleanup(func() { eventTempSweepMinAge = orig })
+	orig := eventTempSweep
+	t.Cleanup(func() { eventTempSweep = orig })
 	lk.installSweepPolicy()
 }
 

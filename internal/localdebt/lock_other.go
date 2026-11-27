@@ -28,8 +28,8 @@ var (
 )
 
 // A waiter reclaims this lock from a holder whose owner epoch is lockStale old,
-// even while that holder is still writing, so the reclaimer's event temp sweep
-// must spare temps younger than that (eventTempSweepMinAge, events.go).
+// even while that holder is still writing, so writes under it sweep no event
+// temps (installSweepPolicy, eventTempSweep in events.go).
 func init() { mkdirLock().installSweepPolicy() }
 
 func mkdirLock() legacyLock {

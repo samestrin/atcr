@@ -31,8 +31,14 @@ type legacyLock struct {
 }
 
 // installSweepPolicy sets the event-temp sweep for builds that use this lock;
-// lock_other.go calls it from an init.
-func (l legacyLock) installSweepPolicy() { eventTempSweepMinAge = l.stale }
+// lock_other.go calls it from an init. The policy is never sweep: a waiter
+// reclaims this lock from a holder whose owner epoch is stale even while that
+// holder is still writing, so a temp in items/ may be a live writer's, and no
+// age proves otherwise (a stalled write ages its temp past l.stale; a clock step
+// or a skewed network FS gives a temp any mtime). Temps left behind are
+// harmless: readers skip them (IsEventEntry) and items/.gitignore keeps them out
+// of `git add -A`. A crash leftover therefore stays until removed by hand.
+func (l legacyLock) installSweepPolicy() { eventTempSweep = false }
 
 // with acquires the lock directory under dir and executes fn.
 func (l legacyLock) with(dir, session string, fn func() error) error {

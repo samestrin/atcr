@@ -130,52 +130,53 @@ func TestCreateItemsGitignore_RefusesSymlinkPlantedAfterLstat(t *testing.T) {
 }
 
 // Rows a55384eaf4b4f883 and 84e68def42784348: unix and Windows hold a kernel
-// lock, so any temp the sweep sees belongs to a dead process and no age is
-// required. Only lock_other.go's legacy mkdir lock sets one.
-func TestEventTempSweepMinAge_ZeroOnKernelLocks(t *testing.T) {
-	assert.Zero(t, eventTempSweepMinAge)
+// lock, so any temp the sweep sees belongs to a dead process and every one is
+// reaped. Only lock_other.go's legacy mkdir lock turns the sweep off.
+func TestEventTempSweep_OnForKernelLocks(t *testing.T) {
+	assert.True(t, eventTempSweep)
 }
 
-// The sweep helper keeps an event temp younger than minAge and removes an older
-// one; a zero minAge removes every temp. The ages are faked with Chtimes.
-func TestSweepEventTemps_MinAge(t *testing.T) {
+// The sweep removes every event temp whatever its age, one just written as much
+// as an old leftover, and leaves the marker, the ignore file and real events.
+// The ages are faked with Chtimes.
+func TestSweepEventTemps_ReapsEveryTemp(t *testing.T) {
 	dir := DefaultDir(t.TempDir())
 	require.NoError(t, EnableEventLayout(dir))
+	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
 	items := ItemsDir(dir)
 
-	live := plantEventTemp(t, items, ".a.json.tmp-1", time.Second)
+	fresh := plantEventTemp(t, items, ".a.json.tmp-1", time.Second)
 	dead := plantEventTemp(t, items, ".b.json.tmp-2", 2*time.Hour)
-	sweepEventTemps(items, time.Hour)
-	assert.FileExists(t, live, "a temp younger than minAge may be a live writer's and is kept")
-	assert.NoFileExists(t, dead, "a temp older than minAge is reaped")
-
-	// A future mtime (clock stepped back, skewed network FS) reads as younger
-	// than any minAge; the kernel-lock path (zero minAge) must still reap it.
+	// A future mtime (clock stepped back, skewed network FS) is reaped too: no
+	// age is consulted.
 	future := plantEventTemp(t, items, ".c.json.tmp-3", -time.Hour)
-	sweepEventTemps(items, 0)
-	assert.NoFileExists(t, live, "a zero minAge reaps every temp")
-	assert.NoFileExists(t, future, "a zero minAge reaps a temp with a future mtime")
+	sweepEventTemps(items)
+	assert.NoFileExists(t, fresh, "a fresh temp is reaped")
+	assert.NoFileExists(t, dead, "an old temp is reaped")
+	assert.NoFileExists(t, future, "a temp with a future mtime is reaped")
 	assert.FileExists(t, filepath.Join(items, eventLayoutMarker), "the marker is never swept")
+	assert.FileExists(t, filepath.Join(items, itemsGitignore), "the ignore file is never swept")
+	assert.Len(t, eventFiles(t, dir), 1, "a real event is never swept")
 }
 
 // The harm the rows name: on the legacy mkdir lock a waiter can reclaim a lock
 // whose holder is still writing, and the reclaimer's sweep then deleted the
-// holder's in-flight temp, failing its rename into place. With the legacy age
-// set, a write's sweep spares a fresh temp and still reaps a stale leftover.
+// holder's in-flight temp, failing its rename into place. An age gate could not
+// tell a stalled writer's temp from a dead one's, so with the legacy policy a
+// write's sweep spares every temp: the live holder's and an old leftover alike.
+// The two-holder case is TestLegacyLock_ReclaimerSparesLiveHoldersTemp.
 func TestAppend_LegacyLockSweepSparesLiveHoldersTemp(t *testing.T) {
-	orig := eventTempSweepMinAge
-	eventTempSweepMinAge = time.Hour
-	t.Cleanup(func() { eventTempSweepMinAge = orig })
+	installLegacySweepPolicy(t, testLegacyLock())
 
 	dir := DefaultDir(t.TempDir())
 	require.NoError(t, EnableEventLayout(dir))
 	items := ItemsDir(dir)
 	live := plantEventTemp(t, items, ".a.json.tmp-1", time.Second)
-	dead := plantEventTemp(t, items, ".b.json.tmp-2", 2*time.Hour)
+	stalled := plantEventTemp(t, items, ".b.json.tmp-2", 2*time.Hour)
 
 	require.NoError(t, Append(dir, eventRec(idP, "2026-06-14T10:00:00Z", "")))
 
 	assert.FileExists(t, live, "a live holder's in-flight temp survives the reclaimer's sweep")
-	assert.NoFileExists(t, dead, "a stale crash leftover is still reaped")
+	assert.FileExists(t, stalled, "a temp older than lockStale may be a stalled live writer's and survives too")
 	assert.Len(t, eventFiles(t, dir), 1)
 }
