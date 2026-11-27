@@ -130,6 +130,7 @@ type summaryLine struct {
 		Line    int        `json:"line"`
 		Path    jsonString `json:"path"`
 		Section jsonString `json:"section"`
+		Commit  jsonString `json:"commit"`
 	} `json:"source_report"`
 
 	// The remaining fields Record declares, type-checked and discarded. Each is a
