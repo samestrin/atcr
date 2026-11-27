@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -343,33 +345,307 @@ func TestCheckLoopbackPortsFree_TunnelInterfaceTimeoutIsNotLocal(t *testing.T) {
 			&net.IPNet{IP: net.ParseIP("fd7a:115c:a1e0::1234"), Mask: net.CIDRMask(128, 128)},
 		}, nil
 	}
+	var mu sync.Mutex
 	var timedOut []string
 	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if strings.Contains(addr, "100.101.102.103") || strings.Contains(addr, "fd7a:115c") {
+			mu.Lock()
 			timedOut = append(timedOut, addr)
+			mu.Unlock()
 			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
 		}
 		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
 	}
 
 	require.NoError(t, checkLoopbackPortsFree(context.Background(), []int{3000, 3001}))
-	assert.Equal(t, []string{"100.101.102.103:3000", "[fd7a:115c:a1e0::1234]:3000"}, timedOut,
+	// Interface addresses are probed concurrently, so the dial order between
+	// them is not defined; which addresses were dialed, and how often, is.
+	assert.ElementsMatch(t, []string{"100.101.102.103:3000", "[fd7a:115c:a1e0::1234]:3000"}, timedOut,
 		"each tunnel address is probed, and once it has timed out not again")
+}
+
+// timeoutOnlyAt returns a loopbackDial that times out at want and refuses
+// everywhere else.
+func timeoutOnlyAt(want string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if host, _, err := net.SplitHostPort(addr); err == nil && host == want {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+}
+
+func TestCheckLoopbackPortsFree_PointToPointOutsideTunnelRangesFailsClosed(t *testing.T) {
+	// The point-to-point exemption covers what was measured (EST-8465):
+	// Tailscale's addresses, in 100.64.0.0/10 and fd7a:115c:a1e0::/48, on a utun
+	// interface. Any other point-to-point address (an L2TP or PPP link, a tun
+	// device a CI harness or container runtime brings up) may be locally
+	// routed, so a timeout there still refuses the run. So does a
+	// tunnel-range address on an interface that is not point-to-point, such
+	// as an ISP's CGNAT address on en0.
+	for _, tc := range []struct {
+		name  string
+		ifc   net.Interface
+		ip    string
+		bits  int
+		class string
+	}{
+		{"ppp0 IPv4", net.Interface{Name: "ppp0", Flags: net.FlagUp | net.FlagPointToPoint}, "203.0.113.7", 32, "point-to-point address of ppp0"},
+		{"ppp0 IPv6", net.Interface{Name: "ppp0", Flags: net.FlagUp | net.FlagPointToPoint}, "2001:db8::7", 128, "point-to-point address of ppp0"},
+		{"utun just below 100.64.0.0/10", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "100.63.255.255", 32, "point-to-point address of utun4"},
+		{"utun just above 100.64.0.0/10", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "100.128.0.0", 32, "point-to-point address of utun4"},
+		{"utun just outside fd7a:115c:a1e0::/48", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "fd7a:115c:a1df:ffff::1", 128, "point-to-point address of utun4"},
+		{"utun in fd7a:115c::/48 but not Tailscale's /48", net.Interface{Name: "utun4", Flags: net.FlagUp | net.FlagPointToPoint}, "fd7a:115c::1", 128, "point-to-point address of utun4"},
+		{"CGNAT address on broadcast en0", net.Interface{Name: "en0", Flags: net.FlagUp | net.FlagBroadcast}, "100.101.102.103", 10, "address of en0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ip, size := net.ParseIP(tc.ip), 128
+			if v4 := ip.To4(); v4 != nil {
+				ip, size = v4, 32
+			}
+			addr := &net.IPNet{IP: ip, Mask: net.CIDRMask(tc.bits, size)}
+			require.True(t, addr.Contains(addr.IP), "fixture %v: mask length must match the address family", addr)
+			origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+			t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+			netInterfaces = func() ([]net.Interface, error) { return []net.Interface{tc.ifc}, nil }
+			interfaceAddrs = func(net.Interface) ([]net.Addr, error) { return []net.Addr{addr}, nil }
+			loopbackDial = timeoutOnlyAt(tc.ip)
+
+			err := checkLoopbackPortsFree(context.Background(), []int{3000})
+			require.Error(t, err, "a timeout at a point-to-point address outside the tunnel ranges must not report the port free")
+			assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+			assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
+			assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+			assert.Contains(t, err.Error(), "port 3000 on "+tc.ip, "the refusal must name the probe that timed out")
+			assert.Contains(t, err.Error(), tc.class, "the refusal must name the address class")
+		})
+	}
+}
+
+func TestCheckLoopbackPortsFree_IPv4LinkLocalTimeoutFailsClosed(t *testing.T) {
+	// A deliberate decision (epic 160, Q5), not an accident of the zone test:
+	// 169.254/16 is IPv4 link-local, which macOS self-assigns when DHCP fails
+	// or a bridge comes up with no peer. Unlike an IPv6 link-local address it
+	// carries no zone, the dial is not scoped to an interface, and the host
+	// routes it to itself over lo0 like a LAN address. A timeout there means
+	// a firewall dropped the SYN, so the run is refused, and the refusal says
+	// the address is IPv4 link-local so an operator can tell which class it was.
+	ip := "169.254.10.20"
+	addr := &net.IPNet{IP: net.ParseIP(ip).To4(), Mask: net.CIDRMask(16, 32)}
+	require.True(t, addr.Contains(addr.IP), "fixture %v: mask length must match the address family", addr)
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "en0"}}, nil }
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) { return []net.Addr{addr}, nil }
+	loopbackDial = timeoutOnlyAt(ip)
+
+	err := checkLoopbackPortsFree(context.Background(), []int{3000})
+	require.Error(t, err, "a timeout at an IPv4 link-local address must not report the port free")
+	assert.True(t, errors.Is(err, ErrOSLevelLoopbackCheckUnavailable), "got %v", err)
+	assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
+	assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	assert.Contains(t, err.Error(), "port 3000 on "+ip, "the refusal must name the probe that timed out")
+	assert.Contains(t, err.Error(), "IPv4 link-local address of en0", "the refusal must name the address class")
+}
+
+// deadWave is a fake clock for dead interface addresses. A dial at a dead
+// address blocks until want such dials are in flight at once; that wave then
+// costs one loopbackDialTimeout of virtual time and every dial in it times
+// out. Serial probing never fills a wave of more than one, so its first dial
+// blocks until the test's safety context ends.
+type deadWave struct {
+	mu      sync.Mutex
+	want    int
+	arrived int
+	dials   int
+	release chan struct{}
+	elapsed time.Duration
+}
+
+func (w *deadWave) dial(ctx context.Context, network string) (net.Conn, error) {
+	w.mu.Lock()
+	w.dials++
+	w.arrived++
+	ch := w.release
+	if w.arrived == w.want {
+		w.elapsed += loopbackDialTimeout
+		w.arrived = 0
+		close(w.release)
+		w.release = make(chan struct{})
+	}
+	w.mu.Unlock()
+	select {
+	case <-ch:
+		return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestCheckLoopbackPortsFree_DeadInterfaceAddressesCostOneTimeout(t *testing.T) {
+	// A Mac with a VPN stack has several tunnel addresses, each of which
+	// burns the full loopbackDialTimeout. Probed one after another, N of them
+	// cost N timeouts before the workload starts, on every run. The interface
+	// addresses are probed concurrently, so N dead ones cost about one; each
+	// is still probed once per call and skipped for later ports.
+	const n = 8
+	var ifaces []net.Interface
+	byName := map[string]net.Addr{}
+	dead := map[string]bool{}
+	for i := range n {
+		name := "utun" + strconv.Itoa(i)
+		ifaces = append(ifaces, net.Interface{Name: name, Flags: net.FlagUp | net.FlagPointToPoint})
+		ip := net.IPv4(100, 101, 102, byte(10+i)).To4()
+		byName[name] = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+		dead[ip.String()] = true
+	}
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return ifaces, nil }
+	interfaceAddrs = func(ifc net.Interface) ([]net.Addr, error) { return []net.Addr{byName[ifc.Name]}, nil }
+	wave := &deadWave{want: n, release: make(chan struct{})}
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if host, _, _ := net.SplitHostPort(addr); dead[host] {
+			return wave.dial(ctx, network)
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	// Real time only bounds a failure: serial probing blocks here.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, checkLoopbackPortsFree(ctx, []int{3000, 5173, 8080}))
+	assert.Equal(t, loopbackDialTimeout, wave.elapsed, "N dead interface addresses must cost one loopbackDialTimeout, not N")
+	assert.Equal(t, n, wave.dials, "each dead address is probed once per call")
+}
+
+func TestCheckLoopbackPortsFree_InterfaceProbesAreBounded(t *testing.T) {
+	// Concurrent probing is bounded: a host with many addresses does not open
+	// a socket per address at once. Every address is still probed. Each
+	// interface probe is held until loopbackProbeConcurrency of them are in
+	// flight; the test then waits briefly for one more. With the cap none can
+	// start, so the peak is exactly the cap; without it the rest start at once.
+	const n = 3*loopbackProbeConcurrency + 1
+	var addrs []net.Addr
+	for i := range n {
+		addrs = append(addrs, &net.IPNet{IP: net.IPv4(192, 168, 1, byte(10+i)).To4(), Mask: net.CIDRMask(24, 32)})
+	}
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "en0"}}, nil }
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) { return addrs, nil }
+	var (
+		mu                      sync.Mutex
+		inFlight, peak, arrived int
+		dials                   atomic.Int32
+	)
+	full := make(chan struct{})
+	extra := make(chan struct{}, 1)
+	release := make(chan struct{})
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials.Add(1)
+		if strings.HasPrefix(addr, "192.168.1.") {
+			mu.Lock()
+			inFlight++
+			arrived++
+			peak = max(peak, inFlight)
+			a := arrived
+			mu.Unlock()
+			switch a {
+			case loopbackProbeConcurrency:
+				close(full)
+			case loopbackProbeConcurrency + 1:
+				extra <- struct{}{}
+			}
+			<-release
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- checkLoopbackPortsFree(context.Background(), []int{3000}) }()
+	select {
+	case <-full:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fewer than loopbackProbeConcurrency interface probes ever ran at once")
+	}
+	select {
+	case <-extra: // over the cap: the peak assertion below fails
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	require.NoError(t, <-done)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, loopbackProbeConcurrency, peak, "exactly loopbackProbeConcurrency probes in flight at the peak")
+	assert.Equal(t, int32(n+2), dials.Load(), "every address, plus 127.0.0.1 and ::1")
+}
+
+func TestCheckLoopbackPortsFree_ConcurrentResultsAreJudgedInAddressOrder(t *testing.T) {
+	// The interface probes for a port run together, but their results are read
+	// in address order, as a serial check would read them: a held port at the
+	// first address is reported even when a later address times out, and the
+	// answer does not depend on which probe finishes first.
+	origIfaces, origAddrs, origDial := netInterfaces, interfaceAddrs, loopbackDial
+	t.Cleanup(func() { netInterfaces, interfaceAddrs, loopbackDial = origIfaces, origAddrs, origDial })
+	netInterfaces = func() ([]net.Interface, error) { return []net.Interface{{Name: "en0"}}, nil }
+	interfaceAddrs = func(net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.IPv4(192, 168, 1, 20).To4(), Mask: net.CIDRMask(24, 32)},
+			&net.IPNet{IP: net.IPv4(192, 168, 1, 21).To4(), Mask: net.CIDRMask(24, 32)},
+		}, nil
+	}
+	var closed atomic.Bool
+	loopbackDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		switch addr {
+		case "192.168.1.20:3000":
+			c1, c2 := net.Pipe()
+			_ = c2.Close()
+			return closeSpy{c1, &closed}, nil
+		case "192.168.1.21:3000":
+			return nil, &net.OpError{Op: "dial", Net: network, Err: os.ErrDeadlineExceeded}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connect: connection refused")}
+	}
+
+	for range 20 {
+		closed.Store(false)
+		err := checkLoopbackPortsFree(context.Background(), []int{3000})
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "got %v", err)
+		assert.Contains(t, err.Error(), "port 3000 on 192.168.1.20")
+		assert.True(t, closed.Load(), "the probe's connection is closed")
+	}
+}
+
+// closeSpy records that a probe's connection was closed.
+type closeSpy struct {
+	net.Conn
+	closed *atomic.Bool
+}
+
+func (c closeSpy) Close() error {
+	c.closed.Store(true)
+	return c.Conn.Close()
 }
 
 func TestCheckLoopbackPortsFree_RoutableInterfaceAddressTimeoutFailsClosed(t *testing.T) {
 	// The utun0 exemption is for zone-suffixed link-local addresses and the
-	// addresses of point-to-point (tunnel) interfaces only. A host's routable
-	// LAN address is reached over lo0 (PR #753), so a probe
+	// Tailscale addresses of point-to-point (tunnel) interfaces only. A host's
+	// routable LAN address is reached over lo0 (PR #753), so a probe
 	// there is answered or refused at once; a timeout means a firewall in
 	// stealth mode dropped the SYN, and a service bound to that address may
 	// still be reachable through the grant. The port's state is unknown.
+	// IPv4 link-local (169.254/16) fails closed too; it has its own test,
+	// TestCheckLoopbackPortsFree_IPv4LinkLocalTimeoutFailsClosed.
 	for _, tc := range []struct {
 		ip   string
 		mask net.IPMask
 	}{
 		{"192.168.1.20", net.CIDRMask(24, 32)},
-		{"169.254.10.20", net.CIDRMask(24, 32)},
 		{"2001:db8::20", net.CIDRMask(64, 128)},
 	} {
 		ip := tc.ip
@@ -397,6 +673,7 @@ func TestCheckLoopbackPortsFree_RoutableInterfaceAddressTimeoutFailsClosed(t *te
 			assert.False(t, errors.Is(err, ErrOSLevelLoopbackPortHeld), "no port was found held: %v", err)
 			assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
 			assert.Contains(t, err.Error(), "port 3000 on "+ip, "the refusal must name the probe that timed out")
+			assert.Contains(t, err.Error(), "address of en0", "the refusal must name the address class")
 		})
 	}
 }
