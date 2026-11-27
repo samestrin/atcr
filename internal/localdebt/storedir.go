@@ -278,8 +278,9 @@ func containedIn(root, dir string) error {
 }
 
 // userStoreDir resolves the user tier's value: "~" and "~/..." expanded to the
-// home directory, absolute as given, relative against root. It gets the same system-directory guard --store gets
-// (validation.FilePath on the absolute form), but no containment rule.
+// home directory, absolute as given, relative against root. It gets the same
+// system-directory guard --store gets (validation.FilePath on the absolute
+// form), but no containment rule.
 func userStoreDir(root, v string) (string, error) {
 	expanded, err := validation.ExpandHome(v)
 	if err != nil {
