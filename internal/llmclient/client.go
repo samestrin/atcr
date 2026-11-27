@@ -425,10 +425,13 @@ type Completion struct {
 	Reasoning string
 }
 
-// completeGuardMessages is the guard CompleteWithMeta runs on the prompt; a
-// variable so tests can stub a malformed guard result (row fc6aae632c3ca6f7),
-// as scanSecrets is stubbed for the scanner.
-var completeGuardMessages = guardMessages
+// completeGuardMessages is the guard CompleteWithMeta runs on the prompt,
+// labelled "complete" so its log lines name the single-shot caller (row
+// b08aa592c80f6566); a variable so tests can stub a malformed guard result
+// (row fc6aae632c3ca6f7), as scanSecrets is stubbed for the scanner.
+var completeGuardMessages = func(ctx context.Context, inv Invocation, messages []Message) ([]Message, error) {
+	return guardMessagesFor(ctx, inv, messages, "complete")
+}
 
 // CompleteWithMeta is CompleteWithUsage plus the truncation signal: it reports
 // whether the provider stopped on finish_reason "length". CompleteWithUsage and

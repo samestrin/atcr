@@ -43,7 +43,17 @@ var scanSecrets = payload.ScanPayloadContext
 // internal/fanout/secretguard.go. Neither a warning nor an error holds secret
 // material: only message indexes and rule kinds are printed. A text
 // inv.ScanCache already holds is not scanned again; its stored hits are used.
+// Log lines name the Chat caller; the single-shot Complete* path goes through
+// guardMessagesFor with its own label.
 func guardMessages(ctx context.Context, inv Invocation, messages []Message) ([]Message, error) {
+	return guardMessagesFor(ctx, inv, messages, "chat")
+}
+
+// guardMessagesFor is guardMessages with the caller name its log lines carry:
+// "chat" for the tool-loop Chat, "complete" for the single-shot Complete*, so
+// a warn/redact line from a single-shot call does not read as a tool-loop
+// event (row b08aa592c80f6566).
+func guardMessagesFor(ctx context.Context, inv Invocation, messages []Message, caller string) ([]Message, error) {
 	from := inv.AlreadyGuardedMessages
 	if from < 0 || from > len(messages) {
 		return nil, fmt.Errorf("%w: %d of %d messages", ErrAlreadyGuardedMessages, from, len(messages))
@@ -121,7 +131,7 @@ func guardMessages(ctx context.Context, inv Invocation, messages []Message) ([]M
 	if scanErr != nil {
 		// ScanPayloadContext's error names only the failure mode, never scanner
 		// output, so it is safe to print.
-		logger.Warn(fmt.Sprintf("chat: secret scan: %v; using the built-in ruleset", scanErr))
+		logger.Warn(fmt.Sprintf("%s: secret scan: %v; using the built-in ruleset", caller, scanErr))
 	}
 	found := describeHits(count, kinds, indexes)
 	switch policy {
@@ -134,11 +144,11 @@ func guardMessages(ctx context.Context, inv Invocation, messages []Message) ([]M
 		}
 	case secretGuardRedact:
 		if count > 0 {
-			logger.Warn(fmt.Sprintf("chat: redacted %s (secret_guard: redact)", found))
+			logger.Warn(fmt.Sprintf("%s: redacted %s (secret_guard: redact)", caller, found))
 		}
 	default:
 		if count > 0 {
-			logger.Warn(fmt.Sprintf("chat: %s sent unchanged (secret_guard: warn); set secret_guard: redact or block to stop it", found))
+			logger.Warn(fmt.Sprintf("%s: %s sent unchanged (secret_guard: warn); set secret_guard: redact or block to stop it", caller, found))
 		}
 	}
 	return out, nil
