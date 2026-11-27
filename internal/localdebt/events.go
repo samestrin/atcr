@@ -236,6 +236,11 @@ func eventFileName(rec Record, line []byte) (string, error) {
 	return rec.ID + "." + ts.UTC().Format(eventTimeLayout) + "-" + hex.EncodeToString(sum[:])[:eventHashLen] + eventExt, nil
 }
 
+// beforeEventRename runs between writeEventLocked's temp close and its rename,
+// with the temp's path. It is a var so a test can hold a writer mid-write;
+// production leaves it empty.
+var beforeEventRename = func(string) {}
+
 // writeEventLocked writes one encoded record as a new event file. The caller holds
 // the store lock and has run the write gate. The file is written to a dot-prefixed
 // temp name and renamed into place, so a reader never sees a partial event. A
@@ -263,6 +268,7 @@ func writeEventLocked(dir string, rec Record, line []byte, prep *itemsPrep) erro
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing localdebt event: %w", basePathErr(err))
 	}
+	beforeEventRename(tmpPath)
 	if err := os.Rename(tmpPath, filepath.Join(items, name)); err != nil {
 		// os.Rename raises an *os.LinkError, which basePathErr passes through
 		// untouched; quotedPathErr redacts both of its paths (backfill.go).

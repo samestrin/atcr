@@ -30,6 +30,10 @@ type legacyLock struct {
 	wait, stale, sleep time.Duration
 }
 
+// installSweepPolicy sets the event-temp sweep for builds that use this lock;
+// lock_other.go calls it from an init.
+func (l legacyLock) installSweepPolicy() { eventTempSweepMinAge = l.stale }
+
 // with acquires the lock directory under dir and executes fn.
 func (l legacyLock) with(dir, session string, fn func() error) error {
 	lockDir := filepath.Join(dir, legacyLockSubdir)

@@ -30,9 +30,13 @@ var (
 // A waiter reclaims this lock from a holder whose owner epoch is lockStale old,
 // even while that holder is still writing, so the reclaimer's event temp sweep
 // must spare temps younger than that (eventTempSweepMinAge, events.go).
-func init() { eventTempSweepMinAge = lockStale }
+func init() { mkdirLock().installSweepPolicy() }
+
+func mkdirLock() legacyLock {
+	return legacyLock{wait: lockWait, stale: lockStale, sleep: lockSleep}
+}
 
 // withLock acquires a cross-process lock directory under dir and executes fn.
 func withLock(dir, session string, fn func() error) error {
-	return legacyLock{wait: lockWait, stale: lockStale, sleep: lockSleep}.with(dir, session, fn)
+	return mkdirLock().with(dir, session, fn)
 }

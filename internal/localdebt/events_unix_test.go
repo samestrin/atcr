@@ -129,17 +129,6 @@ func TestCreateItemsGitignore_RefusesSymlinkPlantedAfterLstat(t *testing.T) {
 	}
 }
 
-// plantEventTemp writes an event temp of the CreateTemp shape into items with its
-// modification time set age in the past, and returns its path.
-func plantEventTemp(t *testing.T, items, name string, age time.Duration) string {
-	t.Helper()
-	p := filepath.Join(items, name)
-	require.NoError(t, os.WriteFile(p, []byte("{partial"), 0o600))
-	when := time.Now().Add(-age)
-	require.NoError(t, os.Chtimes(p, when, when))
-	return p
-}
-
 // Rows a55384eaf4b4f883 and 84e68def42784348: unix and Windows hold a kernel
 // lock, so any temp the sweep sees belongs to a dead process and no age is
 // required. Only lock_other.go's legacy mkdir lock sets one.
