@@ -400,3 +400,152 @@ func TestDebtImport_StoreWithAnAddedRecordReruns(t *testing.T) {
 		})
 	}
 }
+
+// importRepo makes the working directory a git repository holding the import
+// table at docs/td/README.md, committed, and returns the HEAD commit.
+func importRepo(t *testing.T) string {
+	t.Helper()
+	isolate(t)
+	wd := requireIsolatedWorkdir(t)
+	runFixtureGit(t, wd, "init", "-q")
+	require.NoError(t, os.MkdirAll(filepath.Join(wd, "docs", "td"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(wd, "docs", "td", "README.md"), []byte(importREADME), 0o644))
+	runFixtureGit(t, wd, "add", "docs/td/README.md")
+	runFixtureGit(t, wd, "commit", "-q", "-m", "td list")
+	return fixtureHead(t)
+}
+
+// fixtureHead is the HEAD commit of the repository in the working directory.
+func fixtureHead(t *testing.T) string {
+	t.Helper()
+	head, err := fixtureGit(".", "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	return strings.TrimSpace(string(head))
+}
+
+// importedSources reads every record's source_report from the store, failing
+// unless each record carries one.
+func importedSources(t *testing.T, dir string) []localdebt.SourceReport {
+	t.Helper()
+	recs, err := localdebt.ReadAll(dir, localdebt.ReadOpts{})
+	require.NoError(t, err)
+	require.NotEmpty(t, recs)
+	var srcs []localdebt.SourceReport
+	for _, r := range recs {
+		require.NotNil(t, r.SourceReport, "%s has no source_report", r.Problem)
+		srcs = append(srcs, *r.SourceReport)
+	}
+	return srcs
+}
+
+// TestDebtImport_StagedRenameRecordsOriginalPathAndCommit is the migration
+// recipe in docs/technical-debt.md: the README is `git mv`ed to README.import.md,
+// imported, then deleted. Each record names the README's original path and the
+// HEAD commit that holds it, so the list can still be found after the delete.
+func TestDebtImport_StagedRenameRecordsOriginalPathAndCommit(t *testing.T) {
+	// The destination's name plays no part: a move to a name with no ".import"
+	// in it names the original path just the same.
+	for _, dest := range []string{"README.import.md", "old-list.md"} {
+		t.Run(dest, func(t *testing.T) {
+			importRepo(t)
+			// An unrelated staged rename and edit sit beside the README's, so the
+			// README's is found among others.
+			require.NoError(t, os.WriteFile("a.txt", []byte("a\n"), 0o644))
+			runFixtureGit(t, ".", "add", "a.txt")
+			runFixtureGit(t, ".", "commit", "-q", "-m", "a")
+			head := fixtureHead(t)
+			runFixtureGit(t, ".", "mv", "a.txt", "b.txt")
+			require.NoError(t, os.WriteFile("c.txt", []byte("c\n"), 0o644))
+			runFixtureGit(t, ".", "add", "c.txt")
+			runFixtureGit(t, ".", "mv", "docs/td/README.md", "docs/td/"+dest)
+			dir := filepath.Join(t.TempDir(), "debt")
+
+			out, err := runDebt(t, "import", "docs/td/"+dest, "--store", dir)
+			require.NoError(t, err, out)
+			for _, src := range importedSources(t, dir) {
+				assert.Equal(t, "docs/td/README.md", src.Path)
+				assert.Equal(t, head, src.Commit)
+			}
+		})
+	}
+}
+
+// TestDebtImport_NoStagedRenameOmitsCommit: with no staged move the path stays
+// the import argument and no commit is written, even for a file named
+// README.import.md: the original name comes from git, never from the file name.
+func TestDebtImport_NoStagedRenameOmitsCommit(t *testing.T) {
+	cases := map[string]func(t *testing.T) string{
+		"committed README": func(t *testing.T) string {
+			importRepo(t)
+			return "docs/td/README.md"
+		},
+		"added README.import.md": func(t *testing.T) string {
+			importRepo(t)
+			require.NoError(t, os.WriteFile("docs/td/README.import.md", []byte(importREADME), 0o644))
+			runFixtureGit(t, ".", "add", "docs/td/README.import.md")
+			return "docs/td/README.import.md"
+		},
+		"repository with no commit": func(t *testing.T) string {
+			isolate(t)
+			runFixtureGit(t, requireIsolatedWorkdir(t), "init", "-q")
+			require.NoError(t, os.WriteFile("README.import.md", []byte(importREADME), 0o644))
+			runFixtureGit(t, ".", "add", "README.import.md")
+			return "README.import.md"
+		},
+		"not a git repository": func(t *testing.T) string {
+			isolate(t)
+			require.NoError(t, os.WriteFile("README.import.md", []byte(importREADME), 0o644))
+			return "README.import.md"
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			readme := setup(t)
+			dir := filepath.Join(t.TempDir(), "debt")
+
+			out, err := runDebt(t, "import", readme, "--store", dir)
+			require.NoError(t, err, out)
+			for _, src := range importedSources(t, dir) {
+				assert.Equal(t, readme, src.Path)
+				assert.Empty(t, src.Commit)
+			}
+			err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() || strings.Contains(p, ".lock") {
+					return err
+				}
+				b, err := os.ReadFile(p)
+				require.NoError(t, err)
+				assert.NotContains(t, string(b), `"commit"`, "an empty commit is omitted from %s", p)
+				return nil
+			})
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TestDebtImport_RerunAcrossTheRenameCommitChangesNothing: a table imported
+// from a staged rename (path and commit recorded) and imported again once the
+// move is committed (no commit recorded) is the same findings, so the second
+// run writes nothing. The rerun check ignores the commit as it ignores the path.
+func TestDebtImport_RerunAcrossTheRenameCommitChangesNothing(t *testing.T) {
+	for _, layout := range []string{"shards", "events"} {
+		t.Run(layout, func(t *testing.T) {
+			importRepo(t)
+			runFixtureGit(t, ".", "mv", "docs/td/README.md", "docs/td/README.import.md")
+			dir := filepath.Join(t.TempDir(), "debt")
+			if layout == "events" {
+				require.NoError(t, localdebt.EnableEventLayout(dir))
+			}
+			out, err := runDebt(t, "import", "docs/td/README.import.md", "--store", dir)
+			require.NoError(t, err, out)
+			require.NotEmpty(t, importedSources(t, dir)[0].Commit)
+			before := storeSnapshot(t, dir)
+
+			runFixtureGit(t, ".", "commit", "-q", "-m", "move the list")
+			out, err = runDebt(t, "import", "docs/td/README.import.md", "--store", dir)
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "wrote 0 records (5 already in the store)")
+			assert.Equal(t, before, storeSnapshot(t, dir), "a second import must write no new or changed files")
+		})
+	}
+}

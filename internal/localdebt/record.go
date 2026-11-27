@@ -354,10 +354,17 @@ type Record struct {
 // SourceReport is a back-reference to the review.md section a justification was
 // extracted from (Epic 18.3). Path is always present when the object is; Line and
 // Section are best-effort.
+//
+// Commit is the commit holding Path, set by `atcr debt import` when the table it
+// reads is a staged `git mv` of the original README: Path is then that original
+// path, so the list can still be found after the import's copy is deleted.
+// Additive like ReportedBy: omitempty keeps every other record byte-identical to
+// its pre-field wire shape, and an older reader ignores the key.
 type SourceReport struct {
 	Path    string `json:"path"`
 	Line    int    `json:"line,omitempty"`
 	Section string `json:"section,omitempty"`
+	Commit  string `json:"commit,omitempty"`
 }
 
 // Reconciler-feedback kinds, the closed set ReconcilerFeedback.Kind may carry.

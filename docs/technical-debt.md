@@ -234,6 +234,14 @@ repo's folder in its place (for example `technical-debt/`). Pass
    git mv docs/technical-debt/README.md docs/technical-debt/README.import.md
    ```
 
+   The import reads this staged rename: each record's `source_report.path`
+   becomes the pre-rename `docs/technical-debt/README.md` and its
+   `source_report.commit` the HEAD commit that holds that path, so the old list
+   stays findable after `README.import.md` is deleted. Keep the move staged
+   until the import runs. With no staged rename (the move is already committed,
+   or the file is in no git repository), `path` stays the import argument and
+   `commit` is omitted.
+
 2. Dry-run the import and fix every row it rejects in `README.import.md`
    (list each fix in the pull request). Repeat until it reports
    `0 rejected`. The table must have the
@@ -373,7 +381,7 @@ rather than a fabricated value that `resolve` could not match.
 | `confidence` | string | Reviewer-panel confidence (`LOW` / `MEDIUM` / `HIGH` / `VERIFIED`); `atcr debt add --confidence` writes it |
 | `model` | string | Model that produced the finding |
 | `justification` | string | Why it was resolved/dismissed (`--reason`) |
-| `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …}` (`line`/`section` omitted when unset) |
+| `source_report` | object | Report the finding came from: `{"path": …, "line": …, "section": …, "commit": …}` (`line`/`section`/`commit` omitted when unset). An import from a staged `git mv` names the README's pre-rename path in `path` and the HEAD commit that holds it in `commit`; with no staged rename `path` stays the import argument and `commit` is omitted |
 | `status` | string | Empty (open), `deferred`, `resolved`, `wontfix`, `unreproducible`, or `attempts-exhausted` |
 | `resolved_at` | string | Timestamp of the terminal record |
 | `origin` | string | **v3** — `review` or `manual` |
@@ -558,11 +566,16 @@ the status:
 A row's time and `run_id` come from the date of the `### [date] From: ...`
 section it sits under (`2026-11-06` or `November 6, 2026`), never from the
 clock. Running the import again on the same table therefore writes nothing,
-even from a renamed copy of the README (the rerun check ignores the path), and
-a run that stopped part way writes only what is missing. Each record is filed
-with `origin: manual`, a `run_id` ending in `-import`, and a `source_report`
-holding the README path (relative to the repo root) and the section heading,
-which `atcr debt report` groups by.
+even from a renamed copy of the README (the rerun check ignores the path and
+commit), and a run that stopped part way writes only what is missing. Each
+record is filed with `origin: manual`, a `run_id` ending in `-import`, and a
+`source_report` holding the README path (relative to the repo root) and the
+section heading, which `atcr debt report` groups by. When the README is the
+destination of a rename staged in its repository (the migration recipe's
+`git mv`), the path is the README's pre-rename path and `commit` is the HEAD
+commit that holds it, so the old list stays findable after the renamed copy is
+deleted. With no staged rename the path stays the import argument and `commit`
+is omitted.
 
 Every item row ends up in exactly one of three lists, and the first line of the
 output counts them:
