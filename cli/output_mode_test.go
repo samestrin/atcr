@@ -422,3 +422,16 @@ func TestReportCmd_FormatTextIsMarkdown(t *testing.T) {
 	code, _, stderr = execCmdSplit(t, "report", "--disagreements", "--format", "text", "r")
 	assert.Equal(t, 0, code, "text is md for the radar too; stderr: %s", stderr)
 }
+
+// TestOutputMode_ReportDisagreementsKeepsMarkdown: the radar has no AXI view,
+// so on the agent path it keeps its markdown default instead of failing.
+func TestOutputMode_ReportDisagreementsKeepsMarkdown(t *testing.T) {
+	isolate(t)
+	clearOutputModeEnv(t)
+	fixtureReconciled(t, "r", manyFindingsJSON(t, 3))
+	_, want, _ := execCmdSplit(t, "report", "--disagreements", "r")
+
+	code, got, stderr := execPiped(t, "report", "--disagreements", "r")
+	require.Equal(t, 0, code, "stderr: %s", stderr)
+	assert.Equal(t, want, got)
+}

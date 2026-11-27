@@ -38,6 +38,12 @@ const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 // different package that also calls cli.Main) with no guard at all.
 func TestMain(m *testing.M) {
 	perCommentPostDelay = 0
+	// The suite may itself run under an agent (CLAUDECODE=1) or with ATCR_FORMAT
+	// set; either would flip every command with an AXI mode to AXI (epic 165 T1).
+	// Tests that exercise the switch set these per test.
+	for _, k := range append([]string{"ATCR_FORMAT"}, agentEnvMarkers...) {
+		_ = os.Unsetenv(k)
+	}
 	os.Exit(telemetrytest.Run(m))
 }
 
