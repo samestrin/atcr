@@ -53,12 +53,21 @@ func (c *invRecorder) Chat(_ context.Context, inv llmclient.Invocation, _ []llmc
 // invocation of each Chat call.
 func recordLoopInvocations(t *testing.T, policy string, guarded int) []llmclient.Invocation {
 	t.Helper()
+	return recordLoopInvocationsOf(t, func(inv *llmclient.Invocation) {
+		inv.SecretGuard = policy
+		inv.AlreadyGuardedMessages = guarded
+	})
+}
+
+// recordLoopInvocationsOf is recordLoopInvocations with the agent's invocation
+// set by set.
+func recordLoopInvocationsOf(t *testing.T, set func(*llmclient.Invocation)) []llmclient.Invocation {
+	t.Helper()
 	cc := &invRecorder{}
 	d := newFakeDispatcher()
 	d.byName["read_file"] = tools.ToolResult{Content: "x"}
 	a := toolAgent("a", 2, 0)
-	a.Invocation.SecretGuard = policy
-	a.Invocation.AlreadyGuardedMessages = guarded
+	set(&a.Invocation)
 	r := toolEngine(cc, d).invokeAgent(context.Background(), a)
 	require.Equal(t, StatusOK, r.Status)
 	require.Equal(t, []string{budgetMaxTurns}, r.TrippedBudgets, "the loop must reach requestFinalAnswer")
@@ -113,6 +122,43 @@ func TestToolLoop_RedactSharesOneScanCache(t *testing.T) {
 	// Each run starts with its own cache.
 	assert.NotSame(t, recordLoopInvocations(t, secretGuardRedact, 1)[0].ScanCache,
 		recordLoopInvocations(t, secretGuardRedact, 1)[0].ScanCache)
+}
+
+// A caller that supplies its own scan cache on Agent.Invocation keeps it: every
+// Chat of the loop carries that cache, under every policy, rather than the
+// loop's own or none (TD 0f02af9e5f2ae9c4).
+func TestToolLoop_KeepsACallersScanCache(t *testing.T) {
+	for _, policy := range []string{"", secretGuardOff, secretGuardWarn, secretGuardRedact, secretGuardBlock} {
+		cache := llmclient.NewScanCache(4)
+		invs := recordLoopInvocationsOf(t, func(inv *llmclient.Invocation) {
+			inv.SecretGuard = policy
+			inv.AlreadyGuardedMessages = 1
+			inv.ScanCache = cache
+		})
+		for i, inv := range invs {
+			assert.Same(t, cache, inv.ScanCache, "%q: call %d", policy, i+1)
+		}
+	}
+}
+
+// The loop reads the policy as guardMessages does, trimmed (TD
+// 928be6774500b868): " redact" gets the run's shared scan cache, and " warn" and
+// " block " advance the guarded count as warn and block do, so each message is
+// scanned once. The policy itself reaches Chat unchanged.
+func TestToolLoop_TrimsThePolicy(t *testing.T) {
+	redact := recordLoopInvocations(t, " redact", 1)
+	require.NotNil(t, redact[0].ScanCache)
+	for i, inv := range redact {
+		assert.Same(t, redact[0].ScanCache, inv.ScanCache, "call %d", i+1)
+		assert.Equal(t, 1, inv.AlreadyGuardedMessages, "call %d", i+1)
+	}
+	for _, policy := range []string{" warn", "block\t", " block "} {
+		for i, inv := range recordLoopInvocations(t, policy, 1) {
+			assert.Equal(t, policy, inv.SecretGuard, "%q: call %d", policy, i+1)
+			assert.Equal(t, []int{1, 1, 3}[i], inv.AlreadyGuardedMessages, "%q: call %d", policy, i+1)
+			assert.Nil(t, inv.ScanCache, "%q: call %d", policy, i+1)
+		}
+	}
 }
 
 // A tool agent not built by the review (verify, executor and debate build
