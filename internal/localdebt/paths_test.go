@@ -2,6 +2,7 @@ package localdebt
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,6 +122,14 @@ func TestEnsureStoreDir_ProjectTierDepthOneStoreRefusesAVanishedRoot(t *testing.
 	require.Error(t, err, "a vanished repo root under a depth-1 project store must be refused, not recreated")
 	assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
 	assert.Contains(t, err.Error(), `"gone-repo"`, "the refusal names the missing repository root")
+	// Pin the POSITIVE branch of the OpenRoot discriminator (epic 163 T2 review):
+	// a truly missing root (fs.ErrNotExist) must get the missing-root refusal,
+	// not the wrapped-cause message — both name the store and the root, so the
+	// assertions above alone cannot tell the branches apart.
+	assert.Contains(t, err.Error(), "does not exist; refusing to recreate it",
+		"a missing root must be reported by the missing-root refusal")
+	assert.NotContains(t, err.Error(), "opening its repository root",
+		"the wrapped-cause message is only for non-ErrNotExist OpenRoot failures")
 	_, statErr := os.Stat(root)
 	assert.True(t, os.IsNotExist(statErr), "the missing root must not be created: %v", statErr)
 }
@@ -145,6 +154,94 @@ func TestEnsureStoreDir_ProjectTierRootReplacedByAFileIsRefused(t *testing.T) {
 	info, statErr := os.Stat(root)
 	require.NoError(t, statErr)
 	assert.False(t, info.IsDir(), "the file at the root path must be left alone")
+}
+
+// TestEnsureProjectStoreDir_OpenRootNonNotExistErrorKeepsCause pins rows
+// 16d98ffaf8fe2b02 and 2d5085b196378c92: every os.OpenRoot failure was reported
+// as "repository root does not exist", so a non-directory root, a permission
+// denial or a symlink loop was misdiagnosed and the underlying cause dropped.
+// Only fs.ErrNotExist may claim the root is missing; any other failure must
+// wrap the cause, redacted to base names by basePathErr like every other
+// surfaced path error.
+func TestEnsureProjectStoreDir_OpenRootNonNotExistErrorKeepsCause(t *testing.T) {
+	t.Run("root replaced by a regular file", func(t *testing.T) {
+		root := filepath.Join(t.TempDir(), "file-root")
+		require.NoError(t, os.Mkdir(root, 0o755))
+		dir, err := projectStoreDir(root, "debt")
+		require.NoError(t, err)
+		t.Cleanup(func() { forgetProjectStore(dir) })
+		require.NoError(t, os.Remove(root))
+		require.NoError(t, os.WriteFile(root, []byte("not a repo\n"), 0o600))
+
+		err = ensureStoreDir(dir)
+		require.Error(t, err, "a root that is a regular file must be refused")
+		assert.NotContains(t, err.Error(), "does not exist",
+			"the root exists (as a file); only fs.ErrNotExist may report it missing")
+		assert.Contains(t, err.Error(), `"debt"`, "the refusal names the store")
+		assert.Contains(t, err.Error(), `"file-root"`, "the refusal names the repository root")
+		var pe *os.PathError
+		require.ErrorAs(t, err, &pe, "the OpenRoot cause must be wrapped, not dropped")
+		require.Error(t, pe.Err, "the operational cause is preserved")
+		assert.Contains(t, err.Error(), pe.Err.Error(), "the cause is readable in the message")
+		assert.Equal(t, filepath.Base(pe.Path), pe.Path, "the wrapped path is redacted to its base name")
+		assert.NotContains(t, err.Error(), root, "no absolute, username-bearing path reaches the error string")
+	})
+	t.Run("permission denied on the root", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows does not honor Unix permission bits")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permission bits")
+		}
+		root := filepath.Join(t.TempDir(), "locked-root")
+		require.NoError(t, os.Mkdir(root, 0o755))
+		dir, err := projectStoreDir(root, "debt")
+		require.NoError(t, err)
+		t.Cleanup(func() { forgetProjectStore(dir) })
+		require.NoError(t, os.Chmod(root, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
+
+		err = ensureStoreDir(dir)
+		require.Error(t, err, "an unopenable root must be refused")
+		assert.NotContains(t, err.Error(), "does not exist",
+			"the root exists; a permission denial must not be reported as a missing root")
+		assert.ErrorIs(t, err, fs.ErrPermission, "the permission cause is preserved through the wrap")
+		assert.NotContains(t, err.Error(), root, "no absolute path reaches the error string")
+	})
+}
+
+// TestEnsureProjectStoreDir_MkdirAllFailureUnderLiveRootIsRedacted pins row
+// ac1d185e5831d18d: the basePathErr fallback after r.MkdirAll fails while the
+// repository root still exists was exercised by no test. A regular file planted
+// at <root>/debt makes creation of the store at debt/sub fail inside MkdirAll
+// (ENOTDIR/EEXIST) with the root alive, so the error must be the redacted
+// *os.PathError itself — not the missing-root message and not the
+// root-removed-during-creation message. No afterStoreRootChecked hook is used:
+// it stays assigned only in the serial
+// TestEnsureStoreDir_RootRemovedDuringCreationIsRefused (row 3fd4f8bde3b2ebf6).
+func TestEnsureProjectStoreDir_MkdirAllFailureUnderLiveRootIsRedacted(t *testing.T) {
+	root := t.TempDir()
+	dir, err := projectStoreDir(root, "debt/sub")
+	require.NoError(t, err)
+	t.Cleanup(func() { forgetProjectStore(dir) })
+	blocker := filepath.Join(root, "debt")
+	require.NoError(t, os.WriteFile(blocker, []byte("a file, not a directory\n"), 0o600))
+
+	err = ensureStoreDir(dir)
+	require.Error(t, err, "a regular file blocking the store path must be refused")
+	var pe *os.PathError
+	require.ErrorAs(t, err, &pe, "the fallback returns the redacted *os.PathError")
+	assert.Equal(t, filepath.Base(pe.Path), pe.Path, "the failing path is reduced to its base name")
+	require.Error(t, pe.Err, "the operational cause is preserved")
+	assert.NotContains(t, err.Error(), root, "no absolute path reaches the error string")
+	assert.NotContains(t, err.Error(), "does not exist", "the root exists; this is not a missing-root refusal")
+	assert.NotContains(t, err.Error(), "was removed while", "the root was never removed")
+	info, statErr := os.Stat(root)
+	require.NoError(t, statErr, "the live root must be left in place")
+	assert.True(t, info.IsDir())
+	info, statErr = os.Stat(blocker)
+	require.NoError(t, statErr)
+	assert.False(t, info.IsDir(), "the planted file must be left alone")
 }
 
 // TestProjectStores_KeyedByAbsolutePath pins row 7a03d6351e9f221a: projectStores

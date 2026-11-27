@@ -3,6 +3,7 @@ package localdebt
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,8 +58,12 @@ func DefaultDir(root string) string {
 // is anchored to its repository root instead: at depth 1 ("debt") the grandparent
 // is the root's PARENT, which survives the root's removal, so MkdirAll would
 // resurrect the root (row 24dcb363e7cd6d72). The root is known for those stores,
-// so the check names it directly (refusing a root that is missing or is not a
-// directory) and missing directories between the root and the store are created.
+// so the check names it directly: a missing root (fs.ErrNotExist from OpenRoot)
+// gets the missing-root refusal, while any other OpenRoot failure (a
+// non-directory root, a permission denial, a symlink loop) is wrapped with its
+// redacted cause instead of being misdiagnosed as a vanished root (rows
+// 16d98ffaf8fe2b02, 2d5085b196378c92). Missing directories between the root and
+// the store are created.
 // They are created through an os.Root opened on the repository root, not by
 // pathname, so a root removed after the check makes creation fail instead of
 // recreating it (row 9ffc484fcafdf7c1). Stores not in the registry (the default,
@@ -95,7 +100,10 @@ func ensureStoreDir(dir string) error {
 func ensureProjectStoreDir(dir string, ps projectStore) error {
 	r, err := os.OpenRoot(ps.root)
 	if err != nil {
-		return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(ps.root))
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("localdebt store %q cannot be created: its repository root %q does not exist; refusing to recreate it", filepath.Base(dir), filepath.Base(ps.root))
+		}
+		return fmt.Errorf("localdebt store %q cannot be created: opening its repository root %q failed: %w", filepath.Base(dir), filepath.Base(ps.root), basePathErr(err))
 	}
 	defer func() { _ = r.Close() }()
 	afterStoreRootChecked()
