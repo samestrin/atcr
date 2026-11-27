@@ -284,6 +284,7 @@ func TestDecodeSummary_SkipDecisionMatchesDecodeRecord(t *testing.T) {
 		"justification is a bool":   `{` + base + `,"justification":true}`,
 		"status is a number":        `{` + base + `,"status":5}`,
 		"reported_by is a number":   `{` + base + `,"reported_by":5}`,
+		"source commit is a number": `{` + base + `,"source_report":{"path":"README.md","commit":123}}`,
 		"numeric field is a string": `{` + base + `,"line":"12"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
