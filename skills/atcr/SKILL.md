@@ -25,11 +25,11 @@ For a routed review, check `atcr version` before step 2 starts the pool: the hos
 
 Every `atcr` call in this skill runs with its stdout captured, so atcr is already on the **agent path** and prints AXI (token-dense TOON) output by default: you do not need `--axi`. The same default applies when `ATCR_FORMAT=axi` is set or an agent marker such as `CLAUDECODE` is in the environment. On a terminal the human output is unchanged; use `--human` or `ATCR_FORMAT=text` only when the user asks to see the human view, and keep an explicit `--format md` where the flow presents a report to the user.
 
-A failed command on the agent path does not print `atcr: ...` on stderr. It exits with the documented code and writes one `error: true` TOON document on stdout, with empty stderr; stdout carries either the payload or this document, never both. Read `code` and `message` instead of scraping stderr, and take `help[]` as the valid flags or commands to retry with. `code` is the exit code (2 usage or configuration, 1 failure, 3 `--sync-cloud` authentication). A run that already wrote a payload keeps it and adds no second document.
+A failed command on the agent path does not print `atcr: ...` on stderr. It exits with the documented code and writes one `error: true` TOON document on stdout, so stdout carries either the payload or this document, never both. stderr may still hold diagnostics the command emitted before it failed (progress, warnings, structured logs), so never treat a non-empty stderr as the error itself. Read `code` and `message` instead of scraping stderr, and take `help[]` as the valid flags or commands to retry with. `code` is the exit code (2 usage or configuration, 1 failure, 3 `--sync-cloud` authentication). A run that already wrote a payload keeps it and adds no second document.
 
 ```bash
 # This skill captures stdout, so atcr is already on the agent path.
-# A failed command writes one error document to stdout and nothing to stderr.
+# A usage error writes one error document to stdout and no `atcr:` line to stderr.
 rc=0
 atcr status --bogus > error.toon 2> error.log || rc=$?
 test "$rc" -eq 2 && test ! -s error.log

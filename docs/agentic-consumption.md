@@ -284,8 +284,11 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   ```
 
   No `Next:` line is written, on stderr or as a `--log-format json` record. A
-  run whose skeptics' tool harness could not be built stays a plain error
-  (exit 1) with no payload and no `help` block, exactly as in text mode.
+  run whose skeptics' tool harness could not be built writes no TOON result
+  payload; it writes the error document instead — `error: true`, `message:
+  "verification did not run: ..."`, `code: 1` and `help[1]: atcr verify --help`
+  — exactly as any other AXI failure at exit 1. In human mode the same failure
+  keeps its prose line and the `atcr: <message>` line on stderr.
 - In human mode, `atcr verify` prints `Next: atcr report <id>` on **stderr**
   after its result line, and leaves stdout unchanged. It stays a raw stderr
   line under `--log-format json` too, exactly as in the original human output.
@@ -381,9 +384,12 @@ byte-clean file. In AXI mode (the default on the agent path):
   [Errors](#errors-one-error-true-document-on-stdout)), never both.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
   logs, governed by [`ATCR_LOG_LEVEL` and `--log-format`](logging.md) and passed
-  through the same redaction sink. It is empty on a failed AXI run: the error
-  document is on stdout, so an agent branches on the exit code and reads the
-  document rather than scraping a diagnostic line.
+  through the same redaction sink. On a failed AXI run the error *message* is on
+  stdout, not stderr — the `atcr: <message>` line is replaced by the document —
+  so an agent branches on the exit code and reads the document rather than
+  scraping a diagnostic line. stderr is not necessarily empty: diagnostics the
+  command emitted before it failed (progress, warnings, structured logs) stay
+  there, which is why the two streams are captured separately.
 
 Capture the two streams separately so diagnostics never contaminate the payload:
 
@@ -394,7 +400,10 @@ atcr report > findings.toon 2> report.log
 ## Errors: one `error: true` document on stdout
 
 In AXI mode a failed invocation writes exactly one `error: true` TOON document to
-stdout. stderr stays empty, so a redirect still yields one parseable document:
+stdout, and the error is not written to stderr: the `atcr: <message>` line is
+replaced by the document, so a redirect of stdout still yields one parseable
+document. stderr may still carry diagnostics and logs emitted before the
+failure; stdout is never both the payload and the document:
 
 ```text
 error: true

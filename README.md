@@ -238,7 +238,7 @@ Explicit AXI spelling on:
 
 ### Errors in AXI mode
 
-A failed command in AXI mode writes one `error: true` TOON document on stdout and nothing on stderr:
+A failed command in AXI mode writes one `error: true` TOON document on stdout and drops the `atcr: <message>` line from stderr (stderr may still carry diagnostics it emitted before the failure, such as progress or a warning):
 
 ```text
 error: true
