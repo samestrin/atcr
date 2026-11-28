@@ -37,9 +37,9 @@ atcr reconcile "${OUT_DIR}"
 
 ## Pre-flight
 
-- **Binary present:** `atcr --version` (exits 0 and prints `atcr version <v>`)
-  or `command -v atcr`. atcr also ships an `atcr version` subcommand that
-  prints the same string.
+- **Binary present:** `atcr --version` (exits 0 and prints the bare version,
+  e.g. `1.4.0`) or `command -v atcr`. atcr also ships an `atcr version`
+  subcommand that prints the conventional `atcr version <v>` line.
 - **Repo initialized:** `atcr review` requires `.atcr/config.yaml` in the
   reviewed repo and hard-fails without it
   (`no roster found: .atcr/config.yaml not found ... run 'atcr init'`). Catch

@@ -60,6 +60,9 @@ func atcrVersion() string {
 //     path — no logger, no telemetry, no mode resolution. The alias is hidden
 //     so help and the flag list keep showing only -v/--version; validFlags
 //     (axi_error.go) folds its shorthand into the error document's help[].
+//     A pflag flag must carry a long name, so the alias's --version-upper
+//     spelling is also accepted; it stays hidden and undocumented (recorded
+//     as tech debt on EST-9313).
 //
 // InitDefaultVersionFlag is called here (cobra would otherwise call it lazily
 // during Execute) so the alias can share the flag's value at construction time;
