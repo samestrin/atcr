@@ -125,13 +125,14 @@ func TestRenderSingleRowAXI_StandardTOON(t *testing.T) {
 	assert.Equal(t, "4", doc.Rows[0]["agents_total"])
 
 	var h bytes.Buffer
-	require.NoError(t, RenderHomeViewAXI(&h, HomeViewAXI{ExecPath: "~/go/bin/atcr", Description: "d, e", ReviewStatus: "none"}))
+	require.NoError(t, RenderHomeViewAXI(&h, HomeViewAXI{ExecPath: "~/go/bin/atcr", Description: "d, e", ReviewStatus: "none", Telemetry: "on"}))
 	hd := decodeAXI(t, h.Bytes())
 	assert.Equal(t, "home", hd.Name)
-	assert.Equal(t, homeViewAXIHeader, hd.Fields)
+	assert.Equal(t, homeViewAXIStandardHeader, hd.Fields)
 	require.Len(t, hd.Rows, 1)
 	assert.Equal(t, "", hd.Rows[0]["review_id"])
 	assert.Equal(t, "d, e", hd.Rows[0]["description"])
+	assert.Equal(t, "on", hd.Rows[0]["telemetry"])
 }
 
 // TestEncodeAXI_SanitizeErrorsSurfaceViaErrorsAs pins that go-axi's typed

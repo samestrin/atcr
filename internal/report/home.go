@@ -14,17 +14,30 @@ type HomeViewAXI struct {
 	Description  string
 	ReviewID     string // "" when no review has run yet
 	ReviewStatus string // "none" when no review has run yet
+	// Telemetry is the resolved usage-ping state, "on" or "off", so an agent
+	// sees the default-on anonymous ping and its opt-out without reading docs
+	// (epic 165 T4). The caller resolves it from ATCR_TELEMETRY and the persisted
+	// config `telemetry` through the same gate the send path uses; the renderer
+	// carries the string verbatim, like ReviewStatus's caller-set "none".
+	Telemetry string
 }
 
-// homeViewAXIHeader is the fixed column order of the home-view payload. Kept as
-// one slice so the header line and the row are guaranteed the same width and
-// order — the same defensive invariant singleRowAXI (standard) and
-// writePipeSingleRow (legacy) enforce.
+// homeViewAXIHeader is the FROZEN legacy column order of the home-view pipe
+// payload. Kept as one slice so the header line and the row are guaranteed the
+// same width and order — the same defensive invariant singleRowAXI (standard)
+// and writePipeSingleRow (legacy) enforce. The deprecated pipe bytes must never
+// change, so the telemetry column reaches only the standard encoder, exactly as
+// the review-summary coverage columns do (ReviewSummaryAXI.header).
 var homeViewAXIHeader = []string{"exec_path", "description", "review_id", "review_status"}
+
+// homeViewAXIStandardHeader is the standard TOON column order: the frozen base
+// columns plus telemetry (epic 165 T4). Built once from homeViewAXIHeader so the
+// two can never drift in the base columns.
+var homeViewAXIStandardHeader = append(append([]string(nil), homeViewAXIHeader...), "telemetry")
 
 // RenderHomeViewAXI writes s as a single-row standard TOON tabular array
 // (home[1]{...}:) through the same go-axi encoder as the findings payload, so the
-// home view carries the same no-ANSI / no-Markdown structural guarantee. All four
+// home view carries the same no-ANSI / no-Markdown structural guarantee. All five
 // fields are strings; an empty review_id encodes as a quoted "" so a consumer
 // reads it back as an empty string, not null.
 func RenderHomeViewAXI(w io.Writer, s HomeViewAXI) error {

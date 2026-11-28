@@ -196,7 +196,8 @@ func reviewSummaryAXIDoc(s ReviewSummaryAXI) (toon.Object, error) {
 	return singleRowAXI("review_summary", s.header(), values)
 }
 
-// homeViewAXIDoc builds the one-row home document. All four fields are strings.
+// homeViewAXIDoc builds the one-row home document. All five fields are strings;
+// telemetry (epic 165 T4) is the caller-resolved usage-ping state, "on" or "off".
 func homeViewAXIDoc(s HomeViewAXI) (toon.Object, error) {
-	return singleRowAXI("home", homeViewAXIHeader, []any{s.ExecPath, s.Description, s.ReviewID, s.ReviewStatus})
+	return singleRowAXI("home", homeViewAXIStandardHeader, []any{s.ExecPath, s.Description, s.ReviewID, s.ReviewStatus, s.Telemetry})
 }

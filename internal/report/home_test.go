@@ -19,15 +19,17 @@ func TestRenderHomeViewAXI_SingleRow(t *testing.T) {
 		Description:  "Agent Team Code Review — a review panel, not a reviewer",
 		ReviewID:     "2026-06-10_x",
 		ReviewStatus: "completed",
+		Telemetry:    "on",
 	}))
 
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	require.Len(t, lines, 2, "single-row TOON payload: header + one data row")
-	assert.Equal(t, "home[1]{exec_path,description,review_id,review_status}:", lines[0],
-		"header declares the fixed home-view column order")
+	assert.Equal(t, "home[1]{exec_path,description,review_id,review_status,telemetry}:", lines[0],
+		"header declares the fixed home-view column order, telemetry last (epic 165 T4)")
 	assert.Contains(t, lines[1], "~/go/bin/atcr")
 	assert.Contains(t, lines[1], "2026-06-10_x")
 	assert.Contains(t, lines[1], "completed")
+	assert.True(t, strings.HasSuffix(lines[1], ",on"), "the resolved telemetry state is the last cell")
 	assert.Contains(t, lines[1], `"Agent Team Code Review — a review panel, not a reviewer"`,
 		"the description carries the comma delimiter, so standard TOON quotes it")
 }
@@ -41,12 +43,14 @@ func TestRenderHomeViewAXI_NoReview(t *testing.T) {
 		Description:  "desc",
 		ReviewID:     "",
 		ReviewStatus: "none",
+		Telemetry:    "off",
 	}))
 
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	require.Len(t, lines, 2)
 	assert.Contains(t, lines[1], `""`, "empty review_id renders as a quoted empty TOON string")
 	assert.Contains(t, lines[1], "none", "no-review status is explicit")
+	assert.True(t, strings.HasSuffix(lines[1], ",off"), "an opted-out first run reports telemetry off")
 }
 
 // TestRenderHomeViewAXI_NoEscapeSequences pins the same no-ANSI structural
@@ -59,6 +63,7 @@ func TestRenderHomeViewAXI_NoEscapeSequences(t *testing.T) {
 		Description:  "desc\x1b[31mred\x1b[0m",
 		ReviewID:     "id",
 		ReviewStatus: "completed",
+		Telemetry:    "on",
 	}))
 	assert.NotContains(t, b.String(), "\x1b", "control/ANSI bytes are stripped by go-axi's sanitizer")
 }
@@ -72,8 +77,9 @@ func TestRenderHomeViewAXI_Golden(t *testing.T) {
 		Description:  "Agent Team Code Review — a review panel, not a reviewer",
 		ReviewID:     "2026-06-10_x",
 		ReviewStatus: "completed",
+		Telemetry:    "on",
 	}))
-	want := "home[1]{exec_path,description,review_id,review_status}:\n" +
-		"  ~/go/bin/atcr,\"Agent Team Code Review — a review panel, not a reviewer\",2026-06-10_x,completed\n"
+	want := "home[1]{exec_path,description,review_id,review_status,telemetry}:\n" +
+		"  ~/go/bin/atcr,\"Agent Team Code Review — a review panel, not a reviewer\",2026-06-10_x,completed,on\n"
 	assert.Equal(t, want, b.String())
 }

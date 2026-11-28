@@ -68,7 +68,7 @@ func TestAXIPayloads_GoaxiCheck(t *testing.T) {
 	}
 	summary, err := reviewSummaryAXIDoc(ReviewSummaryAXI{ID: "2026-06-10_x", Dir: "/tmp/r", AgentsSucceeded: 3, AgentsTotal: 4, FindingsTotal: 7, FindingsHigh: 2})
 	require.NoError(t, err)
-	home, err := homeViewAXIDoc(HomeViewAXI{ExecPath: "~/go/bin/atcr", Description: "Agent Team Code Review — a review panel, not a reviewer", ReviewStatus: "none"})
+	home, err := homeViewAXIDoc(HomeViewAXI{ExecPath: "~/go/bin/atcr", Description: "Agent Team Code Review — a review panel, not a reviewer", ReviewStatus: "none", Telemetry: "on"})
 	require.NoError(t, err)
 
 	cases := []struct {

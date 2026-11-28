@@ -100,9 +100,12 @@ var legacyPipeGoldenCases = []struct {
 		})
 	}},
 	{"home", "home.axi", func(w io.Writer) error {
+		// Telemetry is set deliberately: the frozen legacy bytes must ignore the
+		// epic 165 T4 column exactly as they ignore the review-summary coverage
+		// columns, so this golden stays identical with the field populated.
 		return RenderHomeViewPipe(w, HomeViewAXI{
 			ExecPath: "~/go/bin/atcr", Description: "Agent Team Code Review — a review panel, not a reviewer",
-			ReviewID: "", ReviewStatus: "none",
+			ReviewID: "", ReviewStatus: "none", Telemetry: "on",
 		})
 	}},
 }
