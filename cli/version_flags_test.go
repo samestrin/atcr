@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,6 +86,18 @@ func TestVersionFlags_ShortCircuitBeforePreRun(t *testing.T) {
 			assert.Empty(t, stderr)
 		})
 	}
+}
+
+// TestInitVersionFlags_NoVersionFlag pins the nil guard in initVersionFlags:
+// a command with no Version set has no --version flag to alias, so the
+// function must return without registering either flag (and without
+// panicking on the nil lookup). Production always sets root.Version
+// (newRootCmd), so this exercises the guard directly.
+func TestInitVersionFlags_NoVersionFlag(t *testing.T) {
+	root := &cobra.Command{Use: "atcr"}
+	initVersionFlags(root)
+	assert.Nil(t, root.Flags().Lookup("version"), "no Version set: cobra registers no --version")
+	assert.Nil(t, root.Flags().Lookup("version-upper"), "no version flag: no -V alias")
 }
 
 // TestVersionFlags_NotInheritedBySubcommands: the version flags are root-local
