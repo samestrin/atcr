@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 )
 
@@ -33,6 +34,17 @@ func newAXIContext(ctx context.Context, enabled bool) context.Context {
 func axiFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(axiContextKey{}).(bool)
 	return v
+}
+
+// axiModeFromContext is axiFromContext that also reports whether the root
+// PersistentPreRunE resolved a mode at all; it did not when the run failed
+// before or inside it (an unknown flag or command, a bad --log-format).
+func axiModeFromContext(ctx context.Context) (axi, ok bool) {
+	if ctx == nil {
+		return false, false
+	}
+	axi, ok = ctx.Value(axiContextKey{}).(bool)
+	return axi, ok
 }
 
 // legacyPipeDeprecation is the stderr notice every legacy pipe AXI route emits.
@@ -117,9 +129,15 @@ func hasAXIMode(cmd *cobra.Command) bool {
 //
 // An unrecognized ATCR_FORMAT warns on w and is ignored, like ATCR_LEGACY_PIPE.
 func resolveAXIMode(cmd *cobra.Command, w io.Writer) (bool, error) {
-	flags := cmd.Flags()
+	return resolveAXIModeFlags(cmd.Flags(), cmd.OutOrStdout(), w)
+}
+
+// resolveAXIModeFlags is resolveAXIMode over a parsed flag set and a stdout, so
+// the error path in runMain can apply the same rules to a flag set it re-parsed
+// from the raw arguments (see errorModeIsAXI).
+func resolveAXIModeFlags(flags *pflag.FlagSet, stdout io.Writer, w io.Writer) (bool, error) {
 	axiSet := flags.Lookup("axi") != nil && flags.Changed("axi")
-	human := optionalBoolFlag(cmd, "human")
+	human := optionalBoolFlag(flags, "human")
 	if axiSet {
 		axi, _ := flags.GetBool("axi")
 		if axi && human {
@@ -127,7 +145,7 @@ func resolveAXIMode(cmd *cobra.Command, w io.Writer) (bool, error) {
 		}
 		return axi, nil
 	}
-	if human || optionalBoolFlag(cmd, "json") || optionalBoolFlag(cmd, "auto-fix") {
+	if human || optionalBoolFlag(flags, "json") || optionalBoolFlag(flags, "auto-fix") {
 		return false, nil
 	}
 	if raw := strings.TrimSpace(os.Getenv("ATCR_FORMAT")); raw != "" {
@@ -144,15 +162,30 @@ func resolveAXIMode(cmd *cobra.Command, w io.Writer) (bool, error) {
 			return true, nil
 		}
 	}
-	f, ok := cmd.OutOrStdout().(*os.File)
+	f, ok := stdoutFile(stdout)
 	return ok && !outputIsTerminal(f), nil
 }
 
-// optionalBoolFlag is boolFlag for a flag cmd may not define: absent is false.
-func optionalBoolFlag(cmd *cobra.Command, name string) bool {
-	if cmd.Flags().Lookup(name) == nil {
+// stdoutFile returns the *os.File behind w, looking through writers that wrap
+// one (runMain's payloadWriter), so wrapping stdout never hides the terminal.
+func stdoutFile(w io.Writer) (*os.File, bool) {
+	for {
+		switch v := w.(type) {
+		case *os.File:
+			return v, true
+		case interface{ Unwrap() io.Writer }:
+			w = v.Unwrap()
+		default:
+			return nil, false
+		}
+	}
+}
+
+// optionalBoolFlag is boolFlag for a flag the set may not define: absent is false.
+func optionalBoolFlag(flags *pflag.FlagSet, name string) bool {
+	if flags.Lookup(name) == nil {
 		return false
 	}
-	v, _ := cmd.Flags().GetBool(name)
+	v, _ := flags.GetBool(name)
 	return v
 }

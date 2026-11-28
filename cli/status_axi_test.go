@@ -262,8 +262,9 @@ func TestStatusCmd_AXIReconciledSuggestsReport(t *testing.T) {
 		"help[1]: atcr report <id>\n"), "stdout: %q", stdout)
 }
 
-// TestStatusCmd_AXIMissingReview: the not-found usage error is unchanged under
-// --axi — exit 2, no payload, no help[].
+// TestStatusCmd_AXIMissingReview: the command tree returns the not-found usage
+// error under --axi — exit 2, no payload. Main renders it as the error document
+// on stdout (TestAXIError_StatusMissingReview).
 func TestStatusCmd_AXIMissingReview(t *testing.T) {
 	isolate(t)
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
