@@ -121,7 +121,8 @@ Prefer to wire a provider by hand? `atcr init` scaffolds the project config, the
 
 Key flags:
 
-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items and report each plan item the diff does not implement as an `Unmet plan item:` finding; a missing/empty plan is ignored, an unreadable one warns and proceeds) / `--pr <n>` (stamp the pull-request number on this run's audit record; falls back to `GITHUB_REF` when unset) / `--all` / `--scope <path>` (baseline whole-repo or subtree review — see below; `--dir` is a deprecated alias) / `--no-file-cache` (bypass the baseline incremental cache and rescan everything; `--fresh` is a deprecated alias) / `--no-ignore` (include files matched by `.gitignore` / `.atcrignore`) / `--auto-fix` (apply sandboxed fixes and open a PR — see below) / `--axi` (token-dense TOON output for agent callers — see below) / `--sync-cloud` / `--cloud-endpoint <url>` (after the run, push the pseudonymized scorecard to the endpoint; requires `ATCR_API_KEY`) / `--dry-run` (print the quality-signal payload without sending it; `--preview` is a deprecated alias) / `--byte-budget <n>` / `--max-parallel <n>` / `--max-units <n>` (with `--all` / `--scope`: the most bins one persona's plan may hold, default 512; a larger plan is refused before anything is sent)
+- Global: `--human` forces the human output on any command (also `ATCR_FORMAT=text`), overriding the agent-path AXI default; `--log-format text|json` and `--telemetry-endpoint <url>` apply to every command.
+- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items and report each plan item the diff does not implement as an `Unmet plan item:` finding; a missing/empty plan is ignored, an unreadable one warns and proceeds) / `--pr <n>` (stamp the pull-request number on this run's audit record; falls back to `GITHUB_REF` when unset) / `--all` / `--scope <path>` (baseline whole-repo or subtree review — see below; `--dir` is a deprecated alias) / `--no-file-cache` (bypass the baseline incremental cache and rescan everything; `--fresh` is a deprecated alias) / `--no-ignore` (include files matched by `.gitignore` / `.atcrignore`) / `--auto-fix` (apply sandboxed fixes and open a PR — see below) / `--axi` (force token-dense TOON output; it is already the default on the agent path — see [Agent consumption](#agent-consumption-axi)) / `--sync-cloud` / `--cloud-endpoint <url>` (after the run, push the pseudonymized scorecard to the endpoint; requires `ATCR_API_KEY`) / `--dry-run` (print the quality-signal payload without sending it; `--preview` is a deprecated alias) / `--byte-budget <n>` / `--max-parallel <n>` / `--max-units <n>` (with `--all` / `--scope`: the most bins one persona's plan may hold, default 512; a larger plan is refused before anything is sent)
 - One-shot pipeline chaining on `atcr review`: `--verify` / `--require-verified` / `--debate` / `--thorough` / `--single-model` / `--min-severity <severity>` run reconcile → verify → debate in a single command; `--exec` opts into sandboxed reproduction of findings (see [docs/execution.md](docs/execution.md))
 - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs) / `--repo-root <path>` (validate findings against a repo other than the current directory; also on `atcr verify`; `--repo` is a deprecated alias)
 - `atcr dedupe --streams <a,b>` (required, parallel to `--source-tags`) / `--source-tags <tags>` (default: each stream's parent directory name) / `--tolerance <n>` (default 3, the line window that clusters findings on one file) / `--untrusted <tags>` (sources whose findings alone are `LOW` confidence) / `--json` (default true; `--json=false` prints a one-line count)
@@ -137,6 +138,7 @@ Environment variables:
 - `ATCR_TIER4_INDEX_MAX_FILES` — overrides the 5000-file cap on the Tier 4 symbol index `atcr reconcile` builds when resolving findings whose cited file does not exist. A tracked tree over the cap disables Tier 4 for the run (counted by `atcr_tier4_index_unavailable_total`); set this to a positive integer to raise or lower the cap. An unparseable or non-positive value falls back to the default.
 - `ATCR_TELEMETRY` — names the **enabled** state (note the inverse direction vs. `ATCR_DISABLE_AST_GROUPING`): `ATCR_TELEMETRY=0` disables the anonymous usage ping. See [docs/telemetry.md](docs/telemetry.md).
 - `ATCR_API_KEY` — API key for `--sync-cloud` scorecard uploads; a missing or rejected key exits with code **3** when `--cloud-endpoint` is set (without `--cloud-endpoint` the run exits **2** first, as a usage error).
+- `ATCR_FORMAT` — `axi` forces AXI output and `text` forces the human output on every command; it is normally chosen from stdout being a pipe and from agent markers (see [Agent consumption](#agent-consumption-axi)).
 - `ATCR_AXI_MAX_LINES` — caps the findings array of `atcr report --format axi` (default 500 lines) before truncation; no other `--axi` output is capped by this variable (`debt filter` has its own `--max`, default 10) (see [docs/agentic-consumption.md](docs/agentic-consumption.md)).
 
 ### Redirecting output for orchestrators (`--output-dir`)
@@ -206,11 +208,21 @@ atcr review --resume latest --require-coverage 100
 
 `--repo` / `--token` / `--api-url` target a non-default GitHub remote. The pull request targets the repository default branch; `--auto-fix-base <branch>` targets a named branch instead (local HEAD must be pushed and equal that branch). `--config-dir <dir>` reads `.atcr/config.yaml` (including `validate_command` and `sandbox:`) from another directory, so an untrusted pull request cannot choose its own validation command. See [docs/auto-fix.md](docs/auto-fix.md) and [docs/security.md](docs/security.md).
 
-## Agent consumption (`--axi`)
+## Agent consumption (AXI)
 
-`--axi` (Agent eXperience Interface) makes atcr comfortable as a subprocess for another agent: token-dense TOON output on stdout, diagnostics kept on stderr, deterministic exit codes, and a line cap on the `atcr report --format axi` findings array tunable via `ATCR_AXI_MAX_LINES`. See [docs/agentic-consumption.md](docs/agentic-consumption.md).
+AXI (Agent eXperience Interface) is atcr's default output for another agent: token-dense TOON on stdout, diagnostics on stderr, deterministic exit codes, and a line cap on the findings array tunable via `ATCR_AXI_MAX_LINES`. On a terminal the human output is unchanged.
 
-Available on:
+A command with an AXI view picks it per invocation, first matching rule below:
+
+1. `--axi` forces AXI; `--human` forces the human output (both together is a usage error, exit 2).
+2. An explicit output choice wins: `--json` on the debt commands, `review --auto-fix`, or `report --format <fmt>`.
+3. `ATCR_FORMAT=axi` forces AXI, `ATCR_FORMAT=text` forces human output. An unrecognized value warns on stderr and is ignored.
+4. An agent harness marker (`CLAUDECODE`, `CODEX` or `OPENCODE`) is set: AXI, even on a terminal.
+5. stdout is not a terminal (a pipe, a redirect, a captured subprocess): AXI.
+
+An explicit `--axi` is therefore no longer needed in a script or agent, but it remains supported. `--human` or `ATCR_FORMAT=text` brings back the human output anywhere, and `report` also accepts `--format text` as an alias of `md` for one invocation. Commands without an AXI view keep their text or JSON output.
+
+Explicit AXI spelling on:
 
 - Bare `atcr --axi`
 - `atcr review --axi`
@@ -223,6 +235,19 @@ Available on:
 - `atcr debt filter --axi`
 - `atcr debt group --axi`
 - `atcr debt validate --axi`
+
+### Errors in AXI mode
+
+A failed command in AXI mode writes one `error: true` TOON document on stdout and nothing on stderr:
+
+```text
+error: true
+message: "unknown flag: --bogus"
+code: 2
+help[5]: "--axi","-h/--help","--human","--log-format","--telemetry-endpoint"
+```
+
+`message` is the same redacted text human mode would print. `code` is the numeric exit code: 2 for a usage or configuration error, 1 for a failure, 3 for `--sync-cloud` authentication. `help[]` names the command's valid flags for an unknown flag, the valid commands for an unknown command, and otherwise the command's `--help`. A run that already wrote a payload keeps it and adds no error document (a `reconcile --fail-on` gate exit is the common case), and human mode keeps the `atcr: <message>` line on stderr. The authoritative exit-code table is [docs/ci-integration.md](docs/ci-integration.md#exit-semantics); the payloads and a worked example are in [docs/agentic-consumption.md](docs/agentic-consumption.md).
 
 ## Limits
 
@@ -354,7 +379,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/telemetry.md](docs/telemetry.md) — what telemetry collects, opting out, and `--sync-cloud`
 - [docs/personas-install.md](docs/personas-install.md) — discovering and installing provider and community personas
 - [docs/personas-authoring.md](docs/personas-authoring.md) — writing and submitting your own community persona
-- [docs/agentic-consumption.md](docs/agentic-consumption.md) — driving atcr from another agent via `--axi`
+- [docs/agentic-consumption.md](docs/agentic-consumption.md) — driving atcr from another agent, where AXI is the default
 - [docs/axi-audit.md](docs/axi-audit.md) — the ten AXI principles, checkable evidence, and stated exceptions
 - [docs/clean-install-check.md](docs/clean-install-check.md) — the recorded clean-install walkthrough of the quickstart
 

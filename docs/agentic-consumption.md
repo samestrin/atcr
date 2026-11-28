@@ -1,41 +1,68 @@
 # Agentic Consumption
 
-`atcr` is built for humans *and* for other autonomous agents. Its default output
-— colored, Markdown-formatted, table-padded — is ergonomic for a person reading a
-terminal but hostile to an LLM agent: it burns context-window tokens and is
-brittle to parse. The **`--axi` (Agent eXperience Interface)** mode strips that
-formatting and emits a token-dense, escape-free [TOON](findings-format.md) payload
-on stdout, so a sweeper agent can invoke `atcr` as a subprocess, parse the result
-cheaply, and branch on a deterministic exit code.
+`atcr` is built for humans *and* for other autonomous agents. On a terminal its
+default output — colored, Markdown-formatted, table-padded — is ergonomic for a
+person but hostile to an LLM agent: it burns context-window tokens and is brittle
+to parse. On the agent path `atcr` therefore defaults to the **AXI (Agent
+eXperience Interface)** rendering: it strips that formatting and emits a
+token-dense, escape-free [TOON](findings-format.md) payload on stdout, so a
+sweeper agent can invoke `atcr` as a subprocess, parse the result cheaply, and
+branch on a deterministic exit code. An agent no longer passes `--axi`;
+`--human` or `ATCR_FORMAT=text` forces the human output anywhere.
 
-This page covers how to drive `atcr` from another agent or orchestrator:
-invocation, the exit-code contract, pagination/truncation, and the
-stdout/stderr isolation guarantee.
+This page covers how to drive `atcr` from another agent or orchestrator: output
+mode resolution, invocation, the error document, the exit-code contract,
+pagination/truncation, and the stdout/stderr isolation guarantee.
+
+## Output modes
+
+`atcr` resolves one output mode per invocation. The first matching rule wins:
+
+1. **Explicit flag.** `--axi` selects AXI and `--human` selects human output on
+   every command; giving both is a usage error (exit 2).
+2. **An explicit output choice.** `--json` on the debt commands,
+   `review --auto-fix`, and `report --format <fmt>` keep their own format and
+   are never overridden by the default.
+3. **`ATCR_FORMAT`.** `ATCR_FORMAT=axi` selects AXI and `ATCR_FORMAT=text`
+   selects human output on every command. Any other non-empty value warns on
+   stderr and is ignored.
+4. **Agent marker.** `CLAUDECODE`, `CODEX` or `OPENCODE` set to a non-empty
+   value selects AXI, even on a terminal.
+5. **stdout.** A stdout that is not an interactive terminal — a pipe, a
+   redirect, a captured subprocess — selects AXI. On a terminal the human
+   output stays the default.
+
+Only commands with an AXI rendering follow this mode; the others keep their text
+or JSON output. `--axi` remains supported for a script that wants AXI on a
+terminal, and `--human` or `ATCR_FORMAT=text` brings the human output back on
+any command. `report` also accepts `--format text` as an alias of `md`, so one
+report can ask for Markdown even on the agent path.
 
 ## Invocation
 
-AXI mode is exposed on these agent-facing surfaces:
+These commands have an AXI rendering:
 
-| Command | How to enable AXI | stdout payload |
-|---------|-------------------|----------------|
-| `atcr` (no subcommand) | `--axi` flag | a one-row `home` TOON array (executable path, one-line description, current review state) |
-| `atcr review` | `--axi` flag | a one-row `review_summary` TOON array (run metadata); a `--all`/`--scope` re-run with nothing changed prints only a `help[]` block ([below](#the-review---axi-run-summary-payload)) |
-| `atcr review --resume <id>` | `--axi` flag | identical `review_summary` shape to `review --axi` |
-| `atcr report` | `--format axi` | a `findings[N]` TOON array of the reconciled findings |
-| `atcr reconcile` | `--axi` flag | a TOON object of the run values (`findings`, `sources`, `reconciled_dir`) |
-| `atcr verify` | `--axi` flag | a TOON object of the run values (`findings`, `confirmed`, `refuted`, `unverifiable`, `reconciled_dir`) |
-| `atcr status` | `--axi` flag | a TOON object of the review status (the `ReviewStatus` fields of the JSON document) |
-| `atcr debate` | `--axi` flag | a TOON object of the run values and next steps |
-| `atcr debt clean` | `--axi` flag | a token-dense TOON `{items, summary}` payload |
-| `atcr debt filter` | `--axi` flag | a token-dense TOON `{items, summary}` payload |
-| `atcr debt group` | `--axi` flag | a token-dense TOON `{groups, ungrouped, summary}` payload |
-| `atcr debt validate` | `--axi` flag | a token-dense TOON `{items, coherence}` payload |
+| Command | AXI output | stdout payload |
+|---------|------------|----------------|
+| `atcr` (no subcommand) | default on the agent path; `--axi` forces it | a one-row `home` TOON array (executable path, one-line description, current review state, telemetry state) |
+| `atcr review` | default on the agent path; `--axi` forces it | a one-row `review_summary` TOON array (run metadata); a `--all`/`--scope` re-run with nothing changed prints only a `help[]` block ([below](#the-review---axi-run-summary-payload)) |
+| `atcr review --resume <id>` | default on the agent path; `--axi` forces it | identical `review_summary` shape to a review |
+| `atcr report` | default on stdout; `--format axi` forces it | a `findings[N]` TOON array of the reconciled findings |
+| `atcr reconcile` | default on the agent path; `--axi` forces it | a TOON object of the run values (`findings`, `sources`, `reconciled_dir`) |
+| `atcr verify` | default on the agent path; `--axi` forces it | a TOON object of the run values (`findings`, `confirmed`, `refuted`, `unverifiable`, `reconciled_dir`) |
+| `atcr status` | default on the agent path; `--axi` forces it | a TOON object of the review status (the `ReviewStatus` fields of the JSON document) |
+| `atcr debate` | default on the agent path; `--axi` forces it | a TOON object of the run values and next steps |
+| `atcr debt clean` | default on the agent path; `--axi` forces it | a token-dense TOON `{items, summary}` payload |
+| `atcr debt filter` | default on the agent path; `--axi` forces it | a token-dense TOON `{items, summary}` payload |
+| `atcr debt group` | default on the agent path; `--axi` forces it | a token-dense TOON `{groups, ungrouped, summary}` payload |
+| `atcr debt validate` | default on the agent path; `--axi` forces it | a token-dense TOON `{items, coherence}` payload |
 
-Note the two spellings are intentional and different: `review`/`resume` take the
-boolean `--axi` flag, while `report` selects AXI through its existing
-`--format` enum (`--format axi`). `atcr report --format axi` is the payload an
-agent reads to consume the findings themselves — `review --axi` deliberately
-emits only a compact run summary, not the findings.
+The two explicit spellings are intentional and different: `review`/`resume` take
+the boolean `--axi` flag, while `report` forces AXI through its existing
+`--format` enum (`--format axi`). In ordinary agent use neither is needed: a
+captured or piped stdout already selects AXI. `atcr report` is the payload an
+agent reads to consume the findings themselves — a review deliberately emits
+only a compact run summary, not the findings.
 
 ### Standard TOON and the legacy pipe fallback
 
@@ -60,7 +87,8 @@ The legacy path keeps its old bytes exactly, including its old pagination contra
 
 ```bash
 # Kick off a review and capture the run summary (metadata) as a clean payload.
-atcr review --axi > run.toon 2> review.log
+# A captured stdout is the agent path, so no --axi is needed.
+atcr review > run.toon 2> review.log
 
 # A review reconciles in-process only when a gate threshold is set (--fail-on,
 # or fail_on in .atcr/config.yaml, which init and quickstart set to HIGH) or
@@ -70,7 +98,7 @@ atcr review --axi > run.toon 2> review.log
 atcr reconcile > /dev/null 2> reconcile.log
 
 # Read the reconciled findings themselves as a token-dense payload.
-atcr report --format axi > findings.toon 2> report.log
+atcr report > findings.toon 2> report.log
 ```
 
 ### `atcr diff-smell --json` — payload-only without AXI
@@ -100,7 +128,7 @@ shape and its stability contract.
 
 A bare `atcr` (no subcommand) renders a live "home view" instead of static help
 (axi.md Principle 8, "Content First"): an orchestrator can sanity-check state in
-one cheap call before deciding what to do next. Under `--axi` that view is a
+one cheap call before deciding what to do next. On the agent path that view is a
 single-row TOON array — the executable path (home-relativized with `~`), atcr's
 one-line description, the current review's id and status, and the usage ping's
 resolved state:
@@ -134,8 +162,8 @@ review's id when known, else `""`.
 
 ### The `review --axi` run-summary payload
 
-`atcr review --axi` (and `atcr review --resume <id> --axi`) gate every
-human-oriented stdout line and emit a single-row TOON array describing the run
+`atcr review` (and `atcr review --resume <id>`) on the agent path gates every
+human-oriented stdout line and emits a single-row TOON array describing the run
 (the one exception, a baseline re-run with nothing to review, is below):
 
 ```
@@ -144,9 +172,9 @@ review_summary[1]{id,dir,agents_succeeded,agents_total,agents_failed,agents_time
 ```
 
 The header declares the fixed column order with the standard comma delimiter; the single data row carries the run id, the review directory, and ten bare-integer counts. A multi-bin baseline run (`--all` or `--scope`) appends four more integer columns after `findings_low`: `bins_reviewed`, `bins_planned`, `files_covered` and `files_in_scope` (see [Baseline review](../README.md#baseline-review---all----scope)); a diff or bulk review never declares them. `findings_total` is the raw pre-reconcile fan-out count, and the four `findings_<severity>` columns break it down by severity. To act on the reconciled
-findings, read `atcr report --format axi` against the same review directory —
+findings, read `atcr report` against the same review directory —
 `findings_total` is a fan-out metric, not the deduplicated reconciled count. One
-exception: a `review --resume <id> --axi` run that finds nothing pending (the
+exception: a `review --resume <id>` run that finds nothing pending (the
 review is already fully complete) runs no fan-out, so its payload reports the
 just-reconciled total instead of a fan-out count.
 
@@ -182,7 +210,7 @@ help[2]: atcr status <id>,atcr review --resume <id> --base=<base sha> --head=<he
 A review that tripped its `--fail-on` gate (exit 1) reconciled first, so it
 suggests `report` and `verify` like any reconciled review.
 
-Without `--axi` the same suggestions go to stderr as `Next:` lines (for example
+In human mode (a terminal, or `--human`/`ATCR_FORMAT=text`) the same suggestions go to stderr as `Next:` lines (for example
 `Next: atcr report <id>` and `Next: atcr verify <id>`), so the human stdout is
 unchanged. A run that failed before its fan-out started (a usage error, or a
 missing API key, which leaves a failed review with `start_error` that
@@ -201,13 +229,13 @@ a report or verify of a review that does not exist:
 help[1]: atcr review --all --no-file-cache
 ```
 
-`.atcr/latest` still points at the earlier review. Without `--axi` the notice is
+`.atcr/latest` still points at the earlier review. In human mode the notice is
 on stdout and the suggestion is a `Next:` line on stderr; under `--legacy-pipe`
 stdout is empty.
 
 ### The `report --format axi` findings payload
 
-`atcr report --format axi` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes). Optional columns follow `id`, declared only when at least one finding carries the signal, in this order: `disagreement`, `verification.verdict`, `verification.skeptic`, `verification.notes`, `verification.challenge_survived`, `evidence_exec.command`, `evidence_exec.exit_code`, `evidence_exec.output_excerpt`, `fix_warning` and `fix_review`. The rows are followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)) and a `help` line naming the usual next commands (see [Next-step suggestions](#next-step-suggestions)):
+On the agent path `atcr report` emits the reconciled findings as a standard TOON tabular array whose header declares the nine-column [`atcr-findings/v1`](findings-format.md) field set plus the finding's `id` (the value `atcr debt resolve <id>` takes). Optional columns follow `id`, declared only when at least one finding carries the signal, in this order: `disagreement`, `verification.verdict`, `verification.skeptic`, `verification.notes`, `verification.challenge_survived`, `evidence_exec.command`, `evidence_exec.exit_code`, `evidence_exec.output_excerpt`, `fix_warning` and `fix_review`. The rows are followed by `total` and `truncated` metadata lines (see [Pagination and truncation](#pagination-and-truncation)) and a `help` line naming the usual next commands (see [Next-step suggestions](#next-step-suggestions)):
 
 ```
 findings[2]{severity,"file:line",problem,fix,category,est_minutes,evidence,reviewers,confidence,id}:
@@ -258,9 +286,9 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   No `Next:` line is written, on stderr or as a `--log-format json` record. A
   run whose skeptics' tool harness could not be built stays a plain error
   (exit 1) with no payload and no `help` block, exactly as in text mode.
-- Without `--axi`, `atcr verify` prints `Next: atcr report <id>` on **stderr**
+- In human mode, `atcr verify` prints `Next: atcr report <id>` on **stderr**
   after its result line, and leaves stdout unchanged. It stays a raw stderr
-  line under `--log-format json` too, exactly as before `--axi` existed.
+  line under `--log-format json` too, exactly as in the original human output.
 - `atcr status --axi` replaces its indented JSON document with one TOON object
   of the same fields (see [status.md](status.md#axi-mode)), followed by a
   `help` array that follows the review's state: `help[1]: atcr reconcile <id>`
@@ -268,9 +296,9 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
   is reconciled, and `atcr review --resume <id>` while agents are pending or the
   review failed (with `--base=<sha> --head=<sha>` or `--merge-commit=<sha>`
   appended for a review of an explicit range). No `Next:` line is written, on stderr or as a
-  `--log-format json` record. Without `--axi`, stdout stays the JSON document
+  `--log-format json` record. In human mode, stdout stays the JSON document
   byte-identical and the same steps are `Next:` lines on stderr.
-- Without `--axi`, `atcr reconcile` prints the same suggestions as human
+- In human mode, `atcr reconcile` prints the same suggestions as human
   lines on **stderr**, after its other diagnostics, and leaves stdout unchanged:
 
   ```
@@ -289,9 +317,9 @@ command graph. A runtime value the CLI cannot know for certain stays a literal
 
 ## Exit codes
 
-AXI mode changes only the *shape* of stdout, never the exit code. `atcr review
---axi`, `atcr review --resume <id> --axi`, and `atcr report --format axi` return
-the same **0/1/2/3** codes as their non-`--axi` counterparts for the same inputs.
+AXI mode changes only the *shape* of stdout, never the exit code. `atcr review`,
+`atcr review --resume <id>`, and `atcr report` return the same **0/1/2/3** codes on
+the agent path as their human-mode counterparts for the same inputs.
 The authoritative table is in [CI Integration → Exit semantics](ci-integration.md#exit-semantics);
 it is not duplicated here. In short:
 
@@ -323,7 +351,7 @@ none.
 ## Pagination and truncation
 
 A large PR can produce a findings list big enough to blow an agent's context
-window. `atcr report --format axi` therefore caps its payload deterministically:
+window. On the agent path `atcr report` therefore caps its payload deterministically:
 
 - **Default cap: 500 lines of array** — the array header plus up to 499 finding rows (header inclusive). The closing `total:`, `truncated:` and `help[...]:` lines are not counted, so a capped payload is at most 503 physical lines.
 - **Override:** set `ATCR_AXI_MAX_LINES` to a positive integer to raise or lower
@@ -342,24 +370,55 @@ ATCR_AXI_MAX_LINES=5000 atcr report --format axi > findings.toon
 ## stdout is payload, stderr is diagnostics
 
 The entire value of AXI mode for an orchestrator is that a redirect produces a
-byte-clean file. Under `--axi`:
+byte-clean file. In AXI mode (the default on the agent path):
 
 - **stdout carries only the payload** — the `review_summary`/`findings` TOON and
   its `total`, `truncated` and `help` lines (only the `help` line for a
-  nothing-to-review baseline re-run), with zero ANSI/OSC escapes and zero Markdown. `atcr
-  review --axi > run.toon` and `atcr report --format axi > findings.toon` yield
-  parseable files with nothing else mixed in.
+  nothing-to-review baseline re-run), with zero ANSI/OSC escapes and zero Markdown.
+  `atcr review > run.toon` and `atcr report > findings.toon` yield parseable
+  files with nothing else mixed in. On failure stdout carries the single
+  structured error document instead (see
+  [Errors](#errors-one-error-true-document-on-stdout)), never both.
 - **stderr carries only diagnostics** — progress, warnings, and all structured
   logs, governed by [`ATCR_LOG_LEVEL` and `--log-format`](logging.md) and passed
-  through the same redaction sink. Error diagnostics also go to stderr, not
-  stdout (axi.md Principle 6 reconciliation), so an agent branches on the exit
-  code and never has to parse stdout for an error case.
+  through the same redaction sink. It is empty on a failed AXI run: the error
+  document is on stdout, so an agent branches on the exit code and reads the
+  document rather than scraping a diagnostic line.
 
 Capture the two streams separately so diagnostics never contaminate the payload:
 
 ```bash
-atcr report --format axi > findings.toon 2> report.log
+atcr report > findings.toon 2> report.log
 ```
+
+## Errors: one `error: true` document on stdout
+
+In AXI mode a failed invocation writes exactly one `error: true` TOON document to
+stdout. stderr stays empty, so a redirect still yields one parseable document:
+
+```text
+error: true
+message: "unknown flag: --bogus"
+code: 2
+help[5]: "--axi","-h/--help","--human","--log-format","--telemetry-endpoint"
+```
+
+- `error` is always `true`.
+- `message` is the same text human mode prints, passed through the redactor, so
+  a secret-shaped token in an error is scrubbed.
+- `code` is the numeric exit code: **2** for a usage or configuration error,
+  **1** for a failure (including a gate failure and an internal fault), **3** for
+  a `--sync-cloud` authentication failure.
+- `help[]` names what to call instead: the command's valid flags for an unknown
+  flag, the valid commands for an unknown command, and otherwise the command's
+  `--help`. For example, an unknown flag on `status` lists
+  `"--axi","-h/--help","--human","--log-format","--telemetry-endpoint"`; an
+  unknown top-level command lists every top-level command.
+
+The document is written only when no payload was written. A command that already
+printed its result keeps it: a `--fail-on` gate exit prints the payload and
+exits 1 with no second document. Human mode keeps the `atcr: <message>` line on
+stderr, so existing scripts and terminal users are unchanged.
 
 ## Worked example: an autonomous sweeper
 
@@ -379,11 +438,12 @@ set -u
 export ATCR_AXI_MAX_LINES=2000
 
 # 1. Run the review as a subprocess. stdout = payload, stderr = diagnostics.
-#    --fail-on gates the exit code on surviving findings; --axi keeps stdout clean.
-atcr review --axi --fail-on high > run.toon 2> review.log
+#    --fail-on gates the exit code on surviving findings; the captured stdout
+#    already selects AXI, so stdout is clean without any output-mode flag.
+atcr review --fail-on high > run.toon 2> review.log
 status=$?
 
-# 2. Branch on the reconciled exit code — the same 0/1/2/3 contract as non-axi.
+# 2. Branch on the reconciled exit code — the same 0/1/2/3 contract as human mode.
 case $status in
   0)
     echo "clean: no findings at or above the threshold; proceeding"
@@ -402,7 +462,7 @@ case $status in
     # Findings survived the gate. Read them as an AXI payload (stdout only).
     # report returns 2 for a usage/config fault (bad anchor, absent findings.json)
     # and 1 for an internal render fault — propagate whichever actually occurred.
-    atcr report --format axi > findings.toon 2> report.log
+    atcr report > findings.toon 2> report.log
     rc=$?
     if [ "$rc" -ne 0 ]; then
       echo "report failed (exit $rc); see report.log" >&2
@@ -414,7 +474,7 @@ case $status in
     #    count — re-run with a higher cap rather than assuming the list is complete.
     if grep -qx 'truncated: true' findings.toon; then
       echo "findings truncated; re-running with a higher cap" >&2
-      ATCR_AXI_MAX_LINES=20000 atcr report --format axi > findings.toon 2> report.log
+      ATCR_AXI_MAX_LINES=20000 atcr report > findings.toon 2> report.log
     fi
 
     # 4. Hand findings.toon to your fixer (see the note below the example).
@@ -468,7 +528,7 @@ different document, the anonymized public submission, and is always JSON
 ([scorecard.md](scorecard.md#atcr-leaderboard-export---output-path)).
 
 Three commands are left out on purpose. `atcr range` and `atcr status` print
-JSON by default (`atcr status --axi` prints TOON instead), so a flag would change nothing. `atcr trust` authorizes
+JSON by default (on the agent path `atcr status` prints a TOON object instead), so a flag would change nothing. `atcr trust` authorizes
 providers; it is not a report. Four more print reports with no `--json` yet:
 `atcr audit-report`, `atcr benchmark fit`, `atcr debt report` (use
 `atcr debt list --json` for the machine-readable form) and

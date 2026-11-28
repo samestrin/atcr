@@ -1013,6 +1013,14 @@ Every fenced example in the 41-file scope appears once. Shell snippets classifie
 
 **Example totals:** 57 hermetic and 177 skipped; 234 fenced examples total. No example is left unclassified.
 
+## SKILL.md examples (epic 165 T5)
+
+The installable agent skill (`skills/atcr/SKILL.md`) carries one runnable fenced example for the new output-mode and error contract. It runs in the same fixture as the docs examples (`TestDocsHermeticExamplesRun`).
+
+| File | Example | Lang | Class | Result | Reason |
+|---|---|---|---|---|---|
+| `skills/atcr/SKILL.md` | L30-44: `# This skill captures stdout, so atcr is already on the agent path.` | `bash` | **hermetic** | **PASS** | Uses only temporary files, a fixture HOME/repository, and the atcr test shim; no provider or network. |
+
 ## T5 re-grade of the m–z pages (EST-6069)
 
 **Scope.** Every `docs/` page named m–z except `docs/registry.md` and `docs/personas-install.md`, which T4 (EST-6068) owns by its own description (M4, M5, M7). Re-graded here: `metrics.md`, `payload-modes.md`, `personas-authoring.md`, `providers.md`, `release-process.md`, `scorecard.md`, `security.md`, `skill-usage.md`, `stable-surface.md`, `status.md`, `technical-debt-format.md`, `technical-debt.md`, `telemetry.md`, `verification.md`, `visual-verification.md`, `webhook.md`.
