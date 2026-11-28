@@ -23,8 +23,8 @@ func TestRenderHomeViewAXI_SingleRow(t *testing.T) {
 
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	require.Len(t, lines, 2, "single-row TOON payload: header + one data row")
-	assert.Equal(t, "home[1]{exec_path,description,review_id,review_status}:", lines[0],
-		"header declares the fixed home-view column order")
+	assert.Equal(t, "home[1]{exec_path,description,review_id,review_status,telemetry}:", lines[0],
+		"header declares the fixed home-view column order, telemetry last (epic 165 T4)")
 	assert.Contains(t, lines[1], "~/go/bin/atcr")
 	assert.Contains(t, lines[1], "2026-06-10_x")
 	assert.Contains(t, lines[1], "completed")
@@ -73,7 +73,7 @@ func TestRenderHomeViewAXI_Golden(t *testing.T) {
 		ReviewID:     "2026-06-10_x",
 		ReviewStatus: "completed",
 	}))
-	want := "home[1]{exec_path,description,review_id,review_status}:\n" +
-		"  ~/go/bin/atcr,\"Agent Team Code Review — a review panel, not a reviewer\",2026-06-10_x,completed\n"
+	want := "home[1]{exec_path,description,review_id,review_status,telemetry}:\n" +
+		"  ~/go/bin/atcr,\"Agent Team Code Review — a review panel, not a reviewer\",2026-06-10_x,completed,on\n"
 	assert.Equal(t, want, b.String())
 }
