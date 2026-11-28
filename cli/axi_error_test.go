@@ -78,7 +78,7 @@ func TestAXIError_UnknownRootFlag(t *testing.T) {
 	doc := errorDoc(t, stdout, 2)
 	assert.Equal(t, "unknown flag: --bogus", doc["message"])
 	help := helpLines(t, doc)
-	for _, f := range []string{"--axi", "--human", "--log-format", "-h/--help", "-v/--version"} {
+	for _, f := range []string{"--axi", "--human", "--log-format", "-h/--help", "-v/-V/--version"} {
 		assert.Contains(t, help, f, "help[] names the root's valid flags")
 	}
 }
