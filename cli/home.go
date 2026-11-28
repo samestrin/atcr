@@ -154,11 +154,26 @@ func runHome(cmd *cobra.Command) error {
 		case st.unavailable:
 			reviewID, status = st.reviewID, "unavailable"
 		}
+		// Telemetry disclosure (epic 165 T4): the home view reports the usage
+		// ping's resolved state so an agent can see the default-on anonymous ping
+		// and its opt-out without reading docs. telemetryGate combines the live
+		// ATCR_TELEMETRY env var with the persisted config `telemetry` exactly as
+		// the send path does (env opt-out wins; a malformed config fails safe to
+		// disabled). The unrecognized-env warning routes to cmd.ErrOrStderr():
+		// a bare invocation reads the gate only here, so this is the one place a
+		// misspelled opt-out can surface. The state reflects the consent gate, not
+		// the injected client's destination (an embedder's no-destination client
+		// sends nothing regardless; see docs/telemetry.md "Embedding atcr").
+		telemetryState := "off"
+		if telemetryGate(cmd.ErrOrStderr()) {
+			telemetryState = "on"
+		}
 		view := report.HomeViewAXI{
 			ExecPath:     relHome(execPath),
 			Description:  cmd.Short,
 			ReviewID:     reviewID,
 			ReviewStatus: status,
+			Telemetry:    telemetryState,
 		}
 		// The deprecated pipe payload stays byte-identical: help[] is a
 		// standard-TOON block (Epic 42.0).
