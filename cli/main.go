@@ -163,7 +163,7 @@ func runMain(ctx context.Context, stdout, stderr io.Writer) int {
 			// and gets the stderr line, not a second document). cobra read its
 			// args from os.Args, so the mode re-resolution reads them too.
 			if !out.wrote && errorModeIsAXI(cmd, os.Args[1:], stdout) {
-				if werr := writeErrorDocument(stdout, err, code, errorHelp(root, cmd, os.Args[1:], err)); werr == nil {
+				if werr := writeErrorDocument(stdout, err, code, errorHelp(cmd, err)); werr == nil {
 					return code
 				}
 			}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -108,6 +109,44 @@ func TestAXIError_UnknownSubcommandOfAGroup(t *testing.T) {
 	help := helpLines(t, errorDoc(t, stdout, 2))
 	assert.Contains(t, help, "atcr debt list")
 	assert.NotContains(t, help, "atcr review")
+}
+
+// TestAXIError_UnknownSubcommandAfterFlagValue: a separated flag value before
+// the group (`--log-format text`) is not a command word, so help[] still lists
+// the group's subcommands.
+func TestAXIError_UnknownSubcommandAfterFlagValue(t *testing.T) {
+	clearOutputModeEnv(t)
+	isolate(t)
+	code, stdout, stderr := mainPiped(t, "--log-format", "text", "debt", "nosuch")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stderr)
+	help := helpLines(t, errorDoc(t, stdout, 2))
+	assert.Contains(t, help, "atcr debt list")
+	assert.NotContains(t, help, "atcr review")
+}
+
+// TestAXIError_EveryGroupRejectsUnknownSubcommand: errorHelp lists the
+// subcommands of the command cobra returns, which is the group only when the
+// group validates its own args. A group left to cobra's legacyArgs fails in
+// Find and hands back root, so its help[] would list the root's commands.
+func TestAXIError_EveryGroupRejectsUnknownSubcommand(t *testing.T) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			if !sub.IsAvailableCommand() || !sub.HasAvailableSubCommands() {
+				continue
+			}
+			root := NewRootCmd()
+			root.SetArgs(append(strings.Fields(strings.TrimPrefix(sub.CommandPath(), "atcr ")), "nosuch"))
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			got, err := root.ExecuteContextC(context.Background())
+			require.Error(t, err, sub.CommandPath())
+			assert.Equal(t, sub.CommandPath(), got.CommandPath(), "cobra returns the group for an unknown subcommand")
+			walk(sub)
+		}
+	}
+	walk(NewRootCmd())
 }
 
 // TestAXIError_UnknownFlagBeforeAXI: the bad flag stops cobra's parse before it

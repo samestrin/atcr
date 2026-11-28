@@ -69,13 +69,16 @@ func errorModeIsAXI(cmd *cobra.Command, args []string, stdout io.Writer) bool {
 
 // errorHelp is the error document's help[]: the commands an unknown command
 // could have been, the flags an unknown flag could have been, and otherwise the
-// failed command's --help.
-func errorHelp(root, cmd *cobra.Command, args []string, err error) []string {
+// failed command's --help. For an unknown command cmd is already the parent the
+// lookup failed in: every command group validates its own args (usageArgs), so
+// cobra returns the group rather than root
+// (TestAXIError_EveryGroupRejectsUnknownSubcommand).
+func errorHelp(cmd *cobra.Command, err error) []string {
 	msg := err.Error()
 	switch {
 	case strings.HasPrefix(msg, "unknown command "):
 		var lines []string
-		for _, c := range commandForArgs(root, args).Commands() {
+		for _, c := range cmd.Commands() {
 			if c.IsAvailableCommand() {
 				lines = append(lines, c.CommandPath())
 			}
@@ -89,37 +92,6 @@ func errorHelp(root, cmd *cobra.Command, args []string, err error) []string {
 		}
 	}
 	return []string{cmd.CommandPath() + " --help"}
-}
-
-// commandForArgs walks args' command words down from root and returns the
-// deepest command they name: the parent an unknown command was looked up in.
-// cobra hands back root, not that parent, when a lookup fails.
-func commandForArgs(root *cobra.Command, args []string) *cobra.Command {
-	cur := root
-	for _, a := range args {
-		if a == "--" {
-			break
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		next := findChild(cur, a)
-		if next == nil {
-			break
-		}
-		cur = next
-	}
-	return cur
-}
-
-// findChild returns cur's subcommand named or aliased name, or nil.
-func findChild(cur *cobra.Command, name string) *cobra.Command {
-	for _, c := range cur.Commands() {
-		if c.Name() == name || c.HasAlias(name) {
-			return c
-		}
-	}
-	return nil
 }
 
 // validFlags names every visible flag cmd accepts, its own and inherited, as
