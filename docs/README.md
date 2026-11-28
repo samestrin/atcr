@@ -60,8 +60,9 @@ single source of truth the website build consumes, so it links every doc in
 - [CI Integration](ci-integration.md) — wiring atcr into a CI gate.
 - [Clean-install check](clean-install-check.md) — the recorded walkthrough of the README quickstart.
 - [Agentic Consumption](agentic-consumption.md) — driving `atcr` from another
-  autonomous agent via `--axi`: token-dense TOON output, exit codes, pagination,
-  and stdout/stderr isolation.
+  autonomous agent, where AXI output is the default: output-mode overrides,
+  the structured error document, exit codes, pagination, and stdout/stderr
+  isolation.
 - [AXI audit](axi-audit.md) — evidence and justified or unjustified exceptions
   for each of the ten Agent eXperience Interface principles.
 - [GitHub Action — PR Review](github-action.md) — posting reconciled findings to

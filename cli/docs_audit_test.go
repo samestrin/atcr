@@ -2226,7 +2226,8 @@ type exampleWorkspace struct {
 var documentedExamples = []docExample{
 	{page: "docs/agentic-consumption.md", anchor: "atcr diff-smell --staged --json > smell.json"},
 	{page: "docs/agentic-consumption.md", anchor: "ATCR_AXI_MAX_LINES=5000 atcr report --format axi"},
-	{page: "docs/agentic-consumption.md", anchor: "atcr report --format axi > findings.toon 2> report.log"},
+	{page: "docs/agentic-consumption.md", anchor: "atcr report > findings.toon 2> report.log"},
+	{page: "skills/atcr/SKILL.md", anchor: "This skill captures stdout, so atcr is already on the agent path."},
 	{page: "docs/auto-fix.md", anchor: `GOMODCACHE="$(go env GOMODCACHE)"`,
 		subst: []string{"/path/to/repo", "{{ws}}/gomod", "<atcr cache path>", "{{ws}}/tmp/atcr-modcache"},
 		setup: func(t *testing.T, w exampleWorkspace) {
@@ -2585,7 +2586,9 @@ func fixtureIDs(t *testing.T, w exampleWorkspace) (id, finding, run string) {
 }
 
 // TestDocsHermeticExamplesRun (epic 111 T6) runs every documented example the
-// inventory classifies hermetic and fails when one exits non-zero.
+// inventory classifies hermetic and fails when one exits non-zero. It also runs
+// the agent-facing examples in skills/atcr/SKILL.md (epic 165 T5), so the
+// instructions an agent follows cannot claim a command that no longer works.
 func TestDocsHermeticExamplesRun(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Fatal("bash is required to run the documented examples")
@@ -2612,6 +2615,9 @@ func TestDocsHermeticExamplesRun(t *testing.T) {
 	})
 
 	pages := auditedMarkdown(t)
+	skillDoc, err := os.ReadFile(filepath.Join(repoRootDir(t), "skills", "atcr", "SKILL.md"))
+	require.NoError(t, err, "read skills/atcr/SKILL.md")
+	pages["skills/atcr/SKILL.md"] = string(skillDoc)
 	for _, ex := range documentedExamples {
 		md, ok := pages[ex.page]
 		require.True(t, ok, "%s is not an audited page", ex.page)
