@@ -77,10 +77,12 @@ func TestRootCmd_HasExactlyTwentyNineSubcommands(t *testing.T) {
 
 func TestVersion_FlagAndSubcommandAgree(t *testing.T) {
 	// The --version flag (cobra, from root.Version) and the version subcommand
-	// must report the same non-empty string so tooling can use either form.
+	// must report the same non-empty version so tooling can use either form.
+	// Since epic 165 T3 the flag prints the BARE version (axi.md Principle 10)
+	// while the subcommand keeps its conventional `atcr version <ver>` line.
 	flagOut, err := execute(t, "--version")
 	require.NoError(t, err)
-	assert.Contains(t, flagOut, atcrVersion())
+	assert.Equal(t, atcrVersion()+"\n", flagOut)
 
 	subOut, err := execute(t, "version")
 	require.NoError(t, err)

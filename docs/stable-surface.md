@@ -16,6 +16,8 @@ The commands, flags, personas, config keys and environment variables below are t
 | `--legacy-pipe` | bool | `false` |  |
 | `--log-format` | string | `text` |  |
 | `--telemetry-endpoint` | string | `` |  |
+| `-V` | bool | `false` | alias of `--version` |
+| `-v, --version` | bool | `false` |  |
 
 ### `atcr audit-report`
 

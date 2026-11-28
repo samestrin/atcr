@@ -95,7 +95,10 @@ func errorHelp(cmd *cobra.Command, err error) []string {
 }
 
 // validFlags names every visible flag cmd accepts, its own and inherited, as
-// `--name` or `-s/--name`.
+// `--name` or `-s/--name`. A hidden alias flag that SHARES a visible flag's
+// pflag.Value (the -V alias of --version, initVersionFlags) contributes its
+// shorthand to that flag's line — `-v/-V/--version` — because it is a valid
+// spelling an agent may use even though help never lists it separately.
 func validFlags(cmd *cobra.Command) []string {
 	seen := map[string]bool{}
 	var lines []string
@@ -104,9 +107,20 @@ func validFlags(cmd *cobra.Command) []string {
 			return
 		}
 		seen[f.Name] = true
-		name := "--" + f.Name
+		var shorts []string
 		if f.Shorthand != "" {
-			name = "-" + f.Shorthand + "/" + name
+			shorts = append(shorts, "-"+f.Shorthand)
+		}
+		alias := func(g *pflag.Flag) {
+			if g.Hidden && g.Shorthand != "" && g.Value == f.Value {
+				shorts = append(shorts, "-"+g.Shorthand)
+			}
+		}
+		cmd.Flags().VisitAll(alias)
+		cmd.InheritedFlags().VisitAll(alias)
+		name := "--" + f.Name
+		if len(shorts) > 0 {
+			name = strings.Join(shorts, "/") + "/" + name
 		}
 		lines = append(lines, name)
 	}

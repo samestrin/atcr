@@ -27,7 +27,10 @@ var updateStableSurface = flag.Bool("update-stable-surface", false, "rewrite doc
 // renderStableSurface builds the v1.0 stable-surface inventory (commands,
 // flags, personas, config keys, environment variables) from the live command tree and the embedded persona files.
 // Hidden commands and flags are deprecated aliases that existing scripts still
-// call, so they are listed too and marked deprecated.
+// call, so they are listed too and marked deprecated — except a hidden flag
+// that SHARES a visible flag's pflag.Value (the -V alias of --version,
+// initVersionFlags): that is a live alternate spelling, listed by its shorthand
+// and marked as an alias of the flag it sets.
 func renderStableSurface(root string) string {
 	var b strings.Builder
 	b.WriteString("# Stable surface\n\n")
@@ -43,6 +46,12 @@ func renderStableSurface(root string) string {
 			b.WriteString("Deprecated alias command.\n\n")
 		}
 		var rows []string
+		visibleByValue := map[pflag.Value]string{}
+		c.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
+			if !f.Hidden {
+				visibleByValue[f.Value] = f.Name
+			}
+		})
 		c.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
 			name := "--" + f.Name
 			if f.Shorthand != "" {
@@ -50,7 +59,16 @@ func renderStableSurface(root string) string {
 			}
 			status := ""
 			if f.Hidden {
-				status = "deprecated alias"
+				if target, ok := visibleByValue[f.Value]; ok {
+					// A live alias spelling, not a deprecated flag: the
+					// shorthand is the surface; the long name is incidental.
+					if f.Shorthand != "" {
+						name = "-" + f.Shorthand
+					}
+					status = "alias of `--" + target + "`"
+				} else {
+					status = "deprecated alias"
+				}
 			}
 			rows = append(rows, fmt.Sprintf("| `%s` | %s | `%s` | %s |\n", name, f.Value.Type(), f.DefValue, status))
 		})

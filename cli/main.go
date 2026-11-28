@@ -436,8 +436,10 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
 		// Setting Version makes cobra auto-register the --version flag, which
 		// short-circuits before PersistentPreRunE (matching the comments on that
-		// hook below). A peer `version` subcommand is also registered for the
-		// `atcr version` convention; both render the same string.
+		// hook below). initVersionFlags below adds the -V alias and the bare
+		// version template (epic 165 T3). A peer `version` subcommand is also
+		// registered for the `atcr version` convention; both report the same
+		// version string, the flags bare and the subcommand prefixed.
 		Version: atcrVersion(),
 		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
 			"then deterministically reconciles their findings into a single deduplicated,\n" +
@@ -576,6 +578,11 @@ func newRootCmd(resolveClient func(usageOverride string) (client *telemetry.Clie
 			return runHome(cmd)
 		},
 	}
+
+	// Version-flag surface (epic 165 T3): -v, -V and --version print the bare
+	// version, exit 0, in both modes, short-circuiting before PersistentPreRunE.
+	// See initVersionFlags in version.go.
+	initVersionFlags(root)
 
 	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
 	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.

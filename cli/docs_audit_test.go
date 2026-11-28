@@ -194,9 +194,10 @@ func commandGroups() map[string]map[string]bool {
 // canonicalFlags walks the whole command tree and returns every long flag name
 // registered on any command (local + persistent).
 func canonicalFlags() map[string]bool {
-	// help (every command) and version (root) are cobra-managed universal flags
-	// added lazily during Execute, so they never appear in the static flag sets
-	// walked below; seed them explicitly.
+	// help (every command) is a cobra-managed universal flag added lazily during
+	// Execute, so it never appears in the static flag sets walked below; seed it
+	// explicitly. version (root) is registered eagerly by initVersionFlags and
+	// walked like any other flag; the seed keeps older trees covered.
 	flags := map[string]bool{"help": true, "version": true}
 	add := func(fs *pflag.FlagSet) {
 		fs.VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
@@ -250,8 +251,8 @@ func reachableFlags(tokens []string) map[string]bool {
 			add(c.LocalFlags()) // the resolved command contributes its local flags
 		}
 	}
-	// --version is registered only on the root command (added lazily by cobra when
-	// Version is set); it is not inherited by subcommands. A doc that writes
+	// --version is registered only on the root command (initVersionFlags, from
+	// root.Version); it is not inherited by subcommands. A doc that writes
 	// `atcr --version` resolves to root (no bare-word command token → chain len 1).
 	if len(chain) == 1 {
 		flags["version"] = true
@@ -2940,14 +2941,14 @@ var axiCitationPins = map[string]string{
 	"cli/main.go:158-173":                     "code := exitCode(err)",
 	"cli/main.go:248-275":                     "// Exit-code semantics, centralized: 0 success, 1 failure (including",
 	"cli/main.go:260-269":                     "// --axi (Agent eXperience Interface) mode reuses this exact 0/1/2/3 c",
-	"cli/main.go:440-441":                     "// `atcr version` convention; both render the same string.",
-	"cli/main.go:575-577":                     "return runHome(cmd)",
-	"cli/main.go:592-600":                     "// --axi is a LOCAL flag on the root command (not persistent): it is r",
-	"cli/main.go:600":                         "root.Flags().Bool(\"legacy-pipe\"",
-	"cli/main.go:602-606":                     "// Flag-parse errors (unknown flags, bad values, violated flag groups)",
-	"cli/main.go:603-633":                     "root.AddCommand(",
-	"cli/main.go:706-742":                     "// axiMaxLinesFromEnv resolves the --axi line cap from ATCR_AXI_MAX_LI",
-	"cli/main.go:758-762":                     "// setupLogger constructs the single root logger from LOG_LEVEL and --",
+	"cli/main.go:441-443":                     "`atcr version` convention; both report the same",
+	"cli/main.go:577-579":                     "return runHome(cmd)",
+	"cli/main.go:599-607":                     "// --axi is a LOCAL flag on the root command (not persistent): it is r",
+	"cli/main.go:607":                         "root.Flags().Bool(\"legacy-pipe\"",
+	"cli/main.go:609-613":                     "// Flag-parse errors (unknown flags, bad values, violated flag groups)",
+	"cli/main.go:610-640":                     "root.AddCommand(",
+	"cli/main.go:713-749":                     "// axiMaxLinesFromEnv resolves the --axi line cap from ATCR_AXI_MAX_LI",
+	"cli/main.go:765-769":                     "// setupLogger constructs the single root logger from LOG_LEVEL and --",
 	"cli/quickstart.go:377-380":               "if stdinIsNotTerminal(o.in) {",
 	"cli/reconcile.go:293-295":                "toon.Field{Key: \"findings\", Value: res.Summary.TotalFindings},",
 	"cli/report.go:160":                       "case format == report.FormatPipe ||",
@@ -2967,9 +2968,9 @@ var axiCitationPins = map[string]string{
 	"cli/suggestions.go:332-342":              "func writeAXIHelp(w io.Writer, payload toon.Object, lines []string) error {",
 	"cli/suggestions.go:89-136":               "var suggestionRegistry = map[suggestionKey][]nextStep{",
 	"cli/verify.go:313-320":                   "reconciledDir := filepath.Join(reviewDir, \"reconciled\")",
-	"cli/version.go:18-55":                    "// atcrVersion resolves the version string reported by `atcr --version",
-	"cli/version.go:23-41":                    "func atcrVersion() string {",
-	"cli/version.go:44-55":                    "// newVersionCmd prints the atcr version. It mirrors the output of the",
+	"cli/version.go:19-103":                   "// atcrVersion resolves the version string reported by `atcr --version",
+	"cli/version.go:24-42":                    "func atcrVersion() string {",
+	"cli/version.go:87-103":                   "// newVersionCmd prints the atcr version. It shares atcrVersion with the",
 	"docs/skill-usage.md:13-56":               "## Installation",
 	"go.mod:40":                               "github.com/samestrin/go-axi v0.4.0",
 	"internal/fanout/resume.go:50-55":         "func RepassRangeHint(m *payload.Manifest) string {",
