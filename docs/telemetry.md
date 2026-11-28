@@ -41,6 +41,12 @@ than before, still bounded by the same 2 seconds.
 > to disable it (see [Opt-out](#opt-out)); either surface alone is
 > sufficient and final.
 
+The AXI home view (a bare `atcr` on the agent path, or `atcr --axi`) reports the
+resolved state as a `telemetry` column — `telemetry: on|off` — read from the same
+two surfaces through the same gate the send path uses, so an agent can see the
+ping's state without reading this page. The deprecated `--legacy-pipe` home
+payload keeps its four frozen columns and does not carry it.
+
 ### Embedding atcr as a library
 
 The default-on posture described here applies to the **`atcr` binary**. If you

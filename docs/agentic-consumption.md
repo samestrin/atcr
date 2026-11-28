@@ -102,20 +102,28 @@ A bare `atcr` (no subcommand) renders a live "home view" instead of static help
 (axi.md Principle 8, "Content First"): an orchestrator can sanity-check state in
 one cheap call before deciding what to do next. Under `--axi` that view is a
 single-row TOON array — the executable path (home-relativized with `~`), atcr's
-one-line description, and the current review's id and status:
+one-line description, the current review's id and status, and the usage ping's
+resolved state:
 
 ```
-home[1]{exec_path,description,review_id,review_status}:
-  ~/go/bin/atcr,"Agent Team Code Review — a review panel, not a reviewer",2026-07-18_main,completed
+home[1]{exec_path,description,review_id,review_status,telemetry}:
+  ~/go/bin/atcr,"Agent Team Code Review — a review panel, not a reviewer",2026-07-18_main,completed,on
 help[2]: atcr review,atcr report <id>
 ```
+
+The `telemetry` column reports the anonymous usage ping's state, `on` or `off`.
+The ping is on by default; opt out with `ATCR_TELEMETRY=0` or config
+`telemetry: false` (`atcr config set telemetry false`) — see
+[telemetry.md](telemetry.md). The column reads the same consent gate the send
+path uses, so an agent can check the state without reading the docs.
 
 The trailing `help[]` line lists the commands that usually come next (axi.md
 Principle 9, "Contextual Disclosure"). `<id>` is a placeholder for the review id,
 never a guessed value. `atcr report <id>` is offered only when the latest review
 has reconciled data; on a first run, an `unavailable` pointer or an unreconciled
 review, where `report` would exit 2, the line is `help[1]: atcr review`. The
-deprecated `--legacy-pipe` home payload has no `help[]` line.
+deprecated `--legacy-pipe` home payload keeps its four frozen columns (no
+`telemetry`) and has no `help[]` line.
 
 When no review has run yet, `review_id` is a quoted empty string (`""`) and
 `review_status` is `none` — the home view is never an error and never empty, even
